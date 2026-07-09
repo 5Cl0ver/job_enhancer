@@ -1,0 +1,69 @@
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+.venv/
+venv/
+env/
+*.egg-info/
+dist/
+build/
+.eggs/
+pip-wheel-metadata/
+*.so
+*.dylib
+
+# ── Node.js ──────────────────────────────────────────────────────────────────
+node_modules/
+.next/
+out/
+.turbo/
+*.tsbuildinfo
+.vercel/
+
+# ── Environment & Secrets ────────────────────────────────────────────────────
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# ── OS ───────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+desktop.ini
+*.swp
+*.swo
+*~
+
+# ── IDE ──────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.iml
+*.suo
+*.user
+
+# ── Logs & Coverage ──────────────────────────────────────────────────────────
+*.log
+logs/
+coverage/
+.coverage
+htmlcov/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Database ─────────────────────────────────────────────────────────────────
+*.db
+*.sqlite3
+
+# ── Build artifacts ──────────────────────────────────────────────────────────
+*.pyc
+*.tgz
+*.tar.gz
+
+# ── Uploads (local dev only) ─────────────────────────────────────────────────
+backend/uploads/

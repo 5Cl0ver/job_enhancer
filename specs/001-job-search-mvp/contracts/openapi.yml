@@ -1,0 +1,698 @@
+openapi: "3.1.0"
+info:
+  title: Job Enhancer API
+  version: "1.0.0"
+  description: >
+    FastAPI backend for the Job Search Assistant MVP.
+    All endpoints require a valid NextAuth.js JWT (Bearer token or cookie).
+    Admin endpoints additionally require role=admin on the decoded JWT.
+
+servers:
+  - url: https://api.job-enhancer.railway.app/v1
+    description: Production (Railway)
+  - url: http://localhost:8000/v1
+    description: Local development
+
+security:
+  - BearerAuth: []
+
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: >
+        NextAuth.js v5 JWE session token. Obtain via getToken({ req, raw: true })
+        in Next.js and pass as Authorization: Bearer <token>.
+
+  schemas:
+    # ── Shared ──────────────────────────────────────────────────────────────
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+
+    PaginatedMeta:
+      type: object
+      properties:
+        total: { type: integer }
+        page: { type: integer }
+        per_page: { type: integer }
+        has_next: { type: boolean }
+
+    # ── JobListing ───────────────────────────────────────────────────────────
+    JobListing:
+      type: object
+      required: [id, title, company, location, source, apply_url, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        external_id: { type: string }
+        source: { type: string, enum: [adzuna, jsearch] }
+        title: { type: string }
+        company: { type: string }
+        location: { type: string }
+        is_remote: { type: boolean }
+        description: { type: string, nullable: true }
+        salary_min: { type: integer, nullable: true }
+        salary_max: { type: integer, nullable: true }
+        currency: { type: string, nullable: true }
+        job_type: { type: string, nullable: true }
+        apply_url: { type: string, format: uri }
+        posted_at: { type: string, format: date-time, nullable: true }
+        is_expired: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    JobSearchResponse:
+      type: object
+      properties:
+        results:
+          type: array
+          items: { $ref: "#/components/schemas/JobListing" }
+        meta: { $ref: "#/components/schemas/PaginatedMeta" }
+
+    # ── SavedJob ─────────────────────────────────────────────────────────────
+    SavedJob:
+      type: object
+      required: [id, user_id, job_listing, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        job_listing: { $ref: "#/components/schemas/JobListing" }
+        collection_id: { type: string, format: uuid, nullable: true }
+        pipeline_stage_id: { type: string, format: uuid, nullable: true }
+        pipeline_stage_name: { type: string, nullable: true }
+        notes: { type: string, nullable: true }
+        applied_at: { type: string, format: date-time, nullable: true }
+        last_stage_change: { type: string, format: date-time }
+        is_archived: { type: boolean }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    SavedJobCreate:
+      type: object
+      required: [job_listing_id]
+      properties:
+        job_listing_id: { type: string, format: uuid }
+        collection_id: { type: string, format: uuid, nullable: true }
+
+    SavedJobUpdate:
+      type: object
+      properties:
+        collection_id: { type: string, format: uuid, nullable: true }
+        pipeline_stage_id: { type: string, format: uuid, nullable: true }
+        notes: { type: string, nullable: true }
+        is_archived: { type: boolean }
+
+    # ── Collection ───────────────────────────────────────────────────────────
+    Collection:
+      type: object
+      required: [id, user_id, name, sort_order, is_default, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        user_id: { type: string, format: uuid }
+        name: { type: string }
+        description: { type: string, nullable: true }
+        color: { type: string, nullable: true }
+        sort_order: { type: integer }
+        is_default: { type: boolean }
+        job_count: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    CollectionCreate:
+      type: object
+      required: [name]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, nullable: true }
+        color: { type: string, pattern: "^#[0-9A-Fa-f]{6}$", nullable: true }
+
+    CollectionUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        description: { type: string, nullable: true }
+        color: { type: string, nullable: true }
+        sort_order: { type: integer }
+
+    # ── PipelineStage ────────────────────────────────────────────────────────
+    PipelineStage:
+      type: object
+      required: [id, name, sort_order, is_default]
+      properties:
+        id: { type: string, format: uuid }
+        name: { type: string }
+        sort_order: { type: integer }
+        color: { type: string, nullable: true }
+        is_default: { type: boolean }
+
+    PipelineStageCreate:
+      type: object
+      required: [name, sort_order]
+      properties:
+        name: { type: string, minLength: 1, maxLength: 100 }
+        sort_order: { type: integer }
+        color: { type: string, nullable: true }
+
+    # ── Resume ───────────────────────────────────────────────────────────────
+    Resume:
+      type: object
+      required: [id, filename, file_size, mime_type, is_active, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        filename: { type: string }
+        file_size: { type: integer }
+        mime_type: { type: string }
+        is_active: { type: boolean }
+        created_at: { type: string, format: date-time }
+
+    # ── GeneratedDocument ────────────────────────────────────────────────────
+    GeneratedDocument:
+      type: object
+      required: [id, document_type, content, version, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        saved_job_id: { type: string, format: uuid }
+        document_type: { type: string, enum: [resume, cover_letter] }
+        content: { type: string }
+        edited_content: { type: string, nullable: true }
+        model_used: { type: string, nullable: true }
+        generation_ms: { type: integer, nullable: true }
+        version: { type: integer }
+        created_at: { type: string, format: date-time }
+        updated_at: { type: string, format: date-time }
+
+    GenerateDocumentRequest:
+      type: object
+      required: [document_type, saved_job_id]
+      properties:
+        document_type: { type: string, enum: [resume, cover_letter] }
+        saved_job_id: { type: string, format: uuid }
+        resume_id: { type: string, format: uuid, nullable: true }
+        emphasis: { type: string, nullable: true, description: "Optional user hint e.g. 'emphasize leadership'" }
+
+    # ── User / Account ───────────────────────────────────────────────────────
+    UserProfile:
+      type: object
+      required: [id, email, role, created_at]
+      properties:
+        id: { type: string, format: uuid }
+        email: { type: string, format: email }
+        name: { type: string, nullable: true }
+        image: { type: string, nullable: true }
+        role: { type: string, enum: [user, admin] }
+        follow_up_days: { type: integer }
+        created_at: { type: string, format: date-time }
+
+    UserUpdate:
+      type: object
+      properties:
+        name: { type: string, nullable: true }
+        follow_up_days: { type: integer, minimum: 1, maximum: 90 }
+
+    # ── Admin ────────────────────────────────────────────────────────────────
+    AdminStats:
+      type: object
+      properties:
+        total_users: { type: integer }
+        active_users_7d: { type: integer }
+        active_users_30d: { type: integer }
+        new_users_7d: { type: integer }
+        total_saved_jobs: { type: integer }
+        total_generated_docs: { type: integer }
+        signup_trend:
+          type: array
+          items:
+            type: object
+            properties:
+              date: { type: string, format: date }
+              count: { type: integer }
+
+    ServiceHealth:
+      type: object
+      properties:
+        status: { type: string, enum: [healthy, degraded, down] }
+        services:
+          type: object
+          properties:
+            database:
+              type: object
+              properties:
+                status: { type: string }
+                latency_ms: { type: integer }
+            nvidia_api:
+              type: object
+              properties:
+                status: { type: string }
+                last_check: { type: string, format: date-time }
+            adzuna_api:
+              type: object
+              properties:
+                status: { type: string }
+                last_check: { type: string, format: date-time }
+            jsearch_api:
+              type: object
+              properties:
+                status: { type: string }
+                last_check: { type: string, format: date-time }
+
+paths:
+  # ── Job Search ──────────────────────────────────────────────────────────────
+  /jobs/search:
+    get:
+      summary: Search jobs across all sources
+      operationId: searchJobs
+      tags: [Jobs]
+      parameters:
+        - name: q
+          in: query
+          required: true
+          schema: { type: string }
+          description: Job title or keywords
+        - name: location
+          in: query
+          schema: { type: string }
+        - name: remote
+          in: query
+          schema: { type: boolean }
+        - name: salary_min
+          in: query
+          schema: { type: integer }
+        - name: salary_max
+          in: query
+          schema: { type: integer }
+        - name: job_type
+          in: query
+          schema: { type: string, enum: [full_time, part_time, contract] }
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 20, maximum: 50 }
+      responses:
+        "200":
+          description: Search results
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/JobSearchResponse" }
+        "422": { description: Validation error }
+
+  # ── Saved Jobs ──────────────────────────────────────────────────────────────
+  /saved-jobs:
+    get:
+      summary: List user's saved jobs
+      operationId: listSavedJobs
+      tags: [SavedJobs]
+      parameters:
+        - name: collection_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: pipeline_stage_id
+          in: query
+          schema: { type: string, format: uuid }
+        - name: is_archived
+          in: query
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/SavedJob" }
+    post:
+      summary: Save a job
+      operationId: saveJob
+      tags: [SavedJobs]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SavedJobCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedJob" }
+        "409": { description: Job already saved }
+
+  /saved-jobs/{id}:
+    patch:
+      summary: Update saved job (stage, collection, notes)
+      operationId: updateSavedJob
+      tags: [SavedJobs]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/SavedJobUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/SavedJob" }
+        "404": { description: Not found }
+    delete:
+      summary: Unsave a job
+      operationId: deleteSavedJob
+      tags: [SavedJobs]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+
+  # ── Collections ──────────────────────────────────────────────────────────────
+  /collections:
+    get:
+      summary: List user's collections
+      operationId: listCollections
+      tags: [Collections]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Collection" }
+    post:
+      summary: Create a collection
+      operationId: createCollection
+      tags: [Collections]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+
+  /collections/{id}:
+    patch:
+      summary: Update a collection
+      operationId: updateCollection
+      tags: [Collections]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CollectionUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Collection" }
+    delete:
+      summary: Delete a collection
+      operationId: deleteCollection
+      tags: [Collections]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Cannot delete default collection }
+
+  # ── Pipeline Stages ──────────────────────────────────────────────────────────
+  /pipeline-stages:
+    get:
+      summary: List user's pipeline stages
+      operationId: listPipelineStages
+      tags: [Tracker]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PipelineStage" }
+    post:
+      summary: Create a custom pipeline stage
+      operationId: createPipelineStage
+      tags: [Tracker]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PipelineStageCreate" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineStage" }
+
+  /pipeline-stages/{id}:
+    patch:
+      summary: Rename or reorder a pipeline stage
+      operationId: updatePipelineStage
+      tags: [Tracker]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                name: { type: string }
+                sort_order: { type: integer }
+                color: { type: string, nullable: true }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PipelineStage" }
+    delete:
+      summary: Delete a custom pipeline stage
+      operationId: deletePipelineStage
+      tags: [Tracker]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "204": { description: Deleted }
+        "400": { description: Cannot delete default stage }
+
+  # ── Resumes ──────────────────────────────────────────────────────────────────
+  /resumes:
+    get:
+      summary: List user's uploaded resumes
+      operationId: listResumes
+      tags: [AI]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Resume" }
+    post:
+      summary: Upload a resume (PDF or DOCX)
+      operationId: uploadResume
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              properties:
+                file:
+                  type: string
+                  format: binary
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Resume" }
+        "400": { description: Invalid file type or too large }
+
+  # ── AI Document Generation ───────────────────────────────────────────────────
+  /ai/generate:
+    post:
+      summary: Generate a tailored resume or cover letter
+      operationId: generateDocument
+      tags: [AI]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/GenerateDocumentRequest" }
+      responses:
+        "201":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GeneratedDocument" }
+        "429": { description: AI rate limit exceeded; retry after given seconds }
+        "503": { description: AI service unavailable }
+
+  /ai/documents/{id}:
+    get:
+      summary: Get a generated document
+      operationId: getGeneratedDocument
+      tags: [AI]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GeneratedDocument" }
+    patch:
+      summary: Save user edits to a generated document
+      operationId: updateGeneratedDocument
+      tags: [AI]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                edited_content: { type: string }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/GeneratedDocument" }
+
+  /ai/documents/{id}/pdf:
+    get:
+      summary: Download generated document as PDF
+      operationId: downloadDocumentPdf
+      tags: [AI]
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string, format: uuid }
+      responses:
+        "200":
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+
+  # ── User Account ─────────────────────────────────────────────────────────────
+  /users/me:
+    get:
+      summary: Get current user profile
+      operationId: getProfile
+      tags: [Users]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserProfile" }
+    patch:
+      summary: Update profile settings
+      operationId: updateProfile
+      tags: [Users]
+      requestBody:
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/UserUpdate" }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/UserProfile" }
+    delete:
+      summary: Permanently delete account and all associated data
+      operationId: deleteAccount
+      tags: [Users]
+      responses:
+        "204": { description: Account deleted }
+
+  /users/me/export:
+    get:
+      summary: Export all user data (JSON)
+      operationId: exportData
+      tags: [Users]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                description: Full export of user data
+
+  # ── Admin ────────────────────────────────────────────────────────────────────
+  /admin/stats:
+    get:
+      summary: Get platform statistics (admin only)
+      operationId: getAdminStats
+      tags: [Admin]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AdminStats" }
+        "403": { description: Admin role required }
+
+  /admin/health:
+    get:
+      summary: Get external service health status (admin only)
+      operationId: getServiceHealth
+      tags: [Admin]
+      responses:
+        "200":
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ServiceHealth" }
+        "403": { description: Admin role required }
+
+  /admin/users:
+    get:
+      summary: List all users with activity summary (admin only)
+      operationId: listUsers
+      tags: [Admin]
+      parameters:
+        - name: page
+          in: query
+          schema: { type: integer, default: 1 }
+        - name: per_page
+          in: query
+          schema: { type: integer, default: 25 }
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  users:
+                    type: array
+                    items: { $ref: "#/components/schemas/UserProfile" }
+                  meta: { $ref: "#/components/schemas/PaginatedMeta" }
+        "403": { description: Admin role required }
