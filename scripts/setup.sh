@@ -10,8 +10,9 @@ echo "=== Job Enhancer Setup ==="
 echo ""
 echo ">> Setting up backend..."
 cd backend
-python -m venv .venv
-source .venv/bin/activate || source .venv/Scripts/activate 2>/dev/null
+# Mac uses python3, Windows uses python — try both
+python3 -m venv .venv 2>/dev/null || python -m venv .venv
+source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
 pip install -e ".[dev]"
 echo "Backend deps installed."
 cd ..
@@ -40,8 +41,11 @@ else
         zod \
         @dnd-kit/core \
         @dnd-kit/sortable \
+        @dnd-kit/utilities \
         recharts \
-        openapi-typescript
+        date-fns \
+        openapi-typescript \
+        lucide-react
     npx shadcn@latest init --defaults
     cd ..
 fi
