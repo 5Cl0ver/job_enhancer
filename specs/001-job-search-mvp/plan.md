@@ -9,8 +9,11 @@
 Build a full-stack job search assistant that aggregates listings from external
 job APIs (Adzuna, JSearch), lets users save/organize/track applications on a
 Kanban board, and uses NVIDIA-hosted LLMs to tailor resumes and generate cover
-letters. Deployed publicly on Vercel (frontend) + Railway (backend) + Neon
-(database) for a real user base of ~50-100 concurrent users.
+letters (AI is the final build phase). Deployed publicly on Vercel (frontend) +
+Render free tier (backend) + Supabase (database + auth + file storage) for a
+real user base of ~50-100 concurrent users. Hosting must be $0/month
+(hard requirement, decided 2026-07-14; replaces the original Railway + Neon +
+NextAuth stack — Railway no longer has a free tier).
 
 ## Technical Context
 
@@ -20,7 +23,7 @@ letters. Deployed publicly on Vercel (frontend) + Railway (backend) + Neon
 
 **Primary Dependencies**:
 - Frontend: Next.js 15, Tailwind CSS, shadcn/ui, TanStack Query v5,
-  NextAuth.js v5, Zod
+  Supabase Auth (@supabase/supabase-js + @supabase/ssr), Zod
 - Backend: FastAPI, SQLAlchemy 2.x (async), Alembic, asyncpg, Pydantic v2,
   LangChain, python-jose, httpx, rapidfuzz
 - AI: NVIDIA NIM API (OpenAI-compatible endpoint, free tier)
@@ -28,13 +31,13 @@ letters. Deployed publicly on Vercel (frontend) + Railway (backend) + Neon
 - PDF: pdfplumber (parse uploaded resumes), reportlab or weasyprint (generate
   PDF output)
 
-**Storage**: PostgreSQL 15 via Neon (serverless, free tier, PgBouncer pooling)
+**Storage**: PostgreSQL 15 via Supabase (free tier, Supavisor pooling); Supabase also provides Auth (email/password + Google + GitHub OAuth) and file Storage (resume uploads, AI phase)
 
 **Testing**:
 - Frontend: Vitest + React Testing Library, Playwright (E2E)
 - Backend: pytest + pytest-asyncio + httpx (async test client)
 
-**Target Platform**: Linux server (Railway) + Vercel Edge (Next.js)
+**Target Platform**: Linux server (Render free tier, Docker) + Vercel Edge (Next.js)
 
 **Project Type**: Full-stack web application (Next.js frontend + FastAPI backend)
 
@@ -45,9 +48,11 @@ letters. Deployed publicly on Vercel (frontend) + Railway (backend) + Neon
 - Dashboard renders in under 1 second on repeat visits (TanStack Query cache)
 
 **Constraints**:
-- Free-tier hosting only (Vercel hobby, Railway starter, Neon free)
+- Free-tier hosting only (Vercel hobby, Render free, Supabase free) — $0/month is a hard requirement
+- Render free instance sleeps after 15 min idle; Supabase free pauses after 7 idle days — both mitigated by a scheduled keep-alive ping (GitHub Actions cron / UptimeRobot)
+- AI features (US4) are the FINAL build phase — everything else ships and deploys first
 - NVIDIA NIM free tier rate limits (see research.md for specifics)
-- Neon serverless: use connection pooler (PgBouncer), pool_size=5 max
+- Supabase: use connection pooler (Supavisor, transaction mode) — keep `prepared_statement_cache_size=0`, pool_size=5 max
 - No native mobile app; responsive web only
 - Admin role limited to single owner account; no self-service admin
 
@@ -68,7 +73,7 @@ letters. Deployed publicly on Vercel (frontend) + Railway (backend) + Neon
 | I. Portfolio-Grade Quality | PASS | Conventional commits enforced; ESLint/Prettier + Ruff configured from day 1; README with screenshots required before launch |
 | II. User-Centric Design | PASS | P1 stories (search, save) deliver immediate value; WCAG 2.1 AA targeted; performance SC-001 through SC-006 are user-facing metrics |
 | III. AI-Powered Intelligence | PASS | NVIDIA NIM for resume/cover letter; graceful degradation when AI unavailable (SC-008); prompt versioning in source control |
-| IV. Security and Privacy | PASS | NextAuth.js v5 OAuth + JWT; input validation at every boundary (Zod frontend, Pydantic backend); secrets in env vars only; account deletion FR-020 |
+| IV. Security and Privacy | PASS | Supabase Auth (email/password + OAuth) with JWT validation in FastAPI; input validation at every boundary (Zod frontend, Pydantic backend); secrets in env vars only; account deletion FR-020 |
 | V. Test-Driven Confidence | PASS | pytest for all API endpoints; Vitest for components; Playwright for critical user flows |
 | VI. Clean Architecture | PASS | Next.js ↔ FastAPI via documented OpenAPI contracts; data access layer in FastAPI services; TanStack Query for client state |
 | VII. Simplicity and Pragmatism | PASS | MVP ships P1 stories first; no premature abstractions; YAGNI enforced |
@@ -129,7 +134,7 @@ backend/
 │   │   ├── resume_parser.py    # pdfplumber + docx2txt
 │   │   └── admin_service.py    # Health checks, user stats
 │   └── middleware/
-│       └── auth.py             # NextAuth JWT validation dependency
+│       └── auth.py             # Supabase JWT validation dependency
 ├── alembic/                    # Database migrations
 │   ├── env.py
 │   └── versions/
@@ -151,7 +156,7 @@ frontend/
 │   │   │   ├── ai-apply/       # US4: AI quick apply
 │   │   │   ├── analytics/      # US5: User analytics
 │   │   │   └── admin/          # US6: Admin dashboard
-│   │   └── api/                # Next.js API routes (auth callbacks)
+│   │   └── auth/callback/      # Supabase auth callback route
 │   ├── components/
 │   │   ├── ui/                 # shadcn/ui base components
 │   │   ├── jobs/               # JobCard, JobList, SearchBar, Filters
@@ -160,7 +165,7 @@ frontend/
 │   │   └── admin/              # HealthPanel, UserTable, StatsChart
 │   ├── lib/
 │   │   ├── api/                # TanStack Query hooks + fetch wrappers
-│   │   ├── auth.ts             # NextAuth config
+│   │   ├── supabase.ts         # Supabase browser/server clients (auth)
 │   │   └── utils.ts
 │   ├── types/                  # Shared TypeScript types
 │   └── hooks/                  # Custom React hooks
