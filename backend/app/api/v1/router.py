@@ -2,13 +2,28 @@
 
 from fastapi import APIRouter
 
-from app.api.v1 import jobs, collections, saved_jobs, tracker, ai, users, admin, analytics
+from app.api.v1 import (
+    admin,
+    ai,
+    analytics,
+    collections,
+    jobs,
+    saved_jobs,
+    saved_searches,
+    tracker,
+    users,
+)
 
 api_router = APIRouter(prefix="/v1")
 
 api_router.include_router(jobs.router, prefix="/jobs", tags=["Jobs"])
 api_router.include_router(saved_jobs.router, prefix="/saved-jobs", tags=["SavedJobs"])
-api_router.include_router(collections.router, prefix="/collections", tags=["Collections"])
+api_router.include_router(
+    saved_searches.router, prefix="/saved-searches", tags=["SavedSearches"]
+)
+api_router.include_router(
+    collections.router, prefix="/collections", tags=["Collections"]
+)
 api_router.include_router(tracker.router, prefix="/pipeline-stages", tags=["Tracker"])
 api_router.include_router(ai.router, prefix="/ai", tags=["AI"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])

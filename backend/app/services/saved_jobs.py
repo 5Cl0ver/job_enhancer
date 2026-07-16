@@ -1,15 +1,18 @@
 """CRUD service for SavedJobs."""
 
 import uuid
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC
 
 from fastapi import HTTPException
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
+from app.models.job_listing import JobListing
 from app.models.saved_job import SavedJob
-from app.schemas.saved_job import SavedJobCreate, SavedJobUpdate
+from app.schemas.saved_job import ManualJobCreate, SavedJobCreate, SavedJobUpdate
+from app.services.dedup import job_content_hash, normalize
 
 
 async def list_saved_jobs(
@@ -45,15 +48,62 @@ async def get_saved_job(
     return sj
 
 
-async def save_job(db: AsyncSession, user_id: uuid.UUID, data: SavedJobCreate) -> SavedJob:
+async def save_job(
+    db: AsyncSession, user_id: uuid.UUID, data: SavedJobCreate
+) -> SavedJob:
     sj = SavedJob(id=uuid.uuid4(), user_id=user_id, **data.model_dump())
     db.add(sj)
     try:
         await db.flush()
     except Exception:
-        raise HTTPException(status_code=409, detail="Job already saved")
+        raise HTTPException(status_code=409, detail="Job already saved") from None
     # Reload with relationship
     return await get_saved_job(db, sj.id, user_id)
+
+
+async def save_manual_job(
+    db: AsyncSession, user_id: uuid.UUID, data: ManualJobCreate
+) -> SavedJob:
+    """Save a job the user found on an external site (FR-004a).
+
+    Creates a `JobListing` with source="manual" — or reuses an existing
+    listing when the same title/company/location is already known — then
+    saves it for the user like any searched job.
+    """
+    title_norm = normalize(data.title)
+    company_norm = normalize(data.company)
+    location_norm = normalize(data.location)
+    content_hash = job_content_hash(title_norm, company_norm, location_norm)
+
+    listing = await db.scalar(
+        select(JobListing).where(JobListing.content_hash == content_hash)
+    )
+    if listing is None:
+        listing = JobListing(
+            id=uuid.uuid4(),
+            external_id=f"manual:{uuid.uuid4()}",
+            source="manual",
+            title=data.title,
+            company=data.company,
+            location=data.location,
+            is_remote=data.is_remote,
+            apply_url=data.url,
+            content_hash=content_hash,
+            title_normalized=title_norm,
+            company_normalized=company_norm,
+        )
+        db.add(listing)
+        await db.flush()
+
+    return await save_job(
+        db,
+        user_id,
+        SavedJobCreate(
+            job_listing_id=listing.id,
+            collection_id=data.collection_id,
+            notes=data.notes,
+        ),
+    )
 
 
 async def update_saved_job(
@@ -62,14 +112,17 @@ async def update_saved_job(
     user_id: uuid.UUID,
     data: SavedJobUpdate,
 ) -> SavedJob:
-    from datetime import datetime, timezone
+    from datetime import datetime
 
     sj = await get_saved_job(db, saved_job_id, user_id)
     updates = data.model_dump(exclude_unset=True)
 
     # Track stage changes for follow-up reminders
-    if "pipeline_stage_id" in updates and updates["pipeline_stage_id"] != sj.pipeline_stage_id:
-        sj.last_stage_change = datetime.now(tz=timezone.utc)
+    if (
+        "pipeline_stage_id" in updates
+        and updates["pipeline_stage_id"] != sj.pipeline_stage_id
+    ):
+        sj.last_stage_change = datetime.now(tz=UTC)
 
     for key, value in updates.items():
         setattr(sj, key, value)

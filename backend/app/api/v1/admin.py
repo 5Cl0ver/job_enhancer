@@ -1,14 +1,11 @@
 """Admin dashboard endpoints (US6 — Admin Dashboard)."""
 
-import uuid
-
 from fastapi import APIRouter, Depends, Query
-from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import AdminUser, CurrentUser
+from app.middleware.auth import require_admin
 from app.models.user import User
 from app.schemas.user import UserProfile
 from app.services import admin_service
@@ -18,7 +15,7 @@ router = APIRouter()
 
 @router.get("/stats", response_model=admin_service.PlatformStats)
 async def get_stats(
-    _user: AdminUser = Depends(),
+    _user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> admin_service.PlatformStats:
     return await admin_service.get_platform_stats(db)
@@ -26,7 +23,7 @@ async def get_stats(
 
 @router.get("/health", response_model=list[admin_service.ServiceStatus])
 async def get_health(
-    _user: AdminUser = Depends(),
+    _user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> list[admin_service.ServiceStatus]:
     return await admin_service.check_service_health(db)
@@ -36,7 +33,7 @@ async def get_health(
 async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
-    _user: AdminUser = Depends(),
+    _user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> list[UserProfile]:
     offset = (page - 1) * page_size

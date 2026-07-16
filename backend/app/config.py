@@ -14,8 +14,9 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # Auth — must match AUTH_SECRET / NEXTAUTH_SECRET in frontend
-    auth_secret: str
+    # Auth — Supabase project JWT secret (Settings -> API -> JWT Secret)
+    supabase_jwt_secret: str
+    supabase_url: str = ""
 
     # AI
     nvidia_api_key: str

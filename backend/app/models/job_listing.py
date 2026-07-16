@@ -56,4 +56,6 @@ class JobListing(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<JobListing id={self.id} title={self.title!r} company={self.company!r}>"
+        return (
+            f"<JobListing id={self.id} title={self.title!r} company={self.company!r}>"
+        )

@@ -83,3 +83,30 @@ export interface GeneratedDocument {
   generation_ms: number | null;
   created_at: string;
 }
+
+export interface SavedSearch {
+  id: string;
+  name: string;
+  q: string;
+  location: string | null;
+  remote_only: boolean;
+  salary_min: number | null;
+  salary_max: number | null;
+  experience: string | null;
+  job_type: string | null;
+  is_active: boolean;
+  last_run_at: string | null;
+  last_viewed_at: string | null;
+  created_at: string;
+}
+
+export interface SearchMatches {
+  search: SavedSearch;
+  new_jobs: JobListing[];
+  new_count: number;
+}
+
+export interface NewMatchesResponse {
+  matches: SearchMatches[];
+  total_new: number;
+}

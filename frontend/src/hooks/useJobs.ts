@@ -11,6 +11,8 @@ export interface JobSearchParams {
   location?: string;
   remote_only?: boolean;
   salary_min?: number;
+  salary_max?: number;
+  experience?: string;
   job_type?: string;
   page?: number;
   page_size?: number;
@@ -22,6 +24,8 @@ function buildSearchUrl(params: JobSearchParams): string {
   if (params.location) qs.set("location", params.location);
   if (params.remote_only) qs.set("remote_only", "true");
   if (params.salary_min != null) qs.set("salary_min", String(params.salary_min));
+  if (params.salary_max != null) qs.set("salary_max", String(params.salary_max));
+  if (params.experience) qs.set("experience", params.experience);
   if (params.job_type) qs.set("job_type", params.job_type);
   qs.set("page", String(params.page ?? 1));
   qs.set("page_size", String(params.page_size ?? 20));

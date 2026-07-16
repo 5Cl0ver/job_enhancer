@@ -1,22 +1,26 @@
 """AI document generation + resume management endpoints (US4 — AI Quick Apply)."""
 
 import uuid
-from typing import Literal
 
-from fastapi import APIRouter, Depends, File, HTTPException, Request, Response, UploadFile
-from slowapi import Limiter
-from slowapi.util import get_remote_address
-
-_limiter = Limiter(key_func=get_remote_address)
+from fastapi import (
+    APIRouter,
+    Depends,
+    File,
+    HTTPException,
+    Request,
+    UploadFile,
+)
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser
+from app.middleware.auth import get_current_user
 from app.models.generated_document import GeneratedDocument
 from app.models.job_listing import JobListing
 from app.models.resume import Resume
+from app.models.user import User
 from app.schemas.resume import (
     GeneratedDocumentCreate,
     GeneratedDocumentSchema,
@@ -24,6 +28,9 @@ from app.schemas.resume import (
     ResumeSchema,
 )
 from app.services import ai_service, resume_parser
+from app.utils.rate_limit import rate_limit_key
+
+_limiter = Limiter(key_func=rate_limit_key)
 
 router = APIRouter()
 
@@ -42,7 +49,7 @@ _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 @router.post("/resumes", response_model=ResumeSchema, status_code=201)
 async def upload_resume(
     file: UploadFile = File(...),
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ResumeSchema:
     if file.content_type not in _ALLOWED_MIME_TYPES:
@@ -80,7 +87,7 @@ async def upload_resume(
 
 @router.get("/resumes", response_model=list[ResumeSchema])
 async def list_resumes(
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[ResumeSchema]:
     result = await db.execute(
@@ -101,7 +108,7 @@ async def list_resumes(
 async def generate_document(
     request: Request,
     data: GeneratedDocumentCreate,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> GeneratedDocumentSchema:
     # Load resume
@@ -154,7 +161,7 @@ async def generate_document(
 @router.get("/documents/{doc_id}", response_model=GeneratedDocumentSchema)
 async def get_document(
     doc_id: uuid.UUID,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> GeneratedDocumentSchema:
     doc = await db.scalar(
@@ -171,7 +178,7 @@ async def get_document(
 async def update_document(
     doc_id: uuid.UUID,
     data: GeneratedDocumentUpdate,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> GeneratedDocumentSchema:
     doc = await db.scalar(
@@ -189,11 +196,12 @@ async def update_document(
 @router.get("/documents/{doc_id}/pdf")
 async def download_document_pdf(
     doc_id: uuid.UUID,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Render the latest content as PDF using weasyprint."""
     import io
+
     import weasyprint
 
     doc = await db.scalar(
@@ -218,5 +226,7 @@ async def download_document_pdf(
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={"Content-Disposition": f'attachment; filename="document-{doc_id}.pdf"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="document-{doc_id}.pdf"'
+        },
     )

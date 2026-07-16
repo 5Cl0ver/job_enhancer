@@ -6,6 +6,7 @@ import {
   BarChart3,
   Bookmark,
   Briefcase,
+  Inbox,
   KanbanSquare,
   Search,
   ShieldCheck,
@@ -13,9 +14,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useProfile } from "@/hooks/useProfile";
+import { useNewMatches } from "@/hooks/useSavedSearches";
+import { Badge } from "@/components/ui/badge";
 
 const NAV_ITEMS = [
   { href: "/search", label: "Search", icon: Search },
+  { href: "/matches", label: "New Matches", icon: Inbox },
   { href: "/saved", label: "Saved", icon: Bookmark },
   { href: "/tracker", label: "Tracker", icon: KanbanSquare },
   { href: "/ai-apply", label: "AI Apply", icon: Sparkles },
@@ -25,6 +29,8 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const pathname = usePathname();
   const { data: profile } = useProfile();
+  const { data: matches } = useNewMatches();
+  const newCount = matches?.total_new ?? 0;
 
   return (
     <aside className="sticky top-0 hidden h-screen w-56 shrink-0 flex-col border-r bg-background md:flex">
@@ -55,6 +61,11 @@ export function Sidebar() {
             >
               <Icon className="h-4 w-4" aria-hidden />
               {label}
+              {href === "/matches" && newCount > 0 && (
+                <Badge variant="secondary" className="ml-auto">
+                  {newCount > 99 ? "99+" : newCount}
+                </Badge>
+              )}
             </Link>
           );
         })}

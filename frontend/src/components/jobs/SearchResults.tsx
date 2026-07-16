@@ -12,6 +12,8 @@ interface SearchResultsProps {
     location?: string;
     remote_only?: string;
     salary_min?: string;
+    salary_max?: string;
+    experience?: string;
     job_type?: string;
     page?: string;
   };
@@ -29,6 +31,8 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
       location: searchParams.location,
       remote_only: searchParams.remote_only === "true",
       salary_min: searchParams.salary_min ? Number(searchParams.salary_min) : undefined,
+      salary_max: searchParams.salary_max ? Number(searchParams.salary_max) : undefined,
+      experience: searchParams.experience,
       job_type: searchParams.job_type,
       page,
       page_size: 20,

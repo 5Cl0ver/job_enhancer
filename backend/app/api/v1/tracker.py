@@ -6,8 +6,13 @@ from fastapi import APIRouter, Body, Depends
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser
-from app.schemas.pipeline_stage import PipelineStageCreate, PipelineStageSchema, PipelineStageUpdate
+from app.middleware.auth import get_current_user
+from app.models.user import User
+from app.schemas.pipeline_stage import (
+    PipelineStageCreate,
+    PipelineStageSchema,
+    PipelineStageUpdate,
+)
 from app.schemas.saved_job import SavedJobSchema
 from app.services import tracker as svc
 
@@ -16,7 +21,7 @@ router = APIRouter()
 
 @router.get("/", response_model=list[PipelineStageSchema])
 async def list_stages(
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[PipelineStageSchema]:
     stages = await svc.list_stages(db, user.id)
@@ -26,7 +31,7 @@ async def list_stages(
 @router.post("/", response_model=PipelineStageSchema, status_code=201)
 async def create_stage(
     data: PipelineStageCreate,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PipelineStageSchema:
     stage = await svc.create_stage(db, user.id, data)
@@ -38,7 +43,7 @@ async def create_stage(
 async def update_stage(
     stage_id: uuid.UUID,
     data: PipelineStageUpdate,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> PipelineStageSchema:
     stage = await svc.update_stage(db, stage_id, user.id, data)
@@ -49,7 +54,7 @@ async def update_stage(
 @router.delete("/{stage_id}", status_code=204)
 async def delete_stage(
     stage_id: uuid.UUID,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     await svc.delete_stage(db, stage_id, user.id)
@@ -60,12 +65,13 @@ async def delete_stage(
 async def move_job(
     saved_job_id: uuid.UUID = Body(...),
     stage_id: uuid.UUID | None = Body(None),
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
     """Move a saved job to a different Kanban column."""
-    from sqlalchemy.orm import selectinload
     from sqlalchemy import select
+    from sqlalchemy.orm import selectinload
+
     from app.models.saved_job import SavedJob
 
     sj = await svc.move_job_to_stage(db, saved_job_id, stage_id, user.id)

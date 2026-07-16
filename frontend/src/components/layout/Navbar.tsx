@@ -5,6 +5,7 @@ import { useRouter, usePathname } from "next/navigation";
 import {
   BarChart3,
   Bookmark,
+  Inbox,
   KanbanSquare,
   LogOut,
   Menu,
@@ -27,6 +28,7 @@ import {
 
 const MOBILE_NAV = [
   { href: "/search", label: "Search", icon: Search },
+  { href: "/matches", label: "New Matches", icon: Inbox },
   { href: "/saved", label: "Saved", icon: Bookmark },
   { href: "/tracker", label: "Tracker", icon: KanbanSquare },
   { href: "/ai-apply", label: "AI Apply", icon: Sparkles },

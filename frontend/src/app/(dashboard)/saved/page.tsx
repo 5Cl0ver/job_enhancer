@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { BookmarkX, Loader2 } from "lucide-react";
+import { AddJobDialog } from "@/components/jobs/AddJobDialog";
 import { CollectionSidebar } from "@/components/jobs/CollectionSidebar";
 import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/button";
@@ -18,11 +19,14 @@ export default function SavedPage() {
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6">
-      <div className="mb-6 space-y-1">
-        <h1 className="text-2xl font-bold tracking-tight">Saved Jobs</h1>
-        <p className="text-sm text-muted-foreground">
-          Organize your saved listings into collections.
-        </p>
+      <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
+        <div className="space-y-1">
+          <h1 className="text-2xl font-bold tracking-tight">Saved Jobs</h1>
+          <p className="text-sm text-muted-foreground">
+            Organize your saved listings into collections.
+          </p>
+        </div>
+        <AddJobDialog />
       </div>
 
       <div className="flex gap-6">

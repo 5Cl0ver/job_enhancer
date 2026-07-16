@@ -108,3 +108,23 @@ export function useUnsaveJob() {
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-jobs"] }),
   });
 }
+
+/** Add a job found on an external site (FR-004a). */
+export function useAddManualJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (data: {
+      url: string;
+      title: string;
+      company: string;
+      location?: string;
+      is_remote?: boolean;
+      collection_id?: string;
+      notes?: string;
+    }) => api.post<SavedJob>("/v1/saved-jobs/manual", data),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+      qc.invalidateQueries({ queryKey: ["collections"] });
+    },
+  });
+}

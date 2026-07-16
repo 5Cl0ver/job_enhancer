@@ -2,7 +2,7 @@
 
 import logging
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from pydantic import BaseModel
@@ -38,7 +38,7 @@ class PlatformStats(BaseModel):
 
 
 async def get_platform_stats(db: AsyncSession) -> PlatformStats:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
     day_7 = now - timedelta(days=7)
     day_30 = now - timedelta(days=30)
 
@@ -76,7 +76,9 @@ async def get_platform_stats(db: AsyncSession) -> PlatformStats:
                 .where(User.created_at >= day_start, User.created_at < day_end)
             )
         ) or 0
-        signups_by_day.append(DailySignup(date=day_start.date().isoformat(), count=count))
+        signups_by_day.append(
+            DailySignup(date=day_start.date().isoformat(), count=count)
+        )
 
     return PlatformStats(
         total_users=total_users,
@@ -87,7 +89,9 @@ async def get_platform_stats(db: AsyncSession) -> PlatformStats:
     )
 
 
-async def _check_endpoint(name: str, url: str, headers: dict | None = None) -> ServiceStatus:
+async def _check_endpoint(
+    name: str, url: str, headers: dict | None = None
+) -> ServiceStatus:
     try:
         start = time.monotonic()
         async with httpx.AsyncClient() as client:
@@ -96,7 +100,10 @@ async def _check_endpoint(name: str, url: str, headers: dict | None = None) -> S
         if r.status_code < 500:
             return ServiceStatus(name=name, status="healthy", latency_ms=latency_ms)
         return ServiceStatus(
-            name=name, status="degraded", latency_ms=latency_ms, detail=f"HTTP {r.status_code}"
+            name=name,
+            status="degraded",
+            latency_ms=latency_ms,
+            detail=f"HTTP {r.status_code}",
         )
     except Exception as exc:
         logger.warning("Health check failed for %s: %s", name, exc)
@@ -111,7 +118,9 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
         start = time.monotonic()
         await db.scalar(select(func.now()))
         latency_ms = int((time.monotonic() - start) * 1000)
-        statuses.append(ServiceStatus(name="Database", status="healthy", latency_ms=latency_ms))
+        statuses.append(
+            ServiceStatus(name="Database", status="healthy", latency_ms=latency_ms)
+        )
     except Exception as exc:
         statuses.append(ServiceStatus(name="Database", status="down", detail=str(exc)))
 

@@ -60,13 +60,15 @@ class SavedJob(Base):
 
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="saved_jobs")  # type: ignore[name-defined]
-    job_listing: Mapped["JobListing"] = relationship("JobListing", back_populates="saved_by")  # type: ignore[name-defined]
-    collection: Mapped["Collection | None"] = relationship("Collection", back_populates="saved_jobs")  # type: ignore[name-defined]
-    pipeline_stage: Mapped["PipelineStage | None"] = relationship("PipelineStage", back_populates="saved_jobs")  # type: ignore[name-defined]
-    generated_documents: Mapped[list["GeneratedDocument"]] = relationship(  # type: ignore[name-defined]
-        "GeneratedDocument", back_populates="saved_job", cascade="all, delete-orphan"
-    )
-
+    job_listing: Mapped["JobListing"] = relationship(
+        "JobListing", back_populates="saved_by"
+    )  # type: ignore[name-defined]
+    collection: Mapped["Collection | None"] = relationship(
+        "Collection", back_populates="saved_jobs"
+    )  # type: ignore[name-defined]
+    pipeline_stage: Mapped["PipelineStage | None"] = relationship(
+        "PipelineStage", back_populates="saved_jobs"
+    )  # type: ignore[name-defined]
     from sqlalchemy import Index
 
     __table_args__ = (
@@ -77,4 +79,4 @@ class SavedJob(Base):
     )
 
     def __repr__(self) -> str:
-        return f"<SavedJob id={self.id} user_id={self.user_id} job_listing_id={self.job_listing_id}>"
+        return f"<SavedJob id={self.id} listing={self.job_listing_id}>"

@@ -1,8 +1,8 @@
 """Tracker service — pipeline stage CRUD and job movement."""
 
 import uuid
-from datetime import datetime, timezone
-from typing import Sequence
+from collections.abc import Sequence
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -13,7 +13,9 @@ from app.models.saved_job import SavedJob
 from app.schemas.pipeline_stage import PipelineStageCreate, PipelineStageUpdate
 
 
-async def seed_default_stages(db: AsyncSession, user_id: uuid.UUID) -> list[PipelineStage]:
+async def seed_default_stages(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[PipelineStage]:
     """Create the 8 default Kanban stages for a new user."""
     stages = []
     for stage_data in DEFAULT_STAGES:
@@ -59,7 +61,9 @@ async def create_stage(
     try:
         await db.flush()
     except Exception:
-        raise HTTPException(status_code=409, detail="A stage with that name already exists")
+        raise HTTPException(
+            status_code=409, detail="A stage with that name already exists"
+        ) from None
     return stage
 
 
@@ -81,7 +85,9 @@ async def delete_stage(
 ) -> None:
     stage = await get_stage(db, stage_id, user_id)
     if stage.is_default:
-        raise HTTPException(status_code=400, detail="Cannot delete a default pipeline stage")
+        raise HTTPException(
+            status_code=400, detail="Cannot delete a default pipeline stage"
+        )
     await db.delete(stage)
     await db.flush()
 
@@ -94,14 +100,12 @@ async def move_job_to_stage(
 ) -> SavedJob:
     """Move a saved job to a new pipeline stage, tracking timestamps."""
     sj = await db.scalar(
-        select(SavedJob).where(
-            SavedJob.id == saved_job_id, SavedJob.user_id == user_id
-        )
+        select(SavedJob).where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
     )
     if not sj:
         raise HTTPException(status_code=404, detail="Saved job not found")
 
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     if stage_id is not None:
         # Validate stage belongs to this user

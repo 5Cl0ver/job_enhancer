@@ -3,7 +3,15 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, UniqueConstraint, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    String,
+    UniqueConstraint,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -48,9 +56,9 @@ class PipelineStage(Base):
         "SavedJob", back_populates="pipeline_stage"
     )
 
-    __table_args__ = (
-        UniqueConstraint("user_id", "name", name="uq_stage_user_name"),
-    )
+    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_stage_user_name"),)
 
     def __repr__(self) -> str:
-        return f"<PipelineStage id={self.id} name={self.name!r} order={self.sort_order}>"
+        return (
+            f"<PipelineStage id={self.id} name={self.name!r} order={self.sort_order}>"
+        )

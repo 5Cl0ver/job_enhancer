@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 
+import logging
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
@@ -9,17 +10,20 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 from slowapi import Limiter, _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
-from slowapi.util import get_remote_address
 
 from app.api.v1.router import api_router
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.utils.rate_limit import rate_limit_key
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     """Application lifespan — startup and shutdown events."""
     from app.services.notifications import send_follow_up_reminders
+    from app.services.users import purge_deleted_users
 
     scheduler = AsyncIOScheduler()
     scheduler.add_job(
@@ -30,6 +34,34 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="follow_up_reminders",
         replace_existing=True,
     )
+    scheduler.add_job(
+        purge_deleted_users,
+        trigger="interval",
+        hours=24,
+        args=[AsyncSessionLocal],
+        id="purge_deleted_users",
+        replace_existing=True,
+    )
+    from app.services.saved_searches import refresh_saved_searches
+
+    scheduler.add_job(
+        refresh_saved_searches,
+        trigger="interval",
+        hours=24,
+        args=[AsyncSessionLocal],
+        id="refresh_saved_searches",
+        replace_existing=True,
+    )
+    from app.services.job_search import mark_expired_listings
+
+    scheduler.add_job(
+        mark_expired_listings,
+        trigger="interval",
+        hours=24,
+        args=[AsyncSessionLocal],
+        id="mark_expired_listings",
+        replace_existing=True,
+    )
     scheduler.start()
 
     yield
@@ -37,8 +69,8 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.shutdown(wait=False)
 
 
-# Rate limiter — default 60 requests/minute per IP
-limiter = Limiter(key_func=get_remote_address, default_limits=["60/minute"])
+# Rate limiter — 60 requests/minute per authenticated user (IP fallback)
+limiter = Limiter(key_func=rate_limit_key, default_limits=["60/minute"])
 
 app = FastAPI(
     title="Job Enhancer API",
@@ -64,10 +96,22 @@ app.add_middleware(
 
 
 @app.exception_handler(422)
-async def validation_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+async def validation_exception_handler(
+    request: Request, exc: Exception
+) -> JSONResponse:
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": str(exc)},
+    )
+
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
+    """Last-resort 500 handler — logs the error, never leaks internals."""
+    logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={"detail": "Internal server error"},
     )
 
 

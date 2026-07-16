@@ -1,6 +1,6 @@
 """User analytics endpoints (US5 — User Dashboard and Analytics)."""
 
-from datetime import datetime, timedelta, timezone
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
@@ -8,9 +8,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser
+from app.middleware.auth import get_current_user
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
+from app.models.user import User
 
 router = APIRouter()
 
@@ -30,15 +31,17 @@ class AnalyticsSummary(BaseModel):
 
 @router.get("/summary", response_model=AnalyticsSummary)
 async def get_analytics_summary(
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> AnalyticsSummary:
-    now = datetime.now(tz=timezone.utc)
+    now = datetime.now(tz=UTC)
 
     # Total saved jobs
     total_saved = (
         await db.scalar(
-            select(func.count()).select_from(SavedJob).where(SavedJob.user_id == user.id)
+            select(func.count())
+            .select_from(SavedJob)
+            .where(SavedJob.user_id == user.id)
         )
     ) or 0
 
@@ -53,13 +56,17 @@ async def get_analytics_summary(
 
     # Interview count — pipeline stage name contains "Interview"
     interview_stage_ids = (
-        await db.execute(
-            select(PipelineStage.id).where(
-                PipelineStage.user_id == user.id,
-                PipelineStage.name.ilike("%interview%"),
+        (
+            await db.execute(
+                select(PipelineStage.id).where(
+                    PipelineStage.user_id == user.id,
+                    PipelineStage.name.ilike("%interview%"),
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
 
     total_interviews = 0
     if interview_stage_ids:
@@ -92,7 +99,9 @@ async def get_analytics_summary(
                 )
             )
         ) or 0
-        weekly.append(WeeklyActivity(week_start=week_start.date().isoformat(), count=count))
+        weekly.append(
+            WeeklyActivity(week_start=week_start.date().isoformat(), count=count)
+        )
 
     return AnalyticsSummary(
         total_saved=total_saved,

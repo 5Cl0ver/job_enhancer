@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { Building2, MapPin, DollarSign, Clock, Wifi } from "lucide-react";
+import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -51,9 +52,16 @@ export function JobCard({ job, onSave, isSaved = false }: JobCardProps) {
               <span className="truncate">{job.company}</span>
             </div>
           </div>
-          <Badge variant="outline" className="shrink-0 text-xs capitalize">
-            {job.source}
-          </Badge>
+          <div className="flex shrink-0 flex-col items-end gap-1">
+            <Badge variant="outline" className="text-xs capitalize">
+              {job.source}
+            </Badge>
+            {job.is_expired && (
+              <Badge variant="destructive" className="text-xs">
+                Listing expired
+              </Badge>
+            )}
+          </div>
         </div>
       </CardHeader>
 
@@ -109,11 +117,12 @@ export function JobCard({ job, onSave, isSaved = false }: JobCardProps) {
               {isSaved ? "Saved" : "Save"}
             </Button>
           )}
-          <Button size="sm" variant="outline" asChild className="h-7 text-xs">
-            <a href={job.apply_url} target="_blank" rel="noopener noreferrer">
-              Apply
-            </a>
-          </Button>
+          <ApplyButton
+            job={job}
+            size="sm"
+            variant="outline"
+            className="h-7 text-xs"
+          />
         </div>
       </CardFooter>
     </Card>

@@ -45,7 +45,9 @@ class Collection(Base):
 
     from sqlalchemy import UniqueConstraint
 
-    __table_args__ = (UniqueConstraint("user_id", "name", name="uq_collection_user_name"),)
+    __table_args__ = (
+        UniqueConstraint("user_id", "name", name="uq_collection_user_name"),
+    )
 
     def __repr__(self) -> str:
         return f"<Collection id={self.id} name={self.name!r} user_id={self.user_id}>"

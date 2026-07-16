@@ -8,16 +8,15 @@ External API notes:
 """
 
 import asyncio
-import hashlib
 import logging
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import select
-from sqlalchemy.dialects.postgresql import insert as pg_insert
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import Select, select
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sqlalchemy.sql.elements import ColumnElement
 
 from app.config import settings
 from app.models.job_listing import JobListing
@@ -142,7 +141,10 @@ def _parse_jsearch(raw: dict[str, Any]) -> dict[str, Any] | None:
             return None
 
         location = ", ".join(
-            filter(None, [raw.get("job_city"), raw.get("job_state"), raw.get("job_country")])
+            filter(
+                None,
+                [raw.get("job_city"), raw.get("job_state"), raw.get("job_country")],
+            )
         )
         is_remote = bool(raw.get("job_is_remote"))
 
@@ -193,6 +195,9 @@ async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> JobListing 
         select(JobListing).where(JobListing.content_hash == content_hash)
     )
     if existing:
+        # Re-seen in a source feed — it's alive
+        existing.refreshed_at = datetime.now(UTC)
+        existing.is_expired = False
         return existing
 
     # Check fuzzy duplicate
@@ -217,21 +222,100 @@ async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> JobListing 
     return listing
 
 
+# Title markers used for the experience-level filter (FR-003). Sources don't
+# expose a reliable seniority field, so we classify by title keywords.
+_SENIOR_MARKERS = [
+    "senior",
+    "sr.",
+    "sr ",
+    "lead ",
+    "principal",
+    "staff ",
+    "head of",
+    "director",
+]
+_JUNIOR_MARKERS = ["junior", "jr.", "jr ", "entry", "intern", "graduate", "trainee"]
+
+
+def _experience_clause(experience: str) -> "ColumnElement[bool]":
+    """SQLAlchemy filter clause for entry/mid/senior title classification."""
+    from sqlalchemy import and_, not_, or_
+
+    senior = or_(*[JobListing.title.ilike(f"%{m}%") for m in _SENIOR_MARKERS])
+    junior = or_(*[JobListing.title.ilike(f"%{m}%") for m in _JUNIOR_MARKERS])
+
+    if experience == "senior":
+        return senior
+    if experience == "entry":
+        return not_(senior)
+    # mid: no explicit seniority marker either way
+    return and_(not_(senior), not_(junior))
+
+
+def build_listing_query(
+    q: str | None = None,
+    location: str | None = None,
+    remote_only: bool = False,
+    salary_min: int | None = None,
+    salary_max: int | None = None,
+    experience: str | None = None,
+    job_type: str | None = None,
+) -> Select[tuple[JobListing]]:
+    """Filtered SELECT over non-expired listings (shared by search + feeds)."""
+    stmt = select(JobListing).where(JobListing.is_expired.is_(False))
+
+    if q:
+        stmt = stmt.where(
+            JobListing.title.ilike(f"%{q}%") | JobListing.description.ilike(f"%{q}%")
+        )
+    if location:
+        stmt = stmt.where(JobListing.location.ilike(f"%{location}%"))
+    if remote_only:
+        stmt = stmt.where(JobListing.is_remote.is_(True))
+    if salary_min is not None:
+        stmt = stmt.where(JobListing.salary_min >= salary_min)
+    if salary_max is not None:
+        # Range overlap: exclude jobs whose floor already exceeds the cap
+        stmt = stmt.where(
+            (JobListing.salary_min <= salary_max) | (JobListing.salary_min.is_(None))
+        )
+    if experience:
+        stmt = stmt.where(_experience_clause(experience))
+    if job_type:
+        stmt = stmt.where(JobListing.job_type == job_type)
+    return stmt
+
+
 async def aggregate_and_deduplicate(
     db: AsyncSession,
     q: str,
     location: str | None = None,
     remote_only: bool = False,
     salary_min: int | None = None,
+    salary_max: int | None = None,
+    experience: str | None = None,
     job_type: str | None = None,
     page: int = 1,
     page_size: int = 20,
+    sources: frozenset[str] = frozenset({"adzuna", "jsearch"}),
 ) -> JobSearchResponse:
-    """Search both APIs in parallel, deduplicate, persist new listings, return page."""
+    """Search the requested APIs in parallel, deduplicate, persist, return page.
+
+    `sources` lets scheduled refreshes stay Adzuna-only to respect the
+    JSearch 200 requests/month free-tier quota.
+    """
+    adzuna_raw: list = []
+    jsearch_raw: list = []
     async with httpx.AsyncClient() as client:
-        adzuna_task = _search_adzuna(client, q, location, page, page_size)
-        jsearch_task = _search_jsearch(client, q, location, page, page_size)
-        adzuna_raw, jsearch_raw = await asyncio.gather(adzuna_task, jsearch_task)
+        tasks = {}
+        if "adzuna" in sources:
+            tasks["adzuna"] = _search_adzuna(client, q, location, page, page_size)
+        if "jsearch" in sources:
+            tasks["jsearch"] = _search_jsearch(client, q, location, page, page_size)
+        results = await asyncio.gather(*tasks.values())
+        by_source = dict(zip(tasks.keys(), results, strict=True))
+        adzuna_raw = by_source.get("adzuna", [])
+        jsearch_raw = by_source.get("jsearch", [])
 
     parsed: list[dict[str, Any]] = []
     for raw in adzuna_raw:
@@ -249,20 +333,15 @@ async def aggregate_and_deduplicate(
     await db.commit()
 
     # Now query DB with filters for the requested page
-    stmt = select(JobListing).where(JobListing.is_expired.is_(False))
-
-    if q:
-        stmt = stmt.where(
-            JobListing.title.ilike(f"%{q}%") | JobListing.description.ilike(f"%{q}%")
-        )
-    if location:
-        stmt = stmt.where(JobListing.location.ilike(f"%{location}%"))
-    if remote_only:
-        stmt = stmt.where(JobListing.is_remote.is_(True))
-    if salary_min is not None:
-        stmt = stmt.where(JobListing.salary_min >= salary_min)
-    if job_type:
-        stmt = stmt.where(JobListing.job_type == job_type)
+    stmt = build_listing_query(
+        q=q,
+        location=location,
+        remote_only=remote_only,
+        salary_min=salary_min,
+        salary_max=salary_max,
+        experience=experience,
+        job_type=job_type,
+    )
 
     # Count total
     from sqlalchemy import func
@@ -272,7 +351,11 @@ async def aggregate_and_deduplicate(
 
     # Paginate
     offset = (page - 1) * page_size
-    stmt = stmt.order_by(JobListing.posted_at.desc().nullslast()).offset(offset).limit(page_size)
+    stmt = (
+        stmt.order_by(JobListing.posted_at.desc().nullslast())
+        .offset(offset)
+        .limit(page_size)
+    )
     rows = (await db.execute(stmt)).scalars().all()
 
     total_pages = max(1, -(-total // page_size))  # ceiling division
@@ -285,3 +368,43 @@ async def aggregate_and_deduplicate(
             total_pages=total_pages,
         ),
     )
+
+
+#: Listings not seen in any source feed for this long are marked expired.
+EXPIRY_STALE_DAYS = 30
+
+
+async def mark_expired_listings(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Mark listings expired when past `expires_at` or stale (spec Edge Case).
+
+    Saved jobs and tracking data are preserved — expired listings simply
+    drop out of search/feeds and show a "Listing expired" badge.
+    Runs daily via APScheduler.
+    """
+    from datetime import timedelta
+
+    from sqlalchemy import or_, update
+
+    now = datetime.now(UTC)
+    stale_cutoff = now - timedelta(days=EXPIRY_STALE_DAYS)
+
+    async with session_factory() as db:
+        result = await db.execute(
+            update(JobListing)
+            .where(
+                JobListing.is_expired.is_(False),
+                or_(
+                    JobListing.expires_at.is_not(None) & (JobListing.expires_at < now),
+                    JobListing.refreshed_at < stale_cutoff,
+                ),
+            )
+            .values(is_expired=True)
+        )
+        await db.commit()
+
+    count = result.rowcount or 0
+    if count:
+        logger.info("Marked %d listing(s) as expired", count)
+    return count

@@ -1,4 +1,5 @@
 import { Suspense } from "react";
+import { SaveSearchButton } from "@/components/jobs/SaveSearchButton";
 import { SearchBar } from "@/components/jobs/SearchBar";
 import { SearchFilters } from "@/components/jobs/SearchFilters";
 import { SearchResults } from "@/components/jobs/SearchResults";
@@ -10,6 +11,8 @@ interface SearchPageProps {
     location?: string;
     remote_only?: string;
     salary_min?: string;
+    salary_max?: string;
+    experience?: string;
     job_type?: string;
     page?: string;
   }>;
@@ -31,7 +34,10 @@ export default async function SearchPage({ searchParams }: SearchPageProps) {
 
       {params.q && (
         <Suspense fallback={null}>
-          <SearchFilters />
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <SearchFilters />
+            <SaveSearchButton />
+          </div>
         </Suspense>
       )}
 

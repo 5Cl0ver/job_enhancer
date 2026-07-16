@@ -1,7 +1,7 @@
 """CRUD service for Collections."""
 
 import uuid
-from typing import Sequence
+from collections.abc import Sequence
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -25,7 +25,9 @@ async def create_default_collection(db: AsyncSession, user_id: uuid.UUID) -> Col
     return col
 
 
-async def list_collections(db: AsyncSession, user_id: uuid.UUID) -> Sequence[Collection]:
+async def list_collections(
+    db: AsyncSession, user_id: uuid.UUID
+) -> Sequence[Collection]:
     result = await db.execute(
         select(Collection)
         .where(Collection.user_id == user_id)
@@ -59,7 +61,9 @@ async def create_collection(
     try:
         await db.flush()
     except Exception:
-        raise HTTPException(status_code=409, detail="A collection with that name already exists")
+        raise HTTPException(
+            status_code=409, detail="A collection with that name already exists"
+        ) from None
     return col
 
 
@@ -81,6 +85,8 @@ async def delete_collection(
 ) -> None:
     col = await get_collection(db, collection_id, user_id)
     if col.is_default:
-        raise HTTPException(status_code=400, detail="Cannot delete the default collection")
+        raise HTTPException(
+            status_code=400, detail="Cannot delete the default collection"
+        )
     await db.delete(col)
     await db.flush()

@@ -6,8 +6,14 @@ from fastapi import APIRouter, Depends, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import CurrentUser
-from app.schemas.saved_job import SavedJobCreate, SavedJobSchema, SavedJobUpdate
+from app.middleware.auth import get_current_user
+from app.models.user import User
+from app.schemas.saved_job import (
+    ManualJobCreate,
+    SavedJobCreate,
+    SavedJobSchema,
+    SavedJobUpdate,
+)
 from app.services import saved_jobs as svc
 
 router = APIRouter()
@@ -18,20 +24,34 @@ async def list_saved_jobs(
     collection_id: uuid.UUID | None = Query(None),
     pipeline_stage_id: uuid.UUID | None = Query(None),
     is_archived: bool = Query(False),
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[SavedJobSchema]:
-    rows = await svc.list_saved_jobs(db, user.id, collection_id, pipeline_stage_id, is_archived)
+    rows = await svc.list_saved_jobs(
+        db, user.id, collection_id, pipeline_stage_id, is_archived
+    )
     return [SavedJobSchema.model_validate(r) for r in rows]
 
 
 @router.post("/", response_model=SavedJobSchema, status_code=201)
 async def save_job(
     data: SavedJobCreate,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
     sj = await svc.save_job(db, user.id, data)
+    await db.commit()
+    return SavedJobSchema.model_validate(sj)
+
+
+@router.post("/manual", response_model=SavedJobSchema, status_code=201)
+async def save_manual_job(
+    data: ManualJobCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SavedJobSchema:
+    """Add a job found on an external site by URL + details (FR-004a)."""
+    sj = await svc.save_manual_job(db, user.id, data)
     await db.commit()
     return SavedJobSchema.model_validate(sj)
 
@@ -40,18 +60,19 @@ async def save_job(
 async def update_saved_job(
     saved_job_id: uuid.UUID,
     data: SavedJobUpdate,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
     sj = await svc.update_saved_job(db, saved_job_id, user.id, data)
     await db.commit()
+    await db.refresh(sj)  # reload server-generated updated_at
     return SavedJobSchema.model_validate(sj)
 
 
 @router.delete("/{saved_job_id}", status_code=204)
 async def delete_saved_job(
     saved_job_id: uuid.UUID,
-    user: CurrentUser = Depends(),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     await svc.delete_saved_job(db, saved_job_id, user.id)

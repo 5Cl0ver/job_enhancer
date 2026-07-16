@@ -23,8 +23,7 @@ dependencies = [
     "pydantic-settings>=2.3.0",
     "email-validator>=2.2.0",
 
-    # Auth
-    "fastapi-nextauth-jwt>=0.1.0",
+    # Auth — Supabase JWT verification
     "python-jose[cryptography]>=3.3.0",
 
     # AI
@@ -58,6 +57,7 @@ dev = [
     "pytest-cov>=5.0.0",
     "httpx>=0.27.0",
     "anyio>=4.4.0",
+    "aiosqlite>=0.20.0",
 ]
 
 [tool.hatch.build.targets.wheel]
@@ -69,10 +69,16 @@ line-length = 88
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM", "ANN"]
-ignore = ["ANN101", "ANN102", "ANN401"]
+# B008: FastAPI's `Depends(...)` in argument defaults is the framework idiom
+ignore = ["ANN401", "B008"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["ANN"]
+# SQLAlchemy string forward references in Mapped[...] annotations
+"app/models/*.py" = ["F821", "E402"]
+"app/models/__init__.py" = ["E402", "F401"]
+# Lifespan-scoped imports avoid circular imports at module load
+"app/main.py" = ["E402"]
 
 [tool.ruff.format]
 quote-style = "double"

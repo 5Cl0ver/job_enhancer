@@ -11,12 +11,6 @@ from app.services.dedup import job_content_hash, normalize
 
 
 @pytest.fixture
-def mock_user(db_session):
-    """Return a mock user dict that auth middleware resolves."""
-    return {"email": "test@example.com", "sub": "test@example.com"}
-
-
-@pytest.fixture
 async def sample_job(db_session):
     title = "Python Developer"
     company = "Acme Corp"
@@ -61,6 +55,35 @@ async def test_get_job_not_found(client: AsyncClient):
 async def test_search_jobs_requires_query(client: AsyncClient):
     response = await client.get("/v1/jobs/")
     assert response.status_code == 422  # q is required
+
+
+@pytest.mark.asyncio
+async def test_search_returns_db_results_with_filters(client: AsyncClient, sample_job):
+    """FR-001/FR-003: search + experience/salary filters (sources mocked out)."""
+    with (
+        patch("app.services.job_search._search_adzuna", new=AsyncMock(return_value=[])),
+        patch(
+            "app.services.job_search._search_jsearch", new=AsyncMock(return_value=[])
+        ),
+    ):
+        # Matches the seeded "Python Developer" (no seniority marker => mid)
+        response = await client.get(
+            "/v1/jobs/", params={"q": "Python", "experience": "mid"}
+        )
+        assert response.status_code == 200
+        assert response.json()["meta"]["total"] == 1
+
+        # Senior filter excludes it
+        response = await client.get(
+            "/v1/jobs/", params={"q": "Python", "experience": "senior"}
+        )
+        assert response.json()["meta"]["total"] == 0
+
+        # Invalid experience value rejected
+        response = await client.get(
+            "/v1/jobs/", params={"q": "Python", "experience": "guru"}
+        )
+        assert response.status_code == 422
 
 
 @pytest.mark.asyncio

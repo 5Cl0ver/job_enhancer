@@ -36,7 +36,7 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          AUTH_SECRET: "test-secret-for-ci-only"
+          SUPABASE_JWT_SECRET: "test-secret-for-ci-only"
           NVIDIA_API_KEY: "test"
           ADZUNA_APP_ID: "test"
           ADZUNA_APP_KEY: "test"

@@ -10,9 +10,9 @@ Email / push notification integration can be layered on top.
 """
 
 import logging
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
-from sqlalchemy import select, text
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import async_sessionmaker
 
 from app.models.saved_job import SavedJob
@@ -24,7 +24,7 @@ logger = logging.getLogger(__name__)
 async def send_follow_up_reminders(session_factory: async_sessionmaker) -> None:
     """Hourly task — flag stale applications for follow-up."""
     async with session_factory() as db:
-        now = datetime.now(tz=timezone.utc)
+        now = datetime.now(tz=UTC)
 
         # Find overdue jobs via a join on User to get follow_up_days per user
         stmt = (
@@ -45,7 +45,7 @@ async def send_follow_up_reminders(session_factory: async_sessionmaker) -> None:
 
         count = 0
         for sj, user in rows:
-            days_stale = (now - sj.last_stage_change.replace(tzinfo=timezone.utc)).days
+            days_stale = (now - sj.last_stage_change.replace(tzinfo=UTC)).days
             if days_stale >= user.follow_up_days:
                 sj.follow_up_sent_at = now
                 count += 1

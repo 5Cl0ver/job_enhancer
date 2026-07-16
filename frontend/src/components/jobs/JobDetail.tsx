@@ -1,8 +1,9 @@
 "use client";
 
-import { Building2, MapPin, DollarSign, Clock, Wifi, ExternalLink, ArrowLeft } from "lucide-react";
+import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft } from "lucide-react";
 import Link from "next/link";
 import { formatDistanceToNow, format } from "date-fns";
+import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -95,12 +96,7 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
-        <Button asChild>
-          <a href={job.apply_url} target="_blank" rel="noopener noreferrer">
-            Apply Now
-            <ExternalLink className="ml-1.5 h-3.5 w-3.5" />
-          </a>
-        </Button>
+        <ApplyButton job={job} />
         {onSave && (
           <Button variant={isSaved ? "default" : "outline"} onClick={onSave}>
             {isSaved ? "Saved" : "Save Job"}

@@ -9,8 +9,8 @@ import logging
 import time
 
 from fastapi import HTTPException
-from langchain_nvidia_ai_endpoints import ChatNVIDIA
 from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_nvidia_ai_endpoints import ChatNVIDIA
 
 from app.config import settings
 
@@ -20,7 +20,7 @@ _MODEL_ID = "meta/llama-3.3-70b-instruct"
 _BASE_URL = "https://integrate.api.nvidia.com/v1"
 
 _RESUME_SYSTEM_PROMPT = """You are an expert resume writer and career coach.
-Your task is to tailor the user's base resume to better match a specific job description.
+Your task is to tailor the user's base resume to better match a specific job.
 Output ONLY the tailored resume text, preserving professional formatting.
 Do not include commentary or explanations — just the resume content."""
 
@@ -56,14 +56,21 @@ async def _invoke(system: str, user_content: str) -> tuple[str, int]:
                 status_code=429,
                 detail="AI rate limit reached. Please try again in a minute.",
                 headers={"Retry-After": "60"},
-            )
+            ) from None
         logger.error("NVIDIA NIM error: %s", exc)
-        raise HTTPException(status_code=503, detail="AI service temporarily unavailable")
+        raise HTTPException(
+            status_code=503, detail="AI service temporarily unavailable"
+        ) from None
 
     generation_ms = int((time.monotonic() - start) * 1000)
     content = str(response.content) if response.content else ""
 
-    logger.info("Generated document: model=%s ms=%d chars=%d", _MODEL_ID, generation_ms, len(content))
+    logger.info(
+        "Generated document: model=%s ms=%d chars=%d",
+        _MODEL_ID,
+        generation_ms,
+        len(content),
+    )
     return content, generation_ms
 
 
