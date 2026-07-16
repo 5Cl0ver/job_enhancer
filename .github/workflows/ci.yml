@@ -68,7 +68,12 @@ jobs:
         run: npx tsc --noEmit
 
       - name: ESLint
-        run: npx eslint src --ext .ts,.tsx --max-warnings 0
+        run: npx eslint src --max-warnings 0
+
+      - name: Component tests (Vitest)
+        run: npm run test
+        # Playwright E2E specs (tests/e2e/) need a live Supabase-backed stack;
+        # they run locally / against staging, not in this headless job.
 
       - name: Build
         env:

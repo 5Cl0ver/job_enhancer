@@ -1,0 +1,22 @@
+name: Keep-alive ping
+
+# Free-tier services nap when idle: Render spins down after 15 minutes,
+# and Supabase pauses after 7 idle days. Pinging the backend every 10
+# minutes keeps Render warm, and the backend's daily scheduled jobs keep
+# Supabase active. Runs only once the BACKEND_URL repo variable is set.
+
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    if: ${{ vars.BACKEND_URL != '' }}
+    steps:
+      - name: Ping backend /health
+        run: |
+          curl -fsS --max-time 30 "${{ vars.BACKEND_URL }}/health" \
+            && echo "backend awake" \
+            || echo "::warning::backend did not respond (asleep, deploying, or BACKEND_URL wrong)"

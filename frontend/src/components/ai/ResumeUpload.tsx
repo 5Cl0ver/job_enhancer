@@ -1,8 +1,7 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Upload, FileText, CheckCircle, Loader2 } from "lucide-react";
-import { Button } from "@/components/ui/button";
+import { Upload, CheckCircle, Loader2 } from "lucide-react";
 import { useUploadResume, useResumes } from "@/hooks/useAI";
 import { cn } from "@/lib/utils";
 

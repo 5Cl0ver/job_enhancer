@@ -56,6 +56,8 @@ export function AddJobDialog() {
           setOpen(false);
           reset();
         },
+        // Errors render via addJob.isError — observe to avoid floating rejection
+        onError: () => {},
       },
     );
   }

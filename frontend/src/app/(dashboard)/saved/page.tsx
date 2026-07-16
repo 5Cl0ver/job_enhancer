@@ -1,13 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { BookmarkX, Loader2 } from "lucide-react";
+import { BookmarkX } from "lucide-react";
 import { AddJobDialog } from "@/components/jobs/AddJobDialog";
 import { CollectionSidebar } from "@/components/jobs/CollectionSidebar";
 import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSavedJobs, useUnsaveJob, useUpdateSavedJob } from "@/hooks/useSavedJobs";
+import { useSavedJobs, useUnsaveJob } from "@/hooks/useSavedJobs";
 
 export default function SavedPage() {
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
@@ -15,7 +15,6 @@ export default function SavedPage() {
     collectionId: selectedCollection ?? undefined,
   });
   const unsaveJob = useUnsaveJob();
-  const updateSavedJob = useUpdateSavedJob();
 
   return (
     <div className="container mx-auto max-w-6xl px-4 py-6">

@@ -1,69 +1,46 @@
 #!/usr/bin/env bash
-# Job Enhancer — one-time project setup script
-# Run from repository root: bash scripts/setup.sh
+# Job Enhancer — one-time local setup.
+# Run from the repository root:  bash scripts/setup.sh
 
 set -e
 
 echo "=== Job Enhancer Setup ==="
 
-# ── Backend ──────────────────────────────────────────────────────────────────
+# ── Backend (FastAPI) ────────────────────────────────────────────────────────
 echo ""
-echo ">> Setting up backend..."
+echo ">> Backend: creating venv + installing dependencies..."
 cd backend
-# Mac uses python3, Windows uses python — try both
 python3 -m venv .venv 2>/dev/null || python -m venv .venv
 source .venv/bin/activate 2>/dev/null || source .venv/Scripts/activate
 pip install -e ".[dev]"
-echo "Backend deps installed."
+deactivate
 cd ..
+echo "Backend ready."
 
-# ── Frontend ─────────────────────────────────────────────────────────────────
+# ── Frontend (Next.js) ───────────────────────────────────────────────────────
 echo ""
-echo ">> Setting up frontend (Next.js 15)..."
-# If frontend/ already exists and has package.json, just install
-if [ -f frontend/package.json ]; then
-    cd frontend && npm install && cd ..
+echo ">> Frontend: installing dependencies..."
+cd frontend && npm install && cd ..
+echo "Frontend ready."
+
+# ── Environment files ────────────────────────────────────────────────────────
+echo ""
+if [ ! -f backend/.env ]; then
+    cp .env.example backend/.env
+    echo "Created backend/.env — fill in your Supabase + job API keys."
 else
-    # First-time setup — run create-next-app
-    echo "Creating Next.js app in frontend/ ..."
-    npx create-next-app@latest frontend \
-        --typescript \
-        --tailwind \
-        --eslint \
-        --app \
-        --src-dir \
-        --import-alias "@/*" \
-        --no-git
-    cd frontend
-    npm install \
-        @tanstack/react-query \
-        next-auth@beta \
-        zod \
-        @dnd-kit/core \
-        @dnd-kit/sortable \
-        @dnd-kit/utilities \
-        recharts \
-        date-fns \
-        openapi-typescript \
-        lucide-react
-    npx shadcn@latest init --defaults
-    cd ..
+    echo "backend/.env already exists, skipping."
 fi
-echo "Frontend deps installed."
-
-# ── Environment ──────────────────────────────────────────────────────────────
-echo ""
-if [ ! -f .env ]; then
-    cp .env.example .env
-    echo "Created .env from .env.example — fill in your secrets before starting."
+if [ ! -f frontend/.env.local ]; then
+    cp frontend/.env.example frontend/.env.local
+    echo "Created frontend/.env.local — fill in your Supabase project values."
 else
-    echo ".env already exists, skipping."
+    echo "frontend/.env.local already exists, skipping."
 fi
 
 echo ""
-echo "=== Setup complete! ==="
-echo "Next steps:"
-echo "  1. Edit .env with your API keys and database URL"
-echo "  2. cd backend && alembic upgrade head"
-echo "  3. cd backend && uvicorn app.main:app --reload"
-echo "  4. cd frontend && npm run dev"
+echo "=== Done. Next steps ==="
+echo "1. Fill in backend/.env and frontend/.env.local (see README)"
+echo "2. Seed sample data:   cd backend && .venv/bin/python scripts/seed_dev.py"
+echo "3. Start the backend:  cd backend && .venv/bin/uvicorn app.main:app --reload"
+echo "4. Start the frontend: cd frontend && npm run dev"

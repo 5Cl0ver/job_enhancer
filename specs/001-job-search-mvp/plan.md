@@ -18,11 +18,11 @@ NextAuth stack — Railway no longer has a free tier).
 ## Technical Context
 
 **Language/Version**:
-- TypeScript 5.x (frontend, Next.js 15)
+- TypeScript 5.x (frontend, Next.js 16)
 - Python 3.11+ (backend, FastAPI)
 
 **Primary Dependencies**:
-- Frontend: Next.js 15, Tailwind CSS, shadcn/ui, TanStack Query v5,
+- Frontend: Next.js 16, Tailwind CSS v4, shadcn/ui, TanStack Query v5,
   Supabase Auth (@supabase/supabase-js + @supabase/ssr), Zod
 - Backend: FastAPI, SQLAlchemy 2.x (async), Alembic, asyncpg, Pydantic v2,
   LangChain, python-jose, httpx, rapidfuzz

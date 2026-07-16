@@ -4,15 +4,15 @@
 
 ```
 ┌─────────────────────────┐     HTTPS      ┌─────────────────────────┐
-│   Next.js 15 (Vercel)   │ ◄────────────► │  FastAPI (Railway)      │
+│   Next.js 16 (Vercel)   │ ◄────────────► │  FastAPI (Render)       │
 │   TypeScript + Tailwind │                │  Python 3.11            │
-│   NextAuth v5 (JWE JWT) │                │  SQLAlchemy 2.x (async) │
+│   Supabase Auth (JWT)   │                │  SQLAlchemy 2.x (async) │
 └─────────────────────────┘                └────────────┬────────────┘
          │                                              │
          │ OAuth (Google / GitHub)                      │ asyncpg
          │                                              ▼
          ▼                                   ┌─────────────────────┐
-  ┌─────────────────┐                        │  PostgreSQL / Neon   │
+  ┌─────────────────┐                        │  PostgreSQL/Supabase   │
   │  OAuth Provider │                        │  (serverless, free)  │
   └─────────────────┘                        └─────────────────────┘
                                                         │
@@ -24,12 +24,12 @@
                     └─────────────────┘   └──────────────────┘  └───────────┘
 ```
 
-## Auth Flow (NextAuth JWE → FastAPI)
+## Auth Flow (Supabase Auth → FastAPI)
 
 ```
-Browser → NextAuth (Next.js)
+Browser → Supabase Auth (via Next.js)
   1. User clicks "Sign in with Google/GitHub"
-  2. OAuth callback → NextAuth creates encrypted JWE session token (AUTH_SECRET)
+  2. Email/password or OAuth → Supabase issues an HS256 access token (session cookie)
   3. JWE token stored as HttpOnly cookie (secure, SameSite=Lax)
 
 Browser → FastAPI
@@ -79,7 +79,7 @@ Insert new listings → DB query with filters → paginated response
 ## Deployment Topology
 
 ```
-Vercel (Next.js)          Railway (FastAPI)         Neon (PostgreSQL)
+Vercel (Next.js)          Render (FastAPI)          Supabase (Postgres)
 ─────────────────         ─────────────────         ─────────────────
 Free tier (Hobby)         $5/month Starter          Free tier (0.5 GB)
 Auto-deploy on push       Docker container          Serverless + PgBouncer

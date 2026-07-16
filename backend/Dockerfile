@@ -12,14 +12,11 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 
-# Install Python dependencies
-COPY pyproject.toml .
-RUN pip install --no-cache-dir -e .
-
-# Copy application code
+# Application code + dependencies
+COPY pyproject.toml alembic.ini ./
 COPY app/ ./app/
 COPY alembic/ ./alembic/
-COPY alembic.ini .
+RUN pip install --no-cache-dir .
 
 # Non-root user for security
 RUN useradd --create-home appuser
@@ -27,4 +24,5 @@ USER appuser
 
 EXPOSE 8000
 
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Render injects $PORT; apply migrations, then serve
+CMD ["sh", "-c", "alembic upgrade head && uvicorn app.main:app --host 0.0.0.0 --port ${PORT:-8000}"]

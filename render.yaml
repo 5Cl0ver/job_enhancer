@@ -1,0 +1,35 @@
+# Render Blueprint — deploys the FastAPI backend on the free tier.
+# Frontend deploys separately on Vercel (root directory: frontend/).
+# Free instances sleep after 15 min idle; .github/workflows/keep-alive.yml
+# pings /health every 10 minutes so visitors never hit a cold start.
+
+services:
+  - type: web
+    name: job-enhancer-api
+    runtime: docker
+    plan: free
+    rootDir: backend
+    dockerfilePath: ./Dockerfile
+    healthCheckPath: /health
+    autoDeploy: true # deploy on every push to the connected branch
+    envVars:
+      - key: DATABASE_URL
+        sync: false # Supabase pooler URL (postgresql+asyncpg://...:6543/postgres)
+      - key: SUPABASE_JWT_SECRET
+        sync: false
+      - key: SUPABASE_URL
+        sync: false
+      - key: ADZUNA_APP_ID
+        sync: false
+      - key: ADZUNA_APP_KEY
+        sync: false
+      - key: JSEARCH_API_KEY
+        sync: false
+      - key: NVIDIA_API_KEY
+        sync: false # AI phase — set to a placeholder until then
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false # e.g. https://job-enhancer.vercel.app
+      - key: DEBUG
+        value: "false"

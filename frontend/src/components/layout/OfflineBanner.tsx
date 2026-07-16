@@ -1,28 +1,29 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useSyncExternalStore } from "react";
 import { WifiOff } from "lucide-react";
+
+function subscribe(callback: () => void) {
+  window.addEventListener("online", callback);
+  window.addEventListener("offline", callback);
+  return () => {
+    window.removeEventListener("online", callback);
+    window.removeEventListener("offline", callback);
+  };
+}
 
 /**
  * Offline indicator (spec Edge Case): shown when the browser loses its
  * connection. Cached data keeps rendering; search and AI need a connection.
  */
 export function OfflineBanner() {
-  const [offline, setOffline] = useState(false);
+  const online = useSyncExternalStore(
+    subscribe,
+    () => navigator.onLine,
+    () => true, // SSR: assume online
+  );
 
-  useEffect(() => {
-    setOffline(!navigator.onLine);
-    const goOffline = () => setOffline(true);
-    const goOnline = () => setOffline(false);
-    window.addEventListener("offline", goOffline);
-    window.addEventListener("online", goOnline);
-    return () => {
-      window.removeEventListener("offline", goOffline);
-      window.removeEventListener("online", goOnline);
-    };
-  }, []);
-
-  if (!offline) return null;
+  if (online) return null;
 
   return (
     <div
