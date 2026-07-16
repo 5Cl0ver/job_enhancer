@@ -24,6 +24,10 @@
 - Q: Does the app ever fill or submit applications on external sites? → A: Combined — applying always happens on the external job site and the system NEVER auto-submits; additionally, a companion browser extension (final build phase, after AI features) auto-fills standard application form fields using the user's saved profile and generated materials, with the user reviewing and submitting manually.
 - Q: After clicking an external apply link, should the app help update the tracker? → A: Yes — on return to the app, show a one-click "Did you apply? Mark as Applied" confirmation that records the date; never change status without user confirmation.
 
+### Session 2026-07-16
+
+- Q: How should jobs from external boards get into the app without manual pasting? → A: Adopt three patterns proven by leading tools: (1) the browser extension ships in two stages, and its v1 "job catcher" — one-click capture of the posting the user is viewing, details pre-filled from the page — is delivered right after the core product is live (no AI required); (2) saved searches re-run automatically on a schedule and surface a "New matches" feed in-app; (3) when the extension fills an application, that job is auto-saved/updated in the tracker and the "Mark as Applied" confirmation is triggered. Mass auto-apply bots remain permanently out of scope. Manual paste-a-link (FR-004a) stays as the fallback for one-offs.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Search and Discover Jobs (Priority: P1)
@@ -51,6 +55,10 @@ job aggregator.
 3. **Given** search results are displayed, **When** the user
    clicks on a listing, **Then** they see the full job description
    with key details highlighted (salary, requirements, benefits)
+4. **Given** the user saved a search (e.g., "Python Developer,
+   New York, remote"), **When** they open the app the next day,
+   **Then** a "New matches" feed shows jobs found since their
+   last visit without re-running the search manually
 
 ---
 
@@ -205,33 +213,48 @@ actions work correctly.
 
 ---
 
-### User Story 7 - Browser Extension Auto-Fill (Priority: P4)
+### User Story 7 - Browser Extension: Job Catcher & Auto-Fill (Priority: P4)
 
-As a job seeker applying on an external job site, I want a
-companion browser extension that fills standard application
-fields with my saved profile and tailored materials so that
-each application takes minutes instead of an hour.
+As a job seeker browsing external job sites, I want a companion
+browser extension that saves any posting I'm viewing in one click
+(v1) and fills application forms with my saved profile and
+tailored materials (v2), so that collecting and applying to jobs
+takes minutes instead of hours.
 
-**Why this priority**: Highest-leverage speed feature, but it
-depends on core data (profile, saved jobs) and AI-generated
-materials existing first. Built last, after User Story 4.
+**Why this priority**: Highest-leverage speed feature. v1 capture
+needs no AI and ships right after the core product is live; v2
+auto-fill depends on the application profile and AI-generated
+materials, so it ships last, after User Story 4.
 
-**Independent Test**: With the extension installed and a tailored
-resume generated, open a supported job application form and click
-"Fill" — standard fields populate, and nothing is submitted until
-the user clicks the site's own submit button.
+**Independent Test (v1)**: With the extension installed, open a
+job posting on a major job board and click "Save to tracker" —
+the job's details are pre-filled from the page and appear in the
+app's tracker.
+
+**Independent Test (v2)**: With a tailored resume generated, open
+a supported job application form and click "Fill" — standard
+fields populate, and nothing is submitted until the user clicks
+the site's own submit button.
 
 **Acceptance Scenarios**:
 
-1. **Given** the extension is installed and the user is signed in,
+1. **Given** the extension is installed and the user is viewing a
+   job posting on an external board, **When** they click "Save to
+   tracker", **Then** the posting's details are pre-filled from
+   the page for review and saved to their tracker in one click
+2. **Given** the extension is installed and the user is signed in,
    **When** they open an application form and click "Fill",
    **Then** standard fields (name, email, phone, links) populate
    from their profile and the tailored resume/cover letter text
    is available to insert
-2. **Given** a form the extension cannot recognize, **When** the
-   user clicks "Fill", **Then** the extension says so and the
-   user completes the form manually — the extension NEVER submits
-   a form on its own
+3. **Given** the extension filled an application form, **When**
+   the user submits it on the site, **Then** the job is saved or
+   updated in their tracker and the "Mark as Applied" confirmation
+   is offered
+4. **Given** a page the extension cannot recognize, **When** the
+   user clicks "Save to tracker" or "Fill", **Then** the extension
+   says so and offers the short manual form — the extension NEVER
+   submits a form on its own
 
 ---
 
@@ -318,13 +341,28 @@ the user clicks the site's own submit button.
 - **FR-021**: System MUST allow users to export their data in a
   simple format (e.g., JSON or CSV)
 - **FR-022**: System MUST provide a companion browser extension
-  (final build phase, after AI features) that auto-fills standard
+  delivered in two stages: v1 "job catcher" (one-click capture,
+  FR-022a) ships after the core product is live; v2 auto-fill
+  (final build phase, after AI features) fills standard
   application form fields on external job sites using the user's
   saved profile and generated documents; the user always reviews
   and submits the form themselves
+- **FR-022a**: The browser extension MUST provide one-click job
+  capture: from a job posting the user is viewing (e.g., LinkedIn,
+  Indeed, Glassdoor), it reads the visible posting, pre-fills the
+  job's details for review, and saves the job to the user's
+  tracker; unrecognized pages fall back to a short manual form
+- **FR-022b**: When the extension fills an application form, the
+  system MUST save or update that job in the user's tracker and
+  trigger the one-click "Mark as Applied" confirmation (FR-006a)
 - **FR-023**: System MUST let users maintain an application
   profile (name, email, phone, links such as LinkedIn/GitHub/
   portfolio) that the browser extension uses for form filling
+- **FR-024**: System MUST support saved searches: a user can save
+  search criteria, the system re-runs saved searches on a schedule
+  (at least daily, within free data-source quotas), and newly
+  found jobs appear in a "New matches" feed when the user next
+  opens the app
 
 ### Out of Scope
 
