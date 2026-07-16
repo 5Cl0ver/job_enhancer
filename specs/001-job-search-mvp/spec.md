@@ -18,6 +18,12 @@
 - Q: Should pipeline stages be fixed or customizable? → A: Both. Keep the default stages (Interested, Applied, Phone Screen, Interview, Offer, Rejected) plus add "Referral Sent" and "Take-Home Assignment" as defaults. Users can also create their own custom stages.
 - Q: How should duplicate job listings from multiple sources be handled? → A: Auto-deduplicate by matching on company name + job title + location. Keep the most complete listing. Can be refined iteratively as edge cases emerge.
 
+### Session 2026-07-14
+
+- Q: Can users add jobs they found elsewhere (LinkedIn, Indeed, company career pages) manually? → A: Yes — paste the job's URL and enter title, company, and optional location. The job is tagged as manually added and is saved/tracked identically to searched jobs. No automatic page-scraping in MVP.
+- Q: Does the app ever fill or submit applications on external sites? → A: Combined — applying always happens on the external job site and the system NEVER auto-submits; additionally, a companion browser extension (final build phase, after AI features) auto-fills standard application form fields using the user's saved profile and generated materials, with the user reviewing and submitting manually.
+- Q: After clicking an external apply link, should the app help update the tracker? → A: Yes — on return to the app, show a one-click "Did you apply? Mark as Applied" confirmation that records the date; never change status without user confirmation.
+
 ## User Scenarios & Testing *(mandatory)*
 
 ### User Story 1 - Search and Discover Jobs (Priority: P1)
@@ -73,6 +79,11 @@ between collections, and verifying persistence across sessions.
 3. **Given** the user has multiple collections, **When** they
    view the organization page, **Then** they see all collections
    with job counts and can filter/sort within each
+4. **Given** the user found a job on an external site (LinkedIn,
+   Indeed, a company careers page), **When** they choose "Add job
+   manually" and paste the URL plus title and company, **Then**
+   the job is saved to their chosen collection and can be tracked
+   like any other saved job
 
 ---
 
@@ -103,6 +114,10 @@ and verify it appears on the board.
 3. **Given** a job has been in "Applied" status for 7+ days,
    **When** the user views the dashboard, **Then** they see a
    follow-up reminder for that application
+4. **Given** the user clicked a job's external apply link,
+   **When** they return to the app, **Then** a one-click prompt
+   asks "Did you apply?" and confirming moves the job to
+   "Applied" with today's date
 
 ---
 
@@ -190,6 +205,36 @@ actions work correctly.
 
 ---
 
+### User Story 7 - Browser Extension Auto-Fill (Priority: P4)
+
+As a job seeker applying on an external job site, I want a
+companion browser extension that fills standard application
+fields with my saved profile and tailored materials so that
+each application takes minutes instead of an hour.
+
+**Why this priority**: Highest-leverage speed feature, but it
+depends on core data (profile, saved jobs) and AI-generated
+materials existing first. Built last, after User Story 4.
+
+**Independent Test**: With the extension installed and a tailored
+resume generated, open a supported job application form and click
+"Fill" — standard fields populate, and nothing is submitted until
+the user clicks the site's own submit button.
+
+**Acceptance Scenarios**:
+
+1. **Given** the extension is installed and the user is signed in,
+   **When** they open an application form and click "Fill",
+   **Then** standard fields (name, email, phone, links) populate
+   from their profile and the tailored resume/cover letter text
+   is available to insert
+2. **Given** a form the extension cannot recognize, **When** the
+   user clicks "Fill", **Then** the extension says so and the
+   user completes the form manually — the extension NEVER submits
+   a form on its own
+
+---
+
 ### Edge Cases
 
 - What happens when no jobs match the search criteria?
@@ -225,10 +270,20 @@ actions work correctly.
   range, job type (remote/hybrid/onsite), and experience level
 - **FR-004**: System MUST allow users to save jobs to personal
   collections
+- **FR-004a**: System MUST allow users to manually add an external
+  job by pasting its URL and entering title, company, and optional
+  location; manually added jobs are tagged with source "manual" and
+  behave identically to searched jobs for saving, collections, and
+  tracking
 - **FR-005**: System MUST allow users to create, rename, and
   delete custom job collections
 - **FR-006**: System MUST provide a Kanban-style board for
   tracking application pipeline stages
+- **FR-006a**: When a user clicks a job's external apply link,
+  the system MUST offer a one-click "Mark as Applied"
+  confirmation on their return to the app, recording the
+  application date; the system MUST NOT change application
+  status without user confirmation
 - **FR-007**: System MUST support these default pipeline stages:
   Interested, Applied, Referral Sent, Phone Screen, Take-Home
   Assignment, Interview, Offer, Rejected
@@ -262,6 +317,24 @@ actions work correctly.
   documents, collections)
 - **FR-021**: System MUST allow users to export their data in a
   simple format (e.g., JSON or CSV)
+- **FR-022**: System MUST provide a companion browser extension
+  (final build phase, after AI features) that auto-fills standard
+  application form fields on external job sites using the user's
+  saved profile and generated documents; the user always reviews
+  and submits the form themselves
+- **FR-023**: System MUST let users maintain an application
+  profile (name, email, phone, links such as LinkedIn/GitHub/
+  portfolio) that the browser extension uses for form filling
+
+### Out of Scope
+
+- Automatic submission of applications on external sites — the
+  user always clicks the final submit button themselves
+- Automatic scraping/parsing of external job pages when adding a
+  job manually (MVP is URL + manual fields; auto-extract may come
+  later)
+- Replacing job boards — the system aggregates, prepares, and
+  tracks; applying happens at the source
 
 ### Key Entities
 
@@ -270,7 +343,8 @@ actions work correctly.
   and preferences
 - **Job Listing**: A job opportunity with title, company,
   location, salary range, description, requirements, source URL,
-  and freshness date
+  and freshness date; source is either an aggregator feed or
+  manual user entry
 - **Collection**: A user-created group for organizing saved jobs
   (e.g., "Top Picks", "Quick Apply", "Dream Companies")
 - **Saved Job**: A link between a user and a job listing, with
@@ -304,6 +378,9 @@ actions work correctly.
   30 seconds of viewing the admin dashboard
 - **SC-010**: System supports up to 100 concurrent users without
   performance degradation on free-tier hosting
+- **SC-011**: With the browser extension, standard fields on a
+  supported application form are filled in one click, and no form
+  is ever submitted without an explicit user action
 
 ## Assumptions
 
@@ -324,3 +401,6 @@ actions work correctly.
   (developer and friends), not just a demo
 - Admin role is limited to the application owner; there is no
   self-service admin registration
+- The browser extension targets Chromium-based browsers first and
+  may be distributed unpacked (developer mode) to keep costs at
+  zero; web store publication (small one-time fee) is optional
