@@ -1,9 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { useSession } from "next-auth/react";
+import { useMutation } from "@tanstack/react-query";
 import { Download, Trash2, Loader2 } from "lucide-react";
+import { createClient } from "@/lib/supabase/client";
+import { useProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -17,11 +18,11 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { api, getAccessToken, API_BASE } from "@/lib/api";
 
 export default function SettingsPage() {
-  const { data: session } = useSession();
-  const userEmail = session?.user?.email ?? "";
+  const { data: profile } = useProfile();
+  const userEmail = profile?.email ?? "";
 
   return (
     <div className="container mx-auto max-w-2xl space-y-6 px-4 py-6">
@@ -42,9 +43,9 @@ function DataExportCard() {
   const handleExport = async () => {
     setDownloading(true);
     try {
-      const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-      const res = await fetch(`${apiBase}/api/v1/users/me/export`, {
-        credentials: "include",
+      const token = await getAccessToken();
+      const res = await fetch(`${API_BASE}/v1/users/me/export`, {
+        headers: token ? { Authorization: `Bearer ${token}` } : {},
       });
       if (!res.ok) throw new Error("Export failed");
       const blob = await res.blob();
@@ -85,10 +86,11 @@ function DeleteAccountCard({ email }: { email: string }) {
   const [confirmation, setConfirmation] = useState("");
 
   const deleteAccount = useMutation({
-    mutationFn: () => api.delete("/api/v1/users/me"),
-    onSuccess: () => {
-      // Sign out and redirect
-      window.location.href = "/api/auth/signout";
+    mutationFn: () => api.delete("/v1/users/me"),
+    onSuccess: async () => {
+      const supabase = createClient();
+      await supabase.auth.signOut();
+      window.location.href = "/login";
     },
   });
 

@@ -51,12 +51,16 @@ export interface PipelineStage {
 
 export interface SavedJob {
   id: string;
+  user_id: string;
   job_listing_id: string;
   collection_id: string | null;
   pipeline_stage_id: string | null;
   notes: string | null;
-  last_stage_change: string | null;
+  applied_at: string | null;
+  last_stage_change: string;
+  is_archived: boolean;
   created_at: string;
+  updated_at: string;
   job_listing: JobListing;
 }
 

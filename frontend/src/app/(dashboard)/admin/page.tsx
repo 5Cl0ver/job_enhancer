@@ -1,8 +1,8 @@
 "use client";
 
-import { useSession } from "next-auth/react";
 import { redirect } from "next/navigation";
 import { Loader2 } from "lucide-react";
+import { useProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { HealthPanel } from "@/components/admin/HealthPanel";
 import { StatsOverview } from "@/components/admin/StatsOverview";
@@ -11,9 +11,9 @@ import { SignupTrendChart } from "@/components/admin/SignupTrendChart";
 import { useAdminStats } from "@/hooks/useAdmin";
 
 export default function AdminPage() {
-  const { data: session, status } = useSession();
+  const { data: profile, isLoading } = useProfile();
 
-  if (status === "loading") {
+  if (isLoading) {
     return (
       <div className="flex h-64 items-center justify-center">
         <Loader2 className="h-8 w-8 animate-spin text-muted-foreground" />
@@ -22,7 +22,7 @@ export default function AdminPage() {
   }
 
   // Role guard
-  if (!session || (session.user as { role?: string })?.role !== "admin") {
+  if (!profile || profile.role !== "admin") {
     redirect("/");
   }
 

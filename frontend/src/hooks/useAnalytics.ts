@@ -17,7 +17,7 @@ interface AnalyticsSummary {
 export function useAnalyticsSummary() {
   return useQuery<AnalyticsSummary>({
     queryKey: ["analytics", "summary"],
-    queryFn: () => api.get<AnalyticsSummary>("/api/v1/analytics/summary"),
+    queryFn: () => api.get<AnalyticsSummary>("/v1/analytics/summary"),
     staleTime: 5 * 60_000,
   });
 }

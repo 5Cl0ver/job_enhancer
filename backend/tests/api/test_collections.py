@@ -34,7 +34,7 @@ async def test_user(db_session: AsyncSession):
 @pytest.mark.asyncio
 async def test_list_collections(client: AsyncClient, test_user):
     user, default_col = test_user
-    response = await client.get("/api/v1/collections/")
+    response = await client.get("/v1/collections/")
     assert response.status_code == 200
     data = response.json()
     assert isinstance(data, list)
@@ -43,7 +43,7 @@ async def test_list_collections(client: AsyncClient, test_user):
 @pytest.mark.asyncio
 async def test_create_collection(client: AsyncClient, test_user):
     response = await client.post(
-        "/api/v1/collections/", json={"name": "Dream Jobs", "color": "#FF5733"}
+        "/v1/collections/", json={"name": "Dream Jobs", "color": "#FF5733"}
     )
     assert response.status_code in (201, 422)  # 422 if auth not set up in test
 
@@ -51,6 +51,6 @@ async def test_create_collection(client: AsyncClient, test_user):
 @pytest.mark.asyncio
 async def test_delete_default_collection_blocked(client: AsyncClient, test_user, db_session):
     user, default_col = test_user
-    response = await client.delete(f"/api/v1/collections/{default_col.id}")
+    response = await client.delete(f"/v1/collections/{default_col.id}")
     # Either 400 (blocked) or 401/403 (auth)
     assert response.status_code in (400, 401, 403, 404)

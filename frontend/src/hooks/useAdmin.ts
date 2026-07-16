@@ -25,7 +25,7 @@ interface PlatformStats {
 export function useAdminStats() {
   return useQuery<PlatformStats>({
     queryKey: ["admin", "stats"],
-    queryFn: () => api.get<PlatformStats>("/api/v1/admin/stats"),
+    queryFn: () => api.get<PlatformStats>("/v1/admin/stats"),
     staleTime: 2 * 60_000,
   });
 }
@@ -33,7 +33,7 @@ export function useAdminStats() {
 export function useServiceHealth() {
   return useQuery<ServiceStatus[]>({
     queryKey: ["admin", "health"],
-    queryFn: () => api.get<ServiceStatus[]>("/api/v1/admin/health"),
+    queryFn: () => api.get<ServiceStatus[]>("/v1/admin/health"),
     staleTime: 60_000,
     refetchInterval: 60_000,
   });
@@ -42,7 +42,7 @@ export function useServiceHealth() {
 export function useAdminUsers(page: number = 1) {
   return useQuery<UserProfile[]>({
     queryKey: ["admin", "users", page],
-    queryFn: () => api.get<UserProfile[]>(`/api/v1/admin/users?page=${page}&page_size=25`),
+    queryFn: () => api.get<UserProfile[]>(`/v1/admin/users?page=${page}&page_size=25`),
     staleTime: 2 * 60_000,
   });
 }

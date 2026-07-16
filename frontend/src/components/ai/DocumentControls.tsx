@@ -26,7 +26,7 @@ export function DocumentControls({ doc, onRegenerate, isRegenerating }: Document
 
   const handleDownload = () => {
     const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-    window.open(`${apiBase}/api/v1/ai/documents/${doc.id}/pdf`, "_blank");
+    window.open(`${apiBase}/v1/ai/documents/${doc.id}/pdf`, "_blank");
   };
 
   return (

@@ -23,7 +23,7 @@ async def test_user(db_session: AsyncSession):
 
 @pytest.mark.asyncio
 async def test_get_profile_unauthenticated(client: AsyncClient):
-    response = await client.get("/api/v1/users/me")
+    response = await client.get("/v1/users/me")
     # Without valid auth token, should get 401 or 422
     assert response.status_code in (401, 403, 422)
 

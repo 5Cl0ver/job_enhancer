@@ -10,7 +10,7 @@ import { useSavedJobs } from "@/hooks/useSavedJobs";
 export function usePipelineStages() {
   return useQuery<PipelineStage[]>({
     queryKey: ["pipeline-stages"],
-    queryFn: () => api.get<PipelineStage[]>("/api/v1/pipeline-stages/"),
+    queryFn: () => api.get<PipelineStage[]>("/v1/pipeline-stages/"),
     staleTime: 5 * 60_000,
   });
 }
@@ -23,7 +23,7 @@ export function useMoveJobStage() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ savedJobId, stageId }: { savedJobId: string; stageId: string | null }) =>
-      api.post<SavedJob>("/api/v1/pipeline-stages/move", {
+      api.post<SavedJob>("/v1/pipeline-stages/move", {
         saved_job_id: savedJobId,
         stage_id: stageId,
       }),
@@ -54,7 +54,7 @@ export function useCreateStage() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { name: string; color?: string }) =>
-      api.post<PipelineStage>("/api/v1/pipeline-stages/", data),
+      api.post<PipelineStage>("/v1/pipeline-stages/", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["pipeline-stages"] }),
   });
 }
@@ -62,7 +62,7 @@ export function useCreateStage() {
 export function useDeleteStage() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/pipeline-stages/${id}`),
+    mutationFn: (id: string) => api.delete(`/v1/pipeline-stages/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["pipeline-stages"] });
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });

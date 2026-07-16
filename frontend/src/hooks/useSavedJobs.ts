@@ -18,7 +18,7 @@ import type { SavedJob, Collection } from "@/types/api";
 export function useCollections() {
   return useQuery<Collection[]>({
     queryKey: ["collections"],
-    queryFn: () => api.get<Collection[]>("/api/v1/collections/"),
+    queryFn: () => api.get<Collection[]>("/v1/collections/"),
     staleTime: 5 * 60_000,
   });
 }
@@ -27,7 +27,7 @@ export function useCreateCollection() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { name: string; color?: string }) =>
-      api.post<Collection>("/api/v1/collections/", data),
+      api.post<Collection>("/v1/collections/", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["collections"] }),
   });
 }
@@ -35,7 +35,7 @@ export function useCreateCollection() {
 export function useDeleteCollection() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/collections/${id}`),
+    mutationFn: (id: string) => api.delete(`/v1/collections/${id}`),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["collections"] });
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
@@ -59,7 +59,7 @@ export function useSavedJobs(params?: {
 
   return useQuery<SavedJob[]>({
     queryKey: ["saved-jobs", params],
-    queryFn: () => api.get<SavedJob[]>(`/api/v1/saved-jobs/?${qs.toString()}`),
+    queryFn: () => api.get<SavedJob[]>(`/v1/saved-jobs/?${qs.toString()}`),
     staleTime: 30_000,
     placeholderData: keepPreviousData,
   });
@@ -76,7 +76,7 @@ export function useSaveJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (data: { job_listing_id: string; collection_id?: string; notes?: string }) =>
-      api.post<SavedJob>("/api/v1/saved-jobs/", data),
+      api.post<SavedJob>("/v1/saved-jobs/", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-jobs"] }),
   });
 }
@@ -93,7 +93,7 @@ export function useUpdateSavedJob() {
       pipeline_stage_id?: string | null;
       notes?: string | null;
       is_archived?: boolean;
-    }) => api.patch<SavedJob>(`/api/v1/saved-jobs/${id}`, data),
+    }) => api.patch<SavedJob>(`/v1/saved-jobs/${id}`, data),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
       qc.invalidateQueries({ queryKey: ["tracker"] });
@@ -104,7 +104,7 @@ export function useUpdateSavedJob() {
 export function useUnsaveJob() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (id: string) => api.delete(`/api/v1/saved-jobs/${id}`),
+    mutationFn: (id: string) => api.delete(`/v1/saved-jobs/${id}`),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-jobs"] }),
   });
 }

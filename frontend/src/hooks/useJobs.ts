@@ -25,7 +25,7 @@ function buildSearchUrl(params: JobSearchParams): string {
   if (params.job_type) qs.set("job_type", params.job_type);
   qs.set("page", String(params.page ?? 1));
   qs.set("page_size", String(params.page_size ?? 20));
-  return `/api/v1/jobs/?${qs.toString()}`;
+  return `/v1/jobs/?${qs.toString()}`;
 }
 
 /** Search jobs — paginated, keeps previous data while loading next page. */
@@ -43,7 +43,7 @@ export function useJobSearch(params: JobSearchParams, enabled = true) {
 export function useJob(jobId: string | null) {
   return useQuery<JobListing>({
     queryKey: ["jobs", jobId],
-    queryFn: () => api.get<JobListing>(`/api/v1/jobs/${jobId}`),
+    queryFn: () => api.get<JobListing>(`/v1/jobs/${jobId}`),
     enabled: !!jobId,
     staleTime: 5 * 60_000, // 5 min
   });

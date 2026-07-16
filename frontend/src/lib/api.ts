@@ -1,7 +1,10 @@
 /**
  * Typed fetch wrapper for the Job Enhancer backend API.
- * All requests include credentials (session cookie forwarded via NextAuth).
+ * Attaches the Supabase session access token as a Bearer header —
+ * cookies are NOT forwarded cross-origin (Vercel → Render).
  */
+
+import { createClient } from "@/lib/supabase/client";
 
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
 
@@ -15,16 +18,31 @@ class ApiError extends Error {
   }
 }
 
+let _supabase: ReturnType<typeof createClient> | null = null;
+
+/** Current Supabase access token, or null when signed out. */
+export async function getAccessToken(): Promise<string | null> {
+  _supabase ??= createClient();
+  const { data } = await _supabase.auth.getSession();
+  return data.session?.access_token ?? null;
+}
+
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const url = `${API_BASE}${path}`;
-  const res = await fetch(url, {
-    ...init,
-    headers: {
-      "Content-Type": "application/json",
-      ...init.headers,
-    },
-    credentials: "include",
-  });
+  const token = await getAccessToken();
+
+  const headers: Record<string, string> = {
+    ...(init.body instanceof FormData
+      ? {}
+      : { "Content-Type": "application/json" }),
+    ...(init.headers as Record<string, string>),
+  };
+  if (token) headers["Authorization"] = `Bearer ${token}`;
+
+  const res = await fetch(`${API_BASE}${path}`, { ...init, headers });
+
+  if (res.status === 401 && typeof window !== "undefined") {
+    window.location.href = "/login";
+  }
 
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
@@ -45,7 +63,7 @@ export const api = {
     request<T>(path, {
       ...init,
       method: "POST",
-      body: JSON.stringify(body),
+      body: body instanceof FormData ? body : JSON.stringify(body),
     }),
 
   patch: <T>(path: string, body: unknown, init?: RequestInit) =>
@@ -59,4 +77,4 @@ export const api = {
     request<T>(path, { ...init, method: "DELETE" }),
 };
 
-export { ApiError };
+export { ApiError, API_BASE };

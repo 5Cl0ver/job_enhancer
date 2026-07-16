@@ -44,7 +44,7 @@ async def sample_job(db_session):
 
 @pytest.mark.asyncio
 async def test_get_job(client: AsyncClient, sample_job: JobListing):
-    response = await client.get(f"/api/v1/jobs/{sample_job.id}")
+    response = await client.get(f"/v1/jobs/{sample_job.id}")
     assert response.status_code == 200
     data = response.json()
     assert data["title"] == sample_job.title
@@ -53,13 +53,13 @@ async def test_get_job(client: AsyncClient, sample_job: JobListing):
 
 @pytest.mark.asyncio
 async def test_get_job_not_found(client: AsyncClient):
-    response = await client.get(f"/api/v1/jobs/{uuid.uuid4()}")
+    response = await client.get(f"/v1/jobs/{uuid.uuid4()}")
     assert response.status_code == 404
 
 
 @pytest.mark.asyncio
 async def test_search_jobs_requires_query(client: AsyncClient):
-    response = await client.get("/api/v1/jobs/")
+    response = await client.get("/v1/jobs/")
     assert response.status_code == 422  # q is required
 
 

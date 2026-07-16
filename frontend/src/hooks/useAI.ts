@@ -19,7 +19,7 @@ interface ResumeRecord {
 export function useResumes() {
   return useQuery<ResumeRecord[]>({
     queryKey: ["resumes"],
-    queryFn: () => api.get<ResumeRecord[]>("/api/v1/ai/resumes"),
+    queryFn: () => api.get<ResumeRecord[]>("/v1/ai/resumes"),
     staleTime: 5 * 60_000,
   });
 }
@@ -31,7 +31,7 @@ export function useUploadResume() {
       const form = new FormData();
       form.append("file", file);
       const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/api/v1/ai/resumes`,
+        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/v1/ai/resumes`,
         { method: "POST", body: form, credentials: "include" },
       );
       if (!res.ok) throw new Error(await res.text());
@@ -48,7 +48,7 @@ export function useGenerateDocument() {
       resume_id: string;
       document_type: "resume" | "cover_letter";
       job_listing_id?: string;
-    }) => api.post<GeneratedDocument>("/api/v1/ai/generate", data),
+    }) => api.post<GeneratedDocument>("/v1/ai/generate", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
   });
 }
@@ -56,7 +56,7 @@ export function useGenerateDocument() {
 export function useGeneratedDocument(docId: string | null) {
   return useQuery<GeneratedDocument>({
     queryKey: ["documents", docId],
-    queryFn: () => api.get<GeneratedDocument>(`/api/v1/ai/documents/${docId}`),
+    queryFn: () => api.get<GeneratedDocument>(`/v1/ai/documents/${docId}`),
     enabled: !!docId,
     staleTime: 60_000,
   });
@@ -66,7 +66,7 @@ export function useUpdateDocument() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, edited_content }: { id: string; edited_content: string }) =>
-      api.patch<GeneratedDocument>(`/api/v1/ai/documents/${id}`, { edited_content }),
+      api.patch<GeneratedDocument>(`/v1/ai/documents/${id}`, { edited_content }),
     onSuccess: (doc) => qc.setQueryData(["documents", doc.id], doc),
   });
 }
