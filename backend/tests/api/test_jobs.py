@@ -1,7 +1,7 @@
 """Integration tests for job search endpoints."""
 
 import uuid
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import pytest
 from httpx import AsyncClient
@@ -60,12 +60,8 @@ async def test_search_jobs_requires_query(client: AsyncClient):
 @pytest.mark.asyncio
 async def test_search_returns_db_results_with_filters(client: AsyncClient, sample_job):
     """FR-001/FR-003: search + experience/salary filters (sources mocked out)."""
-    with (
-        patch("app.services.job_search._search_adzuna", new=AsyncMock(return_value=[])),
-        patch(
-            "app.services.job_search._search_jsearch", new=AsyncMock(return_value=[])
-        ),
-    ):
+    # No external sources → aggregate falls straight through to the DB query.
+    with patch("app.services.job_search.get_sources", return_value=[]):
         # Matches the seeded "Python Developer" (no seniority marker => mid)
         response = await client.get(
             "/v1/jobs/", params={"q": "Python", "experience": "mid"}

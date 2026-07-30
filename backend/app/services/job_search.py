@@ -1,10 +1,11 @@
-"""Job search service — fetches from Adzuna and JSearch, deduplicates, persists.
+"""Job search + aggregation service.
 
-External API notes:
-  - Adzuna: generous free tier, but descriptions are snippets (~200 chars).
-  - JSearch (RapidAPI): 200 req/month free, returns full descriptions.
-  Both APIs are called in parallel; results are merged and deduplicated before DB
-  upsert so we never surface stale data.
+Fetches from pluggable job **sources** (``app/services/sources/``), deduplicates
+across them, persists to the shared ``job_listings`` pool, and serves paginated,
+filtered results from the DB. This module is source-agnostic — new boards are
+added as adapters in the sources package, not here.
+
+See docs/job-data-architecture.md for the ingestion-vs-search design.
 """
 
 import asyncio
@@ -18,169 +19,17 @@ from sqlalchemy import Select, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
-from app.config import settings
 from app.models.job_listing import JobListing
 from app.schemas.job import JobListingSchema, JobSearchResponse, PaginatedMeta
 from app.services.dedup import is_duplicate, job_content_hash, normalize
+from app.services.sources import get_sources
 
 logger = logging.getLogger(__name__)
 
-_ADZUNA_BASE = "https://api.adzuna.com/v1/api/jobs"
-_JSEARCH_BASE = "https://jsearch.p.rapidapi.com/search"
-_HTTP_TIMEOUT = 10.0  # seconds
-
 
 # ---------------------------------------------------------------------------
-# Adzuna fetcher
+# Persistence (dedup + upsert)
 # ---------------------------------------------------------------------------
-
-
-async def _search_adzuna(
-    client: httpx.AsyncClient,
-    q: str,
-    location: str | None,
-    page: int,
-    page_size: int,
-) -> list[dict[str, Any]]:
-    country = "us"
-    url = f"{_ADZUNA_BASE}/{country}/search/{page}"
-    params: dict[str, Any] = {
-        "app_id": settings.adzuna_app_id,
-        "app_key": settings.adzuna_app_key,
-        "results_per_page": min(page_size, 50),
-        "what": q,
-        "content-type": "application/json",
-    }
-    if location:
-        params["where"] = location
-
-    try:
-        resp = await client.get(url, params=params, timeout=_HTTP_TIMEOUT)
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("results", [])
-    except Exception as exc:
-        logger.warning("Adzuna search failed: %s", exc)
-        return []
-
-
-def _parse_adzuna(raw: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalise an Adzuna result dict into our internal format."""
-    try:
-        title = raw.get("title", "").strip()
-        company = raw["company"].get("display_name", "").strip()
-        if not title or not company:
-            return None
-
-        location_parts = raw.get("location", {}).get("display_name", "")
-        is_remote = "remote" in location_parts.lower()
-
-        salary_min = raw.get("salary_min")
-        salary_max = raw.get("salary_max")
-
-        return {
-            "external_id": f"adzuna_{raw['id']}",
-            "source": "adzuna",
-            "title": title,
-            "company": company,
-            "location": location_parts,
-            "is_remote": is_remote,
-            "description": raw.get("description", "").strip() or None,
-            "salary_min": int(salary_min) if salary_min else None,
-            "salary_max": int(salary_max) if salary_max else None,
-            "currency": "GBP" if raw.get("__CLASS__") == "Job" else "USD",
-            "job_type": raw.get("contract_type"),
-            "apply_url": raw.get("redirect_url", ""),
-            "posted_at": _parse_dt(raw.get("created")),
-            "expires_at": None,
-        }
-    except (KeyError, TypeError) as exc:
-        logger.debug("Adzuna parse error: %s | raw=%s", exc, raw)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# JSearch fetcher
-# ---------------------------------------------------------------------------
-
-
-async def _search_jsearch(
-    client: httpx.AsyncClient,
-    q: str,
-    location: str | None,
-    page: int,
-    page_size: int,
-) -> list[dict[str, Any]]:
-    params: dict[str, Any] = {
-        "query": f"{q} {location or ''}".strip(),
-        "page": str(page),
-        "num_pages": "1",
-    }
-    headers = {
-        "x-rapidapi-host": "jsearch.p.rapidapi.com",
-        "x-rapidapi-key": settings.jsearch_api_key,
-    }
-    try:
-        resp = await client.get(
-            _JSEARCH_BASE, params=params, headers=headers, timeout=_HTTP_TIMEOUT
-        )
-        resp.raise_for_status()
-        data = resp.json()
-        return data.get("data", [])
-    except Exception as exc:
-        logger.warning("JSearch search failed: %s", exc)
-        return []
-
-
-def _parse_jsearch(raw: dict[str, Any]) -> dict[str, Any] | None:
-    """Normalise a JSearch result dict into our internal format."""
-    try:
-        title = raw.get("job_title", "").strip()
-        company = raw.get("employer_name", "").strip()
-        if not title or not company:
-            return None
-
-        location = ", ".join(
-            filter(
-                None,
-                [raw.get("job_city"), raw.get("job_state"), raw.get("job_country")],
-            )
-        )
-        is_remote = bool(raw.get("job_is_remote"))
-
-        return {
-            "external_id": f"jsearch_{raw['job_id']}",
-            "source": "jsearch",
-            "title": title,
-            "company": company,
-            "location": location,
-            "is_remote": is_remote,
-            "description": raw.get("job_description", "").strip() or None,
-            "salary_min": raw.get("job_min_salary"),
-            "salary_max": raw.get("job_max_salary"),
-            "currency": raw.get("job_salary_currency") or "USD",
-            "job_type": raw.get("job_employment_type"),
-            "apply_url": raw.get("job_apply_link", ""),
-            "posted_at": _parse_dt(raw.get("job_posted_at_datetime_utc")),
-            "expires_at": None,
-        }
-    except (KeyError, TypeError) as exc:
-        logger.debug("JSearch parse error: %s | raw=%s", exc, raw)
-        return None
-
-
-# ---------------------------------------------------------------------------
-# Aggregation & persistence
-# ---------------------------------------------------------------------------
-
-
-def _parse_dt(value: str | None) -> datetime | None:
-    if not value:
-        return None
-    try:
-        return datetime.fromisoformat(value.replace("Z", "+00:00"))
-    except (ValueError, AttributeError):
-        return None
 
 
 async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> JobListing | None:
@@ -221,6 +70,10 @@ async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> JobListing 
         return None
     return listing
 
+
+# ---------------------------------------------------------------------------
+# Filtered query (shared by search + saved-search feeds)
+# ---------------------------------------------------------------------------
 
 # Title markers used for the experience-level filter (FR-003). Sources don't
 # expose a reliable seniority field, so we classify by title keywords.
@@ -286,6 +139,11 @@ def build_listing_query(
     return stmt
 
 
+# ---------------------------------------------------------------------------
+# Aggregation (ingest from sources) + paginated search
+# ---------------------------------------------------------------------------
+
+
 async def aggregate_and_deduplicate(
     db: AsyncSession,
     q: str,
@@ -299,40 +157,32 @@ async def aggregate_and_deduplicate(
     page_size: int = 20,
     sources: frozenset[str] = frozenset({"adzuna", "jsearch"}),
 ) -> JobSearchResponse:
-    """Search the requested APIs in parallel, deduplicate, persist, return page.
+    """Fetch the selected sources in parallel, deduplicate, persist, return page.
 
-    `sources` lets scheduled refreshes stay Adzuna-only to respect the
-    JSearch 200 requests/month free-tier quota.
+    `sources` names which adapters to hit (see ``app/services/sources/``); e.g.
+    scheduled refreshes can stay Adzuna-only to respect the JSearch monthly quota.
     """
-    adzuna_raw: list = []
-    jsearch_raw: list = []
-    async with httpx.AsyncClient() as client:
-        tasks = {}
-        if "adzuna" in sources:
-            tasks["adzuna"] = _search_adzuna(client, q, location, page, page_size)
-        if "jsearch" in sources:
-            tasks["jsearch"] = _search_jsearch(client, q, location, page, page_size)
-        results = await asyncio.gather(*tasks.values())
-        by_source = dict(zip(tasks.keys(), results, strict=True))
-        adzuna_raw = by_source.get("adzuna", [])
-        jsearch_raw = by_source.get("jsearch", [])
+    active = get_sources(sources)
 
+    async with httpx.AsyncClient() as client:
+        raw_lists = await asyncio.gather(
+            *(source.fetch(client, q, location, page, page_size) for source in active)
+        )
+
+    # Parse each source's raw records into our internal shape
     parsed: list[dict[str, Any]] = []
-    for raw in adzuna_raw:
-        item = _parse_adzuna(raw)
-        if item:
-            parsed.append(item)
-    for raw in jsearch_raw:
-        item = _parse_jsearch(raw)
-        if item:
-            parsed.append(item)
+    for source, raw_list in zip(active, raw_lists, strict=True):
+        for raw in raw_list:
+            item = source.parse(raw)
+            if item:
+                parsed.append(item)
 
     # Persist new listings (duplicates silently skipped)
     for item in parsed:
         await _upsert_listing(db, item)
     await db.commit()
 
-    # Now query DB with filters for the requested page
+    # Query the DB with filters for the requested page
     stmt = build_listing_query(
         q=q,
         location=location,
@@ -343,13 +193,11 @@ async def aggregate_and_deduplicate(
         job_type=job_type,
     )
 
-    # Count total
     from sqlalchemy import func
 
     count_stmt = stmt.with_only_columns(func.count()).order_by(None)
     total = (await db.scalar(count_stmt)) or 0
 
-    # Paginate
     offset = (page - 1) * page_size
     stmt = (
         stmt.order_by(JobListing.posted_at.desc().nullslast())
@@ -369,6 +217,10 @@ async def aggregate_and_deduplicate(
         ),
     )
 
+
+# ---------------------------------------------------------------------------
+# Listing freshness / expiry (scheduled)
+# ---------------------------------------------------------------------------
 
 #: Listings not seen in any source feed for this long are marked expired.
 EXPIRY_STALE_DAYS = 30
