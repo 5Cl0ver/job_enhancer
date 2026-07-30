@@ -1,78 +1,58 @@
-# Frontend Components Manifest
+# Frontend Components Manifest (`frontend/src/components/`)
 
-React components for Job Enhancer (Next.js 15 + TypeScript + Tailwind + shadcn/ui).
-
-## Directory Structure
+React components (Vite + TypeScript + Tailwind + shadcn/ui). The **pages** that
+use them live in `src/routes/` (see its MANIFEST); the **data hooks** live in
+`src/hooks/` (see its MANIFEST). Feature status: [docs/FEATURES.md](../../../docs/FEATURES.md).
 
 ```
-src/components/
-├── ui/           # shadcn/ui base components (button, card, badge, input, etc.)
-├── layout/       # App shell
-├── jobs/         # Job search and save UI
-├── tracker/      # Kanban board
-├── ai/           # AI document generation
-├── analytics/    # User analytics charts
-└── admin/        # Admin dashboard
+ui/  base shadcn primitives   layout/  legacy shell bits
+jobs/ tracker/ ai/ analytics/ admin/   feature UI
 ```
 
-## Layout Components (`layout/`)
+## `ui/` — shadcn/ui primitives
+alert, badge, button, card, dialog, dropdown-menu, input, label, select,
+separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
+`src/app/globals.css`; use `cn()` from `lib/utils`.
 
+## `layout/`
 | File | Purpose |
-|------|---------|
-| `Navbar.tsx` | Top bar — user avatar, sign-out button |
-| `Sidebar.tsx` | Navigation links: Search, Saved, Tracker, AI Apply, Analytics, Settings |
+|---|---|
+| `Navbar.tsx`, `Sidebar.tsx` | ⚠️ Legacy shell — the live app frame is `routes/DashboardLayout.tsx`; these are pending consolidation |
+| `OfflineBanner.tsx` | Offline indicator when the browser goes offline |
 
-## Job Components (`jobs/`)
-
-| File | Purpose | Key Props |
-|------|---------|-----------|
-| `SearchBar.tsx` | Controlled query + location inputs, submits via URL params | `defaultQuery`, `defaultLocation` |
-| `SearchFilters.tsx` | Remote toggle, job type select, salary min — all URL-param driven | — |
-| `SearchResults.tsx` | Calls `useJobSearch`, renders grid of `JobCard`, handles pagination | `searchParams` |
-| `JobCard.tsx` | Compact job listing card with save button stub | `job`, `onSave`, `isSaved` |
-| `JobDetail.tsx` | Full job detail view with description, apply button, generate documents CTA | `job`, `onSave`, `onGenerateDocuments` |
-| `SaveButton.tsx` | Toggle save/unsave with optimistic UI, icon or button variant | `jobId`, `variant` |
-| `CollectionSidebar.tsx` | Collection list with create/delete, "All saved jobs" filter | `selectedId`, `onSelect` |
-
-## Tracker Components (`tracker/`)
-
+## `jobs/`
 | File | Purpose |
-|------|---------|
-| `KanbanBoard.tsx` | DndContext wrapper, renders all pipeline columns, handles drag-end → `useMoveJobStage` |
-| `PipelineColumn.tsx` | Single Kanban column — droppable zone, job cards, stage header + count |
-| `KanbanCard.tsx` | Draggable job card — company, title, applied-ago, follow-up overdue badge (amber) |
+|---|---|
+| `SearchBar.tsx` | Query + location inputs → URL params |
+| `SearchFilters.tsx` | Remote/type/salary/experience filters → URL params |
+| `SearchResults.tsx` | `useJobSearch` → grid of `JobCard` + pagination |
+| `JobCard.tsx` | Job card: title, company, salary, source, apply/save |
+| `JobDetail.tsx` | Full job view (legacy; no `/jobs/:id` route yet) |
+| `SaveButton.tsx` | Optimistic save/unsave toggle |
+| `SaveSearchButton.tsx` | Save current search criteria (FR-024) |
+| `CollectionSidebar.tsx` | Collection list + create/delete + filter |
+| `AddJobDialog.tsx` | Manually add a job by URL (`source=manual`) |
+| `ApplyButton.tsx` | Opens external apply link + "Mark as Applied" confirm |
 
-## AI Components (`ai/`)
-
+## `tracker/`
 | File | Purpose |
-|------|---------|
-| `ResumeUpload.tsx` | Drag-drop + click upload, validates type (PDF/DOCX) + size (≤10MB), shows active resume |
-| `GeneratedDocViewer.tsx` | Tabbed editor (Resume / Cover Letter) with inline editing + AI transparency footer (model + latency) |
-| `DocumentControls.tsx` | Regenerate (with emphasis input) + Copy to clipboard + Download PDF buttons |
+|---|---|
+| `KanbanBoard.tsx` | `DndContext`, renders columns, drag-end → `useMoveJobStage` |
+| `PipelineColumn.tsx` | Droppable stage column + header/count |
+| `KanbanCard.tsx` | Draggable job card + follow-up-overdue badge |
 
-## Analytics Components (`analytics/`)
-
+## `ai/` (final phase)
 | File | Purpose |
-|------|---------|
-| `StatCard.tsx` | Icon + label + value card with optional trend arrow (up/down/neutral) |
-| `ActivityChart.tsx` | Bar chart of applications per week using recharts |
+|---|---|
+| `ResumeUpload.tsx` | Drag-drop PDF/DOCX upload (≤10 MB) |
+| `GeneratedDocViewer.tsx` | Tabbed resume/cover editor + AI-transparency footer |
+| `DocumentControls.tsx` | Regenerate / copy / download-PDF |
 
-## Admin Components (`admin/`)
+## `analytics/`
+| `StatCard.tsx` | icon + value + trend arrow · | `ActivityChart.tsx` | recharts bar chart |
 
-| File | Purpose |
-|------|---------|
-| `HealthPanel.tsx` | Service status grid (Database, NVIDIA, Adzuna, JSearch) with latency + status badges |
-| `StatsOverview.tsx` | 4-card grid: total users, active 7d/30d, new 7d |
-| `UserTable.tsx` | Paginated user table (email, role, joined date) |
-| `SignupTrendChart.tsx` | Line chart of daily signups (last 30 days) using recharts |
+## `admin/`
+| `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users · `SignupTrendChart.tsx` recharts line chart |
 
-## Hooks (`src/hooks/`)
-
-| File | Exported Hooks |
-|------|---------------|
-| `useJobs.ts` | `useJobSearch(params)`, `useJob(id)` |
-| `useSavedJobs.ts` | `useCollections`, `useCreateCollection`, `useDeleteCollection`, `useSavedJobs`, `useSavedJobId`, `useSaveJob`, `useUpdateSavedJob`, `useUnsaveJob` |
-| `useTracker.ts` | `usePipelineStages`, `useKanbanJobs`, `useMoveJobStage`, `useCreateStage`, `useDeleteStage` |
-| `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useGeneratedDocument`, `useUpdateDocument` |
-| `useAnalytics.ts` | `useAnalyticsSummary` |
-| `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers` |
+**How this folder connects:** components are composed by `routes/*`; they get
+data via `hooks/*` → `lib/api.ts` → FastAPI.

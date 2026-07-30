@@ -1,26 +1,28 @@
-# API Manifest
+# API Manifest (`backend/app/api/`)
 
-FastAPI routers for Job Enhancer. All routes require authentication (via `CurrentUser` dependency) unless noted.
+FastAPI routers. Assembled in `v1/router.py` and mounted in `app/main.py`.
+Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 
-Base path: `/api/v1/`
+| Module | Prefix | Key endpoints |
+|---|---|---|
+| `v1/jobs.py` | `/jobs` | `GET /jobs/?q=…` (search + dedupe), `GET /jobs/{id}` |
+| `v1/saved_jobs.py` | `/saved-jobs` | list / create / `PATCH` / `DELETE` (filters: collection, stage, archived) |
+| `v1/collections.py` | `/collections` | full CRUD; `DELETE` blocked for `is_default` |
+| `v1/tracker.py` | `/pipeline-stages` | stage CRUD + `POST /move` (Kanban) |
+| `v1/saved_searches.py` | `/saved-searches` | save/list/delete searches, new-matches feed, mark-seen (FR-024) |
+| `v1/analytics.py` | `/analytics` | `GET /analytics/summary` (totals + 8-week activity) |
+| `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
+| `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export`, `DELETE /users/me` |
+| `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}` — requires `role=admin` |
+| `v1/auth.py` | — | auth helpers/routes (see file) |
+| `v1/router.py` | — | aggregates all routers under `/v1` |
 
-| Module | Prefix | Tags | Key Endpoints |
-|--------|--------|------|---------------|
-| `v1/jobs.py` | `/jobs` | Jobs | `GET /jobs/?q=...` (search + deduplicate), `GET /jobs/{id}` |
-| `v1/saved_jobs.py` | `/saved-jobs` | SavedJobs | `GET /saved-jobs/`, `POST /saved-jobs/`, `PATCH /saved-jobs/{id}`, `DELETE /saved-jobs/{id}` |
-| `v1/collections.py` | `/collections` | Collections | Full CRUD; `DELETE` blocked for `is_default=true` collections |
-| `v1/tracker.py` | `/pipeline-stages` | Tracker | Stage CRUD + `POST /move` to move jobs between Kanban columns |
-| `v1/ai.py` | `/ai` | AI | `POST /ai/resumes` (upload), `GET /ai/resumes`, `POST /ai/generate` (5 req/min limit), `GET /ai/documents/{id}`, `PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
-| `v1/users.py` | `/users` | Users | `GET/PATCH /users/me`, `GET /users/me/export` (JSON download), `DELETE /users/me` |
-| `v1/analytics.py` | `/analytics` | Analytics | `GET /analytics/summary` (totals + 8-week activity) |
-| `v1/admin.py` | `/admin` | Admin | `GET /admin/stats`, `GET /admin/health`, `GET /admin/users` — requires `role=admin` |
+## Auth pattern (`middleware/auth.py`)
+- **`CurrentUser`** — verifies the Supabase **ES256** token via the project **JWKS**; lazy-creates the User on first login.
+- **`AdminUser`** — `CurrentUser` + `role == "admin"` (else 403).
 
-## Auth Pattern
+## Rate limits (slowapi)
+- Default **60/min**; `POST /ai/generate` **5/min**.
 
-- `CurrentUser`: Resolves JWT from `fastapi-nextauth-jwt`, lazy-creates User on first login
-- `AdminUser`: Wraps `CurrentUser` + checks `user.role == "admin"`, raises HTTP 403
-
-## Rate Limits (slowapi)
-
-- Default: 60 req/min per IP
-- `POST /ai/generate`: 5 req/min per IP
+**How this folder connects:** routers validate with `schemas/*`, call
+`services/*` for logic, depend on `middleware/auth.py`.

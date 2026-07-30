@@ -1,26 +1,27 @@
-# Models Manifest
+# Models Manifest (`backend/app/models/`)
 
-SQLAlchemy ORM models for Job Enhancer. All inherit from `Base` defined in `__init__.py`.
+SQLAlchemy 2.x ORM models. All inherit from `Base` (`__init__.py`), which also
+imports every model so Alembic can discover them.
 
-| File | Model | Purpose | Dependencies |
-|------|-------|---------|--------------|
-| `__init__.py` | `Base` | Declarative base; imports all models for Alembic discovery | — |
-| `user.py` | `User` | User accounts. UUID PK, soft-delete via `deleted_at`, OAuth-only auth. Relationships: collections, pipeline_stages, saved_jobs, resumes, generated_documents | — |
-| `job_listing.py` | `JobListing` | Shared (not per-user) job records. Deduplicated on `content_hash` (SHA-256) and fuzzy match via `company_normalized`+`title_normalized`. Indexes on `posted_at`, `is_expired`. | — |
-| `collection.py` | `Collection` | User-created groups for saved jobs. UNIQUE(user_id, name). `is_default` protects the auto-created "Saved" collection. | `User` |
-| `pipeline_stage.py` | `PipelineStage` | Kanban columns. UNIQUE(user_id, name). `DEFAULT_STAGES` list seeds 8 stages per new user. `is_default` blocks deletion. | `User` |
-| `saved_job.py` | `SavedJob` | Join between User + JobListing with state (stage, notes, applied_at, follow-up tracking). UNIQUE(user_id, job_listing_id). | `User`, `JobListing`, `Collection`, `PipelineStage` |
-| `resume.py` | `Resume` | Uploaded resume files. Parsed text stored in `extracted_text`. `is_active` flag — only one active resume per user. Max 10 MB. | `User` |
-| `generated_document.py` | `GeneratedDocument` | AI-generated resumes and cover letters. Tracks `model_used` and `generation_ms` for transparency. `edited_content` holds user edits. | `User`, `JobListing`, `Resume`, `SavedJob` |
+| File | Model | Purpose | Depends on |
+|---|---|---|---|
+| `__init__.py` | `Base` | Declarative base + model registry for Alembic | — |
+| `user.py` | `User` | Accounts (Supabase Auth: email/password + OAuth). UUID PK, soft-delete via `deleted_at`, `role` (user/admin), `image`, `follow_up_days`. | — |
+| `job_listing.py` | `JobListing` | **Shared** (not per-user) job pool. Deduped on `content_hash` + fuzzy (`company_normalized`, `title_normalized`). Indexes on `posted_at`, `is_expired`. | — |
+| `collection.py` | `Collection` | User folders for saved jobs. `UNIQUE(user_id, name)`; `is_default` protected; `color`, `sort_order`. | `User` |
+| `pipeline_stage.py` | `PipelineStage` | Kanban columns. `UNIQUE(user_id, name)`; `sort_order`; 8 defaults seeded per user; `is_default` blocks deletion. | `User` |
+| `saved_job.py` | `SavedJob` | Join of User×JobListing + state (stage, notes, `applied_at`, follow-up, `is_archived`). `UNIQUE(user_id, job_listing_id)`. | `User`, `JobListing`, `Collection`, `PipelineStage` |
+| `saved_search.py` | `SavedSearch` | Stored search criteria; drives the daily new-matches feed (FR-024). | `User` |
+| `resume.py` | `Resume` | Uploaded resume; `extracted_text`; one `is_active` per user (≤10 MB). | `User` |
+| `generated_document.py` | `GeneratedDocument` | AI resume/cover output; `model_used` + `generation_ms` (transparency); `edited_content`. | `User`, `JobListing`, `Resume`, `SavedJob` |
 
-## Migration Order
+## Migrations (`alembic/versions/`)
+1. `0001_initial_schema` — core tables
+2. `0002_saved_searches` — saved-search table (FR-024)
+3. `6d32186f6f5a_sync_schema_with_current_models` — aligns schema with the models above (added `users.image`, `sort_order`s, etc.)
 
-1. `users`
-2. `job_listings`
-3. `collections`
-4. `pipeline_stages`
-5. `saved_jobs`
-6. `resumes`
-7. `generated_documents`
+Run with `alembic upgrade head`. **Note:** tests use SQLite (`create_all` from
+models), so always verify migrations against real Postgres.
 
-All managed by a single Alembic migration: `alembic/versions/0001_initial_schema.py`.
+**How this folder connects:** models are the source of truth for the DB;
+`schemas/*` serialize them; `services/*` query them.
