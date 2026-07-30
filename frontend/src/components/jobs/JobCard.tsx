@@ -1,6 +1,4 @@
-"use client";
-
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { Building2, MapPin, DollarSign, Clock, Wifi } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
@@ -42,7 +40,7 @@ export function JobCard({ job, onSave, isSaved = false }: JobCardProps) {
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
             <Link
-              href={`/jobs/${job.id}`}
+              to={`/jobs/${job.id}`}
               className="line-clamp-2 font-semibold leading-tight hover:underline"
             >
               {job.title}

@@ -1,9 +1,7 @@
-"use client";
-
 import { useJobSearch } from "@/hooks/useJobs";
 import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/button";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2, SearchX } from "lucide-react";
 
 interface SearchResultsProps {
@@ -20,8 +18,8 @@ interface SearchResultsProps {
 }
 
 export function SearchResults({ searchParams }: SearchResultsProps) {
-  const router = useRouter();
-  const urlParams = useSearchParams();
+  const navigate = useNavigate();
+  const [urlParams] = useSearchParams();
   const query = searchParams.q ?? "";
   const page = Number(searchParams.page ?? 1);
 
@@ -83,7 +81,7 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
   const goToPage = (newPage: number) => {
     const params = new URLSearchParams(urlParams.toString());
     params.set("page", String(newPage));
-    router.push(`/search?${params.toString()}`);
+    navigate(`/search?${params.toString()}`);
   };
 
   return (

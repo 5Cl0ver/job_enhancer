@@ -1,6 +1,4 @@
-"use client";
-
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback, useState } from "react";
 import { Search } from "lucide-react";
 import { Button } from "@/components/ui/button";
@@ -12,8 +10,8 @@ interface SearchBarProps {
 }
 
 export function SearchBar({ defaultQuery = "", defaultLocation = "" }: SearchBarProps) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
   const [query, setQuery] = useState(defaultQuery);
   const [location, setLocation] = useState(defaultLocation);
 
@@ -30,9 +28,9 @@ export function SearchBar({ defaultQuery = "", defaultLocation = "" }: SearchBar
         params.delete("location");
       }
       params.set("page", "1");
-      router.push(`/search?${params.toString()}`);
+      navigate(`/search?${params.toString()}`);
     },
-    [query, location, router, searchParams],
+    [query, location, navigate, searchParams],
   );
 
   return (

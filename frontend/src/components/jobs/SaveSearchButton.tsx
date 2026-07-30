@@ -1,6 +1,4 @@
-"use client";
-
-import { useSearchParams } from "next/navigation";
+import { useSearchParams } from "react-router-dom";
 import { BellPlus, Check, Loader2 } from "lucide-react";
 import { useCreateSavedSearch, useSavedSearches } from "@/hooks/useSavedSearches";
 import { Button } from "@/components/ui/button";
@@ -10,7 +8,7 @@ import { Button } from "@/components/ui/button";
  * searches daily and surfaces new results in the New Matches feed.
  */
 export function SaveSearchButton() {
-  const searchParams = useSearchParams();
+  const [searchParams] = useSearchParams();
   const create = useCreateSavedSearch();
   const { data: existing = [] } = useSavedSearches();
 

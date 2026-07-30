@@ -14,9 +14,11 @@ class Settings(BaseSettings):
     # Database
     database_url: str
 
-    # Auth — Supabase project JWT secret (Settings -> API -> JWT Secret)
-    supabase_jwt_secret: str
-    supabase_url: str = ""
+    # Auth — Supabase project. Tokens are verified against the project's public
+    # JWKS at {supabase_url}/auth/v1/.well-known/jwks.json, so supabase_url is
+    # required. supabase_jwt_secret is legacy (HS256) and no longer used.
+    supabase_url: str
+    supabase_jwt_secret: str = ""
 
     # AI
     nvidia_api_key: str
@@ -28,12 +30,14 @@ class Settings(BaseSettings):
 
     # Server
     debug: bool = False
-    allowed_origins: list[str] = ["http://localhost:3000"]
+    # Comma-separated origins in .env (e.g. "http://localhost:5173,http://x.com").
+    # Kept as a plain string so pydantic-settings doesn't try to JSON-parse it.
+    allowed_origins: str = "http://localhost:5173"
     admin_email: str = ""
 
     @property
     def cors_origins(self) -> list[str]:
-        return self.allowed_origins
+        return [o.strip() for o in self.allowed_origins.split(",") if o.strip()]
 
 
 settings = Settings()  # type: ignore[call-arg]

@@ -17,8 +17,15 @@ NextAuth stack — Railway no longer has a free tier).
 
 ## Technical Context
 
+> **Frontend migration in progress (2026-07-28).** The frontend is moving from
+> Next.js to a **Vite + React + React Router** SPA (TanStack Query, Tailwind,
+> shadcn/ui, and Supabase Auth are retained). Backend, database, and the `/v1`
+> API contract are unchanged. See [frontend-vite-migration.md](frontend-vite-migration.md)
+> for the full plan. References to "Next.js 16" below describe the pre-migration
+> state.
+
 **Language/Version**:
-- TypeScript 5.x (frontend, Next.js 16)
+- TypeScript 5.x (frontend, Next.js 16 → migrating to Vite + React Router SPA)
 - Python 3.11+ (backend, FastAPI)
 
 **Primary Dependencies**:

@@ -1,6 +1,6 @@
 "use client";
 
-import Link from "next/link";
+import { Link } from "react-router-dom";
 import { BellOff, CheckCheck, Inbox, Loader2, Trash2 } from "lucide-react";
 import {
   useDeleteSavedSearch,
@@ -63,7 +63,7 @@ export default function MatchesPage() {
             jobs will be waiting here every day.
           </p>
           <Button asChild variant="outline" size="sm">
-            <Link href="/search">Go to Search</Link>
+            <Link to="/search">Go to Search</Link>
           </Button>
         </div>
       ) : (

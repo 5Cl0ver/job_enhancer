@@ -1,6 +1,4 @@
-"use client";
-
-import { useRouter, useSearchParams } from "next/navigation";
+import { useNavigate, useSearchParams } from "react-router-dom";
 import { useCallback } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -50,8 +48,8 @@ const EXPERIENCE_OPTIONS = [
 ];
 
 export function SearchFilters() {
-  const router = useRouter();
-  const searchParams = useSearchParams();
+  const navigate = useNavigate();
+  const [searchParams] = useSearchParams();
 
   const remoteOnly = searchParams.get("remote_only") === "true";
   const jobType = searchParams.get("job_type") ?? ANY;
@@ -68,9 +66,9 @@ export function SearchFilters() {
         params.delete(key);
       }
       params.set("page", "1");
-      router.push(`/search?${params.toString()}`);
+      navigate(`/search?${params.toString()}`);
     },
-    [router, searchParams],
+    [navigate, searchParams],
   );
 
   const activeCount = [
@@ -87,7 +85,7 @@ export function SearchFilters() {
     const location = searchParams.get("location");
     if (q) params.set("q", q);
     if (location) params.set("location", location);
-    router.push(`/search?${params.toString()}`);
+    navigate(`/search?${params.toString()}`);
   };
 
   return (

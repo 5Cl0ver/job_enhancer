@@ -1,6 +1,6 @@
 "use client";
 
-import { redirect } from "next/navigation";
+import { Navigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { useProfile } from "@/hooks/useProfile";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -23,7 +23,7 @@ export default function AdminPage() {
 
   // Role guard
   if (!profile || profile.role !== "admin") {
-    redirect("/");
+    return <Navigate to="/" replace />;
   }
 
   return <AdminDashboard />;
