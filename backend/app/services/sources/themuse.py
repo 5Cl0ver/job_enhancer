@@ -2,9 +2,10 @@
 
 Free, keyless — reaches **non-remote** jobs across many professional categories.
 The Muse has no free-text keyword search, so this adapter ignores the query and
-pulls recent jobs from a set of professional categories. That makes it a **feed
-source**: it's driven by scheduled background ingestion (which populates the
-shared pool), not by live per-search. Docs: https://www.themuse.com/developers/api/v2
+pulls recent jobs across **all categories** (every field — not just tech). That
+makes it a **feed source**: driven by scheduled background ingestion (which
+populates the shared pool), not by live per-search.
+Docs: https://www.themuse.com/developers/api/v2
 """
 
 import logging
@@ -18,15 +19,8 @@ logger = logging.getLogger(__name__)
 
 _BASE = "https://www.themuse.com/api/public/jobs"
 
-# Categories we pull into the pool (The Muse's fixed taxonomy).
-_CATEGORIES = [
-    "Software Engineering",
-    "Data Science",
-    "Data and Analytics",
-    "Design and UX",
-    "Product Management",
-    "IT",
-]
+#: How many pages of The Muse's all-category feed to pull per ingest (~20/page).
+_MAX_PAGES = 3
 
 
 class TheMuseSource(JobSource):
@@ -35,21 +29,26 @@ class TheMuseSource(JobSource):
     async def fetch(
         self,
         client: httpx.AsyncClient,
-        q: str,  # noqa: ARG002 — The Muse has no keyword search; query is ignored
+        q: str,  # noqa: ARG002 — The Muse has no keyword search
         location: str | None,  # noqa: ARG002
-        page: int,
+        page: int,  # noqa: ARG002 — we pull a fixed range of pages below
         page_size: int,  # noqa: ARG002
     ) -> list[dict[str, Any]]:
-        # Newest-first across our chosen professional categories.
-        params: list[tuple[str, str]] = [("page", str(page)), ("descending", "true")]
-        params += [("category", c) for c in _CATEGORIES]
-        try:
-            resp = await client.get(_BASE, params=params, timeout=HTTP_TIMEOUT)
-            resp.raise_for_status()
-            return resp.json().get("results", [])
-        except Exception as exc:
-            logger.warning("The Muse fetch failed: %s", exc)
-            return []
+        # All categories (no filter), newest-first, a few pages deep.
+        jobs: list[dict[str, Any]] = []
+        for p in range(1, _MAX_PAGES + 1):
+            params = [("page", str(p)), ("descending", "true")]
+            try:
+                resp = await client.get(_BASE, params=params, timeout=HTTP_TIMEOUT)
+                resp.raise_for_status()
+                batch = resp.json().get("results", [])
+            except Exception as exc:
+                logger.warning("The Muse fetch failed (page %d): %s", p, exc)
+                break
+            if not batch:
+                break
+            jobs.extend(batch)
+        return jobs
 
     def parse(self, raw: dict[str, Any]) -> dict[str, Any] | None:
         try:

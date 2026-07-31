@@ -220,18 +220,21 @@ async def aggregate_and_deduplicate(
 # Scheduled background ingestion (populate the pool off the request path)
 # ---------------------------------------------------------------------------
 
-#: Common searches used to keep the pool broadly populated (keyword sources).
+#: Common searches used to keep the pool broadly populated across many fields
+#: (keyword sources). Deliberately not tech-only — this is a general job app.
 CURATED_QUERIES = [
     "software engineer",
-    "frontend developer",
-    "backend developer",
-    "full stack developer",
-    "data scientist",
+    "web developer",
     "data analyst",
     "product manager",
-    "product designer",
-    "devops engineer",
+    "graphic designer",
     "marketing manager",
+    "sales representative",
+    "customer support",
+    "accountant",
+    "registered nurse",
+    "project manager",
+    "writer",
 ]
 
 #: Keyword-searchable sources run per curated query. JSearch is excluded — its
