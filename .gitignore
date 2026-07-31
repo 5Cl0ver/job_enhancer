@@ -27,6 +27,9 @@ out/
 .env
 .env.*
 !.env.example
+
+# Browser extension local config (public values, but kept per-machine)
+extension/config.js
 *.pem
 *.key
 *.p12
