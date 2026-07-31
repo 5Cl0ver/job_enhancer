@@ -155,7 +155,7 @@ async def aggregate_and_deduplicate(
     job_type: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive"}),
+    sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive", "jobicy"}),
 ) -> JobSearchResponse:
     """Fetch the selected sources in parallel, deduplicate, persist, return page.
 
@@ -239,10 +239,10 @@ CURATED_QUERIES = [
 
 #: Keyword-searchable sources run per curated query. JSearch is excluded — its
 #: ~200/month free quota is too small for a scheduled fan-out.
-_INGEST_QUERY_SOURCES = frozenset({"adzuna", "remotive"})
+_INGEST_QUERY_SOURCES = frozenset({"adzuna", "remotive", "jobicy"})
 
 #: Feed sources (no keyword search) fetched once per run.
-_INGEST_FEED_SOURCES = frozenset({"themuse"})
+_INGEST_FEED_SOURCES = frozenset({"themuse", "remoteok"})
 
 
 async def ingest_curated_jobs(

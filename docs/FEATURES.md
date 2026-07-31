@@ -146,7 +146,9 @@ The plan to get broad, real listings for many users on $0. Full design in
 |---|---|
 | Pluggable source-adapter pattern (`services/sources/`) | ✅ |
 | Remotive adapter (free, keyless remote jobs) | ✅ |
-| The Muse adapter (free, non-remote; feed/scheduled only) | ✅ |
+| Jobicy adapter (free, keyless, keyword-searchable remote) | ✅ |
+| The Muse adapter (free, non-remote; feed/scheduled) | ✅ |
+| RemoteOK adapter (free, keyless remote feed; scheduled) | ✅ |
 | Adzuna adapter | 🟡 (coded; needs real key) |
 | JSearch adapter (Google-for-Jobs) | 🟡 (coded; 200/mo — reserve for scheduled/deep search) |
 | Additional free sources (Jooble, USAJobs) | 🔜 |
