@@ -31,8 +31,12 @@ Every meaningful code folder has a `MANIFEST.md` — a **local map** of that fol
 what each file does (one line) and **how the folder connects to others**. Current
 manifests:
 
-**Frontend** — `src/routes/`, `src/components/`, `src/hooks/`, `src/lib/`
-**Backend** — `app/api/`, `app/services/`, `app/services/sources/` *(see note)*, `app/models/`, `app/schemas/`, `app/middleware/`
+**Frontend** — `src/` *(overview)*, `src/routes/`, `src/components/`, `src/hooks/`, `src/lib/`
+**Backend** — `app/` *(overview)*, `app/api/`, `app/services/`, `app/models/`, `app/schemas/`, `app/middleware/`
+
+Start with the `src/` and `app/` **overview** manifests — they map the loose
+top-level files (`main.tsx`/`router.tsx`, `main.py`/`config.py`/`database.py`)
+and how the subfolders fit together — then drill into a specific folder's manifest.
 
 *(A folder-level manifest can cover its subfolders; e.g. `services/MANIFEST.md`
 mentions the `sources/` adapter registry.)*
