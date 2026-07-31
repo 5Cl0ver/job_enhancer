@@ -43,40 +43,142 @@ async function signOut() {
 }
 
 // --- Read the current page for job details (runs in the tab's context) ---
+// Strategy (most reliable first): schema.org JobPosting JSON-LD → site-specific
+// selectors (LinkedIn/Indeed/Glassdoor) → generic og: meta → page title.
 async function extractJob() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const fallback = { url: tab?.url || "", title: tab?.title || "", company: "" };
+  const fallback = {
+    url: tab?.url || "",
+    title: tab?.title || "",
+    company: "",
+    location: "",
+    is_remote: false,
+  };
   try {
     const [{ result }] = await chrome.scripting.executeScript({
       target: { tabId: tab.id },
       func: () => {
-        const pick = (selectors) => {
-          for (const sel of selectors) {
-            const el = document.querySelector(sel);
-            const t = el?.innerText?.trim() || el?.content?.trim();
-            if (t) return t;
+        const clip = (s, n) =>
+          (s ?? "").toString().trim().replace(/\s+/g, " ").slice(0, n);
+        const pick = (sels) => {
+          for (const s of sels) {
+            const el = document.querySelector(s);
+            const t = el?.getAttribute?.("content") ?? el?.innerText;
+            if (t && t.trim()) return t.trim();
           }
           return "";
         };
+
+        // 1) schema.org JobPosting (JSON-LD) — the gold standard.
+        const fromJsonLd = () => {
+          for (const sc of document.querySelectorAll(
+            'script[type="application/ld+json"]',
+          )) {
+            let data;
+            try {
+              data = JSON.parse(sc.textContent);
+            } catch {
+              continue;
+            }
+            const nodes = Array.isArray(data) ? data : data["@graph"] || [data];
+            for (const node of nodes) {
+              const type = node && node["@type"];
+              const isJob =
+                type === "JobPosting" ||
+                (Array.isArray(type) && type.includes("JobPosting"));
+              if (!isJob) continue;
+              const org = node.hiringOrganization;
+              const company = typeof org === "string" ? org : org?.name || "";
+              const loc = Array.isArray(node.jobLocation)
+                ? node.jobLocation[0]
+                : node.jobLocation;
+              const addr = loc?.address;
+              const location = addr
+                ? [
+                    addr.addressLocality,
+                    addr.addressRegion,
+                    addr.addressCountry?.name || addr.addressCountry,
+                  ]
+                    .filter(Boolean)
+                    .join(", ")
+                : "";
+              return {
+                title: node.title || "",
+                company,
+                location,
+                is_remote: node.jobLocationType === "TELECOMMUTE",
+              };
+            }
+          }
+          return null;
+        };
+
+        // 2) Site-specific selectors.
+        const host = location.hostname;
+        const site = () => {
+          if (host.includes("linkedin")) {
+            return {
+              title: pick([
+                "h1.top-card-layout__title",
+                ".job-details-jobs-unified-top-card__job-title",
+                "h1.topcard__title",
+              ]),
+              company: pick([
+                ".topcard__org-name-link",
+                ".job-details-jobs-unified-top-card__company-name a",
+                ".topcard__flavor",
+              ]),
+              location: pick([
+                ".topcard__flavor--bullet",
+                ".job-details-jobs-unified-top-card__primary-description-container span",
+              ]),
+            };
+          }
+          if (host.includes("indeed")) {
+            return {
+              title: pick([
+                'h2[data-testid="jobsearch-JobInfoHeader-title"]',
+                ".jobsearch-JobInfoHeader-title",
+                'h2[data-testid="simpler-jobTitle"]',
+              ]),
+              company: pick([
+                '[data-testid="inlineHeader-companyName"]',
+                '[data-company-name="true"]',
+                '[data-testid="companyName"]',
+                ".jobsearch-CompanyInfoContainer a",
+              ]),
+              location: pick([
+                '[data-testid="inlineHeader-companyLocation"]',
+                '[data-testid="jobsearch-JobInfoHeader-companyLocation"]',
+              ]),
+            };
+          }
+          if (host.includes("glassdoor")) {
+            return {
+              title: pick(['[data-test="job-title"]']),
+              company: pick(['[data-test="employer-name"]']),
+              location: pick(['[data-test="location"]']),
+            };
+          }
+          return {};
+        };
+
+        const j = fromJsonLd() || {};
+        const s = site();
         const title =
-          pick([
-            "h1",
-            '[data-testid="jobsearch-JobInfoHeader-title"]',
-            ".top-card-layout__title",
-            ".jobsearch-JobInfoHeader-title",
-          ]) || document.title;
-        const company = pick([
-          '[data-testid="inlineHeader-companyName"]',
-          ".topcard__org-name-link",
-          '[data-company-name]',
-          'a[data-tn-element="companyName"]',
-          '[data-testid="jobsearch-CompanyInfoContainer"] a',
-          'meta[property="og:site_name"]',
-        ]);
+          j.title || s.title || pick(['meta[property="og:title"]']) || document.title;
+        const company =
+          j.company || s.company || pick(['meta[property="og:site_name"]']) || "";
+        const locVal = j.location || s.location || "";
+        const is_remote =
+          !!j.is_remote || /\bremote\b/i.test(title) || /\bremote\b/i.test(locVal);
+
         return {
           url: location.href,
-          title: (title || "").slice(0, 300),
-          company: (company || "").slice(0, 200),
+          title: clip(title, 300),
+          company: clip(company, 200),
+          location: clip(locVal, 200),
+          is_remote,
         };
       },
     });
@@ -91,6 +193,8 @@ async function initCapture() {
   const job = await extractJob();
   $("f-title").value = job.title || "";
   $("f-company").value = job.company || "";
+  $("f-location").value = job.location || "";
+  $("f-remote").checked = !!job.is_remote;
   $("f-url").value = job.url || "";
   show("capture");
 }
