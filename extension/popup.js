@@ -49,7 +49,7 @@ async function extractJob() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const fallback = {
     url: tab?.url || "",
-    title: tab?.title || "",
+    title: "",
     company: "",
     location: "",
     is_remote: false,
@@ -163,12 +163,26 @@ async function extractJob() {
           return {};
         };
 
+        // Reject "site chrome" so we never fill garbage like "Job Search | Indeed".
+        const CHROME =
+          /^\s*(job search|indeed|linkedin|glassdoor|ziprecruiter|welcome\b|home\b)/i;
+        const notChrome = (t) => (t && !CHROME.test(t.trim()) ? t.trim() : "");
+        // If the user highlighted text, that's the title they want.
+        const selRaw = (window.getSelection?.().toString() || "").trim();
+        const selTitle =
+          selRaw && selRaw.length >= 2 && selRaw.length <= 150 && !/\n\s*\n/.test(selRaw)
+            ? selRaw
+            : "";
+
         const j = fromJsonLd() || {};
         const s = site();
         const title =
-          j.title || s.title || pick(['meta[property="og:title"]']) || document.title;
-        const company =
-          j.company || s.company || pick(['meta[property="og:site_name"]']) || "";
+          selTitle ||
+          notChrome(j.title) ||
+          notChrome(s.title) ||
+          notChrome(pick(['meta[property="og:title"]']));
+        // Company: only real employer signals — never the job board's own name.
+        const company = j.company || s.company || "";
         const locVal = j.location || s.location || "";
         const is_remote =
           !!j.is_remote || /\bremote\b/i.test(title) || /\bremote\b/i.test(locVal);
@@ -190,13 +204,30 @@ async function extractJob() {
 }
 
 async function initCapture() {
-  const job = await extractJob();
+  // If the user just used "Pick from page", prefer that capture.
+  const { je_capture } = await chrome.storage.local.get("je_capture");
+  const job = je_capture || (await extractJob());
+  if (je_capture) await chrome.storage.local.remove("je_capture");
   $("f-title").value = job.title || "";
   $("f-company").value = job.company || "";
   $("f-location").value = job.location || "";
   $("f-remote").checked = !!job.is_remote;
   $("f-url").value = job.url || "";
   show("capture");
+}
+
+// Inject the on-page picker, then close the popup so the user can click the page.
+async function startPicker() {
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  try {
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["picker.js"],
+    });
+    window.close();
+  } catch {
+    $("save-status").textContent = "Can't pick on this page (try a job page).";
+  }
 }
 
 // --- Save to the tracker ---
@@ -264,5 +295,6 @@ document.addEventListener("DOMContentLoaded", async () => {
     }
   });
 
+  $("pick-btn").addEventListener("click", startPicker);
   $("signout").addEventListener("click", signOut);
 });
