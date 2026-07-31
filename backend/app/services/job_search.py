@@ -155,7 +155,7 @@ async def aggregate_and_deduplicate(
     job_type: str | None = None,
     page: int = 1,
     page_size: int = 20,
-    sources: frozenset[str] = frozenset({"adzuna", "jsearch"}),
+    sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive"}),
 ) -> JobSearchResponse:
     """Fetch the selected sources in parallel, deduplicate, persist, return page.
 

@@ -7,10 +7,12 @@ registry below — nothing else in the codebase needs to change.
 from app.services.sources.adzuna import AdzunaSource
 from app.services.sources.base import JobSource, parse_dt
 from app.services.sources.jsearch import JSearchSource
+from app.services.sources.remotive import RemotiveSource
 
 #: All available source adapters, keyed by their stable ``name``.
 _REGISTRY: dict[str, JobSource] = {
-    source.name: source for source in (AdzunaSource(), JSearchSource())
+    source.name: source
+    for source in (AdzunaSource(), JSearchSource(), RemotiveSource())
 }
 
 

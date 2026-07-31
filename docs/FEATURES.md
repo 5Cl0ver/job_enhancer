@@ -144,10 +144,11 @@ The plan to get broad, real listings for many users on $0. Full design in
 
 | Piece | Status |
 |---|---|
+| Pluggable source-adapter pattern (`services/sources/`) | ✅ |
+| Remotive adapter (free, keyless remote jobs) | ✅ |
 | Adzuna adapter | 🟡 (coded; needs real key) |
 | JSearch adapter (Google-for-Jobs) | 🟡 (coded; 200/mo — reserve for scheduled/deep search) |
-| Additional free sources (Jooble, The Muse, USAJobs, remote boards) | 🔜 |
-| Pluggable source-adapter pattern | 🔜 |
+| Additional free sources (Jooble, The Muse, USAJobs) | 🔜 |
 | Scheduled ingestion → shared DB pool → search-from-DB (cache) | 🔜 |
 | Hacker News "Who's Hiring" source (unique) | 🔜 |
 | Source-coverage transparency in UI | 🔜 |
