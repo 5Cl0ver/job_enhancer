@@ -52,7 +52,7 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="refresh_saved_searches",
         replace_existing=True,
     )
-    from app.services.job_search import mark_expired_listings
+    from app.services.job_search import ingest_curated_jobs, mark_expired_listings
 
     scheduler.add_job(
         mark_expired_listings,
@@ -60,6 +60,14 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         hours=24,
         args=[AsyncSessionLocal],
         id="mark_expired_listings",
+        replace_existing=True,
+    )
+    scheduler.add_job(
+        ingest_curated_jobs,
+        trigger="interval",
+        hours=6,
+        args=[AsyncSessionLocal],
+        id="ingest_curated_jobs",
         replace_existing=True,
     )
     scheduler.start()

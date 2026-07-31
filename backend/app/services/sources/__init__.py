@@ -8,11 +8,20 @@ from app.services.sources.adzuna import AdzunaSource
 from app.services.sources.base import JobSource, parse_dt
 from app.services.sources.jsearch import JSearchSource
 from app.services.sources.remotive import RemotiveSource
+from app.services.sources.themuse import TheMuseSource
 
 #: All available source adapters, keyed by their stable ``name``.
+#: NOTE: keyword-searchable sources (adzuna, jsearch, remotive) are used by live
+#: search; feed sources (themuse) have no keyword search and are driven only by
+#: scheduled ingestion — see job_search.ingest_curated_jobs.
 _REGISTRY: dict[str, JobSource] = {
     source.name: source
-    for source in (AdzunaSource(), JSearchSource(), RemotiveSource())
+    for source in (
+        AdzunaSource(),
+        JSearchSource(),
+        RemotiveSource(),
+        TheMuseSource(),
+    )
 }
 
 

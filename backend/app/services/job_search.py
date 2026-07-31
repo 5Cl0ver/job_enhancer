@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import Select, select
+from sqlalchemy import Select, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -193,8 +193,6 @@ async def aggregate_and_deduplicate(
         job_type=job_type,
     )
 
-    from sqlalchemy import func
-
     count_stmt = stmt.with_only_columns(func.count()).order_by(None)
     total = (await db.scalar(count_stmt)) or 0
 
@@ -216,6 +214,77 @@ async def aggregate_and_deduplicate(
             total_pages=total_pages,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Scheduled background ingestion (populate the pool off the request path)
+# ---------------------------------------------------------------------------
+
+#: Common searches used to keep the pool broadly populated (keyword sources).
+CURATED_QUERIES = [
+    "software engineer",
+    "frontend developer",
+    "backend developer",
+    "full stack developer",
+    "data scientist",
+    "data analyst",
+    "product manager",
+    "product designer",
+    "devops engineer",
+    "marketing manager",
+]
+
+#: Keyword-searchable sources run per curated query. JSearch is excluded — its
+#: ~200/month free quota is too small for a scheduled fan-out.
+_INGEST_QUERY_SOURCES = frozenset({"adzuna", "remotive"})
+
+#: Feed sources (no keyword search) fetched once per run.
+_INGEST_FEED_SOURCES = frozenset({"themuse"})
+
+
+async def ingest_curated_jobs(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Populate the shared job pool in the background (cache-first search).
+
+    Runs each curated query through the keyword sources and pulls the feed
+    sources once, deduplicating everything into ``job_listings``. This moves API
+    fetching OFF the user's request path so searches read a fast, pre-populated
+    DB. Runs on a schedule via APScheduler; see docs/job-data-architecture.md.
+    """
+    query_sources = get_sources(_INGEST_QUERY_SOURCES)
+    feed_sources = get_sources(_INGEST_FEED_SOURCES)
+
+    async with session_factory() as db, httpx.AsyncClient() as client:
+        before = await db.scalar(select(func.count()).select_from(JobListing)) or 0
+
+        # Keyword sources: one pass per curated query
+        for query in CURATED_QUERIES:
+            if not query_sources:
+                break
+            raw_lists = await asyncio.gather(
+                *(s.fetch(client, query, None, 1, 50) for s in query_sources)
+            )
+            for source, raw_list in zip(query_sources, raw_lists, strict=True):
+                for raw in raw_list:
+                    item = source.parse(raw)
+                    if item:
+                        await _upsert_listing(db, item)
+            await db.commit()
+
+        # Feed sources: fetched once (query is ignored by these sources)
+        for source in feed_sources:
+            for raw in await source.fetch(client, "", None, 1, 50):
+                item = source.parse(raw)
+                if item:
+                    await _upsert_listing(db, item)
+            await db.commit()
+
+        after = await db.scalar(select(func.count()).select_from(JobListing)) or 0
+
+    new_count = after - before
+    logger.info("Curated ingest: %d new listing(s) added (pool now %d)", new_count, after)
+    return new_count
 
 
 # ---------------------------------------------------------------------------

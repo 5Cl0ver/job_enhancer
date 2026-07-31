@@ -14,7 +14,9 @@ one real job becomes one row no matter how many sources surface it.
 See docs/job-data-architecture.md for the bigger picture.
 """
 
+import html as html_lib
 import logging
+import re
 from abc import ABC, abstractmethod
 from datetime import datetime
 from typing import Any
@@ -26,6 +28,9 @@ logger = logging.getLogger(__name__)
 #: Shared HTTP timeout for all source fetches (seconds).
 HTTP_TIMEOUT = 10.0
 
+_TAG_RE = re.compile(r"<[^>]+>")
+_WS_RE = re.compile(r"\s+")
+
 
 def parse_dt(value: str | None) -> datetime | None:
     """Parse an ISO-8601 timestamp, tolerant of a trailing ``Z``."""
@@ -35,6 +40,12 @@ def parse_dt(value: str | None) -> datetime | None:
         return datetime.fromisoformat(value.replace("Z", "+00:00"))
     except (ValueError, AttributeError):
         return None
+
+
+def strip_html(raw_html: str) -> str:
+    """Turn an HTML description into a clean plain-text snippet."""
+    text = _TAG_RE.sub(" ", raw_html)
+    return _WS_RE.sub(" ", html_lib.unescape(text)).strip()
 
 
 class JobSource(ABC):
