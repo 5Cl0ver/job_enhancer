@@ -2,7 +2,12 @@
  * TanStack Query hooks for job search and individual job lookup.
  */
 
-import { useQuery, keepPreviousData } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { JobListing, JobSearchResponse } from "@/types/api";
 
@@ -16,6 +21,7 @@ export interface JobSearchParams {
   job_type?: string;
   page?: number;
   page_size?: number;
+  refresh?: boolean;
 }
 
 function buildSearchUrl(params: JobSearchParams): string {
@@ -29,6 +35,7 @@ function buildSearchUrl(params: JobSearchParams): string {
   if (params.job_type) qs.set("job_type", params.job_type);
   qs.set("page", String(params.page ?? 1));
   qs.set("page_size", String(params.page_size ?? 20));
+  if (params.refresh) qs.set("refresh", "true");
   return `/v1/jobs/?${qs.toString()}`;
 }
 
@@ -40,6 +47,17 @@ export function useJobSearch(params: JobSearchParams, enabled = true) {
     enabled: enabled && params.q.trim().length > 0,
     placeholderData: keepPreviousData,
     staleTime: 60_000, // 1 min — job listings don't change that fast
+  });
+}
+
+/** Force a live fetch from external sources, then refresh the cached results. */
+export function useRefreshSearch() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (params: JobSearchParams) =>
+      api.get<JobSearchResponse>(buildSearchUrl({ ...params, refresh: true })),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["jobs", "search"] }),
   });
 }
 

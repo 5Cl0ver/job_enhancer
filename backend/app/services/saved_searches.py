@@ -186,7 +186,8 @@ async def refresh_saved_searches(
                     job_type=search.job_type,
                     page=1,
                     page_size=20,
-                    sources=frozenset({"adzuna"}),
+                    refresh=True,  # scheduled refresh must actually fetch live
+                    sources=frozenset({"adzuna", "remotive", "jobicy"}),
                 )
                 search.last_run_at = datetime.now(UTC)
                 refreshed += 1

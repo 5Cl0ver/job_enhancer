@@ -153,7 +153,7 @@ The plan to get broad, real listings for many users on $0. Full design in
 | JSearch adapter (Google-for-Jobs) | 🟡 (coded; 200/mo — reserve for scheduled/deep search) |
 | Additional free sources (Jooble, USAJobs) | 🔜 |
 | Scheduled background ingestion into the pool (`ingest_curated_jobs`, every 6h) | ✅ |
-| Cache-first search (read the DB only; live fetch behind a refresh) | 🔜 (search still fetches live too) |
+| Cache-first search (DB-first; live fetch on "Refresh" or empty pool) | ✅ |
 | Hacker News "Who's Hiring" source (unique) | 🔜 |
 | Source-coverage transparency in UI | 🔜 |
 | Listing freshness / expiry | 🟡 (`is_expired` + daily job exists) |

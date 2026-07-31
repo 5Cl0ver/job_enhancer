@@ -144,45 +144,43 @@ def build_listing_query(
 # ---------------------------------------------------------------------------
 
 
-async def aggregate_and_deduplicate(
+async def _ingest_live(
     db: AsyncSession,
     q: str,
-    location: str | None = None,
-    remote_only: bool = False,
-    salary_min: int | None = None,
-    salary_max: int | None = None,
-    experience: str | None = None,
-    job_type: str | None = None,
-    page: int = 1,
-    page_size: int = 20,
-    sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive", "jobicy"}),
-) -> JobSearchResponse:
-    """Fetch the selected sources in parallel, deduplicate, persist, return page.
-
-    `sources` names which adapters to hit (see ``app/services/sources/``); e.g.
-    scheduled refreshes can stay Adzuna-only to respect the JSearch monthly quota.
-    """
+    location: str | None,
+    page: int,
+    page_size: int,
+    sources: frozenset[str],
+) -> None:
+    """Fetch the selected sources in parallel and upsert them into the pool."""
     active = get_sources(sources)
-
+    if not active:
+        return
     async with httpx.AsyncClient() as client:
         raw_lists = await asyncio.gather(
             *(source.fetch(client, q, location, page, page_size) for source in active)
         )
-
-    # Parse each source's raw records into our internal shape
-    parsed: list[dict[str, Any]] = []
     for source, raw_list in zip(active, raw_lists, strict=True):
         for raw in raw_list:
             item = source.parse(raw)
             if item:
-                parsed.append(item)
-
-    # Persist new listings (duplicates silently skipped)
-    for item in parsed:
-        await _upsert_listing(db, item)
+                await _upsert_listing(db, item)
     await db.commit()
 
-    # Query the DB with filters for the requested page
+
+async def _query_page(
+    db: AsyncSession,
+    q: str,
+    location: str | None,
+    remote_only: bool,
+    salary_min: int | None,
+    salary_max: int | None,
+    experience: str | None,
+    job_type: str | None,
+    page: int,
+    page_size: int,
+) -> JobSearchResponse:
+    """Filtered, paginated read from the shared pool (newest first)."""
     stmt = build_listing_query(
         q=q,
         location=location,
@@ -214,6 +212,40 @@ async def aggregate_and_deduplicate(
             total_pages=total_pages,
         ),
     )
+
+
+async def aggregate_and_deduplicate(
+    db: AsyncSession,
+    q: str,
+    location: str | None = None,
+    remote_only: bool = False,
+    salary_min: int | None = None,
+    salary_max: int | None = None,
+    experience: str | None = None,
+    job_type: str | None = None,
+    page: int = 1,
+    page_size: int = 20,
+    refresh: bool = False,
+    sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive", "jobicy"}),
+) -> JobSearchResponse:
+    """Cache-first job search.
+
+    Reads from the shared pool (fast). Fetches live from external sources ONLY
+    when ``refresh`` is requested or the pool has nothing for this query — keeping
+    the request path fast and reserving API budgets for scheduled ingestion.
+    See docs/job-data-architecture.md.
+    """
+    result = await _query_page(
+        db, q, location, remote_only, salary_min, salary_max,
+        experience, job_type, page, page_size,
+    )
+    if refresh or result.meta.total == 0:
+        await _ingest_live(db, q, location, page, page_size, sources)
+        result = await _query_page(
+            db, q, location, remote_only, salary_min, salary_max,
+            experience, job_type, page, page_size,
+        )
+    return result
 
 
 # ---------------------------------------------------------------------------
