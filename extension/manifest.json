@@ -4,10 +4,7 @@
   "version": "0.2.0",
   "description": "Save jobs from any site to your Job Enhancer tracker — a side panel plus one-click Save buttons on job cards.",
   "permissions": ["sidePanel", "storage", "scripting", "activeTab"],
-  "host_permissions": [
-    "http://localhost:8000/*",
-    "https://gzdjlqcvcurcjetzzxbw.supabase.co/*"
-  ],
+  "host_permissions": ["http://*/*", "https://*/*"],
   "background": { "service_worker": "background.js" },
   "action": {
     "default_title": "Open Job Enhancer",
