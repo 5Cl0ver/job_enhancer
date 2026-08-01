@@ -1,7 +1,7 @@
 """SavedJob ORM model — user's saved job with tracking state."""
 
 import uuid
-from datetime import datetime
+from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean,
@@ -44,7 +44,14 @@ class SavedJob(Base):
     notes: Mapped[str | None] = mapped_column(Text)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_stage_change: Mapped[datetime] = mapped_column(
-        DateTime(timezone=True), nullable=False, server_default=func.now()
+        DateTime(timezone=True),
+        nullable=False,
+        # Client-side default too (not just server_default): the live Postgres
+        # column was created without a DB default, so relying on the server to
+        # fill it inserted NULL and violated NOT NULL. Sending the value from
+        # the ORM makes saves work regardless of DB-schema drift.
+        default=lambda: datetime.now(timezone.utc),
+        server_default=func.now(),
     )
     follow_up_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)

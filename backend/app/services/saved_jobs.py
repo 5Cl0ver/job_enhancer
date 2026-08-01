@@ -6,6 +6,7 @@ from datetime import UTC
 
 from fastapi import HTTPException
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -55,8 +56,18 @@ async def save_job(
     db.add(sj)
     try:
         await db.flush()
-    except Exception:
-        raise HTTPException(status_code=409, detail="Job already saved") from None
+    except IntegrityError as e:
+        # Only a real duplicate (the user↔listing unique constraint) is a 409.
+        # Any other integrity error is a genuine bug — don't disguise it as
+        # "already saved" (that masked a NOT NULL violation for a long time).
+        # Match on both Postgres (constraint name) and SQLite (column list).
+        orig = str(getattr(e, "orig", e)).lower()
+        is_duplicate = "uq_saved_job_user_listing" in orig or (
+            "unique" in orig and "job_listing_id" in orig
+        )
+        if is_duplicate:
+            raise HTTPException(status_code=409, detail="Job already saved") from None
+        raise
     # Reload with relationship
     return await get_saved_job(db, sj.id, user_id)
 
