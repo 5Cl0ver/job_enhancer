@@ -130,10 +130,12 @@ Browser ──(Supabase session JWT as Bearer)──▶ FastAPI backend ──�
 
 ---
 
-## 9. Browser Extension — 🟡 (v1 built)
-- **v1 "Job Catcher":** ✅ built (`extension/`, Chrome MV3, **Side Panel** architecture). Two capture paths: **"+ Save" buttons injected onto job cards** (Indeed/LinkedIn/Glassdoor) and a persistent **side panel** with a universal **Pick from page** (click any element to capture — never closes when you click the page). A background service worker handles Supabase login + token refresh + saving via `POST /v1/saved-jobs/manual` (no backend changes). Load-unpacked (see extension/README.md).
+## 9. Browser Extension — 🟡 (v1, test-backed rebuild)
+- **v1 "Job Catcher":** ✅ built (`extension/`, Chrome MV3, **Side Panel** architecture). Capture is a **pure, unit-tested** function — `extractJob(document, url)` — that tries **schema.org `JobPosting` JSON-LD** first (standardized across most boards), then **per-site selectors** (Indeed/LinkedIn detail pages), then a generic `og:title` fallback. Two entry points share that tested code: a single **Save button** injected on Indeed/LinkedIn job pages, and the side panel's **Capture this page** / **Pick manually**. A background service worker handles Supabase login + token refresh + saving via `POST /v1/saved-jobs/manual` (no backend changes).
+- **Testing:** Vitest unit tests over saved HTML fixtures (no browser needed) + a Playwright MV3 integration test that loads the built extension in real Chromium and asserts capture → `chrome.storage`. `npm run check`. This is what makes the extension reliable instead of guess-and-check.
+- **Build:** esbuild bundles `src/*.entry.js` → `dist/` (`npm run build`); load-unpacked (see extension/README.md).
 - **v2 Auto-fill:** 🔜 fill application forms from your profile + generated docs; never auto-submits.
-- **Status:** v1 built; v2 planned (spec.md US7, FR-022–023).
+- **Status:** v1 rebuilt on the detail-page + JSON-LD pattern with a real test harness; v2 planned (spec.md US7, FR-022–023).
 
 ---
 

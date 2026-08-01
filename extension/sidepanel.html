@@ -80,12 +80,16 @@
     <!-- Capture -->
     <div id="capture-view" hidden>
       <p class="sub">
-        On Indeed/LinkedIn/Glassdoor, use the <b>+ Save</b> buttons on each card.
-        Anywhere else, click <b>Pick from page</b> then click the job title.
+        On a job page, click <b>Capture this page</b> — it reads the title,
+        company, and location for you. On Indeed/LinkedIn there's also a green
+        <b>Save</b> button on the page itself.
       </p>
-      <button id="pick-btn" class="primary">🎯 Pick from page</button>
+      <button id="capture-btn" class="primary">📋 Capture this page</button>
+      <button id="pick-btn" class="ghost" style="margin-top: 8px">
+        🎯 Pick manually
+      </button>
 
-      <div class="divider">or add manually</div>
+      <div class="divider">review &amp; save</div>
       <form id="save-form">
         <label for="f-title">Title</label>
         <input id="f-title" type="text" required />

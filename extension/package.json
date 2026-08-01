@@ -1,0 +1,21 @@
+{
+  "name": "job-enhancer-extension",
+  "version": "0.3.0",
+  "private": true,
+  "description": "Job Enhancer browser extension — Job Catcher (Chrome MV3).",
+  "type": "module",
+  "scripts": {
+    "build": "node build.mjs",
+    "dev": "node build.mjs --watch",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "test:e2e": "playwright test",
+    "check": "npm run build && npm run test"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.48.0",
+    "esbuild": "^0.24.0",
+    "happy-dom": "^15.11.0",
+    "vitest": "^2.1.0"
+  }
+}

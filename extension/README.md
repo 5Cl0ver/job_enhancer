@@ -2,35 +2,70 @@
 
 Save jobs from any site to your Job Enhancer tracker — **two ways**:
 
-- **"+ Save" buttons** appear right on job cards (Indeed / LinkedIn / Glassdoor) —
-  one click saves that job.
-- **Side panel** (toolbar icon) — a sidebar that **stays open** while you browse.
-  Use **Pick from page** to grab a job from *any* other site, review, and save.
-  It also lists what you've saved this session and links to your tracker.
+- **On Indeed / LinkedIn:** a green **Save to Job Enhancer** button sits on the job
+  page. One click reads the title, company, and location and saves it.
+- **Anywhere else:** open the **side panel** (toolbar icon) and click **Capture this
+  page** — it reads the job for you — or **Pick manually** to click the exact element.
+  The panel stays open while you browse and links to your tracker.
 
-Chromium (Chrome / Edge / Brave), Manifest V3, plain HTML/JS — no build step.
+Chromium (Chrome / Edge / Brave), Manifest V3.
 
-## Install (developer mode)
+## How capture works (the important part)
 
-1. Copy `config.example.js` → `config.js` and fill in your values (all public).
-2. Make sure your backend is running (`localhost:8000`).
-3. `chrome://extensions` → **Developer mode** on → **Load unpacked** → select this
-   `extension/` folder → pin the icon.
+Extraction is a **pure function** — `extractJob(document, url)` in
+[`src/extract/`](src/extract/) — that tries, in order:
+
+1. **schema.org `JobPosting` JSON-LD** — a standardized block most boards embed
+   (Indeed, LinkedIn, Glassdoor, Greenhouse, Lever, Workday…). Stable, not brittle.
+2. **Per-site selectors** — Indeed / LinkedIn detail-page headers, used only when
+   JSON-LD is missing.
+3. **Generic `og:title` / `h1`** — a conservative title for any other site.
+
+Because it's a pure function, it's **unit-tested against saved HTML fixtures** — we
+prove capture works without a browser and without hitting live job boards. The same
+tested code runs in the on-page button *and* the side panel, so green tests mean real
+capture works.
+
+## Setup
+
+```bash
+cd extension
+npm install
+npm run build      # bundles src/ → dist/ (needed once; re-run after editing src/extract)
+cp config.example.js config.js   # fill in your public Supabase + API values
+```
+
+Then load it: `chrome://extensions` → **Developer mode** on → **Load unpacked** →
+select this `extension/` folder → pin the icon. Make sure the backend is running
+(`localhost:8000`).
 
 ## Use
 
-1. Click the toolbar icon to open the **side panel**, and **sign in once**.
-2. **On Indeed / LinkedIn / Glassdoor:** click the green **+ Save** on any job card.
-3. **Anywhere else:** in the panel, click **Pick from page** → click the job title
-   on the page → it fills the panel instantly → **Save to tracker**.
-4. Open your tracker anytime from the panel footer.
+1. Click the toolbar icon → **side panel** → **sign in once**.
+2. **On Indeed / LinkedIn:** click the green **Save to Job Enhancer** button on a job.
+3. **Anywhere else:** in the panel, **Capture this page** (or **Pick manually**) →
+   review the pre-filled form → **Save to tracker**.
+4. Open your tracker from the panel footer anytime.
+
+## Testing
+
+```bash
+npm test          # vitest — extractor unit tests against fixtures (fast, no browser)
+npm run test:e2e  # playwright — loads the built extension in real Chromium
+npm run check     # build + unit tests
+```
+
+- **Unit tests** ([`test/extract.spec.js`](test/extract.spec.js)) cover every
+  extraction path. To lock a selector against reality, save a real job page's HTML
+  into [`test/fixtures/`](test/fixtures/) and add a test pointing at it.
+- **E2E** ([`e2e/extension.spec.js`](e2e/extension.spec.js)) loads the extension,
+  injects the capture bundle, and asserts it stores the parsed job — MV3 needs a
+  headed/persistent context (or `xvfb` in CI).
 
 ## Notes
 
 - It **never submits** applications — it only saves jobs you choose.
-- Card selectors are best-effort per site; if a button doesn't appear or grabs the
-  wrong data, use **Pick from page** (works on any site). Per-site parsing improves
-  over time — tell us the URL and we add a parser.
-- **When you deploy:** set the production `API_BASE`/`APP_URL` in `config.js`, add
-  the production API to `host_permissions` in [manifest.json](manifest.json), then
+- If a site isn't parsed well, use **Capture this page** / **Pick manually** and edit
+  the form. Add a fixture + test and we tighten the parser.
+- **When you deploy:** set the production `API_BASE` / `APP_URL` in `config.js`, then
   publish to the **Chrome Web Store** for one-click install (no developer mode).

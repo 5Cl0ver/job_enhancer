@@ -53,20 +53,30 @@ async function refreshStatus() {
   show(res?.signedIn ? "capture" : "login");
 }
 
-async function startPicker() {
+// Inject a small script into the active tab and surface a friendly error if the
+// page can't be scripted (chrome:// pages, the Web Store, PDF viewer, etc.).
+async function injectIntoActiveTab(file, workingMsg) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   const status = $("save-status");
-  try {
-    await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      files: ["picker.js"],
-    });
+  if (!tab?.id || /^(chrome|edge|about|chrome-extension):/.test(tab.url || "")) {
     status.className = "status";
-    status.textContent = "Now click the job title on the page…";
-  } catch {
-    status.textContent = "Can't pick on this page.";
+    status.textContent = "Open a real job page first, then try again.";
+    return;
+  }
+  try {
+    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [file] });
+    status.className = "status";
+    status.textContent = workingMsg;
+  } catch (e) {
+    status.className = "status";
+    status.textContent = "Can't run on this page (the site may block it).";
   }
 }
+
+// Primary path: auto-read the current page with the shared extractor.
+const captureThisPage = () => injectIntoActiveTab("dist/capture.js", "Reading this page…");
+// Fallback: let the user click the exact element to capture.
+const startPicker = () => injectIntoActiveTab("picker.js", "Now click the job title on the page…");
 
 document.addEventListener("DOMContentLoaded", () => {
   refreshStatus();
@@ -86,6 +96,7 @@ document.addEventListener("DOMContentLoaded", () => {
     else $("login-error").textContent = res?.error || "Sign-in failed";
   });
 
+  $("capture-btn").addEventListener("click", captureThisPage);
   $("pick-btn").addEventListener("click", startPicker);
 
   $("save-form").addEventListener("submit", async (e) => {
@@ -125,18 +136,25 @@ document.addEventListener("DOMContentLoaded", () => {
   });
 });
 
-// "Pick from page" stashes the capture in storage — fill the form the moment it lands.
+// "Capture this page" / "Pick manually" stash the result in storage — fill the
+// form the moment it lands, whichever path produced it.
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.je_capture?.newValue) {
-    fillForm(changes.je_capture.newValue);
+    const job = changes.je_capture.newValue;
+    fillForm(job);
     chrome.storage.local.remove("je_capture");
     const status = $("save-status");
-    status.className = "status ok";
-    status.textContent = "Captured — review and save.";
+    if (job.title) {
+      status.className = "status ok";
+      status.textContent = "Captured — review and save.";
+    } else {
+      status.className = "status";
+      status.textContent = "Couldn't read a title — fill it in or try Pick manually.";
+    }
   }
 });
 
-// On-page "+ Save" card buttons save via the background, which pings us to update the list.
+// The on-page green "Save" button saves via the background, which pings us to update the list.
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg?.type === "jobSaved" && msg.job) addSaved(msg.job);
 });

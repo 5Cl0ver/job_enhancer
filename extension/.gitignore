@@ -1,0 +1,6 @@
+# Extension tooling — build artifacts (dist/) ARE committed so the extension
+# loads unpacked with no build step; everything else here is local-only.
+node_modules/
+test-results/
+playwright-report/
+.playwright/
