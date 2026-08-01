@@ -131,7 +131,7 @@ Browser ──(Supabase session JWT as Bearer)──▶ FastAPI backend ──�
 ---
 
 ## 9. Browser Extension — 🟡 (v1 built)
-- **v1 "Job Catcher":** ✅ built (`extension/`, Chrome MV3). One-click capture of the posting you're viewing (LinkedIn/Indeed/Glassdoor/any site) into your tracker — the legal way to pull walled-garden jobs (user captures publicly-shown data). Reads title/company/URL via `chrome.scripting`, signs in with Supabase, saves via `POST /v1/saved-jobs/manual`. No backend changes needed. Load-unpacked (see extension/README.md).
+- **v1 "Job Catcher":** ✅ built (`extension/`, Chrome MV3, **Side Panel** architecture). Two capture paths: **"+ Save" buttons injected onto job cards** (Indeed/LinkedIn/Glassdoor) and a persistent **side panel** with a universal **Pick from page** (click any element to capture — never closes when you click the page). A background service worker handles Supabase login + token refresh + saving via `POST /v1/saved-jobs/manual` (no backend changes). Load-unpacked (see extension/README.md).
 - **v2 Auto-fill:** 🔜 fill application forms from your profile + generated docs; never auto-submits.
 - **Status:** v1 built; v2 planned (spec.md US7, FR-022–023).
 

@@ -83,7 +83,7 @@
       },
     });
 
-    hint.textContent = "✓ Captured — click the Job Enhancer icon to save.";
+    hint.textContent = "✓ Captured — review & save it in the side panel.";
     hint.style.background = "#16a34a";
     overlay.remove();
     document.removeEventListener("mousemove", onMove, true);

@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <style>
+      :root { color-scheme: light dark; }
+      * { box-sizing: border-box; }
+      body {
+        font-family: system-ui, -apple-system, sans-serif;
+        margin: 0; padding: 14px; font-size: 14px;
+        display: flex; flex-direction: column; min-height: 100vh;
+      }
+      header { display: flex; align-items: center; gap: 8px; margin-bottom: 10px; }
+      header .dot {
+        width: 22px; height: 22px; border-radius: 6px; background: #16a34a;
+        display: inline-flex; align-items: center; justify-content: center;
+        color: #fff; font-weight: 800; font-size: 12px;
+      }
+      header b { font-size: 15px; }
+      .sub { color: #6b7280; font-size: 12px; margin: 0 0 12px; }
+      label { display: block; margin: 8px 0 2px; font-size: 12px; font-weight: 600; }
+      input[type="text"], input[type="email"], input[type="password"] {
+        width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;
+        border-radius: 8px; font-size: 13px; background: transparent; color: inherit;
+      }
+      .row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
+      .row label { margin: 0; font-weight: 400; }
+      button { font-family: inherit; cursor: pointer; }
+      button.primary {
+        width: 100%; margin-top: 12px; padding: 10px; border: 0; border-radius: 9px;
+        background: #16a34a; color: #fff; font-weight: 700; font-size: 14px;
+      }
+      button.dark { background: #111827; }
+      button.primary:disabled { opacity: .6; cursor: default; }
+      button.ghost {
+        width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px;
+        background: transparent; color: inherit; font-weight: 600; font-size: 13px;
+      }
+      .divider {
+        display: flex; align-items: center; gap: 8px; color: #9ca3af;
+        font-size: 11px; margin: 14px 0 4px;
+      }
+      .divider::before, .divider::after {
+        content: ""; flex: 1; height: 1px; background: #e5e7eb;
+      }
+      .error { color: #dc2626; font-size: 12px; margin: 8px 0 0; min-height: 14px; }
+      .status { font-size: 12px; margin: 8px 0 0; min-height: 14px; }
+      .status.ok { color: #16a34a; }
+      .saved { margin-top: 16px; }
+      .saved h2 { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+      .saved ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+      .saved li {
+        border: 1px solid #e5e7eb; border-radius: 8px; padding: 7px 9px; font-size: 12px;
+      }
+      .saved li b { display: block; font-size: 13px; }
+      .saved li span { color: #6b7280; }
+      footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
+      .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <span class="dot">JE</span>
+      <b>Job Enhancer</b>
+    </header>
+
+    <!-- Sign-in -->
+    <div id="login-view" hidden>
+      <p class="sub">Sign in once — then save jobs from any tab.</p>
+      <form id="login-form">
+        <label for="l-email">Email</label>
+        <input id="l-email" type="email" required autocomplete="username" />
+        <label for="l-password">Password</label>
+        <input id="l-password" type="password" required autocomplete="current-password" />
+        <button class="primary dark" type="submit">Sign in</button>
+        <p id="login-error" class="error"></p>
+      </form>
+    </div>
+
+    <!-- Capture -->
+    <div id="capture-view" hidden>
+      <p class="sub">
+        On Indeed/LinkedIn/Glassdoor, use the <b>+ Save</b> buttons on each card.
+        Anywhere else, click <b>Pick from page</b> then click the job title.
+      </p>
+      <button id="pick-btn" class="primary">🎯 Pick from page</button>
+
+      <div class="divider">or add manually</div>
+      <form id="save-form">
+        <label for="f-title">Title</label>
+        <input id="f-title" type="text" required />
+        <label for="f-company">Company</label>
+        <input id="f-company" type="text" />
+        <label for="f-location">Location</label>
+        <input id="f-location" type="text" placeholder="Not specified" />
+        <div class="row">
+          <input id="f-remote" type="checkbox" />
+          <label for="f-remote">Remote</label>
+        </div>
+        <input id="f-url" type="hidden" />
+        <button class="primary" type="submit">Save to tracker</button>
+        <p id="save-status" class="status"></p>
+      </form>
+
+      <div class="saved" id="saved-wrap" hidden>
+        <h2>Saved this session</h2>
+        <ul id="saved-list"></ul>
+      </div>
+
+      <footer>
+        <button id="open-app" class="link" type="button">Open my tracker ↗</button>
+        <button id="signout" class="link" type="button">Sign out</button>
+      </footer>
+    </div>
+
+    <script src="config.js"></script>
+    <script src="sidepanel.js"></script>
+  </body>
+</html>

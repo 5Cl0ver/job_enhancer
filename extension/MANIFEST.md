@@ -1,21 +1,23 @@
 # Extension Manifest (`extension/`)
 
-Chrome MV3 **"Job Catcher"** — saves any job page to the tracker in one click.
-Plain HTML/JS, no build step. Product context: [docs/FEATURES.md](../docs/FEATURES.md)
-(Browser Extension); install/use steps: [README.md](README.md).
+Chrome MV3 **"Job Catcher"** — saves jobs to the tracker via **on-page "+ Save"
+buttons** on job cards *and* a persistent **side panel**. Plain HTML/JS, no build.
+Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use: [README.md](README.md).
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | MV3 config: permissions (`activeTab`, `scripting`, `storage`), `host_permissions` (API + Supabase), popup action |
-| `popup.html` | Popup UI — sign-in form + capture form (title/company/location/remote) |
-| `popup.js` | Logic: Supabase login (token in `chrome.storage`); extract the job via `chrome.scripting` (schema.org **JobPosting JSON-LD** first → LinkedIn/Indeed/Glassdoor selectors → generic); `POST /v1/saved-jobs/manual` |
-| `picker.js` | "Pick from page" mode — injected on demand; hover-highlight + click the job title to capture it (+ infer company/location); stashes to storage for the popup |
-| `icons/` | Toolbar/store icons (16/48/128 px) |
-| `config.example.js` | Template for `config.js` |
-| `config.js` | Local config (**gitignored**): `API_BASE`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` (public values) |
+| `manifest.json` | MV3 config: `side_panel` + `background` worker + `content_scripts` (Indeed/LinkedIn/Glassdoor); `permissions` (sidePanel, storage, scripting, activeTab) + `host_permissions`; icons |
+| `background.js` | Service worker — the **only** caller of Supabase Auth + the API. Handles login, **token refresh**, and `saveJob`; broadcasts card saves to the panel. Opens the side panel on toolbar click |
+| `sidepanel.html` / `sidepanel.js` | The persistent side-panel UI: sign-in, **Pick from page**, manual form, "saved this session" list, tracker link. Fills instantly when a pick lands in storage |
+| `content.js` / `content.css` | Injects **"+ Save"** buttons onto job cards (per-site selectors, re-scans SPA feeds); on click, messages the background to save |
+| `picker.js` | "Pick from page" mode — hover-highlight + click any element to capture the job; stashes to storage, which the panel reads live |
+| `config.example.js` / `config.js` | Public client config (`config.js` **gitignored**): `API_BASE`, `APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` |
+| `icons/` | Toolbar/store icons (16/48/128) |
 | `README.md` | Install (load unpacked) + usage |
 
-**How it connects:** signs in against **Supabase Auth** (REST) to get the same
-access token the web app uses, then saves via the backend
-`POST /v1/saved-jobs/manual` (Bearer auth). **No backend changes** — the
-extension's `host_permissions` make its requests privileged (no CORS needed).
+**How it connects:** the **background** worker is the single API caller — it
+verifies via Supabase Auth (with token refresh) and saves via
+`POST /v1/saved-jobs/manual` (Bearer). The **content script** and **side panel**
+both just message the background, so there are no CORS issues and one source of
+truth. A Chrome **Side Panel** (not a popup) means the UI never closes when you
+click the page.

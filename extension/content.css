@@ -1,0 +1,29 @@
+.je-save-btn {
+  position: absolute;
+  top: 8px;
+  right: 8px;
+  z-index: 9999;
+  background: #16a34a;
+  color: #fff;
+  border: 0;
+  border-radius: 7px;
+  padding: 4px 10px;
+  font: 600 12px system-ui, -apple-system, sans-serif;
+  line-height: 1.2;
+  cursor: pointer;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.2);
+  opacity: 0.92;
+}
+.je-save-btn:hover {
+  opacity: 1;
+}
+.je-save-btn:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+.je-save-btn.je-saved {
+  background: #111827;
+}
+.je-save-btn.je-err {
+  background: #dc2626;
+}
