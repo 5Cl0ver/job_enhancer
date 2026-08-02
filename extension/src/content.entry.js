@@ -108,8 +108,15 @@ function makeButton() {
 
 async function onSave(btn) {
   if (btn.dataset.state === "saved" || btn.dataset.state === "busy") return;
-  const job = btn._job;
-  if (!job?.title) return;
+  // Re-extract fresh on click (the open job may have changed since injection).
+  const job = extractJob(document, location.href);
+  btn._job = job;
+  if (!job.title) {
+    // Never a silent dead click — tell the user where to go instead.
+    setState(btn, "error", "Can't read here → use panel Capture");
+    setTimeout(() => setState(btn, "idle", LABEL), 3500);
+    return;
+  }
   setState(btn, "busy", "Saving…");
   const res = await chrome.runtime
     .sendMessage({ type: "saveJob", job })

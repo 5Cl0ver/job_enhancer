@@ -275,8 +275,13 @@
   }
   async function onSave(btn) {
     if (btn.dataset.state === "saved" || btn.dataset.state === "busy") return;
-    const job = btn._job;
-    if (!job?.title) return;
+    const job = extractJob(document, location.href);
+    btn._job = job;
+    if (!job.title) {
+      setState(btn, "error", "Can't read here \u2192 use panel Capture");
+      setTimeout(() => setState(btn, "idle", LABEL), 3500);
+      return;
+    }
     setState(btn, "busy", "Saving\u2026");
     const res = await chrome.runtime.sendMessage({ type: "saveJob", job }).catch(() => ({ ok: false, error: "error" }));
     if (res?.ok) {
