@@ -9,6 +9,8 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.saved_job import (
+    JobSavedCheck,
+    JobSavedResult,
     ManualJobCreate,
     SavedJobCreate,
     SavedJobSchema,
@@ -54,6 +56,18 @@ async def save_manual_job(
     sj = await svc.save_manual_job(db, user.id, data)
     await db.commit()
     return SavedJobSchema.model_validate(sj)
+
+
+@router.post("/check", response_model=JobSavedResult)
+async def check_saved(
+    data: JobSavedCheck,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobSavedResult:
+    """Is this job already in the user's tracker? Used by the extension to show
+    an 'already saved' state before the user clicks."""
+    saved = await svc.is_job_saved(db, user.id, data.title, data.company, data.location)
+    return JobSavedResult(saved=saved)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobSchema)

@@ -77,6 +77,26 @@ async function saveJob(job) {
   return res.json();
 }
 
+// Is this job already in the user's tracker? Lets the on-page button show an
+// "already saved" state before the user clicks. Returns { saved } or, if not
+// signed in, { saved:false, signedIn:false } (a non-error — the page still loads).
+async function checkSaved(job) {
+  const token = await getValidToken();
+  if (!token) return { saved: false, signedIn: false };
+  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/check`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      title: job.title || "",
+      company: job.company || "",
+      location: job.location || "",
+    }),
+  });
+  if (!res.ok) return { saved: false, signedIn: true };
+  const d = await res.json();
+  return { saved: !!d.saved, signedIn: true };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
@@ -95,6 +115,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           "je_email",
         ]);
         sendResponse({ ok: true });
+      } else if (msg.type === "checkSaved") {
+        sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
       } else if (msg.type === "saveJob") {
         const saved = await saveJob(msg.job);
         sendResponse({ ok: true, saved });

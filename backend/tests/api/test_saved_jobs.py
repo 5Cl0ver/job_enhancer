@@ -92,6 +92,33 @@ async def test_manual_add_job(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_check_saved_reflects_tracker(client: AsyncClient):
+    """POST /check returns saved=False before saving, True after (extension pre-check)."""
+    job = {
+        "title": "Platform Engineer",
+        "company": "CheckCo",
+        "location": "Remote",
+    }
+    before = await client.post("/v1/saved-jobs/check", json=job)
+    assert before.status_code == 200
+    assert before.json()["saved"] is False
+
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={"url": "https://example.com/checkco/1", "is_remote": True, **job},
+    )
+
+    after = await client.post("/v1/saved-jobs/check", json=job)
+    assert after.json()["saved"] is True
+
+    # A different job is still not saved.
+    other = await client.post(
+        "/v1/saved-jobs/check", json={"title": "Someone Else", "company": "X"}
+    )
+    assert other.json()["saved"] is False
+
+
+@pytest.mark.asyncio
 async def test_manual_add_rejects_non_http_url(client: AsyncClient):
     response = await client.post(
         "/v1/saved-jobs/manual",

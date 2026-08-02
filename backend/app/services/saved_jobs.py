@@ -49,6 +49,31 @@ async def get_saved_job(
     return sj
 
 
+async def is_job_saved(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    title: str,
+    company: str = "",
+    location: str = "",
+) -> bool:
+    """Has this user already saved this job? Matches by the same content hash
+    used for dedup, so the extension can show "already saved" before a click."""
+    content_hash = job_content_hash(
+        normalize(title), normalize(company), normalize(location)
+    )
+    listing_id = await db.scalar(
+        select(JobListing.id).where(JobListing.content_hash == content_hash)
+    )
+    if listing_id is None:
+        return False
+    saved_id = await db.scalar(
+        select(SavedJob.id).where(
+            SavedJob.user_id == user_id, SavedJob.job_listing_id == listing_id
+        )
+    )
+    return saved_id is not None
+
+
 async def save_job(
     db: AsyncSession, user_id: uuid.UUID, data: SavedJobCreate
 ) -> SavedJob:

@@ -19,7 +19,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | File | Purpose |
 |---|---|
 | `manifest.json` | MV3 config: `side_panel` + `background` worker + `content_scripts` (`dist/content.js` on Indeed/LinkedIn); permissions + `host_permissions` |
-| `src/content.entry.js` → `dist/content.js` | Injects **one** floating `#je-fab` "Save to Job Enhancer" button; runs `extractJob` and messages the background |
+| `src/content.entry.js` → `dist/content.js` | Injects the **Save** button into the Indeed/LinkedIn job header (`#je-save-btn`); re-syncs when you switch jobs; asks the background `checkSaved` to show **blue "✓ Already saved"** proactively; falls back to a floating `#je-fab` if no header is found |
+| `src/inject.js` | Pure DOM helpers (title selectors, `findTitleEl`, `headingFor`) for anchoring the button — unit-tested against fixtures |
 | `src/capture.entry.js` → `dist/capture.js` | Injected on demand by the panel's **Capture this page**; runs `extractJob`, stashes result in `chrome.storage` |
 | `background.js` | Service worker — the **only** caller of Supabase Auth + the API. Login, **token refresh**, `saveJob`; broadcasts saves to the panel |
 | `sidepanel.html` / `sidepanel.js` | Persistent UI: sign-in, **Capture this page**, **Pick manually**, review form, "saved this session", tracker link. Fills the form when a capture lands in storage |

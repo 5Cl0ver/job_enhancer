@@ -2,8 +2,10 @@
 
 Save jobs from any site to your Job Enhancer tracker — **two ways**:
 
-- **On Indeed / LinkedIn:** a green **Save to Job Enhancer** button sits on the job
-  page. One click reads the title, company, and location and saves it.
+- **On Indeed / LinkedIn:** a **Save to Job Enhancer** button appears right in the
+  job's header (next to Apply/Save). One click reads the title, company, and
+  location and saves it. It shows **blue "✓ Already saved"** for jobs already in
+  your tracker — *before* you click — and green for new ones.
 - **Anywhere else:** open the **side panel** (toolbar icon) and click **Capture this
   page** — it reads the job for you — or **Pick manually** to click the exact element.
   The panel stays open while you browse and links to your tracker.

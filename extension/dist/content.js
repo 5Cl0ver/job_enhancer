@@ -161,14 +161,14 @@
 
   // src/extract/index.js
   function siteExtractor(url) {
-    let host = "";
+    let host2 = "";
     try {
-      host = new URL(url).hostname;
+      host2 = new URL(url).hostname;
     } catch {
-      host = "";
+      host2 = "";
     }
-    if (host.includes("indeed.")) return { via: "indeed", fn: extractIndeed };
-    if (host.includes("linkedin.")) return { via: "linkedin", fn: extractLinkedIn };
+    if (host2.includes("indeed.")) return { via: "indeed", fn: extractIndeed };
+    if (host2.includes("linkedin.")) return { via: "linkedin", fn: extractLinkedIn };
     return null;
   }
   function extractJob(doc, url) {
@@ -181,66 +181,159 @@
     return mergeJob(candidates, url);
   }
 
+  // src/inject.js
+  var INDEED_TITLE_SELECTORS = [
+    "h1.jobsearch-JobInfoHeader-title",
+    "[data-testid='jobsearch-JobInfoHeader-title']",
+    "h2[data-testid='jobsearch-JobInfoHeader-title']",
+    "h1 span[title]"
+  ];
+  var LINKEDIN_TITLE_SELECTORS = [
+    ".top-card-layout__title",
+    ".job-details-jobs-unified-top-card__job-title",
+    ".jobs-unified-top-card__job-title",
+    "h1.topcard__title"
+  ];
+  function findTitleEl(doc, selectors) {
+    for (const sel of selectors) {
+      const el = doc.querySelector(sel);
+      if (el && el.textContent.trim()) return el;
+    }
+    return null;
+  }
+  function headingFor(titleEl) {
+    return titleEl.closest("h1, h2") || titleEl;
+  }
+
   // src/content.entry.js
+  var host = location.hostname;
+  var IS_INDEED = /(^|\.)indeed\./i.test(host);
+  var IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
+  var TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELECTORS;
+  var BTN_ID = "je-save-btn";
   var FAB_ID = "je-fab";
-  var SUPPORTED = /(^|\.)(indeed|linkedin)\./i;
-  if (SUPPORTED.test(location.hostname)) init();
-  function init() {
-    if (document.getElementById(FAB_ID)) return;
+  var LABEL = "\uFF0B Save to Job Enhancer";
+  var currentKey = "";
+  if (IS_INDEED || IS_LINKEDIN) {
     injectStyles();
+    sync();
+    let t;
+    new MutationObserver(() => {
+      clearTimeout(t);
+      t = setTimeout(sync, 300);
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+  function findTitleEl2() {
+    return findTitleEl(document, TITLE_SELECTORS);
+  }
+  function keyFor(job) {
+    return `${job.title}|${job.company}`.toLowerCase();
+  }
+  function sync() {
+    const titleEl = findTitleEl2();
+    if (!titleEl) {
+      removeInlineButton();
+      ensureFab();
+      return;
+    }
+    removeFab();
+    const job = extractJob(document, location.href);
+    if (!job.title) return;
+    const key = keyFor(job);
+    let btn = document.getElementById(BTN_ID);
+    const heading = headingFor(titleEl);
+    if (!btn) {
+      btn = makeButton();
+      heading.insertAdjacentElement("afterend", btn);
+    } else if (!heading.parentElement?.contains(btn)) {
+      heading.insertAdjacentElement("afterend", btn);
+    }
+    if (key !== currentKey || !btn.dataset.state) {
+      currentKey = key;
+      btn._job = job;
+      setState(btn, "checking", "Checking\u2026");
+      chrome.runtime.sendMessage({ type: "checkSaved", job }).then((res) => {
+        if (keyFor(job) !== currentKey) return;
+        if (res?.saved) setState(btn, "saved", "\u2713 Already saved");
+        else setState(btn, "idle", LABEL);
+      }).catch(() => setState(btn, "idle", LABEL));
+    } else {
+      btn._job = job;
+    }
+  }
+  function makeButton() {
+    const btn = document.createElement("button");
+    btn.id = BTN_ID;
+    btn.type = "button";
+    btn.className = "je-btn";
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onSave(btn);
+    });
+    return btn;
+  }
+  async function onSave(btn) {
+    if (btn.dataset.state === "saved" || btn.dataset.state === "busy") return;
+    const job = btn._job;
+    if (!job?.title) return;
+    setState(btn, "busy", "Saving\u2026");
+    const res = await chrome.runtime.sendMessage({ type: "saveJob", job }).catch(() => ({ ok: false, error: "error" }));
+    if (res?.ok) {
+      setState(btn, "saved", "\u2713 Saved");
+    } else if (res?.error === "Already in your tracker") {
+      setState(btn, "saved", "\u2713 Already saved");
+    } else if (res?.error === "NOT_SIGNED_IN") {
+      setState(btn, "error", "Open panel & sign in");
+      setTimeout(() => setState(btn, "idle", LABEL), 3e3);
+    } else {
+      setState(btn, "error", (res?.error || "Failed").slice(0, 28));
+      setTimeout(() => setState(btn, "idle", LABEL), 3e3);
+    }
+  }
+  function setState(btn, state, text) {
+    btn.dataset.state = state;
+    btn.textContent = text;
+  }
+  function ensureFab() {
+    if (document.getElementById(FAB_ID)) return;
     const fab = document.createElement("button");
     fab.id = FAB_ID;
     fab.type = "button";
-    setLabel(fab, "\uFF0B Save to Job Enhancer");
+    fab.className = "je-btn je-fab";
+    setState(fab, "idle", LABEL);
     fab.addEventListener("click", () => onSave(fab));
+    fab._job = extractJob(document, location.href);
     document.body.appendChild(fab);
   }
-  function setLabel(fab, text, state) {
-    fab.textContent = text;
-    fab.dataset.state = state || "idle";
+  function removeFab() {
+    document.getElementById(FAB_ID)?.remove();
   }
-  async function onSave(fab) {
-    if (fab.dataset.busy === "1") return;
-    const job = extractJob(document, location.href);
-    if (!job.title) {
-      setLabel(fab, "Open a job first \u2197", "error");
-      reset(fab, "\uFF0B Save to Job Enhancer");
-      return;
-    }
-    fab.dataset.busy = "1";
-    setLabel(fab, "Saving\u2026", "busy");
-    const res = await chrome.runtime.sendMessage({ type: "saveJob", job }).catch(() => ({ ok: false, error: "error" }));
-    fab.dataset.busy = "0";
-    if (res?.ok) {
-      setLabel(fab, "\u2713 Saved", "saved");
-      reset(fab, "\uFF0B Save to Job Enhancer", 2500);
-    } else if (res?.error === "NOT_SIGNED_IN") {
-      setLabel(fab, "Open panel & sign in", "error");
-      reset(fab, "\uFF0B Save to Job Enhancer", 3e3);
-    } else {
-      setLabel(fab, (res?.error || "Failed").slice(0, 24), "error");
-      reset(fab, "\uFF0B Save to Job Enhancer", 3e3);
-    }
-  }
-  function reset(fab, text, delay = 2e3) {
-    setTimeout(() => setLabel(fab, text), delay);
+  function removeInlineButton() {
+    document.getElementById(BTN_ID)?.remove();
+    currentKey = "";
   }
   function injectStyles() {
-    if (document.getElementById("je-fab-style")) return;
+    if (document.getElementById("je-style")) return;
     const style = document.createElement("style");
-    style.id = "je-fab-style";
+    style.id = "je-style";
     style.textContent = `
-    #${FAB_ID} {
-      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
-      padding: 11px 16px; border: 0; border-radius: 999px; cursor: pointer;
+    .je-btn {
+      display: inline-flex; align-items: center; gap: 6px;
+      margin: 10px 0; padding: 9px 15px; border: 0; border-radius: 999px;
       font: 600 14px/1 system-ui, -apple-system, sans-serif; color: #fff;
-      background: #16a34a; box-shadow: 0 6px 20px rgba(0,0,0,.28);
+      background: #16a34a; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
       transition: background .15s, transform .1s;
     }
-    #${FAB_ID}:hover { transform: translateY(-1px); }
-    #${FAB_ID}[data-state="busy"]  { background: #6b7280; cursor: default; }
-    #${FAB_ID}[data-state="saved"] { background: #15803d; }
-    #${FAB_ID}[data-state="error"] { background: #dc2626; }
+    .je-btn:hover { transform: translateY(-1px); }
+    .je-btn[data-state="checking"] { background: #9ca3af; cursor: default; }
+    .je-btn[data-state="busy"]     { background: #6b7280; cursor: default; }
+    .je-btn[data-state="saved"]    { background: #2563eb; cursor: default; }  /* blue */
+    .je-btn[data-state="error"]    { background: #dc2626; }
+    .je-fab {
+      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+      box-shadow: 0 6px 20px rgba(0,0,0,.28);
+    }
   `;
     document.documentElement.appendChild(style);
   }

@@ -33,6 +33,18 @@ class ManualJobCreate(BaseModel):
         return v
 
 
+class JobSavedCheck(BaseModel):
+    """Ask whether a job is already in the user's tracker (extension pre-check)."""
+
+    title: str = Field(min_length=1, max_length=500)
+    company: str = Field(default="", max_length=255)
+    location: str = Field(default="", max_length=255)
+
+
+class JobSavedResult(BaseModel):
+    saved: bool
+
+
 class SavedJobUpdate(BaseModel):
     collection_id: uuid.UUID | None = None
     pipeline_stage_id: uuid.UUID | None = None
