@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { RequireAuth } from "@/routes/RequireAuth";
 import { createClient } from "@/lib/supabase/client";
+import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 
 // The persistent app frame: a sidebar that stays put while the main area
 // (the <Outlet/>) swaps between pages as you navigate. This replaces the
@@ -18,6 +19,9 @@ const NAV = [
 ];
 
 export function DashboardLayout() {
+  // Live-sync saved jobs across the app, the extension, and other tabs.
+  useRealtimeSync();
+
   const handleSignOut = async () => {
     await createClient().auth.signOut();
     window.location.href = "/login";
