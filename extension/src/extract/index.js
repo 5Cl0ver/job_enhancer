@@ -10,6 +10,7 @@
 // This module is PURE (no chrome.* / window globals) so it is unit-tested
 // directly against saved HTML fixtures under test/fixtures/.
 import { extractFromJsonLd } from "./jsonld.js";
+import { extractIndeedEmbedded } from "./indeed-embedded.js";
 import { extractIndeed } from "./indeed.js";
 import { extractLinkedIn } from "./linkedin.js";
 import { extractGeneric } from "./generic.js";
@@ -34,8 +35,23 @@ function siteExtractor(url) {
  * @param {string} url
  * @returns {CapturedJob}  (title may be "" if nothing usable was found)
  */
+function hostOf(url) {
+  try {
+    return new URL(url).hostname;
+  } catch {
+    return "";
+  }
+}
+
 export function extractJob(doc, url) {
   const candidates = [];
+
+  // Indeed's embedded JSON is the most reliable source across its layouts
+  // (search / viewjob / home feed) — try it first on Indeed.
+  if (hostOf(url).includes("indeed.")) {
+    const embedded = extractIndeedEmbedded(doc, url);
+    if (embedded) candidates.push({ via: "indeed-embedded", data: embedded });
+  }
 
   const jsonld = extractFromJsonLd(doc, url);
   if (jsonld) candidates.push({ via: "jsonld", data: jsonld });

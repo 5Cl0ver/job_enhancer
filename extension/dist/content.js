@@ -118,10 +118,9 @@
       url
     };
   }
-  function selectedJobKey(url) {
+  function openCardKey(url) {
     try {
-      const p = new URL(url).searchParams;
-      return p.get("vjk") || p.get("jk");
+      return new URL(url).searchParams.get("vjk");
     } catch {
       return null;
     }
@@ -135,14 +134,14 @@
     } catch {
       return null;
     }
-    const detail = normalizeDetail(b.detail, url);
-    if (detail) return detail;
-    if (Array.isArray(b.cards)) {
-      const jk = selectedJobKey(url);
-      const card = jk ? b.cards.find((c) => c.jobkey === jk) : null;
+    const vjk = openCardKey(url);
+    if (vjk) {
+      const card = Array.isArray(b.cards) ? b.cards.find((c) => c.jobkey === vjk) : null;
       if (card) return normalizeCard(card, url);
+      if (b.detail?.jobKey && b.detail.jobKey === vjk) return normalizeDetail(b.detail, url);
+      return null;
     }
-    return null;
+    return normalizeDetail(b.detail, url);
   }
   function balanced(str, start) {
     let depth = 0, inStr = false, esc = false;
@@ -182,6 +181,16 @@
     return null;
   }
   function fromStatic(doc, url) {
+    const vjk = openCardKey(url);
+    if (vjk) {
+      const results = scanScripts(
+        doc,
+        'mosaic-provider-jobcards"]',
+        (d) => d?.metaData?.mosaicProviderJobCardsModel?.results || null
+      );
+      const card = Array.isArray(results) ? results.find((c) => c.jobkey === vjk) : null;
+      return card ? normalizeCard(card, url) : null;
+    }
     const model = scanScripts(
       doc,
       "_initialData",
@@ -198,16 +207,6 @@
         },
         url
       );
-    }
-    const results = scanScripts(
-      doc,
-      'mosaic-provider-jobcards"]',
-      (d) => d?.metaData?.mosaicProviderJobCardsModel?.results || null
-    );
-    if (Array.isArray(results)) {
-      const jk = selectedJobKey(url);
-      const card = jk ? results.find((c) => c.jobkey === jk) : null;
-      if (card) return normalizeCard(card, url);
     }
     return null;
   }
@@ -345,8 +344,8 @@
   var IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
   var TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELECTORS;
   var BTN_ID = "je-save-btn";
-  var FAB_ID = "je-fab";
   var LABEL = "\uFF0B Save to Job Enhancer";
+  var btn = null;
   var currentKey = "";
   if (IS_INDEED || IS_LINKEDIN) {
     injectStyles();
@@ -356,64 +355,68 @@
       clearTimeout(t);
       t = setTimeout(sync, 300);
     }).observe(document.body, { childList: true, subtree: true });
-  }
-  function findTitleEl2() {
-    return findTitleEl(document, TITLE_SELECTORS);
+    setInterval(sync, 1e3);
   }
   function keyFor(job) {
     return `${job.title}|${job.company}`.toLowerCase();
   }
   function sync() {
-    const titleEl = findTitleEl2();
-    if (!titleEl) {
-      removeInlineButton();
-      ensureFab();
+    const job = extractJob(document, location.href);
+    const titleEl = findTitleEl(document, TITLE_SELECTORS);
+    ensureButton();
+    placeButton(titleEl);
+    btn._job = job;
+    const key = job.title ? keyFor(job) : "";
+    if (!key) {
+      if (currentKey !== "" || !btn.dataset.state) {
+        currentKey = "";
+        setState(btn, "idle", LABEL);
+      }
       return;
     }
-    removeFab();
-    const job = extractJob(document, location.href);
-    if (!job.title) return;
-    const key = keyFor(job);
-    let btn = document.getElementById(BTN_ID);
-    const heading = headingFor(titleEl);
-    if (!btn) {
-      btn = makeButton();
-      heading.insertAdjacentElement("afterend", btn);
-    } else if (!heading.parentElement?.contains(btn)) {
-      heading.insertAdjacentElement("afterend", btn);
-    }
-    if (key !== currentKey || !btn.dataset.state) {
-      currentKey = key;
-      btn._job = job;
-      setState(btn, "checking", "Checking\u2026");
-      chrome.runtime.sendMessage({ type: "checkSaved", job }).then((res) => {
-        if (keyFor(job) !== currentKey) return;
-        if (res?.saved) setState(btn, "saved", "\u2713 Already saved");
-        else setState(btn, "idle", LABEL);
-      }).catch(() => setState(btn, "idle", LABEL));
-    } else {
-      btn._job = job;
-    }
+    if (key === currentKey) return;
+    currentKey = key;
+    setState(btn, "checking", "Checking\u2026");
+    chrome.runtime.sendMessage({ type: "checkSaved", job }).then((res) => {
+      if (!btn || keyFor(btn._job) !== key) return;
+      if (res?.saved) setState(btn, "saved", "\u2713 Already saved");
+      else setState(btn, "idle", LABEL);
+    }).catch(() => btn && setState(btn, "idle", LABEL));
   }
-  function makeButton() {
-    const btn = document.createElement("button");
+  function ensureButton() {
+    if (btn && document.contains(btn)) return;
+    btn = document.getElementById(BTN_ID) || document.createElement("button");
     btn.id = BTN_ID;
     btn.type = "button";
-    btn.className = "je-btn";
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      onSave(btn);
-    });
-    return btn;
+    if (!btn._wired) {
+      btn.className = "je-btn";
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onSave();
+      });
+      btn._wired = true;
+    }
   }
-  async function onSave(btn) {
-    if (btn.dataset.state === "saved" || btn.dataset.state === "busy") return;
+  function placeButton(titleEl) {
+    if (titleEl) {
+      const heading = headingFor(titleEl);
+      if (btn.previousElementSibling !== heading || btn.classList.contains("je-fab")) {
+        btn.classList.remove("je-fab");
+        heading.insertAdjacentElement("afterend", btn);
+      }
+    } else if (!btn.classList.contains("je-fab") || !document.contains(btn)) {
+      btn.classList.add("je-fab");
+      document.body.appendChild(btn);
+    }
+  }
+  async function onSave() {
+    if (!btn || btn.dataset.state === "busy" || btn.dataset.state === "saved") return;
     const job = extractJob(document, location.href);
     btn._job = job;
     if (!job.title) {
       setState(btn, "error", "Can't read here \u2192 use panel Capture");
-      setTimeout(() => setState(btn, "idle", LABEL), 3500);
+      setTimeout(() => btn && setState(btn, "idle", LABEL), 3500);
       return;
     }
     setState(btn, "busy", "Saving\u2026");
@@ -424,33 +427,15 @@
       setState(btn, "saved", "\u2713 Already saved");
     } else if (res?.error === "NOT_SIGNED_IN") {
       setState(btn, "error", "Open panel & sign in");
-      setTimeout(() => setState(btn, "idle", LABEL), 3e3);
+      setTimeout(() => btn && setState(btn, "idle", LABEL), 3e3);
     } else {
       setState(btn, "error", (res?.error || "Failed").slice(0, 28));
-      setTimeout(() => setState(btn, "idle", LABEL), 3e3);
+      setTimeout(() => btn && setState(btn, "idle", LABEL), 3e3);
     }
   }
-  function setState(btn, state, text) {
-    btn.dataset.state = state;
-    btn.textContent = text;
-  }
-  function ensureFab() {
-    if (document.getElementById(FAB_ID)) return;
-    const fab = document.createElement("button");
-    fab.id = FAB_ID;
-    fab.type = "button";
-    fab.className = "je-btn je-fab";
-    setState(fab, "idle", LABEL);
-    fab.addEventListener("click", () => onSave(fab));
-    fab._job = extractJob(document, location.href);
-    document.body.appendChild(fab);
-  }
-  function removeFab() {
-    document.getElementById(FAB_ID)?.remove();
-  }
-  function removeInlineButton() {
-    document.getElementById(BTN_ID)?.remove();
-    currentKey = "";
+  function setState(el, state, text) {
+    el.dataset.state = state;
+    el.textContent = text;
   }
   function injectStyles() {
     if (document.getElementById("je-style")) return;
@@ -462,7 +447,7 @@
       margin: 10px 0; padding: 9px 15px; border: 0; border-radius: 999px;
       font: 600 14px/1 system-ui, -apple-system, sans-serif; color: #fff;
       background: #16a34a; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
-      transition: background .15s, transform .1s;
+      transition: background .15s, transform .1s; z-index: 2147483647;
     }
     .je-btn:hover { transform: translateY(-1px); }
     .je-btn[data-state="checking"] { background: #9ca3af; cursor: default; }
@@ -470,7 +455,7 @@
     .je-btn[data-state="saved"]    { background: #2563eb; cursor: default; }  /* blue */
     .je-btn[data-state="error"]    { background: #dc2626; }
     .je-fab {
-      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+      position: fixed; right: 20px; bottom: 20px;
       box-shadow: 0 6px 20px rgba(0,0,0,.28);
     }
   `;

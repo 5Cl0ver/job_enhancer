@@ -1,16 +1,15 @@
 // Content script for Indeed / LinkedIn job pages.
 //
-// Injects a "Save to Job Enhancer" button INTO THE JOB DETAIL HEADER (right
-// after the job title), so you save from where you're reading. It's anchored to
-// the title element the shared extractor already finds, and it re-syncs when you
-// click a different job (Indeed/LinkedIn swap the detail pane in place).
+// One Save button that stays in sync with the OPEN job:
+//   • Anchored in the job header when we can find the title; otherwise a small
+//     floating button (so there's always a way to save).
+//   • Proactive state — asks the background whether the open job is already saved
+//     and colours BLUE "✓ Already saved" vs GREEN "Save" before you click.
+//   • Re-syncs when you switch jobs in Indeed's list+pane view (the pane updates
+//     and the URL's ?vjk= changes), so the button reflects THIS card, not the last.
 //
-// Proactive state: when a job opens, we ask the background whether it's already
-// in your tracker and colour the button BLUE ("✓ Already saved") before you
-// click — GREEN if it's new. Clicking saves; a duplicate turns blue, an error red.
-//
-// If we can't find a header to anchor to (unusual layout), we fall back to a
-// small floating button so there's always a way to save.
+// Extraction itself is the shared, tested extractJob() (Indeed embedded JSON →
+// JSON-LD → selectors), which identifies the open job strictly by ?vjk=.
 import { extractJob } from "./extract/index.js";
 import {
   INDEED_TITLE_SELECTORS,
@@ -22,14 +21,13 @@ import {
 const host = location.hostname;
 const IS_INDEED = /(^|\.)indeed\./i.test(host);
 const IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
-
-// Same title selectors the extractor uses — a reliable, single anchor point.
 const TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELECTORS;
 
 const BTN_ID = "je-save-btn";
-const FAB_ID = "je-fab";
 const LABEL = "＋ Save to Job Enhancer";
-let currentKey = ""; // identifies the open job so we only re-check when it changes
+
+let btn = null;
+let currentKey = ""; // the open job we've reflected state for (so we only re-check on change)
 
 if (IS_INDEED || IS_LINKEDIN) {
   injectStyles();
@@ -39,82 +37,83 @@ if (IS_INDEED || IS_LINKEDIN) {
     clearTimeout(t);
     t = setTimeout(sync, 300);
   }).observe(document.body, { childList: true, subtree: true });
-}
-
-function findTitleEl() {
-  return findTitle(document, TITLE_SELECTORS);
+  // The pane can swap jobs via history (?vjk=) without a DOM mutation we catch —
+  // a light poll keeps the button honest when you click another card.
+  setInterval(sync, 1000);
 }
 
 function keyFor(job) {
   return `${job.title}|${job.company}`.toLowerCase();
 }
 
-// Runs on load and on every (debounced) DOM change.
 function sync() {
-  const titleEl = findTitleEl();
-  if (!titleEl) {
-    // No job header on this view — offer the floating fallback instead.
-    removeInlineButton();
-    ensureFab();
+  const job = extractJob(document, location.href);
+  const titleEl = findTitle(document, TITLE_SELECTORS);
+
+  ensureButton();
+  placeButton(titleEl);
+  btn._job = job;
+
+  const key = job.title ? keyFor(job) : "";
+  if (!key) {
+    // Couldn't read the open job — reset to a neutral Save (don't keep a stale
+    // "already saved" from a previous card). Clicking will guide to the panel.
+    if (currentKey !== "" || !btn.dataset.state) {
+      currentKey = "";
+      setState(btn, "idle", LABEL);
+    }
     return;
   }
-  removeFab();
+  if (key === currentKey) return; // same job — nothing to re-check
 
-  const job = extractJob(document, location.href);
-  if (!job.title) return;
-  const key = keyFor(job);
-
-  let btn = document.getElementById(BTN_ID);
-  const heading = headingFor(titleEl);
-  if (!btn) {
-    btn = makeButton();
-    heading.insertAdjacentElement("afterend", btn);
-  } else if (!heading.parentElement?.contains(btn)) {
-    // Header re-rendered and dropped our button — re-anchor it.
-    heading.insertAdjacentElement("afterend", btn);
-  }
-
-  // Only (re)check saved-state when the open job actually changes.
-  if (key !== currentKey || !btn.dataset.state) {
-    currentKey = key;
-    btn._job = job;
-    setState(btn, "checking", "Checking…");
-    chrome.runtime
-      .sendMessage({ type: "checkSaved", job })
-      .then((res) => {
-        // Ignore a stale response if the user moved to another job meanwhile.
-        if (keyFor(job) !== currentKey) return;
-        if (res?.saved) setState(btn, "saved", "✓ Already saved");
-        else setState(btn, "idle", LABEL);
-      })
-      .catch(() => setState(btn, "idle", LABEL));
-  } else {
-    btn._job = job; // keep the freshest extraction for the click handler
-  }
+  currentKey = key;
+  setState(btn, "checking", "Checking…");
+  chrome.runtime
+    .sendMessage({ type: "checkSaved", job })
+    .then((res) => {
+      if (!btn || keyFor(btn._job) !== key) return; // moved to another job meanwhile
+      if (res?.saved) setState(btn, "saved", "✓ Already saved");
+      else setState(btn, "idle", LABEL);
+    })
+    .catch(() => btn && setState(btn, "idle", LABEL));
 }
 
-function makeButton() {
-  const btn = document.createElement("button");
+function ensureButton() {
+  if (btn && document.contains(btn)) return;
+  btn = document.getElementById(BTN_ID) || document.createElement("button");
   btn.id = BTN_ID;
   btn.type = "button";
-  btn.className = "je-btn";
-  btn.addEventListener("click", (e) => {
-    e.preventDefault();
-    e.stopPropagation();
-    onSave(btn);
-  });
-  return btn;
+  if (!btn._wired) {
+    btn.className = "je-btn";
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      onSave();
+    });
+    btn._wired = true;
+  }
 }
 
-async function onSave(btn) {
-  if (btn.dataset.state === "saved" || btn.dataset.state === "busy") return;
-  // Re-extract fresh on click (the open job may have changed since injection).
-  const job = extractJob(document, location.href);
+function placeButton(titleEl) {
+  if (titleEl) {
+    const heading = headingFor(titleEl);
+    if (btn.previousElementSibling !== heading || btn.classList.contains("je-fab")) {
+      btn.classList.remove("je-fab");
+      heading.insertAdjacentElement("afterend", btn);
+    }
+  } else if (!btn.classList.contains("je-fab") || !document.contains(btn)) {
+    btn.classList.add("je-fab");
+    document.body.appendChild(btn);
+  }
+}
+
+async function onSave() {
+  if (!btn || btn.dataset.state === "busy" || btn.dataset.state === "saved") return;
+  const job = extractJob(document, location.href); // re-read fresh at click time
   btn._job = job;
   if (!job.title) {
-    // Never a silent dead click — tell the user where to go instead.
     setState(btn, "error", "Can't read here → use panel Capture");
-    setTimeout(() => setState(btn, "idle", LABEL), 3500);
+    setTimeout(() => btn && setState(btn, "idle", LABEL), 3500);
     return;
   }
   setState(btn, "busy", "Saving…");
@@ -128,36 +127,16 @@ async function onSave(btn) {
     setState(btn, "saved", "✓ Already saved");
   } else if (res?.error === "NOT_SIGNED_IN") {
     setState(btn, "error", "Open panel & sign in");
-    setTimeout(() => setState(btn, "idle", LABEL), 3000);
+    setTimeout(() => btn && setState(btn, "idle", LABEL), 3000);
   } else {
     setState(btn, "error", (res?.error || "Failed").slice(0, 28));
-    setTimeout(() => setState(btn, "idle", LABEL), 3000);
+    setTimeout(() => btn && setState(btn, "idle", LABEL), 3000);
   }
 }
 
-function setState(btn, state, text) {
-  btn.dataset.state = state;
-  btn.textContent = text;
-}
-
-// ---- floating fallback (only when there's no header to anchor to) ----
-function ensureFab() {
-  if (document.getElementById(FAB_ID)) return;
-  const fab = document.createElement("button");
-  fab.id = FAB_ID;
-  fab.type = "button";
-  fab.className = "je-btn je-fab";
-  setState(fab, "idle", LABEL);
-  fab.addEventListener("click", () => onSave(fab));
-  fab._job = extractJob(document, location.href);
-  document.body.appendChild(fab);
-}
-function removeFab() {
-  document.getElementById(FAB_ID)?.remove();
-}
-function removeInlineButton() {
-  document.getElementById(BTN_ID)?.remove();
-  currentKey = "";
+function setState(el, state, text) {
+  el.dataset.state = state;
+  el.textContent = text;
 }
 
 function injectStyles() {
@@ -170,7 +149,7 @@ function injectStyles() {
       margin: 10px 0; padding: 9px 15px; border: 0; border-radius: 999px;
       font: 600 14px/1 system-ui, -apple-system, sans-serif; color: #fff;
       background: #16a34a; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
-      transition: background .15s, transform .1s;
+      transition: background .15s, transform .1s; z-index: 2147483647;
     }
     .je-btn:hover { transform: translateY(-1px); }
     .je-btn[data-state="checking"] { background: #9ca3af; cursor: default; }
@@ -178,7 +157,7 @@ function injectStyles() {
     .je-btn[data-state="saved"]    { background: #2563eb; cursor: default; }  /* blue */
     .je-btn[data-state="error"]    { background: #dc2626; }
     .je-fab {
-      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+      position: fixed; right: 20px; bottom: 20px;
       box-shadow: 0 6px 20px rgba(0,0,0,.28);
     }
   `;
