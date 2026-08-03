@@ -30,8 +30,10 @@ stable
 security definer
 set search_path = public
 as $$
+  -- Match the backend's own lookup exactly: active (non-deleted) user by email.
   select id from public.users
   where email = (auth.jwt() ->> 'email')
+    and deleted_at is null
   limit 1
 $$;
 
