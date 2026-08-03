@@ -78,6 +78,30 @@ test("capture.js parses a JobPosting page into chrome.storage", async () => {
   await page.close();
 });
 
+test("MAIN-world bridge mirrors window._initialData onto <html data-je-embedded>", async () => {
+  const page = await context.newPage();
+  const url = `${baseUrl}/indeed-initialdata.html`;
+  await page.goto(url);
+
+  // Inject the bridge into the page's MAIN world (where window._initialData lives).
+  await worker.evaluate(async (pageUrl) => {
+    const [tab] = await chrome.tabs.query({ url: pageUrl });
+    await chrome.scripting.executeScript({
+      target: { tabId: tab.id },
+      files: ["dist/bridge.js"],
+      world: "MAIN",
+    });
+  }, url);
+
+  await page.waitForFunction(
+    () => document.documentElement.hasAttribute("data-je-embedded"),
+    { timeout: 4000 },
+  );
+  const attr = await page.getAttribute("html", "data-je-embedded");
+  expect(attr).toContain("Senior Backend Engineer");
+  await page.close();
+});
+
 test("side panel page renders the sign-in view without errors", async () => {
   const page = await context.newPage();
   const errors = [];

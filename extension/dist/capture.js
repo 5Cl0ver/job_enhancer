@@ -92,6 +92,129 @@
     };
   }
 
+  // src/extract/indeed-embedded.js
+  function normalizeDetail(detail, url) {
+    if (!detail?.jobTitle) return null;
+    const description = stripHtml(detail.description || "");
+    return {
+      title: clean(detail.jobTitle),
+      company: clean(detail.companyName),
+      location: clean(detail.formattedLocation),
+      description,
+      is_remote: looksRemote(detail.formattedLocation, detail.jobTitle, description),
+      url
+    };
+  }
+  function normalizeCard(card, url) {
+    const title = card?.title || card?.displayTitle;
+    if (!title) return null;
+    const loc = clean(card.formattedLocation);
+    return {
+      title: clean(title),
+      company: clean(card.company),
+      location: loc,
+      description: stripHtml(card.snippet || ""),
+      is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
+      url
+    };
+  }
+  function selectedJobKey(url) {
+    try {
+      const p = new URL(url).searchParams;
+      return p.get("vjk") || p.get("jk");
+    } catch {
+      return null;
+    }
+  }
+  function fromBridge(doc, url) {
+    const raw = doc.documentElement?.getAttribute?.("data-je-embedded");
+    if (!raw) return null;
+    let b;
+    try {
+      b = JSON.parse(raw);
+    } catch {
+      return null;
+    }
+    const detail = normalizeDetail(b.detail, url);
+    if (detail) return detail;
+    if (Array.isArray(b.cards)) {
+      const jk = selectedJobKey(url);
+      const card = jk ? b.cards.find((c) => c.jobkey === jk) : null;
+      if (card) return normalizeCard(card, url);
+    }
+    return null;
+  }
+  function balanced(str, start) {
+    let depth = 0, inStr = false, esc = false;
+    for (let i = start; i < str.length; i++) {
+      const c = str[i];
+      if (inStr) {
+        if (esc) esc = false;
+        else if (c === "\\") esc = true;
+        else if (c === '"') inStr = false;
+      } else if (c === '"') inStr = true;
+      else if (c === "{") depth++;
+      else if (c === "}") {
+        if (--depth === 0) return str.slice(start, i + 1);
+      }
+    }
+    return null;
+  }
+  function scanScripts(doc, marker, pick) {
+    for (const s of doc.querySelectorAll("script")) {
+      const t = s.textContent || "";
+      let idx = t.indexOf(marker);
+      while (idx !== -1) {
+        const start = t.indexOf("{", idx);
+        if (start !== -1) {
+          const json = balanced(t, start);
+          if (json) {
+            try {
+              const got = pick(JSON.parse(json));
+              if (got) return got;
+            } catch {
+            }
+          }
+        }
+        idx = t.indexOf(marker, idx + marker.length);
+      }
+    }
+    return null;
+  }
+  function fromStatic(doc, url) {
+    const model = scanScripts(
+      doc,
+      "_initialData",
+      (d) => d?.jobInfoWrapperModel?.jobInfoModel ? d.jobInfoWrapperModel.jobInfoModel : null
+    );
+    const h = model?.jobInfoHeaderModel;
+    if (h?.jobTitle) {
+      return normalizeDetail(
+        {
+          jobTitle: h.jobTitle,
+          companyName: h.companyName,
+          formattedLocation: h.formattedLocation,
+          description: model?.sanitizedJobDescription?.content || ""
+        },
+        url
+      );
+    }
+    const results = scanScripts(
+      doc,
+      'mosaic-provider-jobcards"]',
+      (d) => d?.metaData?.mosaicProviderJobCardsModel?.results || null
+    );
+    if (Array.isArray(results)) {
+      const jk = selectedJobKey(url);
+      const card = jk ? results.find((c) => c.jobkey === jk) : null;
+      if (card) return normalizeCard(card, url);
+    }
+    return null;
+  }
+  function extractIndeedEmbedded(doc, url) {
+    return fromBridge(doc, url) || fromStatic(doc, url);
+  }
+
   // src/extract/indeed.js
   function extractIndeed(doc, url) {
     const title = textFrom(doc, [
@@ -171,8 +294,19 @@
     if (host.includes("linkedin.")) return { via: "linkedin", fn: extractLinkedIn };
     return null;
   }
+  function hostOf(url) {
+    try {
+      return new URL(url).hostname;
+    } catch {
+      return "";
+    }
+  }
   function extractJob(doc, url) {
     const candidates = [];
+    if (hostOf(url).includes("indeed.")) {
+      const embedded = extractIndeedEmbedded(doc, url);
+      if (embedded) candidates.push({ via: "indeed-embedded", data: embedded });
+    }
     const jsonld = extractFromJsonLd(doc, url);
     if (jsonld) candidates.push({ via: "jsonld", data: jsonld });
     const site = siteExtractor(url);
