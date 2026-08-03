@@ -52,8 +52,16 @@
       .saved li {
         border: 1px solid #e5e7eb; border-radius: 8px; padding: 7px 9px; font-size: 12px;
       }
-      .saved li b { display: block; font-size: 13px; }
+      .saved li b { display: block; font-size: 13px; padding-right: 16px; }
       .saved li span { color: #6b7280; }
+      .saved h2 .count { color: #9ca3af; font-weight: 400; text-transform: none; letter-spacing: 0; }
+      .saved li { position: relative; }
+      .saved li a.open {
+        position: absolute; top: 7px; right: 8px; text-decoration: none;
+        color: #16a34a; font-weight: 700;
+      }
+      .saved li.muted { color: #9ca3af; text-align: center; }
+      #saved-all-list { max-height: 260px; overflow-y: auto; }
       footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
       .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
     </style>
@@ -105,6 +113,11 @@
         <button class="primary" type="submit">Save to tracker</button>
         <p id="save-status" class="status"></p>
       </form>
+
+      <div class="saved" id="saved-all-wrap">
+        <h2>Your saved jobs <span id="saved-all-count" class="count"></span></h2>
+        <ul id="saved-all-list"></ul>
+      </div>
 
       <div class="saved" id="saved-wrap" hidden>
         <h2>Saved this session</h2>

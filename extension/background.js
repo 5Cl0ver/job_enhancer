@@ -97,6 +97,25 @@ async function checkSaved(job) {
   return { saved: !!d.saved, signedIn: true };
 }
 
+// The user's saved jobs (for the "Your saved jobs" list in the panel).
+async function listSaved() {
+  const token = await getValidToken();
+  if (!token) return { signedIn: false, jobs: [] };
+  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return { signedIn: true, jobs: [] };
+  const data = await res.json().catch(() => []);
+  const jobs = (Array.isArray(data) ? data : []).map((sj) => ({
+    id: sj.id,
+    title: sj.job_listing?.title || "Untitled",
+    company: sj.job_listing?.company || "",
+    location: sj.job_listing?.location || "",
+    url: sj.job_listing?.apply_url || "",
+  }));
+  return { signedIn: true, jobs };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
@@ -117,6 +136,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
+      } else if (msg.type === "listSaved") {
+        sendResponse({ ok: true, ...(await listSaved()) });
       } else if (msg.type === "saveJob") {
         const saved = await saveJob(msg.job);
         sendResponse({ ok: true, saved });

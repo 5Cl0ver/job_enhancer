@@ -67,15 +67,17 @@ function sync() {
   if (key === currentKey) return; // same job — nothing to re-check
 
   currentKey = key;
-  setState(btn, "checking", "Checking…");
+  // Show a usable "Save" immediately — never a stuck "Checking…". The saved-state
+  // check runs in the background and only UPGRADES the button to blue if it
+  // confirms; if it's slow or fails, the button still works.
+  setState(btn, "idle", LABEL);
   chrome.runtime
     .sendMessage({ type: "checkSaved", job })
     .then((res) => {
       if (!btn || keyFor(btn._job) !== key) return; // moved to another job meanwhile
-      if (res?.saved) setState(btn, "saved", "✓ Already saved");
-      else setState(btn, "idle", LABEL);
+      if (res?.saved && btn.dataset.state === "idle") setState(btn, "saved", "✓ Already saved");
     })
-    .catch(() => btn && setState(btn, "idle", LABEL));
+    .catch(() => {});
 }
 
 function ensureButton() {

@@ -35,6 +35,44 @@ function addSaved(job) {
   renderSaved();
 }
 
+// "Your saved jobs" — the full library, pulled from the backend.
+function renderSavedAll(jobs) {
+  $("saved-all-count").textContent = jobs.length ? `(${jobs.length})` : "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  if (!jobs.length) {
+    const li = document.createElement("li");
+    li.className = "muted";
+    li.textContent = "No saved jobs yet.";
+    list.append(li);
+    return;
+  }
+  for (const j of jobs.slice(0, 50)) {
+    const li = document.createElement("li");
+    const b = document.createElement("b");
+    b.textContent = j.title || "Untitled";
+    const s = document.createElement("span");
+    s.textContent = [j.company, j.location].filter(Boolean).join(" · ");
+    li.append(b, s);
+    if (j.url) {
+      const a = document.createElement("a");
+      a.className = "open";
+      a.href = j.url;
+      a.target = "_blank";
+      a.rel = "noopener";
+      a.textContent = "↗";
+      a.title = "Open job";
+      li.append(a);
+    }
+    list.append(li);
+  }
+}
+
+async function loadSaved() {
+  const res = await send({ type: "listSaved" });
+  renderSavedAll(res?.jobs || []);
+}
+
 function fillForm(job) {
   $("f-title").value = job.title || "";
   $("f-company").value = job.company || "";
@@ -50,7 +88,9 @@ async function currentUrl() {
 
 async function refreshStatus() {
   const res = await send({ type: "authStatus" });
-  show(res?.signedIn ? "capture" : "login");
+  const signedIn = !!res?.signedIn;
+  show(signedIn ? "capture" : "login");
+  if (signedIn) loadSaved();
 }
 
 // Inject a small script into the active tab and surface a friendly error if the
@@ -119,6 +159,7 @@ document.addEventListener("DOMContentLoaded", () => {
       status.className = "status ok";
       status.textContent = "✓ Saved!";
       addSaved(job);
+      loadSaved();
       fillForm({});
     } else if (res?.error === "NOT_SIGNED_IN") {
       show("login");
@@ -156,5 +197,8 @@ chrome.storage.onChanged.addListener((changes, area) => {
 
 // The on-page green "Save" button saves via the background, which pings us to update the list.
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === "jobSaved" && msg.job) addSaved(msg.job);
+  if (msg?.type === "jobSaved" && msg.job) {
+    addSaved(msg.job);
+    loadSaved();
+  }
 });

@@ -376,12 +376,12 @@
     }
     if (key === currentKey) return;
     currentKey = key;
-    setState(btn, "checking", "Checking\u2026");
+    setState(btn, "idle", LABEL);
     chrome.runtime.sendMessage({ type: "checkSaved", job }).then((res) => {
       if (!btn || keyFor(btn._job) !== key) return;
-      if (res?.saved) setState(btn, "saved", "\u2713 Already saved");
-      else setState(btn, "idle", LABEL);
-    }).catch(() => btn && setState(btn, "idle", LABEL));
+      if (res?.saved && btn.dataset.state === "idle") setState(btn, "saved", "\u2713 Already saved");
+    }).catch(() => {
+    });
   }
   function ensureButton() {
     if (btn && document.contains(btn)) return;
