@@ -1,4 +1,4 @@
-import { useParams } from "react-router-dom";
+import { useParams, useNavigate } from "react-router-dom";
 import { useJob } from "@/hooks/useJobs";
 import { useSavedJobId, useSaveJob, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { JobDetail } from "@/components/jobs/JobDetail";
@@ -7,6 +7,7 @@ import { Skeleton } from "@/components/ui/skeleton";
 /** Full detail view for one job listing (reached by clicking a card title). */
 export function JobDetailPage() {
   const { id = "" } = useParams();
+  const navigate = useNavigate();
   const { data: job, isLoading, isError } = useJob(id);
   const { savedJobId } = useSavedJobId(id);
   const saveJob = useSaveJob();
@@ -31,7 +32,12 @@ export function JobDetailPage() {
           Couldn't load this job. It may have been removed.
         </div>
       ) : (
-        <JobDetail job={job} isSaved={isSaved} onSave={toggleSave} />
+        <JobDetail
+          job={job}
+          isSaved={isSaved}
+          onSave={toggleSave}
+          onGenerateDocuments={() => navigate(`/ai-apply?job=${id}`)}
+        />
       )}
     </div>
   );

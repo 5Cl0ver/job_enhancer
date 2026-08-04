@@ -1,6 +1,5 @@
-"use client";
-
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { Bot, Loader2, AlertCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
@@ -20,13 +19,22 @@ import { useResumes, useGenerateDocument, useGeneratedDocument } from "@/hooks/u
 import { useSavedJobs } from "@/hooks/useSavedJobs";
 import type { GeneratedDocument } from "@/types/api";
 
+// Radix <SelectItem> forbids an empty-string value, so the "no job" choice uses
+// a sentinel that maps back to "" (which the API treats as no target job).
+const NO_JOB = "none";
+
 export default function AIApplyPage() {
+  const [searchParams] = useSearchParams();
   const { data: resumes = [] } = useResumes();
   const { data: savedJobs = [] } = useSavedJobs();
   const generateDoc = useGenerateDocument();
 
   const activeResume = resumes.find((r) => r.is_active);
-  const [selectedJobId, setSelectedJobId] = useState<string>("");
+  // Preselect a job when arriving from a job's "Generate Documents" button
+  // (/ai-apply?job=<job_listing_id>).
+  const [selectedJobId, setSelectedJobId] = useState<string>(
+    () => searchParams.get("job") ?? "",
+  );
   const [resumeDocId, setResumeDocId] = useState<string | null>(null);
   const [coverDocId, setCoverDocId] = useState<string | null>(null);
 
@@ -89,12 +97,15 @@ export default function AIApplyPage() {
               <CardTitle className="text-base">Target Job (optional)</CardTitle>
             </CardHeader>
             <CardContent>
-              <Select value={selectedJobId} onValueChange={setSelectedJobId}>
+              <Select
+                value={selectedJobId || NO_JOB}
+                onValueChange={(v) => setSelectedJobId(v === NO_JOB ? "" : v)}
+              >
                 <SelectTrigger>
                   <SelectValue placeholder="Select a saved job…" />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="">No job selected</SelectItem>
+                  <SelectItem value={NO_JOB}>No job selected</SelectItem>
                   {savedJobs.map((sj) => (
                     <SelectItem key={sj.job_listing_id} value={sj.job_listing_id}>
                       {sj.job_listing.title} — {sj.job_listing.company}

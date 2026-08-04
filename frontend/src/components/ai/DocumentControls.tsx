@@ -1,10 +1,9 @@
-"use client";
-
 import { useState } from "react";
-import { Download, Copy, RefreshCw, Check } from "lucide-react";
+import { Download, Copy, RefreshCw, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { api } from "@/lib/api";
 import type { GeneratedDocument } from "@/types/api";
 
 interface DocumentControlsProps {
@@ -16,6 +15,8 @@ interface DocumentControlsProps {
 export function DocumentControls({ doc, onRegenerate, isRegenerating }: DocumentControlsProps) {
   const [emphasis, setEmphasis] = useState("");
   const [copied, setCopied] = useState(false);
+  const [downloading, setDownloading] = useState(false);
+  const [downloadError, setDownloadError] = useState(false);
 
   const handleCopy = async () => {
     const text = doc.edited_content ?? doc.content;
@@ -24,9 +25,26 @@ export function DocumentControls({ doc, onRegenerate, isRegenerating }: Document
     setTimeout(() => setCopied(false), 2000);
   };
 
-  const handleDownload = () => {
-    const apiBase = process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000";
-    window.open(`${apiBase}/v1/ai/documents/${doc.id}/pdf`, "_blank");
+  // The PDF endpoint requires the Supabase Bearer token, which window.open can't
+  // send. Fetch it as an authenticated blob, then hand the browser an object URL.
+  const handleDownload = async () => {
+    setDownloadError(false);
+    setDownloading(true);
+    try {
+      const blob = await api.getBlob(`/v1/ai/documents/${doc.id}/pdf`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${doc.document_type}-${doc.id}.pdf`;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(url);
+    } catch {
+      setDownloadError(true);
+    } finally {
+      setDownloading(false);
+    }
   };
 
   return (
@@ -58,15 +76,28 @@ export function DocumentControls({ doc, onRegenerate, isRegenerating }: Document
         </div>
       )}
 
-      <div className="flex gap-2">
+      <div className="flex items-center gap-2">
         <Button variant="outline" size="sm" onClick={handleCopy} className="gap-1.5">
           {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
           {copied ? "Copied!" : "Copy"}
         </Button>
-        <Button variant="outline" size="sm" onClick={handleDownload} className="gap-1.5">
-          <Download className="h-3.5 w-3.5" />
-          Download PDF
+        <Button
+          variant="outline"
+          size="sm"
+          onClick={handleDownload}
+          disabled={downloading}
+          className="gap-1.5"
+        >
+          {downloading ? (
+            <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          ) : (
+            <Download className="h-3.5 w-3.5" />
+          )}
+          {downloading ? "Preparing…" : "Download PDF"}
         </Button>
+        {downloadError && (
+          <span className="text-xs text-destructive">Download failed. Try again.</span>
+        )}
       </div>
     </div>
   );

@@ -1,5 +1,3 @@
-"use client";
-
 import { useRef, useState } from "react";
 import { Upload, CheckCircle, Loader2 } from "lucide-react";
 import { useUploadResume, useResumes } from "@/hooks/useAI";

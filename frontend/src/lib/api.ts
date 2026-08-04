@@ -27,7 +27,8 @@ export async function getAccessToken(): Promise<string | null> {
   return data.session?.access_token ?? null;
 }
 
-async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+/** Attach the Bearer token and perform the fetch. Shared by JSON + blob helpers. */
+async function authedFetch(path: string, init: RequestInit = {}): Promise<Response> {
   const token = await getAccessToken();
 
   const headers: Record<string, string> = {
@@ -49,10 +50,26 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
     throw new ApiError(res.status, text);
   }
 
+  return res;
+}
+
+async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const res = await authedFetch(path, init);
+
   // 204 No Content — return null cast to T
   if (res.status === 204) return null as T;
 
   return res.json() as Promise<T>;
+}
+
+/**
+ * Fetch a binary response (e.g. a generated PDF) WITH the auth header.
+ * `window.open`/`<a download>` can't send a Bearer token, so protected file
+ * downloads must go through here and be handed to the browser as a Blob.
+ */
+async function requestBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const res = await authedFetch(path, { ...init, method: "GET" });
+  return res.blob();
 }
 
 export const api = {
@@ -75,6 +92,8 @@ export const api = {
 
   delete: <T = void>(path: string, init?: RequestInit) =>
     request<T>(path, { ...init, method: "DELETE" }),
+
+  getBlob: (path: string, init?: RequestInit) => requestBlob(path, init),
 };
 
 export { ApiError, API_BASE };

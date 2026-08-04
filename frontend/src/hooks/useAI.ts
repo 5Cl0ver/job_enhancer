@@ -27,15 +27,14 @@ export function useResumes() {
 export function useUploadResume() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (file: File) => {
+    // Route through the shared api client so the upload gets the Supabase Bearer
+    // token (the endpoint requires auth) and the correct API base URL. The client
+    // passes FormData through untouched and omits the JSON Content-Type so the
+    // browser sets the multipart boundary itself.
+    mutationFn: (file: File) => {
       const form = new FormData();
       form.append("file", file);
-      const res = await fetch(
-        `${process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000"}/v1/ai/resumes`,
-        { method: "POST", body: form, credentials: "include" },
-      );
-      if (!res.ok) throw new Error(await res.text());
-      return res.json() as Promise<ResumeRecord>;
+      return api.post<ResumeRecord>("/v1/ai/resumes", form);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["resumes"] }),
   });
