@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, EmailStr, Field
 
@@ -21,3 +22,9 @@ class UserProfile(BaseModel):
 class UserUpdate(BaseModel):
     name: str | None = None
     follow_up_days: int | None = Field(None, ge=1, le=90)
+
+
+class AdminUserUpdate(BaseModel):
+    """Admin-only change to another user's role (promote/demote)."""
+
+    role: Literal["user", "admin"]

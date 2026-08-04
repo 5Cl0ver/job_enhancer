@@ -1,4 +1,4 @@
-import { useQuery } from "@tanstack/react-query";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { UserProfile } from "@/types/api";
 
@@ -44,5 +44,27 @@ export function useAdminUsers(page: number = 1) {
     queryKey: ["admin", "users", page],
     queryFn: () => api.get<UserProfile[]>(`/v1/admin/users?page=${page}&page_size=25`),
     staleTime: 2 * 60_000,
+  });
+}
+
+/** Promote a user to admin or demote back to a regular user. */
+export function useUpdateUserRole() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ userId, role }: { userId: string; role: "user" | "admin" }) =>
+      api.patch<UserProfile>(`/v1/admin/users/${userId}`, { role }),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["admin", "users"] }),
+  });
+}
+
+/** Soft-delete (remove) a user account — subject to the 30-day purge grace. */
+export function useRemoveUser() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (userId: string) => api.delete(`/v1/admin/users/${userId}`),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["admin", "users"] });
+      qc.invalidateQueries({ queryKey: ["admin", "stats"] });
+    },
   });
 }
