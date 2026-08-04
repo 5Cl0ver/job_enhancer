@@ -1,7 +1,5 @@
-"use client";
-
-import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft } from "lucide-react";
-import Link from "next/link";
+import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft, ExternalLink } from "lucide-react";
+import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
@@ -43,11 +41,11 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
     <div className="mx-auto max-w-3xl space-y-6">
       {/* Back link */}
       <Link
-        href="/search"
+        to="/saved"
         className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to search
+        Back to saved
       </Link>
 
       {/* Header */}
@@ -97,6 +95,17 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
         <ApplyButton job={job} />
+        {/* Always a link to the original posting (for now this is the same as
+            Apply; once we capture a separate company-apply URL, Apply Now goes
+            to the employer and this stays pointed at the source listing). */}
+        {job.apply_url && (
+          <Button variant="ghost" asChild>
+            <a href={job.apply_url} target="_blank" rel="noopener noreferrer">
+              View listing
+              <ExternalLink className="ml-1.5 h-3.5 w-3.5" aria-hidden />
+            </a>
+          </Button>
+        )}
         {onSave && (
           <Button variant={isSaved ? "default" : "outline"} onClick={onSave}>
             {isSaved ? "Saved" : "Save Job"}

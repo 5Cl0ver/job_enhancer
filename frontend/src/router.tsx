@@ -4,6 +4,7 @@ import { Login } from "@/routes/Login";
 import { AuthCallback } from "@/routes/AuthCallback";
 import { SearchPage } from "@/routes/SearchPage";
 import SavedPage from "@/routes/SavedPage";
+import { JobDetailPage } from "@/routes/JobDetailPage";
 import TrackerPage from "@/routes/TrackerPage";
 import MatchesPage from "@/routes/MatchesPage";
 import AnalyticsPage from "@/routes/AnalyticsPage";
@@ -28,6 +29,7 @@ export const router = createBrowserRouter([
       { index: true, element: <Navigate to="/search" replace /> },
       { path: "search", element: <SearchPage /> },
       { path: "saved", element: <SavedPage /> },
+      { path: "jobs/:id", element: <JobDetailPage /> },
       { path: "tracker", element: <TrackerPage /> },
       { path: "matches", element: <MatchesPage /> },
       { path: "analytics", element: <AnalyticsPage /> },
