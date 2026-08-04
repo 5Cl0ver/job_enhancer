@@ -10,7 +10,7 @@ interface AnalyticsSummary {
   total_saved: number;
   total_applied: number;
   total_interviews: number;
-  response_rate: number;
+  application_rate: number;
   weekly_activity: WeeklyActivity[];
 }
 

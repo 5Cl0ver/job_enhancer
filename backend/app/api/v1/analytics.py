@@ -25,7 +25,9 @@ class AnalyticsSummary(BaseModel):
     total_saved: int
     total_applied: int
     total_interviews: int
-    response_rate: float  # applied / total_saved * 100
+    # Share of saved jobs the user has actually applied to (applied / saved * 100).
+    # Named "application_rate" — it is NOT a response/interview rate.
+    application_rate: float
     weekly_activity: list[WeeklyActivity]
 
 
@@ -81,7 +83,7 @@ async def get_analytics_summary(
             )
         ) or 0
 
-    response_rate = (total_applied / total_saved * 100) if total_saved > 0 else 0.0
+    application_rate = (total_applied / total_saved * 100) if total_saved > 0 else 0.0
 
     # Weekly activity — applications per week for last 8 weeks
     weekly: list[WeeklyActivity] = []
@@ -107,6 +109,6 @@ async def get_analytics_summary(
         total_saved=total_saved,
         total_applied=total_applied,
         total_interviews=total_interviews,
-        response_rate=round(response_rate, 1),
+        application_rate=round(application_rate, 1),
         weekly_activity=weekly,
     )

@@ -464,8 +464,8 @@ export interface components {
             total_applied: number;
             /** Total Interviews */
             total_interviews: number;
-            /** Response Rate */
-            response_rate: number;
+            /** Application Rate */
+            application_rate: number;
             /** Weekly Activity */
             weekly_activity: components["schemas"]["WeeklyActivity"][];
         };

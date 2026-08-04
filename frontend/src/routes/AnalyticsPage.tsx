@@ -1,5 +1,3 @@
-"use client";
-
 import { Bookmark, Send, MessagesSquare, BarChart2, Loader2 } from "lucide-react";
 import { StatCard } from "@/components/analytics/StatCard";
 import { ActivityChart } from "@/components/analytics/ActivityChart";
@@ -38,11 +36,11 @@ export default function AnalyticsPage() {
         <StatCard label="Jobs Saved" value={data.total_saved} icon={Bookmark} />
         <StatCard label="Applications Sent" value={data.total_applied} icon={Send} />
         <StatCard
-          label="Response Rate"
-          value={data.response_rate}
+          label="Application Rate"
+          value={data.application_rate}
           suffix="%"
           icon={BarChart2}
-          trend={data.response_rate >= 20 ? "up" : data.response_rate > 0 ? "neutral" : "down"}
+          trend={data.application_rate >= 20 ? "up" : data.application_rate > 0 ? "neutral" : "down"}
         />
         <StatCard label="Interviews" value={data.total_interviews} icon={MessagesSquare} />
       </div>
