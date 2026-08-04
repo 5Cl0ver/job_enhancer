@@ -73,6 +73,11 @@ function renderSavedAll(jobs) {
 
 async function loadSaved() {
   const res = await send({ type: "listSaved" });
+  // Session expired/wedged — bounce to sign-in instead of showing empty.
+  if (res && res.signedIn === false) {
+    show("login");
+    return;
+  }
   renderSavedAll(res?.jobs || []);
 }
 

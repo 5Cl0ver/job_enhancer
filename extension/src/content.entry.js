@@ -38,8 +38,9 @@ if (IS_INDEED || IS_LINKEDIN) {
     t = setTimeout(sync, 300);
   }).observe(document.body, { childList: true, subtree: true });
   // The pane can swap jobs via history (?vjk=) without a DOM mutation we catch —
-  // a light poll keeps the button honest when you click another card.
-  setInterval(sync, 1000);
+  // a light poll keeps the button honest when you click another card. (2s to
+  // stay light on Indeed's busy, constantly-mutating feed.)
+  setInterval(sync, 2000);
 }
 
 function keyFor(job) {

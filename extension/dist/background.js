@@ -171,7 +171,10 @@
     const hasDescription = (job.description || "").length > 200;
     if (!isIndeedListing || hasDescription) return job;
     try {
-      const res = await fetch(job.url, { credentials: "omit" });
+      const res = await fetch(job.url, {
+        credentials: "omit",
+        signal: AbortSignal.timeout(5e3)
+      });
       if (!res.ok) return job;
       const extra = enrichFromHtml(await res.text(), job.url);
       return {
@@ -224,6 +227,10 @@
     const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/`, {
       headers: { Authorization: `Bearer ${token}` }
     });
+    if (res.status === 401) {
+      await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
+      return { signedIn: false, jobs: [] };
+    }
     if (!res.ok) return { signedIn: true, jobs: [] };
     const data = await res.json().catch(() => []);
     const jobs = (Array.isArray(data) ? data : []).map((sj) => ({

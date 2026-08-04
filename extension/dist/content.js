@@ -439,7 +439,7 @@
       clearTimeout(t);
       t = setTimeout(sync, 300);
     }).observe(document.body, { childList: true, subtree: true });
-    setInterval(sync, 1e3);
+    setInterval(sync, 2e3);
   }
   function keyFor(job) {
     return `${job.title}|${job.company}`.toLowerCase();
