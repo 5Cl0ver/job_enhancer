@@ -1,6 +1,7 @@
 import { NavLink, Outlet } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { RequireAuth } from "@/routes/RequireAuth";
+import { OfflineBanner } from "@/components/layout/OfflineBanner";
 import { createClient } from "@/lib/supabase/client";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 
@@ -29,7 +30,9 @@ export function DashboardLayout() {
 
   return (
     <RequireAuth>
-      <div className="flex min-h-screen bg-background text-foreground">
+      <div className="flex min-h-screen flex-col bg-background text-foreground">
+        <OfflineBanner />
+        <div className="flex min-h-0 flex-1">
         <aside className="flex w-56 shrink-0 flex-col border-r bg-card p-4">
           <div className="mb-6 px-2 text-lg font-semibold">Job Enhancer</div>
           <nav className="flex flex-col gap-1">
@@ -64,6 +67,7 @@ export function DashboardLayout() {
           {/* Whichever child route matches renders here */}
           <Outlet />
         </main>
+        </div>
       </div>
     </RequireAuth>
   );

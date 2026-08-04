@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { BookmarkX } from "lucide-react";
 import { AddJobDialog } from "@/components/jobs/AddJobDialog";

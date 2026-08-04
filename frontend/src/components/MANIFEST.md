@@ -12,7 +12,7 @@ jobs/ tracker/ ai/ analytics/ admin/   feature UI
 ## `ui/` — shadcn/ui primitives
 alert, badge, button, card, dialog, dropdown-menu, input, label, select,
 separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
-`src/app/globals.css`; use `cn()` from `lib/utils`.
+`src/globals.css`; use `cn()` from `lib/utils`.
 
 ## `layout/`
 | File | Purpose |

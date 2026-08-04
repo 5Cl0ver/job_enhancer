@@ -1,5 +1,3 @@
-"use client";
-
 import { useRef, useState } from "react";
 import { ExternalLink, Loader2 } from "lucide-react";
 import { useSavedJobId, useSaveJob } from "@/hooks/useSavedJobs";

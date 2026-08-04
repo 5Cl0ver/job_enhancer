@@ -1,5 +1,3 @@
-"use client";
-
 import { Link } from "react-router-dom";
 import { BellOff, CheckCheck, Inbox, Loader2, Trash2 } from "lucide-react";
 import {

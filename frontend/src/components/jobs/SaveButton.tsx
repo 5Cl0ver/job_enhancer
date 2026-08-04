@@ -1,5 +1,3 @@
-"use client";
-
 import { Bookmark, BookmarkCheck, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { useSaveJob, useUnsaveJob, useSavedJobId } from "@/hooks/useSavedJobs";

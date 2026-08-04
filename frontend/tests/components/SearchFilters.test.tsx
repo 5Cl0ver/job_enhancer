@@ -1,21 +1,29 @@
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
-
-const push = vi.fn();
-
-vi.mock("next/navigation", () => ({
-  useRouter: () => ({ push }),
-  useSearchParams: () => new URLSearchParams("q=python"),
-}));
+import { describe, expect, it } from "vitest";
+import { MemoryRouter, useLocation } from "react-router-dom";
 
 import { SearchFilters } from "@/components/jobs/SearchFilters";
 
-describe("SearchFilters", () => {
-  beforeEach(() => push.mockClear());
+// SearchFilters navigates via react-router's useNavigate. To assert what URL it
+// pushes, we render a probe that mirrors the current location into the DOM.
+function LocationProbe() {
+  const loc = useLocation();
+  return <div data-testid="location">{loc.pathname + loc.search}</div>;
+}
 
+function renderFilters(initialUrl = "/search?q=python") {
+  return render(
+    <MemoryRouter initialEntries={[initialUrl]}>
+      <SearchFilters />
+      <LocationProbe />
+    </MemoryRouter>,
+  );
+}
+
+describe("SearchFilters", () => {
   it("renders all five filters", () => {
-    render(<SearchFilters />);
+    renderFilters();
     expect(screen.getByLabelText("Remote only")).toBeInTheDocument();
     expect(screen.getByLabelText("Job type")).toBeInTheDocument();
     expect(screen.getByLabelText("Minimum salary")).toBeInTheDocument();
@@ -25,14 +33,14 @@ describe("SearchFilters", () => {
 
   it("toggling Remote only updates the URL and resets to page 1", async () => {
     const user = userEvent.setup();
-    render(<SearchFilters />);
+    renderFilters("/search?q=python");
 
     await user.click(screen.getByLabelText("Remote only"));
 
-    expect(push).toHaveBeenCalledTimes(1);
-    const url = push.mock.calls[0][0] as string;
+    const url = screen.getByTestId("location").textContent ?? "";
     expect(url).toContain("remote_only=true");
     expect(url).toContain("page=1");
+    // The existing query (q=python) is preserved across the filter change.
     expect(url).toContain("q=python");
   });
 });

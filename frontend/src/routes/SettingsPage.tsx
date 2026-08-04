@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Download, Trash2, Loader2 } from "lucide-react";

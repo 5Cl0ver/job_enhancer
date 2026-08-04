@@ -1,5 +1,3 @@
-"use client";
-
 import { useState } from "react";
 import { Link2, Loader2, Plus } from "lucide-react";
 import { useAddManualJob } from "@/hooks/useSavedJobs";

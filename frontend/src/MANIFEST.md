@@ -14,7 +14,7 @@ See [docs/architecture.md](../../docs/architecture.md) for the frontend data flo
 | `router.tsx` | The route table — maps each URL to a page component in `routes/` |
 | `providers.tsx` | `QueryClientProvider` (TanStack Query configuration) |
 | `vite-env.d.ts` | Vite type shims (`import.meta.env`) |
-| `app/globals.css` | Tailwind v4 import + theme CSS variables (shadcn). *Only file still used from the legacy `app/`.* |
+| `globals.css` | Tailwind v4 import + theme CSS variables (shadcn); imported by `main.tsx`. |
 
 ## Folders (each has its own MANIFEST unless noted)
 | Folder | Responsibility |

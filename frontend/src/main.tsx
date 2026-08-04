@@ -3,7 +3,7 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { Providers } from "@/providers";
 import { router } from "@/router";
-import "@/app/globals.css";
+import "@/globals.css";
 
 // This is the entry point of the whole app (the file index.html loads).
 // 1. Find the <div id="root"> in index.html
