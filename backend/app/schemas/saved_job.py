@@ -30,6 +30,16 @@ class ManualJobCreate(BaseModel):
     collection_id: uuid.UUID | None = None
     notes: str | None = None
 
+    @field_validator("salary_min", "salary_max", mode="before")
+    @classmethod
+    def _round_salary(cls, v: object) -> object:
+        # Sites list salaries with cents (Indeed: "$80,708.90 a year"). The
+        # strict int fields rejected those floats (422 int_from_float) and the
+        # save failed — round instead; nobody needs the cents.
+        if isinstance(v, float):
+            return round(v)
+        return v
+
     @field_validator("url")
     @classmethod
     def _http_only(cls, v: str) -> str:

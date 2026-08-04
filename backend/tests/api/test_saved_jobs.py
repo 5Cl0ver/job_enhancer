@@ -117,6 +117,27 @@ async def test_manual_add_stores_rich_fields(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_manual_add_accepts_decimal_salary(client: AsyncClient):
+    """Regression: Indeed lists salaries with cents ("$80,708.90 a year"); the
+    strict int fields 422'd on those floats and the save failed."""
+    r = await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://example.com/decimal/1",
+            "title": "Web Developer",
+            "company": "Civic Canvas",
+            "location": "Los Angeles, CA",
+            "salary_min": 80708.90,
+            "salary_max": 101756.95,
+        },
+    )
+    assert r.status_code == 201
+    jl = r.json()["job_listing"]
+    assert jl["salary_min"] == 80709
+    assert jl["salary_max"] == 101757
+
+
+@pytest.mark.asyncio
 async def test_check_saved_reflects_tracker(client: AsyncClient):
     """POST /check returns saved=False before saving, True after (extension pre-check)."""
     job = {
