@@ -7,7 +7,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Window } from "happy-dom";
-import { extractIndeedEmbedded } from "../src/extract/indeed-embedded.js";
+import { extractIndeedEmbedded, canonicalIndeedUrl } from "../src/extract/indeed-embedded.js";
 import { extractJob } from "../src/extract/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +46,29 @@ describe("Indeed embedded JSON — static <script> fallback", () => {
   it("returns null when the open job key isn't in the feed", () => {
     const doc = docFrom("indeed-mosaic.html");
     expect(extractIndeedEmbedded(doc, "https://www.indeed.com/?vjk=nope")).toBeNull();
+  });
+});
+
+describe("canonical Indeed url (fixes 'View listing' → home page)", () => {
+  it("rewrites a home-feed ?vjk= url to a real /viewjob link", () => {
+    expect(canonicalIndeedUrl("https://www.indeed.com/?vjk=abc123")).toBe(
+      "https://www.indeed.com/viewjob?jk=abc123",
+    );
+  });
+  it("leaves an existing /viewjob url alone", () => {
+    expect(canonicalIndeedUrl("https://www.indeed.com/viewjob?jk=xyz")).toBe(
+      "https://www.indeed.com/viewjob?jk=xyz",
+    );
+  });
+  it("returns null for non-Indeed urls", () => {
+    expect(canonicalIndeedUrl("https://www.linkedin.com/jobs/view/1")).toBeNull();
+  });
+  it("extractJob canonicalizes even when a non-embedded path wins", () => {
+    // indeed-no-jsonld.html has no embedded/mosaic data → the selector path wins
+    // and would otherwise keep the home-feed url.
+    const doc = docFrom("indeed-no-jsonld.html");
+    const job = extractJob(doc, "https://www.indeed.com/?vjk=abc123");
+    expect(job.url).toBe("https://www.indeed.com/viewjob?jk=abc123");
   });
 });
 

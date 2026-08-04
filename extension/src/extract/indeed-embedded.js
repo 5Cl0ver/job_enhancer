@@ -10,6 +10,22 @@
 // to scanning static <script> text (works on server-rendered pages).
 import { clean, stripHtml, looksRemote } from "./util.js";
 
+// Turn ANY Indeed page url into the canonical /viewjob?jk= listing url, using the
+// job key in the url (vjk on the home feed / search pane, jk on a job page).
+// Home-feed ?vjk= urls redirect to Indeed's front page, so we always rewrite.
+// Returns null if it's not an Indeed url or has no key.
+export function canonicalIndeedUrl(pageUrl) {
+  try {
+    const u = new URL(pageUrl);
+    if (!/(^|\.)indeed\./i.test(u.hostname)) return null;
+    if (u.pathname.includes("/viewjob")) return pageUrl; // already canonical
+    const jk = u.searchParams.get("vjk") || u.searchParams.get("jk");
+    return jk ? `https://www.indeed.com/viewjob?jk=${jk}` : null;
+  } catch {
+    return null;
+  }
+}
+
 // Build the canonical Indeed LISTING url from a job key. Captures from the home
 // feed have a page url like indeed.com/?vjk=… (the home page, not the job), so
 // saving location.href sends you to the wrong place — we reconstruct the real

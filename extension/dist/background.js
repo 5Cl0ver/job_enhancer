@@ -169,7 +169,8 @@
     const host = hostOf(job.url);
     const isIndeedListing = host.endsWith("indeed.com") && /\/viewjob\b/.test(job.url);
     const hasDescription = (job.description || "").length > 200;
-    if (!isIndeedListing || hasDescription) return job;
+    const hasSalary = job.salary_min != null || job.salary_max != null;
+    if (!isIndeedListing || hasDescription && hasSalary) return job;
     try {
       const res = await fetch(job.url, {
         credentials: "omit",

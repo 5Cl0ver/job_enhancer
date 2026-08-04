@@ -10,7 +10,7 @@
 // This module is PURE (no chrome.* / window globals) so it is unit-tested
 // directly against saved HTML fixtures under test/fixtures/.
 import { extractFromJsonLd } from "./jsonld.js";
-import { extractIndeedEmbedded } from "./indeed-embedded.js";
+import { extractIndeedEmbedded, canonicalIndeedUrl } from "./indeed-embedded.js";
 import { extractIndeed } from "./indeed.js";
 import { extractLinkedIn } from "./linkedin.js";
 import { extractGeneric } from "./generic.js";
@@ -61,5 +61,13 @@ export function extractJob(doc, url) {
 
   candidates.push({ via: "generic", data: extractGeneric(doc, url) });
 
-  return mergeJob(candidates, url);
+  const result = mergeJob(candidates, url);
+
+  // Canonicalize Indeed links in ONE place, whatever extraction path won — a
+  // home-feed ?vjk= url redirects to the front page and also skips enrichment.
+  if (hostOf(url).includes("indeed.")) {
+    result.url = canonicalIndeedUrl(result.url) || canonicalIndeedUrl(url) || result.url;
+  }
+
+  return result;
 }

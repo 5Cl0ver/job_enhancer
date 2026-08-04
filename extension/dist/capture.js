@@ -145,6 +145,17 @@
   }
 
   // src/extract/indeed-embedded.js
+  function canonicalIndeedUrl(pageUrl) {
+    try {
+      const u = new URL(pageUrl);
+      if (!/(^|\.)indeed\./i.test(u.hostname)) return null;
+      if (u.pathname.includes("/viewjob")) return pageUrl;
+      const jk = u.searchParams.get("vjk") || u.searchParams.get("jk");
+      return jk ? `https://www.indeed.com/viewjob?jk=${jk}` : null;
+    } catch {
+      return null;
+    }
+  }
   function indeedListingUrl(jobKey, url) {
     let jk = jobKey;
     if (!jk) {
@@ -395,7 +406,11 @@
     const site = siteExtractor(url);
     if (site) candidates.push({ via: site.via, data: site.fn(doc, url) });
     candidates.push({ via: "generic", data: extractGeneric(doc, url) });
-    return mergeJob(candidates, url);
+    const result = mergeJob(candidates, url);
+    if (hostOf(url).includes("indeed.")) {
+      result.url = canonicalIndeedUrl(result.url) || canonicalIndeedUrl(url) || result.url;
+    }
+    return result;
   }
 
   // src/capture.entry.js

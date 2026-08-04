@@ -89,7 +89,10 @@ async function enrichIfThin(job) {
   const host = hostOf(job.url);
   const isIndeedListing = host.endsWith("indeed.com") && /\/viewjob\b/.test(job.url);
   const hasDescription = (job.description || "").length > 200;
-  if (!isIndeedListing || hasDescription) return job;
+  const hasSalary = job.salary_min != null || job.salary_max != null;
+  // Fetch the listing if we're missing the full description OR the salary — the
+  // page's JSON-LD is the reliable source for both.
+  if (!isIndeedListing || (hasDescription && hasSalary)) return job;
   try {
     // Hard 5s cap — enrichment must NEVER hold up (or hang) the save. If Indeed
     // is slow/blocks, we save without it.
