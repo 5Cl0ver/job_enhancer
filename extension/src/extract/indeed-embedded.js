@@ -10,6 +10,22 @@
 // to scanning static <script> text (works on server-rendered pages).
 import { clean, stripHtml, looksRemote } from "./util.js";
 
+// Build the canonical Indeed LISTING url from a job key. Captures from the home
+// feed have a page url like indeed.com/?vjk=… (the home page, not the job), so
+// saving location.href sends you to the wrong place — we reconstruct the real
+// /viewjob url from the key instead.
+function indeedListingUrl(jobKey, url) {
+  let jk = jobKey;
+  if (!jk) {
+    try {
+      jk = new URL(url).searchParams.get("jk");
+    } catch {
+      jk = null;
+    }
+  }
+  return jk ? `https://www.indeed.com/viewjob?jk=${jk}` : url;
+}
+
 function normalizeDetail(detail, url) {
   if (!detail?.jobTitle) return null;
   const description = stripHtml(detail.description || "");
@@ -19,7 +35,7 @@ function normalizeDetail(detail, url) {
     location: clean(detail.formattedLocation),
     description,
     is_remote: looksRemote(detail.formattedLocation, detail.jobTitle, description),
-    url,
+    url: indeedListingUrl(detail.jobKey, url),
   };
 }
 
@@ -33,7 +49,7 @@ function normalizeCard(card, url) {
     location: loc,
     description: stripHtml(card.snippet || ""),
     is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
-    url,
+    url: indeedListingUrl(card.jobkey, url),
   };
 }
 

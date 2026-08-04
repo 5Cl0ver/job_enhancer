@@ -84,6 +84,8 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
     const job = extractJob(doc, "https://www.indeed.com/?vjk=open99");
     expect(job.title).toBe("Software Engineer II");
     expect(job.company).toBe("OpenEye");
+    // The apply/listing url must be the real /viewjob page, not the home feed.
+    expect(job.url).toBe("https://www.indeed.com/viewjob?jk=open99");
   });
 
   it("returns no title when the open vjk job isn't available (won't save the wrong one)", () => {

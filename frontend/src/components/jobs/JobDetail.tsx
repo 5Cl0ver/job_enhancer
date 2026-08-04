@@ -1,4 +1,4 @@
-import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft, ExternalLink } from "lucide-react";
+import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft, ExternalLink, Trash2 } from "lucide-react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
@@ -106,11 +106,21 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
             </a>
           </Button>
         )}
-        {onSave && (
-          <Button variant={isSaved ? "default" : "outline"} onClick={onSave}>
-            {isSaved ? "Saved" : "Save Job"}
-          </Button>
-        )}
+        {onSave &&
+          (isSaved ? (
+            <Button
+              variant="outline"
+              onClick={onSave}
+              className="text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <Trash2 className="mr-1.5 h-4 w-4" aria-hidden />
+              Remove
+            </Button>
+          ) : (
+            <Button variant="outline" onClick={onSave}>
+              Save Job
+            </Button>
+          ))}
         {onGenerateDocuments && (
           <Button variant="outline" onClick={onGenerateDocuments}>
             Generate Documents

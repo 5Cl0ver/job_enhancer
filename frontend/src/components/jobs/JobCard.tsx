@@ -1,5 +1,5 @@
 import { Link } from "react-router-dom";
-import { Building2, MapPin, DollarSign, Clock, Wifi } from "lucide-react";
+import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2 } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -107,12 +107,23 @@ export function JobCard({ job, onSave, isSaved = false }: JobCardProps) {
         <div className="ml-auto flex gap-2">
           {onSave && (
             <Button
-              variant={isSaved ? "default" : "outline"}
+              variant="outline"
               size="sm"
               onClick={() => onSave(job.id)}
-              className="h-7 text-xs"
+              className={
+                isSaved
+                  ? "h-7 text-xs text-destructive hover:bg-destructive/10 hover:text-destructive"
+                  : "h-7 text-xs"
+              }
             >
-              {isSaved ? "Saved" : "Save"}
+              {isSaved ? (
+                <>
+                  <Trash2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Remove
+                </>
+              ) : (
+                "Save"
+              )}
             </Button>
           )}
           <ApplyButton
