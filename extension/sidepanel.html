@@ -60,8 +60,16 @@
         position: absolute; top: 7px; right: 8px; text-decoration: none;
         color: #16a34a; font-weight: 700;
       }
-      .saved li.muted { color: #9ca3af; text-align: center; }
-      #saved-all-list { max-height: 260px; overflow-y: auto; }
+      .saved li.muted { color: #9ca3af; text-align: center; padding: 12px; }
+      #saved-all-list { max-height: 300px; overflow-y: auto; padding-right: 2px; }
+      .saved li { transition: border-color .12s, background .12s; }
+      .saved li:hover { border-color: #16a34a; background: rgba(22,163,74,.04); }
+      .divider span { white-space: nowrap; }
+      .review-x {
+        background: none; border: 0; color: #9ca3af; cursor: pointer;
+        font-size: 11px; padding: 0 2px; line-height: 1;
+      }
+      .review-x:hover { color: #dc2626; }
       footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
       .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
     </style>
@@ -88,31 +96,36 @@
     <!-- Capture -->
     <div id="capture-view" hidden>
       <p class="sub">
-        On a job page, click <b>Capture this page</b> — it reads the title,
-        company, and location for you. On Indeed/LinkedIn there's also a green
-        <b>Save</b> button on the page itself.
+        On Indeed/LinkedIn, use the green <b>Save</b> button right on the page.
+        On any other site, <b>Capture this page</b> below.
       </p>
       <button id="capture-btn" class="primary">📋 Capture this page</button>
       <button id="pick-btn" class="ghost" style="margin-top: 8px">
         🎯 Pick manually
       </button>
 
-      <div class="divider">review &amp; save</div>
-      <form id="save-form">
-        <label for="f-title">Title</label>
-        <input id="f-title" type="text" required />
-        <label for="f-company">Company</label>
-        <input id="f-company" type="text" />
-        <label for="f-location">Location</label>
-        <input id="f-location" type="text" placeholder="Not specified" />
-        <div class="row">
-          <input id="f-remote" type="checkbox" />
-          <label for="f-remote">Remote</label>
+      <!-- Review form: hidden until a capture actually lands, so the panel stays clean. -->
+      <div id="review-section" hidden>
+        <div class="divider">
+          <span>review &amp; save</span>
+          <button id="review-cancel" class="review-x" type="button" title="Dismiss">✕</button>
         </div>
-        <input id="f-url" type="hidden" />
-        <button class="primary" type="submit">Save to tracker</button>
-        <p id="save-status" class="status"></p>
-      </form>
+        <form id="save-form">
+          <label for="f-title">Title</label>
+          <input id="f-title" type="text" required />
+          <label for="f-company">Company</label>
+          <input id="f-company" type="text" />
+          <label for="f-location">Location</label>
+          <input id="f-location" type="text" placeholder="Not specified" />
+          <div class="row">
+            <input id="f-remote" type="checkbox" />
+            <label for="f-remote">Remote</label>
+          </div>
+          <input id="f-url" type="hidden" />
+          <button class="primary" type="submit">Save to tracker</button>
+          <p id="save-status" class="status"></p>
+        </form>
+      </div>
 
       <div class="saved" id="saved-all-wrap">
         <h2>Your saved jobs <span id="saved-all-count" class="count"></span></h2>

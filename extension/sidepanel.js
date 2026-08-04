@@ -81,6 +81,19 @@ function fillForm(job) {
   $("f-url").value = job.url || "";
 }
 
+// The review form only appears once there's something to review (a capture),
+// keeping the panel uncluttered the rest of the time.
+function showReview() {
+  $("review-section").hidden = false;
+}
+function hideReview() {
+  $("review-section").hidden = true;
+  fillForm({});
+  const s = $("save-status");
+  s.textContent = "";
+  s.className = "status";
+}
+
 async function currentUrl() {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   return tab?.url || "";
@@ -138,6 +151,7 @@ document.addEventListener("DOMContentLoaded", () => {
 
   $("capture-btn").addEventListener("click", captureThisPage);
   $("pick-btn").addEventListener("click", startPicker);
+  $("review-cancel").addEventListener("click", hideReview);
 
   $("save-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -156,11 +170,9 @@ document.addEventListener("DOMContentLoaded", () => {
     const res = await send({ type: "saveJob", job });
     btn.disabled = false;
     if (res?.ok) {
-      status.className = "status ok";
-      status.textContent = "✓ Saved!";
       addSaved(job);
       loadSaved();
-      fillForm({});
+      hideReview();
     } else if (res?.error === "NOT_SIGNED_IN") {
       show("login");
     } else {
@@ -183,6 +195,7 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.je_capture?.newValue) {
     const job = changes.je_capture.newValue;
     fillForm(job);
+    showReview();
     chrome.storage.local.remove("je_capture");
     const status = $("save-status");
     if (job.title) {
