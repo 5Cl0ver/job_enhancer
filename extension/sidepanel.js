@@ -156,6 +156,16 @@ document.addEventListener("DOMContentLoaded", () => {
   $("pick-btn").addEventListener("click", startPicker);
   $("review-cancel").addEventListener("click", hideReview);
 
+  // Keep "Your saved jobs" in sync with changes made elsewhere (removing/saving
+  // in the app or another tab): refresh when the panel regains focus, and poll
+  // lightly while it's visible.
+  const maybeRefresh = () => {
+    if (!document.hidden && !$("capture-view").hidden) loadSaved();
+  };
+  document.addEventListener("visibilitychange", maybeRefresh);
+  window.addEventListener("focus", maybeRefresh);
+  setInterval(maybeRefresh, 6000);
+
   $("save-form").addEventListener("submit", async (e) => {
     e.preventDefault();
     const status = $("save-status");

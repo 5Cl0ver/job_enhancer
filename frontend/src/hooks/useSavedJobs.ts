@@ -105,7 +105,25 @@ export function useUnsaveJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (id: string) => api.delete(`/v1/saved-jobs/${id}`),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-jobs"] }),
+    // Optimistic: drop the card from every saved-jobs cache immediately so the
+    // UI reacts the instant you click, then reconcile with the server.
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ["saved-jobs"] });
+      const prev = qc.getQueriesData<SavedJob[]>({ queryKey: ["saved-jobs"] });
+      qc.setQueriesData<SavedJob[]>({ queryKey: ["saved-jobs"] }, (old) =>
+        old ? old.filter((sj) => sj.id !== id) : old,
+      );
+      return { prev };
+    },
+    onError: (_err, _id, ctx) => {
+      // Put the card back if the delete failed.
+      ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+      qc.invalidateQueries({ queryKey: ["tracker"] });
+      qc.invalidateQueries({ queryKey: ["analytics"] });
+    },
   });
 }
 
