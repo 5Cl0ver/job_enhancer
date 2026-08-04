@@ -502,7 +502,10 @@
       return;
     }
     setState(btn, "busy", "Saving\u2026");
-    const res = await chrome.runtime.sendMessage({ type: "saveJob", job }).catch(() => ({ ok: false, error: "error" }));
+    const res = await Promise.race([
+      chrome.runtime.sendMessage({ type: "saveJob", job }),
+      new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "Timed out \u2014 try again" }), 12e3))
+    ]).catch(() => ({ ok: false, error: "error" }));
     if (res?.ok) {
       setState(btn, "saved", "\u2713 Saved");
     } else if (res?.error === "Already in your tracker") {

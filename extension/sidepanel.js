@@ -158,13 +158,19 @@ document.addEventListener("DOMContentLoaded", () => {
 
   // Keep "Your saved jobs" in sync with changes made elsewhere (removing/saving
   // in the app or another tab): refresh when the panel regains focus, and poll
-  // lightly while it's visible.
+  // gently while it's visible. Throttled so rapid focus/visibility events can't
+  // spam the API.
+  let lastRefresh = 0;
   const maybeRefresh = () => {
-    if (!document.hidden && !$("capture-view").hidden) loadSaved();
+    if (document.hidden || $("capture-view").hidden) return;
+    const now = Date.now();
+    if (now - lastRefresh < 4000) return;
+    lastRefresh = now;
+    loadSaved();
   };
   document.addEventListener("visibilitychange", maybeRefresh);
   window.addEventListener("focus", maybeRefresh);
-  setInterval(maybeRefresh, 6000);
+  setInterval(maybeRefresh, 15000);
 
   $("save-form").addEventListener("submit", async (e) => {
     e.preventDefault();

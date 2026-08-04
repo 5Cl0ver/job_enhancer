@@ -119,9 +119,11 @@ async function onSave() {
     return;
   }
   setState(btn, "busy", "Saving…");
-  const res = await chrome.runtime
-    .sendMessage({ type: "saveJob", job })
-    .catch(() => ({ ok: false, error: "error" }));
+  // Never hang on "Saving…" — bail after 12s so the button stays usable.
+  const res = await Promise.race([
+    chrome.runtime.sendMessage({ type: "saveJob", job }),
+    new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "Timed out — try again" }), 12000)),
+  ]).catch(() => ({ ok: false, error: "error" }));
 
   if (res?.ok) {
     setState(btn, "saved", "✓ Saved");

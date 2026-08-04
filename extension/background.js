@@ -22,6 +22,24 @@ async function storeSession(d, email) {
   await chrome.storage.local.set(patch);
 }
 
+// A single in-flight refresh, shared by ALL callers. Supabase rotates refresh
+// tokens, so if many requests each refresh at once, only the first succeeds and
+// the rest get "refresh token already used" — which wedges the session. This
+// mutex makes concurrent callers await the SAME refresh instead of racing.
+let _refreshInFlight = null;
+
+async function refreshToken(je_refresh) {
+  const res = await fetch(`${cfg.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+    method: "POST",
+    headers: { apikey: cfg.SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify({ refresh_token: je_refresh }),
+  });
+  if (!res.ok) return null;
+  const d = await res.json();
+  await storeSession(d);
+  return d.access_token;
+}
+
 async function getValidToken() {
   const { je_token, je_expires, je_refresh } = await chrome.storage.local.get([
     "je_token",
@@ -31,22 +49,13 @@ async function getValidToken() {
   if (je_token && je_expires && je_expires * 1000 > Date.now() + 30_000) {
     return je_token;
   }
-  if (je_refresh) {
-    const res = await fetch(
-      `${cfg.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`,
-      {
-        method: "POST",
-        headers: { apikey: cfg.SUPABASE_ANON_KEY, "Content-Type": "application/json" },
-        body: JSON.stringify({ refresh_token: je_refresh }),
-      },
-    );
-    if (res.ok) {
-      const d = await res.json();
-      await storeSession(d);
-      return d.access_token;
-    }
+  if (!je_refresh) return null;
+  if (!_refreshInFlight) {
+    _refreshInFlight = refreshToken(je_refresh).finally(() => {
+      _refreshInFlight = null;
+    });
   }
-  return null;
+  return _refreshInFlight;
 }
 
 async function login(email, password) {
