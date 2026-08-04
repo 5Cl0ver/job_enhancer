@@ -5,6 +5,7 @@ Free tier: 40 RPM. On 429, raise HTTPException(429) with Retry-After header.
 Constitution Principle III requires logging model_used and generation_ms.
 """
 
+import asyncio
 import logging
 import time
 
@@ -16,8 +17,11 @@ from app.config import settings
 
 logger = logging.getLogger(__name__)
 
-_MODEL_ID = "meta/llama-3.3-70b-instruct"
+_MODEL_ID = settings.nvidia_model
 _BASE_URL = "https://integrate.api.nvidia.com/v1"
+# Hard cap so a slow/queued model can never hang document generation (and the
+# UI waiting on it). Comfortably above a normal generation, well below a hang.
+_REQUEST_TIMEOUT_S = 90
 
 _RESUME_SYSTEM_PROMPT = """You are an expert resume writer and career coach.
 Your task is to tailor the user's base resume to better match a specific job.
@@ -47,7 +51,17 @@ async def _invoke(system: str, user_content: str) -> tuple[str, int]:
 
     start = time.monotonic()
     try:
-        response = await client.ainvoke(messages)
+        response = await asyncio.wait_for(
+            client.ainvoke(messages), timeout=_REQUEST_TIMEOUT_S
+        )
+    except asyncio.TimeoutError:
+        logger.warning(
+            "NVIDIA NIM timed out after %ss (model=%s)", _REQUEST_TIMEOUT_S, _MODEL_ID
+        )
+        raise HTTPException(
+            status_code=503,
+            detail="AI generation timed out — the model is busy. Please try again.",
+        ) from None
     except Exception as exc:
         exc_str = str(exc).lower()
         if "429" in exc_str or "rate limit" in exc_str:

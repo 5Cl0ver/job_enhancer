@@ -22,6 +22,11 @@ class Settings(BaseSettings):
 
     # AI
     nvidia_api_key: str
+    # NVIDIA NIM model id. Defaults to the fast 8B model: on the free tier the
+    # 70B models are frequently queued and can take >60s (or time out), which
+    # hangs document generation. Override with NVIDIA_MODEL to use a larger model
+    # when the free tier has capacity (e.g. meta/llama-3.3-70b-instruct).
+    nvidia_model: str = "meta/llama-3.1-8b-instruct"
 
     # Job APIs
     adzuna_app_id: str
