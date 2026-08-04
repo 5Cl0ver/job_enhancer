@@ -58,13 +58,25 @@ export function looksRemote(...parts) {
  * @param {Array<{via:string, data:object}>} candidates ordered high→low priority
  */
 export function mergeJob(candidates, url) {
-  const out = { title: "", company: "", location: "", is_remote: false, url, description: "", _via: "" };
-  for (const field of ["title", "company", "location", "description", "url"]) {
+  const out = {
+    title: "", company: "", location: "", is_remote: false, url,
+    description: "", job_type: "", salary_min: null, salary_max: null, _via: "",
+  };
+  for (const field of ["title", "company", "location", "description", "job_type", "url"]) {
     for (const c of candidates) {
       const v = clean(c.data?.[field]);
       if (v) {
         out[field] = v;
         if (field === "title" && !out._via) out._via = c.via;
+        break;
+      }
+    }
+  }
+  for (const field of ["salary_min", "salary_max"]) {
+    for (const c of candidates) {
+      const v = c.data?.[field];
+      if (v != null) {
+        out[field] = v;
         break;
       }
     }

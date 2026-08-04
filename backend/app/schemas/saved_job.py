@@ -22,6 +22,11 @@ class ManualJobCreate(BaseModel):
     company: str = Field(min_length=1, max_length=255)
     location: str = Field(default="Not specified", max_length=255)
     is_remote: bool = False
+    # Optional richer detail the extension can capture from the page.
+    description: str | None = None
+    salary_min: int | None = None
+    salary_max: int | None = None
+    job_type: str | None = Field(default=None, max_length=50)
     collection_id: uuid.UUID | None = None
     notes: str | None = None
 

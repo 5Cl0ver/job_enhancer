@@ -11,6 +11,9 @@ function show(view) {
 }
 
 const savedThisSession = [];
+// The most recent capture, so richer fields (description, salary, type) that
+// aren't shown in the form still get saved.
+let lastCapture = null;
 function renderSaved() {
   const wrap = $("saved-wrap");
   if (!savedThisSession.length) {
@@ -167,6 +170,13 @@ document.addEventListener("DOMContentLoaded", () => {
       location: $("f-location").value.trim() || "Not specified",
       is_remote: $("f-remote").checked,
     };
+    // Carry richer captured fields the form doesn't show.
+    if (lastCapture) {
+      if (lastCapture.description) job.description = lastCapture.description;
+      if (lastCapture.salary_min != null) job.salary_min = lastCapture.salary_min;
+      if (lastCapture.salary_max != null) job.salary_max = lastCapture.salary_max;
+      if (lastCapture.job_type) job.job_type = lastCapture.job_type;
+    }
     const res = await send({ type: "saveJob", job });
     btn.disabled = false;
     if (res?.ok) {
@@ -194,6 +204,7 @@ document.addEventListener("DOMContentLoaded", () => {
 chrome.storage.onChanged.addListener((changes, area) => {
   if (area === "local" && changes.je_capture?.newValue) {
     const job = changes.je_capture.newValue;
+    lastCapture = job;
     fillForm(job);
     showReview();
     chrome.storage.local.remove("je_capture");

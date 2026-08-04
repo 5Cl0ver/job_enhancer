@@ -21,13 +21,33 @@
     return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
   }
   function mergeJob(candidates, url) {
-    const out = { title: "", company: "", location: "", is_remote: false, url, description: "", _via: "" };
-    for (const field of ["title", "company", "location", "description", "url"]) {
+    const out = {
+      title: "",
+      company: "",
+      location: "",
+      is_remote: false,
+      url,
+      description: "",
+      job_type: "",
+      salary_min: null,
+      salary_max: null,
+      _via: ""
+    };
+    for (const field of ["title", "company", "location", "description", "job_type", "url"]) {
       for (const c of candidates) {
         const v = clean(c.data?.[field]);
         if (v) {
           out[field] = v;
           if (field === "title" && !out._via) out._via = c.via;
+          break;
+        }
+      }
+    }
+    for (const field of ["salary_min", "salary_max"]) {
+      for (const c of candidates) {
+        const v = c.data?.[field];
+        if (v != null) {
+          out[field] = v;
           break;
         }
       }
@@ -54,6 +74,25 @@
     if (typeof hiringOrganization === "string") return clean(hiringOrganization);
     if (Array.isArray(hiringOrganization)) return orgName(hiringOrganization[0]);
     return clean(hiringOrganization.name);
+  }
+  function numOrNull(n) {
+    const v = typeof n === "string" ? parseInt(n.replace(/[^0-9]/g, ""), 10) : n;
+    return Number.isFinite(v) ? v : null;
+  }
+  function salaryFrom(job2) {
+    const b = job2.baseSalary;
+    const v = b?.value;
+    if (v && typeof v === "object") {
+      return {
+        salary_min: numOrNull(v.minValue ?? v.value),
+        salary_max: numOrNull(v.maxValue ?? v.value)
+      };
+    }
+    return { salary_min: numOrNull(v), salary_max: null };
+  }
+  function employmentType(job2) {
+    const t = job2.employmentType;
+    return clean(Array.isArray(t) ? t[0] : t);
   }
   function addressText(jobLocation) {
     const loc = Array.isArray(jobLocation) ? jobLocation[0] : jobLocation;
@@ -82,13 +121,17 @@
     const location2 = addressText(job2.jobLocation);
     const description = stripHtml(job2.description);
     const remoteFlag = job2.jobLocationType === "TELECOMMUTE" || !!job2.applicantLocationRequirements || looksRemote(title, location2, description);
+    const { salary_min, salary_max } = salaryFrom(job2);
     return {
       title,
       company: orgName(job2.hiringOrganization),
       location: location2,
       is_remote: remoteFlag,
       url: clean(job2.url) || url,
-      description
+      description,
+      job_type: employmentType(job2),
+      salary_min,
+      salary_max
     };
   }
 
@@ -118,10 +161,9 @@
       url
     };
   }
-  function selectedJobKey(url) {
+  function openCardKey(url) {
     try {
-      const p = new URL(url).searchParams;
-      return p.get("vjk") || p.get("jk");
+      return new URL(url).searchParams.get("vjk");
     } catch {
       return null;
     }
@@ -135,14 +177,14 @@
     } catch {
       return null;
     }
-    const detail = normalizeDetail(b.detail, url);
-    if (detail) return detail;
-    if (Array.isArray(b.cards)) {
-      const jk = selectedJobKey(url);
-      const card = jk ? b.cards.find((c) => c.jobkey === jk) : null;
+    const vjk = openCardKey(url);
+    if (vjk) {
+      const card = Array.isArray(b.cards) ? b.cards.find((c) => c.jobkey === vjk) : null;
       if (card) return normalizeCard(card, url);
+      if (b.detail?.jobKey && b.detail.jobKey === vjk) return normalizeDetail(b.detail, url);
+      return null;
     }
-    return null;
+    return normalizeDetail(b.detail, url);
   }
   function balanced(str, start) {
     let depth = 0, inStr = false, esc = false;
@@ -182,6 +224,16 @@
     return null;
   }
   function fromStatic(doc, url) {
+    const vjk = openCardKey(url);
+    if (vjk) {
+      const results = scanScripts(
+        doc,
+        'mosaic-provider-jobcards"]',
+        (d) => d?.metaData?.mosaicProviderJobCardsModel?.results || null
+      );
+      const card = Array.isArray(results) ? results.find((c) => c.jobkey === vjk) : null;
+      return card ? normalizeCard(card, url) : null;
+    }
     const model = scanScripts(
       doc,
       "_initialData",
@@ -198,16 +250,6 @@
         },
         url
       );
-    }
-    const results = scanScripts(
-      doc,
-      'mosaic-provider-jobcards"]',
-      (d) => d?.metaData?.mosaicProviderJobCardsModel?.results || null
-    );
-    if (Array.isArray(results)) {
-      const jk = selectedJobKey(url);
-      const card = jk ? results.find((c) => c.jobkey === jk) : null;
-      if (card) return normalizeCard(card, url);
     }
     return null;
   }

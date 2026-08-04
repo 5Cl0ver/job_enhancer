@@ -21,13 +21,33 @@
     return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
   }
   function mergeJob(candidates, url) {
-    const out = { title: "", company: "", location: "", is_remote: false, url, description: "", _via: "" };
-    for (const field of ["title", "company", "location", "description", "url"]) {
+    const out = {
+      title: "",
+      company: "",
+      location: "",
+      is_remote: false,
+      url,
+      description: "",
+      job_type: "",
+      salary_min: null,
+      salary_max: null,
+      _via: ""
+    };
+    for (const field of ["title", "company", "location", "description", "job_type", "url"]) {
       for (const c of candidates) {
         const v = clean(c.data?.[field]);
         if (v) {
           out[field] = v;
           if (field === "title" && !out._via) out._via = c.via;
+          break;
+        }
+      }
+    }
+    for (const field of ["salary_min", "salary_max"]) {
+      for (const c of candidates) {
+        const v = c.data?.[field];
+        if (v != null) {
+          out[field] = v;
           break;
         }
       }
@@ -54,6 +74,25 @@
     if (typeof hiringOrganization === "string") return clean(hiringOrganization);
     if (Array.isArray(hiringOrganization)) return orgName(hiringOrganization[0]);
     return clean(hiringOrganization.name);
+  }
+  function numOrNull(n) {
+    const v = typeof n === "string" ? parseInt(n.replace(/[^0-9]/g, ""), 10) : n;
+    return Number.isFinite(v) ? v : null;
+  }
+  function salaryFrom(job) {
+    const b = job.baseSalary;
+    const v = b?.value;
+    if (v && typeof v === "object") {
+      return {
+        salary_min: numOrNull(v.minValue ?? v.value),
+        salary_max: numOrNull(v.maxValue ?? v.value)
+      };
+    }
+    return { salary_min: numOrNull(v), salary_max: null };
+  }
+  function employmentType(job) {
+    const t = job.employmentType;
+    return clean(Array.isArray(t) ? t[0] : t);
   }
   function addressText(jobLocation) {
     const loc = Array.isArray(jobLocation) ? jobLocation[0] : jobLocation;
@@ -82,13 +121,17 @@
     const location2 = addressText(job.jobLocation);
     const description = stripHtml(job.description);
     const remoteFlag = job.jobLocationType === "TELECOMMUTE" || !!job.applicantLocationRequirements || looksRemote(title, location2, description);
+    const { salary_min, salary_max } = salaryFrom(job);
     return {
       title,
       company: orgName(job.hiringOrganization),
       location: location2,
       is_remote: remoteFlag,
       url: clean(job.url) || url,
-      description
+      description,
+      job_type: employmentType(job),
+      salary_min,
+      salary_max
     };
   }
 

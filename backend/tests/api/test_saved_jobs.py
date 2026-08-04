@@ -92,6 +92,31 @@ async def test_manual_add_job(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_manual_add_stores_rich_fields(client: AsyncClient):
+    """Description / salary / job_type captured by the extension are persisted."""
+    r = await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://example.com/rich/1",
+            "title": "Platform Engineer",
+            "company": "RichCo",
+            "location": "Remote",
+            "is_remote": True,
+            "description": "Build and run our platform. Kubernetes, Go, on-call.",
+            "salary_min": 120000,
+            "salary_max": 160000,
+            "job_type": "FULL_TIME",
+        },
+    )
+    assert r.status_code == 201
+    jl = r.json()["job_listing"]
+    assert jl["description"].startswith("Build and run our platform")
+    assert jl["salary_min"] == 120000
+    assert jl["salary_max"] == 160000
+    assert jl["job_type"] == "FULL_TIME"
+
+
+@pytest.mark.asyncio
 async def test_check_saved_reflects_tracker(client: AsyncClient):
     """POST /check returns saved=False before saving, True after (extension pre-check)."""
     job = {

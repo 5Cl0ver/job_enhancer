@@ -25,6 +25,29 @@ function orgName(hiringOrganization) {
   return clean(hiringOrganization.name);
 }
 
+function numOrNull(n) {
+  const v = typeof n === "string" ? parseInt(n.replace(/[^0-9]/g, ""), 10) : n;
+  return Number.isFinite(v) ? v : null;
+}
+
+// schema.org baseSalary → { salary_min, salary_max } (annual-ish, best effort).
+function salaryFrom(job) {
+  const b = job.baseSalary;
+  const v = b?.value;
+  if (v && typeof v === "object") {
+    return {
+      salary_min: numOrNull(v.minValue ?? v.value),
+      salary_max: numOrNull(v.maxValue ?? v.value),
+    };
+  }
+  return { salary_min: numOrNull(v), salary_max: null };
+}
+
+function employmentType(job) {
+  const t = job.employmentType;
+  return clean(Array.isArray(t) ? t[0] : t);
+}
+
 function addressText(jobLocation) {
   const loc = Array.isArray(jobLocation) ? jobLocation[0] : jobLocation;
   const addr = loc?.address;
@@ -64,6 +87,8 @@ export function extractFromJsonLd(doc, url) {
     !!job.applicantLocationRequirements ||
     looksRemote(title, location, description);
 
+  const { salary_min, salary_max } = salaryFrom(job);
+
   return {
     title,
     company: orgName(job.hiringOrganization),
@@ -71,5 +96,8 @@ export function extractFromJsonLd(doc, url) {
     is_remote: remoteFlag,
     url: clean(job.url) || url,
     description,
+    job_type: employmentType(job),
+    salary_min,
+    salary_max,
   };
 }

@@ -124,12 +124,27 @@ async def save_manual_job(
             location=data.location,
             is_remote=data.is_remote,
             apply_url=data.url,
+            description=data.description,
+            salary_min=data.salary_min,
+            salary_max=data.salary_max,
+            job_type=data.job_type,
             content_hash=content_hash,
             title_normalized=title_norm,
             company_normalized=company_norm,
         )
         db.add(listing)
         await db.flush()
+    else:
+        # Backfill richer detail if this capture has it and the stored listing
+        # didn't (e.g. it was first saved with just a title from a card).
+        if data.description and not listing.description:
+            listing.description = data.description
+        if data.salary_min and not listing.salary_min:
+            listing.salary_min = data.salary_min
+        if data.salary_max and not listing.salary_max:
+            listing.salary_max = data.salary_max
+        if data.job_type and not listing.job_type:
+            listing.job_type = data.job_type
 
     return await save_job(
         db,
