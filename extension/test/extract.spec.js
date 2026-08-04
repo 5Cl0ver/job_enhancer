@@ -62,6 +62,8 @@ describe("extractJob — per-site selector fallback (no JSON-LD)", () => {
     expect(job.location).toBe("Remote");
     expect(job.is_remote).toBe(true);
     expect(job._via).toBe("indeed");
+    // The full page description (#jobDescriptionText) is captured, not just a card snippet.
+    expect(job.description).toContain("Analyze all the data");
   });
 });
 

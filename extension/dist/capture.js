@@ -6,6 +6,9 @@
   function stripHtml(s) {
     return clean((s || "").replace(/<[^>]*>/g, " "));
   }
+  function cleanMultiline(s) {
+    return (s || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  }
   function textFrom(root, selectors) {
     if (!root) return "";
     for (const sel of selectors) {
@@ -33,7 +36,7 @@
       salary_max: null,
       _via: ""
     };
-    for (const field of ["title", "company", "location", "description", "job_type", "url"]) {
+    for (const field of ["title", "company", "location", "job_type", "url"]) {
       for (const c of candidates) {
         const v = clean(c.data?.[field]);
         if (v) {
@@ -42,6 +45,10 @@
           break;
         }
       }
+    }
+    for (const c of candidates) {
+      const v = cleanMultiline(c.data?.description || "");
+      if (v.length > out.description.length) out.description = v;
     }
     for (const field of ["salary_min", "salary_max"]) {
       for (const c of candidates) {
@@ -269,6 +276,19 @@
   }
 
   // src/extract/indeed.js
+  function descriptionText(doc) {
+    for (const sel of [
+      "#jobDescriptionText",
+      "[id^='jobDescriptionText']",
+      ".jobsearch-JobComponent-description",
+      "[class*='jobDescriptionText']"
+    ]) {
+      const el = doc.querySelector(sel);
+      const t = (el?.textContent || "").trim();
+      if (t) return t;
+    }
+    return "";
+  }
   function extractIndeed(doc, url) {
     const title = textFrom(doc, [
       "h1.jobsearch-JobInfoHeader-title",
@@ -287,8 +307,16 @@
       "[data-testid='job-location']",
       ".jobsearch-JobInfoHeader-subtitle div:last-child"
     ]);
+    const description = descriptionText(doc);
     const body = doc.body?.textContent || "";
-    return { title, company, location: location2, is_remote: looksRemote(location2, title, body), url };
+    return {
+      title,
+      company,
+      location: location2,
+      description,
+      is_remote: looksRemote(location2, title, body),
+      url
+    };
   }
 
   // src/extract/linkedin.js

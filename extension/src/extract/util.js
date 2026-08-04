@@ -12,6 +12,16 @@ export function stripHtml(s) {
   return clean((s || "").replace(/<[^>]*>/g, " "));
 }
 
+/** Like clean, but keep paragraph breaks — for multi-line job descriptions. */
+export function cleanMultiline(s) {
+  return (s || "")
+    .replace(/\r/g, "")
+    .replace(/[ \t]+/g, " ")
+    .replace(/ *\n */g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 /** First element matching any selector whose text/title is non-empty. */
 export function textFrom(root, selectors) {
   if (!root) return "";
@@ -62,7 +72,7 @@ export function mergeJob(candidates, url) {
     title: "", company: "", location: "", is_remote: false, url,
     description: "", job_type: "", salary_min: null, salary_max: null, _via: "",
   };
-  for (const field of ["title", "company", "location", "description", "job_type", "url"]) {
+  for (const field of ["title", "company", "location", "job_type", "url"]) {
     for (const c of candidates) {
       const v = clean(c.data?.[field]);
       if (v) {
@@ -71,6 +81,12 @@ export function mergeJob(candidates, url) {
         break;
       }
     }
+  }
+  // Description: pick the FULLEST one (a card snippet is short; the page's own
+  // description text is the whole thing), preserving paragraph breaks.
+  for (const c of candidates) {
+    const v = cleanMultiline(c.data?.description || "");
+    if (v.length > out.description.length) out.description = v;
   }
   for (const field of ["salary_min", "salary_max"]) {
     for (const c of candidates) {
