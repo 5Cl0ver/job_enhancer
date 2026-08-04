@@ -64,7 +64,7 @@
     return out;
   }
 
-  // src/extract/jsonld.js
+  // src/extract/jsonld-map.js
   function collectJobPostings(node, out) {
     if (!node || typeof node !== "object") return;
     if (Array.isArray(node)) {
@@ -109,20 +109,7 @@
     const parts = [addr.addressLocality, addr.addressRegion, addr.addressCountry].map((p) => typeof p === "object" ? p?.name : p).filter(Boolean);
     return clean(parts.join(", "));
   }
-  function extractFromJsonLd(doc, url) {
-    const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
-    const postings = [];
-    for (const s of scripts) {
-      let parsed;
-      try {
-        parsed = JSON.parse(s.textContent);
-      } catch {
-        continue;
-      }
-      collectJobPostings(parsed, postings);
-    }
-    if (!postings.length) return null;
-    const job2 = postings[0];
+  function mapJobPosting(job2, url) {
     const title = clean(job2.title);
     if (!title) return null;
     const location2 = addressText(job2.jobLocation);
@@ -140,6 +127,21 @@
       salary_min,
       salary_max
     };
+  }
+
+  // src/extract/jsonld.js
+  function extractFromJsonLd(doc, url) {
+    const scripts = doc.querySelectorAll('script[type="application/ld+json"]');
+    const postings = [];
+    for (const s of scripts) {
+      try {
+        collectJobPostings(JSON.parse(s.textContent), postings);
+      } catch {
+        continue;
+      }
+    }
+    if (!postings.length) return null;
+    return mapJobPosting(postings[0], url);
   }
 
   // src/extract/indeed-embedded.js

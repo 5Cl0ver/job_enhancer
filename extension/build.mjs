@@ -11,6 +11,8 @@ const options = {
   entryPoints: {
     content: "src/content.entry.js", // injected content script (Save button)
     capture: "src/capture.entry.js", // injected on demand by "Capture this page"
+    bridge: "src/bridge.entry.js", // MAIN-world: mirrors Indeed's page JSON to the DOM
+    background: "src/background.entry.js", // service worker (API/auth/enrichment)
   },
   bundle: true,
   format: "iife",

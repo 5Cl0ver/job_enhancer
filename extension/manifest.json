@@ -5,7 +5,7 @@
   "description": "Save jobs from any site to your Job Enhancer tracker — a side panel plus a one-click Save button on Indeed & LinkedIn job pages.",
   "permissions": ["sidePanel", "storage", "scripting", "activeTab"],
   "host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "service_worker": "background.js" },
+  "background": { "service_worker": "dist/background.js" },
   "action": {
     "default_title": "Open Job Enhancer",
     "default_icon": {
@@ -20,6 +20,12 @@
       "matches": ["https://*.indeed.com/*", "https://*.linkedin.com/*"],
       "js": ["dist/content.js"],
       "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*.indeed.com/*"],
+      "js": ["dist/bridge.js"],
+      "run_at": "document_start",
+      "world": "MAIN"
     }
   ],
   "icons": {

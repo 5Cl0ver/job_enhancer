@@ -1,9 +1,13 @@
 // Background service worker — the ONLY place that talks to Supabase Auth and the
 // Job Enhancer API. The side panel and the on-page Save buttons send it messages;
-// it handles login, token refresh, and saving. Centralizing here avoids CORS
-// (content scripts can't call the API directly) and keeps one source of truth.
+// it handles login, token refresh, saving, and enriching a saved job with the
+// full listing detail. Centralizing here avoids CORS and keeps one source of truth.
+//
+// Bundled by esbuild (it imports the shared enrichment module). config.js is
+// loaded at runtime from the extension root.
+import { enrichFromHtml } from "./enrich.js";
 
-importScripts("config.js");
+importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
 
 // Clicking the toolbar icon opens the side panel (no popup).
@@ -69,13 +73,47 @@ async function login(email, password) {
   await storeSession(d, email);
 }
 
+function hostOf(u) {
+  try {
+    return new URL(u).hostname;
+  } catch {
+    return "";
+  }
+}
+
+// If a saved Indeed job is missing a real description, fetch its /viewjob page
+// and pull the full description + salary + job type from the page's JSON-LD.
+// This is what gets full detail for home-feed captures (where the on-page
+// snippet is short/empty) and the extra fields worth filtering on later.
+async function enrichIfThin(job) {
+  const host = hostOf(job.url);
+  const isIndeedListing = host.endsWith("indeed.com") && /\/viewjob\b/.test(job.url);
+  const hasDescription = (job.description || "").length > 200;
+  if (!isIndeedListing || hasDescription) return job;
+  try {
+    const res = await fetch(job.url, { credentials: "omit" });
+    if (!res.ok) return job;
+    const extra = enrichFromHtml(await res.text(), job.url);
+    return {
+      ...job,
+      description: extra.description || job.description,
+      salary_min: job.salary_min ?? extra.salary_min ?? null,
+      salary_max: job.salary_max ?? extra.salary_max ?? null,
+      job_type: job.job_type || extra.job_type || "",
+    };
+  } catch {
+    return job; // enrichment is best-effort; never block a save on it
+  }
+}
+
 async function saveJob(job) {
   const token = await getValidToken();
   if (!token) throw new Error("NOT_SIGNED_IN");
+  const enriched = await enrichIfThin(job);
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/manual`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(job),
+    body: JSON.stringify(enriched),
   });
   if (res.status === 401) {
     await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
@@ -136,12 +174,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const { je_email } = await chrome.storage.local.get("je_email");
         sendResponse({ ok: true, signedIn: !!token, email: je_email || "" });
       } else if (msg.type === "signOut") {
-        await chrome.storage.local.remove([
-          "je_token",
-          "je_expires",
-          "je_refresh",
-          "je_email",
-        ]);
+        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email"]);
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
