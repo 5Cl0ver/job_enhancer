@@ -2,6 +2,7 @@ import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft, ExternalLink, Tr
 import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
+import { MatchScore } from "@/components/jobs/MatchScore";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -116,6 +117,9 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
       </div>
 
       <Separator />
+
+      {/* How well the resume covers this job's named skills */}
+      <MatchScore jobId={job.id} />
 
       {/* Description */}
       {job.description ? (

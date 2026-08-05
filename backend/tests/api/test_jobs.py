@@ -83,6 +83,51 @@ async def test_search_returns_db_results_with_filters(client: AsyncClient, sampl
 
 
 @pytest.mark.asyncio
+async def test_match_score_flow(client: AsyncClient, db_session, test_user, sample_job):
+    """GET /jobs/{id}/match: no resume → flag; with resume → coverage lists."""
+    import uuid as _uuid
+
+    from app.models.resume import Resume
+
+    # Give the listing a description that names skills.
+    sample_job.description = (
+        "Build web apps with Python and React on PostgreSQL. "
+        "Docker deploys, code reviews, strong communication."
+    )
+    await db_session.commit()
+
+    # No resume yet → has_resume False, score 0 (UI shows an upload prompt).
+    r = await client.get(f"/v1/jobs/{sample_job.id}/match")
+    assert r.status_code == 200
+    assert r.json() == {
+        "has_resume": False, "has_description": True,
+        "score": 0, "matched": [], "missing": [],
+    }
+
+    # Active resume covering some of the keywords.
+    db_session.add(
+        Resume(
+            id=_uuid.uuid4(),
+            user_id=test_user.id,
+            filename="resume.pdf",
+            mime_type="application/pdf",
+            file_size_bytes=100,
+            extracted_text="Python developer, Postgres, Docker, clear communication.",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+    r2 = await client.get(f"/v1/jobs/{sample_job.id}/match")
+    body = r2.json()
+    assert body["has_resume"] is True
+    assert "python" in body["matched"]
+    assert "postgresql" in body["matched"]  # postgres in resume counts
+    assert "react" in body["missing"]
+    assert 0 < body["score"] < 100
+
+
+@pytest.mark.asyncio
 async def test_dedup_hash_consistency():
     """Same title/company/location always produces the same hash."""
     h1 = job_content_hash(normalize("Python Dev"), normalize("Acme"), normalize("NYC"))

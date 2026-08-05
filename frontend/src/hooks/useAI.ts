@@ -36,7 +36,11 @@ export function useUploadResume() {
       form.append("file", file);
       return api.post<ResumeRecord>("/v1/ai/resumes", form);
     },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["resumes"] }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+      // A new resume changes every job's match score.
+      qc.invalidateQueries({ queryKey: ["match"] });
+    },
   });
 }
 

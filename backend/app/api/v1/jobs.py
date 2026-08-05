@@ -9,9 +9,11 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.job_listing import JobListing
+from app.models.resume import Resume
 from app.models.user import User
-from app.schemas.job import JobListingSchema, JobSearchResponse
+from app.schemas.job import JobListingSchema, JobSearchResponse, MatchResponse
 from app.services.job_search import aggregate_and_deduplicate
+from app.services.match import match_resume
 
 router = APIRouter()
 
@@ -59,3 +61,35 @@ async def get_job(
     if not listing:
         raise HTTPException(status_code=404, detail="Job not found")
     return JobListingSchema.model_validate(listing)
+
+
+@router.get("/{job_id}/match", response_model=MatchResponse)
+async def get_match(
+    job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MatchResponse:
+    """Resume ↔ job keyword coverage: which skills the job names does the
+    user's active resume already show, and which are missing?"""
+    listing = await db.scalar(select(JobListing).where(JobListing.id == job_id))
+    if not listing:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    resume = await db.scalar(
+        select(Resume).where(Resume.user_id == user.id, Resume.is_active.is_(True))
+    )
+    has_resume = bool(resume and resume.extracted_text)
+    has_description = bool(listing.description)
+    if not has_resume or not has_description:
+        return MatchResponse(
+            has_resume=has_resume, has_description=has_description, score=0
+        )
+
+    result = match_resume(resume.extracted_text, listing.description)
+    return MatchResponse(
+        has_resume=True,
+        has_description=True,
+        score=result.score,
+        matched=result.matched,
+        missing=result.missing,
+    )

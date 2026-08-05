@@ -40,6 +40,16 @@ class JobSearchResponse(BaseModel):
     meta: PaginatedMeta
 
 
+class MatchResponse(BaseModel):
+    """Resume ↔ job keyword coverage for the match score UI."""
+
+    has_resume: bool
+    has_description: bool
+    score: int  # 0-100; meaningful only when both flags are true
+    matched: list[str] = []
+    missing: list[str] = []
+
+
 class JobSearchParams(BaseModel):
     q: str
     location: str | None = None
