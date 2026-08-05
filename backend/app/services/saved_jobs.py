@@ -112,6 +112,11 @@ async def backfill_job_details(
     if data.salary_max and not listing.salary_max:
         listing.salary_max = data.salary_max
         updated.append("salary_max")
+    if data.salary_period and not listing.salary_period and (
+        "salary_min" in updated or "salary_max" in updated
+    ):
+        listing.salary_period = data.salary_period
+        updated.append("salary_period")
     if data.job_type and not listing.job_type:
         listing.job_type = data.job_type
         updated.append("job_type")
@@ -174,6 +179,7 @@ async def save_manual_job(
             description=data.description,
             salary_min=data.salary_min,
             salary_max=data.salary_max,
+            salary_period=data.salary_period,
             job_type=data.job_type,
             content_hash=content_hash,
             title_normalized=title_norm,
@@ -188,8 +194,12 @@ async def save_manual_job(
             listing.description = data.description
         if data.salary_min and not listing.salary_min:
             listing.salary_min = data.salary_min
+            if data.salary_period and not listing.salary_period:
+                listing.salary_period = data.salary_period
         if data.salary_max and not listing.salary_max:
             listing.salary_max = data.salary_max
+            if data.salary_period and not listing.salary_period:
+                listing.salary_period = data.salary_period
         if data.job_type and not listing.job_type:
             listing.job_type = data.job_type
 

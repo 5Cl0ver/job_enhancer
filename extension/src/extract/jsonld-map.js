@@ -24,10 +24,18 @@ function orgName(hiringOrganization) {
 
 function numOrNull(n) {
   const v = typeof n === "string" ? parseInt(n.replace(/[^0-9]/g, ""), 10) : n;
-  return Number.isFinite(v) ? v : null;
+  return Number.isFinite(v) ? Math.round(v) : null;
 }
 
-// schema.org baseSalary → { salary_min, salary_max } (best effort).
+// schema.org QuantitativeValue.unitText: "YEAR" | "HOUR" | "MONTH" | …
+function periodFrom(unitText) {
+  const u = (unitText || "").toLowerCase();
+  if (u.startsWith("year")) return "yearly";
+  if (u.startsWith("hour")) return "hourly";
+  return null;
+}
+
+// schema.org baseSalary → { salary_min, salary_max, salary_period } (best effort).
 function salaryFrom(job) {
   const b = job.baseSalary;
   const v = b?.value;
@@ -35,9 +43,10 @@ function salaryFrom(job) {
     return {
       salary_min: numOrNull(v.minValue ?? v.value),
       salary_max: numOrNull(v.maxValue ?? v.value),
+      salary_period: periodFrom(v.unitText || b?.unitText),
     };
   }
-  return { salary_min: numOrNull(v), salary_max: null };
+  return { salary_min: numOrNull(v), salary_max: null, salary_period: null };
 }
 
 function employmentType(job) {
@@ -70,7 +79,7 @@ export function mapJobPosting(job, url) {
     job.jobLocationType === "TELECOMMUTE" ||
     !!job.applicantLocationRequirements ||
     looksRemote(title, location, description);
-  const { salary_min, salary_max } = salaryFrom(job);
+  const { salary_min, salary_max, salary_period } = salaryFrom(job);
 
   return {
     title,
@@ -82,5 +91,6 @@ export function mapJobPosting(job, url) {
     job_type: employmentType(job),
     salary_min,
     salary_max,
+    salary_period,
   };
 }

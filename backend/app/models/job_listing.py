@@ -25,6 +25,9 @@ class JobListing(Base):
     description: Mapped[str | None] = mapped_column(Text)
     salary_min: Mapped[int | None] = mapped_column(Integer)
     salary_max: Mapped[int | None] = mapped_column(Integer)
+    # "yearly" (also the meaning of null, for legacy rows) or "hourly" —
+    # hourly listings ($50-$100/hr) must not display as annual figures.
+    salary_period: Mapped[str | None] = mapped_column(String(20))
     currency: Mapped[str | None] = mapped_column(String(10), default="USD")
     job_type: Mapped[str | None] = mapped_column(String(50))
     apply_url: Mapped[str] = mapped_column(Text, nullable=False)

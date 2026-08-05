@@ -138,6 +138,32 @@ async def test_manual_add_accepts_decimal_salary(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_manual_add_stores_hourly_salary_period(client: AsyncClient):
+    """Hourly listings ($50-$100/hr) keep their period so the UI can label
+    them honestly instead of showing $50 as an annual salary."""
+    r = await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://example.com/hourly/1",
+            "title": "Staff Software Engineer - AI Trainer",
+            "company": "DataAnnotation",
+            "location": "Remote in Pomona, CA",
+            "is_remote": True,
+            "salary_min": 50,
+            "salary_max": 100,
+            "salary_period": "hourly",
+            "job_type": "Part-time, Contract, Full-time",
+        },
+    )
+    assert r.status_code == 201
+    jl = r.json()["job_listing"]
+    assert jl["salary_min"] == 50
+    assert jl["salary_max"] == 100
+    assert jl["salary_period"] == "hourly"
+    assert jl["job_type"] == "Part-time, Contract, Full-time"
+
+
+@pytest.mark.asyncio
 async def test_check_saved_reflects_tracker(client: AsyncClient):
     """POST /check returns saved=False before saving, True after (extension pre-check)."""
     job = {

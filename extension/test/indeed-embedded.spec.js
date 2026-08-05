@@ -117,7 +117,7 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
     expect(job.description).not.toContain("react-native-html-content");
   });
 
-  it("reads the salary from the open card's own data (extractedSalary / snippet)", () => {
+  it("reads salary, period, and job types from the open card's own data", () => {
     const doc = bridgeDoc({
       cards: [
         {
@@ -135,22 +135,29 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
         },
         {
           jobkey: "sal3",
-          title: "AI Trainer",
-          company: "HourlyCo",
-          salarySnippet: "$50 - $100 an hour", // hourly → skipped, not "$50 a year"
+          title: "Staff Software Engineer - AI Trainer",
+          company: "DataAnnotation",
+          salarySnippet: "$50 - $100 an hour",
+          jobTypes: ["Part-time", "Contract", "Full-time"],
         },
       ],
     });
     const structured = extractJob(doc, "https://www.indeed.com/?vjk=sal1");
     expect(structured.salary_min).toBe(80299);
     expect(structured.salary_max).toBe(104389);
+    expect(structured.salary_period).toBe("yearly");
 
     const parsed = extractJob(doc, "https://www.indeed.com/?vjk=sal2");
     expect(parsed.salary_min).toBe(90000);
     expect(parsed.salary_max).toBe(120000);
+    expect(parsed.salary_period).toBe("yearly");
 
+    // Hourly pay is captured WITH its period (never stored as fake-yearly).
     const hourly = extractJob(doc, "https://www.indeed.com/?vjk=sal3");
-    expect(hourly.salary_min).toBeNull();
+    expect(hourly.salary_min).toBe(50);
+    expect(hourly.salary_max).toBe(100);
+    expect(hourly.salary_period).toBe("hourly");
+    expect(hourly.job_type).toBe("Part-time, Contract, Full-time");
   });
 
   it("reads a dedicated job page from the bridged detail (no vjk)", () => {

@@ -5,6 +5,7 @@ import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
+import { formatSalary } from "@/lib/utils";
 import type { JobListing } from "@/types/api";
 
 interface JobDetailProps {
@@ -14,22 +15,8 @@ interface JobDetailProps {
   onGenerateDocuments?: () => void;
 }
 
-function formatSalary(min?: number | null, max?: number | null, currency?: string | null) {
-  const curr = currency ?? "USD";
-  const fmt = (n: number) =>
-    new Intl.NumberFormat("en-US", {
-      style: "currency",
-      currency: curr,
-      maximumFractionDigits: 0,
-    }).format(n);
-  if (min && max) return `${fmt(min)} – ${fmt(max)}`;
-  if (min) return `${fmt(min)}+`;
-  if (max) return `Up to ${fmt(max)}`;
-  return null;
-}
-
 export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }: JobDetailProps) {
-  const salary = formatSalary(job.salary_min, job.salary_max, job.currency);
+  const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
     : null;

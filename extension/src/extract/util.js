@@ -31,19 +31,25 @@ export function stripHtml(s) {
 }
 
 /**
- * Parse a visible salary string like "$80,299 - $104,389 a year" into numbers.
- * Only YEARLY salaries are returned (that's what the app stores) — hourly/
- * monthly figures would show up as nonsense ("$50" a year), so they're skipped.
- * @returns {{salary_min:number|null, salary_max:number|null} | null}
+ * Parse a visible salary string like "$80,299 - $104,389 a year" or
+ * "$50 - $100 an hour" into numbers + period. Yearly and hourly are kept
+ * (with the period label so the UI can display them honestly); monthly/
+ * weekly/daily are skipped rather than stored ambiguously.
+ * @returns {{salary_min:number|null, salary_max:number|null, salary_period:string} | null}
  */
 export function parseSalaryText(text) {
   const t = clean(text);
-  if (!t || !/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) return null;
+  if (!t) return null;
+  let period = null;
+  if (/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) period = "yearly";
+  else if (/\b(a|an|per)\s+hour\b|\bhourly\b|\/\s*hr\b/i.test(t)) period = "hourly";
+  if (!period) return null;
   const nums = [...t.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)]
     .map((m) => Math.round(parseFloat(m[1].replace(/,/g, ""))))
-    .filter((n) => Number.isFinite(n) && n > 1000); // yearly figures, not "$50"
+    // Sanity floor per period: yearly figures are thousands, hourly single digits+.
+    .filter((n) => Number.isFinite(n) && n >= (period === "yearly" ? 1000 : 2));
   if (!nums.length) return null;
-  return { salary_min: nums[0], salary_max: nums[1] ?? null };
+  return { salary_min: nums[0], salary_max: nums[1] ?? null, salary_period: period };
 }
 
 /** Like clean, but keep paragraph breaks — for multi-line job descriptions. */
@@ -139,7 +145,8 @@ export function descriptionByHeading(doc) {
 export function mergeJob(candidates, url) {
   const out = {
     title: "", company: "", location: "", is_remote: false, url,
-    description: "", job_type: "", salary_min: null, salary_max: null, _via: "",
+    description: "", job_type: "", salary_min: null, salary_max: null,
+    salary_period: null, _via: "",
   };
   for (const field of ["title", "company", "location", "job_type", "url"]) {
     for (const c of candidates) {
@@ -157,7 +164,7 @@ export function mergeJob(candidates, url) {
     const v = cleanMultiline(c.data?.description || "");
     if (v.length > out.description.length) out.description = v;
   }
-  for (const field of ["salary_min", "salary_max"]) {
+  for (const field of ["salary_min", "salary_max", "salary_period"]) {
     for (const c of candidates) {
       const v = c.data?.[field];
       if (v != null) {

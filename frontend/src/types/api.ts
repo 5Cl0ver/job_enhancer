@@ -14,6 +14,8 @@ export interface JobListing {
   description: string | null;
   salary_min: number | null;
   salary_max: number | null;
+  /** "yearly" (also the meaning of null) or "hourly". */
+  salary_period: "yearly" | "hourly" | null;
   currency: string | null;
   job_type: string | null;
   apply_url: string;

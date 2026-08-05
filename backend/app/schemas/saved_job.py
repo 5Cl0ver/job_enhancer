@@ -2,6 +2,7 @@
 
 import uuid
 from datetime import datetime
+from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
@@ -26,6 +27,7 @@ class ManualJobCreate(BaseModel):
     description: str | None = None
     salary_min: int | None = None
     salary_max: int | None = None
+    salary_period: Literal["yearly", "hourly"] | None = None
     job_type: str | None = Field(default=None, max_length=50)
     collection_id: uuid.UUID | None = None
     notes: str | None = None

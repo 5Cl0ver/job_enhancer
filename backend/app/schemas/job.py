@@ -17,6 +17,7 @@ class JobListingSchema(BaseModel):
     description: str | None
     salary_min: int | None
     salary_max: int | None
+    salary_period: str | None = None  # "yearly" (also when null) or "hourly"
     currency: str | None
     job_type: str | None
     apply_url: str

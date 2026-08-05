@@ -56,17 +56,28 @@ function normalizeDetail(detail, url) {
 }
 
 // Salary from the card's own data: Indeed's structured extractedSalary
-// (min/max/type) first, else parse the visible "$80,299 - $104,389 a year"
-// snippet. Yearly only — the app stores annual figures.
+// (min/max/type) first, else parse the visible "$80,299 - $104,389 a year" /
+// "$50 - $100 an hour" snippet. Yearly and hourly both carry their period so
+// the app can label them honestly.
 function cardSalary(card) {
   const es = card?.extractedSalary;
-  if (es && (es.min || es.max) && /^year/i.test(es.type || "yearly")) {
-    return {
-      salary_min: es.min ? Math.round(es.min) : null,
-      salary_max: es.max ? Math.round(es.max) : null,
-    };
+  if (es && (es.min || es.max)) {
+    const type = (es.type || "yearly").toLowerCase();
+    if (type.startsWith("year") || type.startsWith("hour")) {
+      return {
+        salary_min: es.min ? Math.round(es.min) : null,
+        salary_max: es.max ? Math.round(es.max) : null,
+        salary_period: type.startsWith("hour") ? "hourly" : "yearly",
+      };
+    }
   }
-  return parseSalaryText(card?.salarySnippet) || { salary_min: null, salary_max: null };
+  return (
+    parseSalaryText(card?.salarySnippet) || {
+      salary_min: null,
+      salary_max: null,
+      salary_period: null,
+    }
+  );
 }
 
 function normalizeCard(card, url) {
@@ -80,6 +91,8 @@ function normalizeCard(card, url) {
     description: stripHtml(card.snippet || ""),
     is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
     url: indeedListingUrl(card.jobkey, url),
+    // "Part-time, Contract, Full-time" — straight from the card's own data.
+    job_type: Array.isArray(card.jobTypes) ? clean(card.jobTypes.join(", ")).slice(0, 50) : "",
     ...cardSalary(card),
   };
 }

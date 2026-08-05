@@ -9,10 +9,14 @@
   }
   function parseSalaryText(text) {
     const t = clean(text);
-    if (!t || !/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) return null;
-    const nums = [...t.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)].map((m) => Math.round(parseFloat(m[1].replace(/,/g, "")))).filter((n) => Number.isFinite(n) && n > 1e3);
+    if (!t) return null;
+    let period = null;
+    if (/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) period = "yearly";
+    else if (/\b(a|an|per)\s+hour\b|\bhourly\b|\/\s*hr\b/i.test(t)) period = "hourly";
+    if (!period) return null;
+    const nums = [...t.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)].map((m) => Math.round(parseFloat(m[1].replace(/,/g, "")))).filter((n) => Number.isFinite(n) && n >= (period === "yearly" ? 1e3 : 2));
     if (!nums.length) return null;
-    return { salary_min: nums[0], salary_max: nums[1] ?? null };
+    return { salary_min: nums[0], salary_max: nums[1] ?? null, salary_period: period };
   }
   function cleanMultiline(s) {
     return (s || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -67,6 +71,7 @@
       job_type: "",
       salary_min: null,
       salary_max: null,
+      salary_period: null,
       _via: ""
     };
     for (const field of ["title", "company", "location", "job_type", "url"]) {
@@ -83,7 +88,7 @@
       const v = cleanMultiline(c.data?.description || "");
       if (v.length > out.description.length) out.description = v;
     }
-    for (const field of ["salary_min", "salary_max"]) {
+    for (const field of ["salary_min", "salary_max", "salary_period"]) {
       for (const c of candidates) {
         const v = c.data?.[field];
         if (v != null) {
@@ -117,7 +122,13 @@
   }
   function numOrNull(n) {
     const v = typeof n === "string" ? parseInt(n.replace(/[^0-9]/g, ""), 10) : n;
-    return Number.isFinite(v) ? v : null;
+    return Number.isFinite(v) ? Math.round(v) : null;
+  }
+  function periodFrom(unitText) {
+    const u = (unitText || "").toLowerCase();
+    if (u.startsWith("year")) return "yearly";
+    if (u.startsWith("hour")) return "hourly";
+    return null;
   }
   function salaryFrom(job) {
     const b = job.baseSalary;
@@ -125,10 +136,11 @@
     if (v && typeof v === "object") {
       return {
         salary_min: numOrNull(v.minValue ?? v.value),
-        salary_max: numOrNull(v.maxValue ?? v.value)
+        salary_max: numOrNull(v.maxValue ?? v.value),
+        salary_period: periodFrom(v.unitText || b?.unitText)
       };
     }
-    return { salary_min: numOrNull(v), salary_max: null };
+    return { salary_min: numOrNull(v), salary_max: null, salary_period: null };
   }
   function employmentType(job) {
     const t = job.employmentType;
@@ -148,7 +160,7 @@
     const location2 = addressText(job.jobLocation);
     const description = stripHtml(job.description);
     const remoteFlag = job.jobLocationType === "TELECOMMUTE" || !!job.applicantLocationRequirements || looksRemote(title, location2, description);
-    const { salary_min, salary_max } = salaryFrom(job);
+    const { salary_min, salary_max, salary_period } = salaryFrom(job);
     return {
       title,
       company: orgName(job.hiringOrganization),
@@ -158,7 +170,8 @@
       description,
       job_type: employmentType(job),
       salary_min,
-      salary_max
+      salary_max,
+      salary_period
     };
   }
 
@@ -214,13 +227,21 @@
   }
   function cardSalary(card) {
     const es = card?.extractedSalary;
-    if (es && (es.min || es.max) && /^year/i.test(es.type || "yearly")) {
-      return {
-        salary_min: es.min ? Math.round(es.min) : null,
-        salary_max: es.max ? Math.round(es.max) : null
-      };
+    if (es && (es.min || es.max)) {
+      const type = (es.type || "yearly").toLowerCase();
+      if (type.startsWith("year") || type.startsWith("hour")) {
+        return {
+          salary_min: es.min ? Math.round(es.min) : null,
+          salary_max: es.max ? Math.round(es.max) : null,
+          salary_period: type.startsWith("hour") ? "hourly" : "yearly"
+        };
+      }
     }
-    return parseSalaryText(card?.salarySnippet) || { salary_min: null, salary_max: null };
+    return parseSalaryText(card?.salarySnippet) || {
+      salary_min: null,
+      salary_max: null,
+      salary_period: null
+    };
   }
   function normalizeCard(card, url) {
     const title = card?.title || card?.displayTitle;
@@ -233,6 +254,8 @@
       description: stripHtml(card.snippet || ""),
       is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
       url: indeedListingUrl(card.jobkey, url),
+      // "Part-time, Contract, Full-time" — straight from the card's own data.
+      job_type: Array.isArray(card.jobTypes) ? clean(card.jobTypes.join(", ")).slice(0, 50) : "",
       ...cardSalary(card)
     };
   }
