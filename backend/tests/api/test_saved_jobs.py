@@ -264,6 +264,31 @@ async def test_backfill_never_downgrades_or_touches_unsaved(client: AsyncClient)
 
 
 @pytest.mark.asyncio
+async def test_backfill_corrects_false_remote_flag(client: AsyncClient):
+    """Early captures falsely flagged on-site jobs as Remote (whole-page text
+    scan). A backfill from the job's own page corrects the flag."""
+    job = {"title": "Junior ML Engineer", "company": "Tax Relief Advocates", "location": "Irvine, CA"}
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={"url": "https://example.com/tra/1", "is_remote": True, **job},  # wrong
+    )
+    r = await client.post(
+        "/v1/saved-jobs/backfill",
+        json={
+            "url": "https://example.com/tra/1",
+            "is_remote": False,  # what the job page actually says
+            "description": "Join our Irvine office as a junior ML engineer. " * 8,
+            **job,
+        },
+    )
+    assert r.json()["updated"] is True
+    assert "is_remote" in r.json()["fields"]
+    saved = (await client.get("/v1/saved-jobs/")).json()
+    jl = next(s["job_listing"] for s in saved if s["job_listing"]["company"] == "Tax Relief Advocates")
+    assert jl["is_remote"] is False
+
+
+@pytest.mark.asyncio
 async def test_manual_add_rejects_non_http_url(client: AsyncClient):
     response = await client.post(
         "/v1/saved-jobs/manual",

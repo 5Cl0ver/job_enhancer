@@ -1,7 +1,15 @@
 // Indeed detail-page (viewjob) selector fallback — used only when JSON-LD is
 // absent or partial. These target the OPEN job page, not search cards, which is
 // the reliable capture surface (one job, stable header markup).
-import { textFrom, looksRemote, descriptionByHeading, stripHtml } from "./util.js";
+import {
+  textFrom,
+  looksRemote,
+  descriptionByHeading,
+  stripHtml,
+  textAfterHeading,
+  parseSalaryText,
+  parseJobTypes,
+} from "./util.js";
 
 // The full job description as rendered on the page. Known containers first
 // (viewjob + search-pane markup); the home-feed pane uses different markup, so
@@ -44,13 +52,28 @@ export function extractIndeed(doc, url) {
     ".jobsearch-JobInfoHeader-subtitle div:last-child",
   ]);
   const description = descriptionText(doc);
-  const body = doc.body?.textContent || "";
+
+  // The visible "Job details" block ("$85,000 - $100,000 a year - Permanent,
+  // Full-time") — parse pay + job types from what the user actually sees.
+  const detailsText =
+    (doc.querySelector("#salaryInfoAndJobType")?.textContent || "") ||
+    textAfterHeading(doc, [/^job details/i], 5);
+  const salary = parseSalaryText(detailsText) || {};
+  const job_type = parseJobTypes(detailsText);
+
   return {
     title,
     company,
     location,
     description,
-    is_remote: looksRemote(location, title, body),
+    // Only STRUCTURED remote signals: the location line ("Remote in Pomona,
+    // CA") or the title. Never scan the whole page — on a feed, some OTHER
+    // card always says "remote" and every job got falsely flagged.
+    is_remote: looksRemote(location, title),
     url,
+    job_type,
+    salary_min: salary.salary_min ?? null,
+    salary_max: salary.salary_max ?? null,
+    salary_period: salary.salary_period ?? null,
   };
 }

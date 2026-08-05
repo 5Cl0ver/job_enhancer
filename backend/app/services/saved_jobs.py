@@ -81,7 +81,11 @@ async def get_saved_listing(
 
 
 def listing_needs_details(listing: JobListing) -> bool:
-    return len(listing.description or "") < MIN_DESCRIPTION_CHARS
+    """Thin description OR no salary — either way, invite the extension to send
+    full details next time the user is on the job's page."""
+    thin_description = len(listing.description or "") < MIN_DESCRIPTION_CHARS
+    no_salary = listing.salary_min is None and listing.salary_max is None
+    return thin_description or no_salary
 
 
 async def backfill_job_details(
@@ -120,6 +124,12 @@ async def backfill_job_details(
     if data.job_type and not listing.job_type:
         listing.job_type = data.job_type
         updated.append("job_type")
+    # is_remote is CORRECTED, not just filled: early captures falsely flagged
+    # on-site jobs as Remote (full-page text scan); the capture sent from the
+    # job's own page is the trustworthy signal.
+    if data.is_remote != listing.is_remote:
+        listing.is_remote = data.is_remote
+        updated.append("is_remote")
 
     if updated:
         await db.flush()

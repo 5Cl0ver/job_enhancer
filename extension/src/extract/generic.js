@@ -13,12 +13,15 @@ export function extractGeneric(doc, url) {
     title = textFrom(doc, ["h1"]);
   }
   if (CHROME.test(title)) title = "";
-  const body = doc.body?.textContent || "";
   return {
     title: clean(title),
     company: "",
     location: "",
-    is_remote: looksRemote(title, body),
+    // Title only — a full-page scan flags on-site jobs as Remote whenever ANY
+    // other text on the page mentions remote (feed cards, footers, ads). This
+    // guess is OR-ed with every other extractor's in mergeJob, so it must be
+    // conservative.
+    is_remote: looksRemote(title),
     url,
   };
 }

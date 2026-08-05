@@ -35,18 +35,12 @@
   function looksRemote(...parts) {
     return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
   }
-  var DESCRIPTION_HEADINGS = [
-    /^full job description/i,
-    /^job description/i,
-    /^about the job/i,
-    /^about the role/i
-  ];
-  function descriptionByHeading(doc) {
+  function textAfterHeading(doc, patterns, minLen) {
     if (!doc?.querySelectorAll) return "";
     for (const h of doc.querySelectorAll("h1,h2,h3,h4,strong,b")) {
       const label = clean(h.textContent);
       if (!label || label.length > 60) continue;
-      if (!DESCRIPTION_HEADINGS.some((re) => re.test(label))) continue;
+      if (!patterns.some((re) => re.test(label))) continue;
       let node = h;
       for (let depth = 0; depth < 3 && node; depth++) {
         let text = "";
@@ -54,11 +48,39 @@
           text += "\n" + stripHtml(sib.innerHTML || "");
         }
         const v = cleanMultiline(text);
-        if (v.length >= 200) return v;
+        if (v.length >= minLen) return v;
         node = node.parentElement;
       }
     }
     return "";
+  }
+  var DESCRIPTION_HEADINGS = [
+    /^full job description/i,
+    /^job description/i,
+    /^about the job/i,
+    /^about the role/i
+  ];
+  function descriptionByHeading(doc) {
+    return textAfterHeading(doc, DESCRIPTION_HEADINGS, 200);
+  }
+  var JOB_TYPE_WORDS = [
+    "Full-time",
+    "Part-time",
+    "Contract",
+    "Permanent",
+    "Temporary",
+    "Internship",
+    "Apprenticeship",
+    "Seasonal",
+    "Freelance"
+  ];
+  function parseJobTypes(text) {
+    const t = clean(text);
+    if (!t) return "";
+    const found = JOB_TYPE_WORDS.filter(
+      (w) => new RegExp(`\\b${w.replace("-", "[-\\s]?")}\\b`, "i").test(t)
+    );
+    return found.join(", ").slice(0, 50);
   }
   function mergeJob(candidates, url) {
     const out = {
@@ -159,7 +181,7 @@
     if (!title) return null;
     const location2 = addressText(job.jobLocation);
     const description = stripHtml(job.description);
-    const remoteFlag = job.jobLocationType === "TELECOMMUTE" || !!job.applicantLocationRequirements || looksRemote(title, location2, description);
+    const remoteFlag = job.jobLocationType === "TELECOMMUTE" || !!job.applicantLocationRequirements || looksRemote(title, location2);
     const { salary_min, salary_max, salary_period } = salaryFrom(job);
     return {
       title,
@@ -221,7 +243,9 @@
       company: clean(detail.companyName),
       location: clean(detail.formattedLocation),
       description,
-      is_remote: looksRemote(detail.formattedLocation, detail.jobTitle, description),
+      // Structured signals only (location/title) — a description casually saying
+      // "remote" must not flag an on-site job as Remote.
+      is_remote: looksRemote(detail.formattedLocation, detail.jobTitle),
       url: indeedListingUrl(detail.jobKey, url)
     };
   }
@@ -252,7 +276,9 @@
       company: clean(card.company),
       location: loc,
       description: stripHtml(card.snippet || ""),
-      is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
+      // Indeed's own remoteLocation flag, or "Remote in …" in the location/title.
+      // NOT the snippet — marketing copy mentioning "remote" isn't a remote job.
+      is_remote: card.remoteLocation === true || looksRemote(loc, title),
       url: indeedListingUrl(card.jobkey, url),
       // "Part-time, Contract, Full-time" — straight from the card's own data.
       job_type: Array.isArray(card.jobTypes) ? clean(card.jobTypes.join(", ")).slice(0, 50) : "",
@@ -390,14 +416,23 @@
       ".jobsearch-JobInfoHeader-subtitle div:last-child"
     ]);
     const description = descriptionText(doc);
-    const body = doc.body?.textContent || "";
+    const detailsText = doc.querySelector("#salaryInfoAndJobType")?.textContent || "" || textAfterHeading(doc, [/^job details/i], 5);
+    const salary = parseSalaryText(detailsText) || {};
+    const job_type = parseJobTypes(detailsText);
     return {
       title,
       company,
       location: location2,
       description,
-      is_remote: looksRemote(location2, title, body),
-      url
+      // Only STRUCTURED remote signals: the location line ("Remote in Pomona,
+      // CA") or the title. Never scan the whole page — on a feed, some OTHER
+      // card always says "remote" and every job got falsely flagged.
+      is_remote: looksRemote(location2, title),
+      url,
+      job_type,
+      salary_min: salary.salary_min ?? null,
+      salary_max: salary.salary_max ?? null,
+      salary_period: salary.salary_period ?? null
     };
   }
 
@@ -435,12 +470,15 @@
       title = textFrom(doc, ["h1"]);
     }
     if (CHROME.test(title)) title = "";
-    const body = doc.body?.textContent || "";
     return {
       title: clean(title),
       company: "",
       location: "",
-      is_remote: looksRemote(title, body),
+      // Title only — a full-page scan flags on-site jobs as Remote whenever ANY
+      // other text on the page mentions remote (feed cards, footers, ads). This
+      // guess is OR-ed with every other extractor's in mergeJob, so it must be
+      // conservative.
+      is_remote: looksRemote(title),
       url
     };
   }

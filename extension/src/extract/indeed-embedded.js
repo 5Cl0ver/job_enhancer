@@ -50,7 +50,9 @@ function normalizeDetail(detail, url) {
     company: clean(detail.companyName),
     location: clean(detail.formattedLocation),
     description,
-    is_remote: looksRemote(detail.formattedLocation, detail.jobTitle, description),
+    // Structured signals only (location/title) — a description casually saying
+    // "remote" must not flag an on-site job as Remote.
+    is_remote: looksRemote(detail.formattedLocation, detail.jobTitle),
     url: indeedListingUrl(detail.jobKey, url),
   };
 }
@@ -89,7 +91,9 @@ function normalizeCard(card, url) {
     company: clean(card.company),
     location: loc,
     description: stripHtml(card.snippet || ""),
-    is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
+    // Indeed's own remoteLocation flag, or "Remote in …" in the location/title.
+    // NOT the snippet — marketing copy mentioning "remote" isn't a remote job.
+    is_remote: card.remoteLocation === true || looksRemote(loc, title),
     url: indeedListingUrl(card.jobkey, url),
     // "Part-time, Contract, Full-time" — straight from the card's own data.
     job_type: Array.isArray(card.jobTypes) ? clean(card.jobTypes.join(", ")).slice(0, 50) : "",

@@ -75,10 +75,13 @@ export function mapJobPosting(job, url) {
 
   const location = addressText(job.jobLocation);
   const description = stripHtml(job.description);
+  // Structured signals (schema.org TELECOMMUTE / location requirements) or the
+  // title/location text — NOT the description, which too often says "remote"
+  // in passing ("no remote work", "remote teams") and falsely flags jobs.
   const remoteFlag =
     job.jobLocationType === "TELECOMMUTE" ||
     !!job.applicantLocationRequirements ||
-    looksRemote(title, location, description);
+    looksRemote(title, location);
   const { salary_min, salary_max, salary_period } = salaryFrom(job);
 
   return {

@@ -66,6 +66,56 @@ describe("home-feed pane (regression: full description IS on screen — capture 
   });
 });
 
+describe("remote flag honesty (regression: everything was flagged Remote)", () => {
+  it("does NOT flag an on-site job just because the page mentions 'remote' elsewhere", () => {
+    // The old check scanned the WHOLE page body — on a feed, some other card
+    // always says "Remote", so an Irvine on-site job showed as Remote.
+    const w = new Window();
+    w.document.write(`
+      <html><body>
+        <div class="other-card">Software Engineer — Remote in Cambridge, MA</div>
+        <h1 class="jobsearch-JobInfoHeader-title">Junior Machine Learning Engineer</h1>
+        <div data-testid="inlineHeader-companyName">Tax Relief Advocates</div>
+        <div data-testid="inlineHeader-companyLocation">Irvine, CA</div>
+      </body></html>`);
+    const job = extractJob(w.document, "https://www.indeed.com/viewjob?jk=onsite1");
+    expect(job.title).toBe("Junior Machine Learning Engineer");
+    expect(job.is_remote).toBe(false);
+  });
+
+  it("still flags genuinely remote jobs via the location line", () => {
+    const w = new Window();
+    w.document.write(`
+      <html><body>
+        <h1 class="jobsearch-JobInfoHeader-title">Staff Software Engineer</h1>
+        <div data-testid="inlineHeader-companyLocation">Remote in Pomona, CA</div>
+      </body></html>`);
+    const job = extractJob(w.document, "https://www.indeed.com/viewjob?jk=rem1");
+    expect(job.is_remote).toBe(true);
+  });
+});
+
+describe("'Job details' block (pay + job types from what the user sees)", () => {
+  it("parses salary and job types from the visible Job details section", () => {
+    const w = new Window();
+    w.document.write(`
+      <html><body>
+        <h1 class="jobsearch-JobInfoHeader-title">Junior Machine Learning Engineer</h1>
+        <div data-testid="inlineHeader-companyLocation">Irvine, CA</div>
+        <h2>Job details</h2>
+        <div>
+          <div>$85,000 - $100,000 a year</div>
+          <div>Permanent, Full-time</div>
+        </div>
+      </body></html>`);
+    const job = extractJob(w.document, "https://www.indeed.com/viewjob?jk=jd1");
+    expect(job.salary_min).toBe(85000);
+    expect(job.salary_max).toBe(100000);
+    expect(job.salary_period).toBe("yearly");
+    expect(job.job_type).toBe("Full-time, Permanent");
+  });
+});
+
 describe("canonical Indeed url (fixes 'View listing' → home page)", () => {
   it("rewrites a home-feed ?vjk= url to a real /viewjob link", () => {
     expect(canonicalIndeedUrl("https://www.indeed.com/?vjk=abc123")).toBe(

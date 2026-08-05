@@ -101,26 +101,18 @@ export function looksRemote(...parts) {
   return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
 }
 
-const DESCRIPTION_HEADINGS = [
-  /^full job description/i,
-  /^job description/i,
-  /^about the job/i,
-  /^about the role/i,
-];
-
 /**
- * Description fallback that works on ANY layout: find the visible
- * "Full job description" (etc.) heading and capture the text that follows it.
- * Sites change their ids/classes constantly, but the heading the USER reads is
- * stable — if you can see the description, this can capture it.
- * Climbs up to two ancestors when the heading is alone in a wrapper div.
+ * Text that FOLLOWS a visible heading matching one of `patterns`. Sites change
+ * their ids/classes constantly, but the headings the USER reads are stable —
+ * if you can see the section, this can capture it. Climbs up to two ancestors
+ * when the heading is alone in a wrapper div.
  */
-export function descriptionByHeading(doc) {
+export function textAfterHeading(doc, patterns, minLen) {
   if (!doc?.querySelectorAll) return "";
   for (const h of doc.querySelectorAll("h1,h2,h3,h4,strong,b")) {
     const label = clean(h.textContent);
     if (!label || label.length > 60) continue;
-    if (!DESCRIPTION_HEADINGS.some((re) => re.test(label))) continue;
+    if (!patterns.some((re) => re.test(label))) continue;
 
     let node = h;
     for (let depth = 0; depth < 3 && node; depth++) {
@@ -129,11 +121,45 @@ export function descriptionByHeading(doc) {
         text += "\n" + stripHtml(sib.innerHTML || "");
       }
       const v = cleanMultiline(text);
-      if (v.length >= 200) return v; // a real description, not a stray label
+      if (v.length >= minLen) return v;
       node = node.parentElement;
     }
   }
   return "";
+}
+
+const DESCRIPTION_HEADINGS = [
+  /^full job description/i,
+  /^job description/i,
+  /^about the job/i,
+  /^about the role/i,
+];
+
+/** The full description anchored on its heading (min 200 chars = a real one). */
+export function descriptionByHeading(doc) {
+  return textAfterHeading(doc, DESCRIPTION_HEADINGS, 200);
+}
+
+const JOB_TYPE_WORDS = [
+  "Full-time",
+  "Part-time",
+  "Contract",
+  "Permanent",
+  "Temporary",
+  "Internship",
+  "Apprenticeship",
+  "Seasonal",
+  "Freelance",
+];
+
+/** Known job-type words present in a text block ("Permanent, Full-time"). */
+export function parseJobTypes(text) {
+  const t = clean(text);
+  if (!t) return "";
+  const found = JOB_TYPE_WORDS.filter((w) =>
+    new RegExp(`\\b${w.replace("-", "[-\\s]?")}\\b`, "i").test(t),
+  );
+  return found.join(", ").slice(0, 50);
 }
 
 /**
