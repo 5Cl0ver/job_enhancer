@@ -1,12 +1,13 @@
 // Background service worker — the ONLY place that talks to Supabase Auth and the
 // Job Enhancer API. The side panel and the on-page Save buttons send it messages;
-// it handles login, token refresh, saving, and enriching a saved job with the
-// full listing detail. Centralizing here avoids CORS and keeps one source of truth.
+// it handles login, token refresh, saving, and passive detail backfill.
+// Centralizing here avoids CORS and keeps one source of truth.
 //
-// Bundled by esbuild (it imports the shared enrichment module). config.js is
-// loaded at runtime from the extension root.
-import { enrichFromHtml } from "./enrich.js";
-
+// NO SCRAPING: we never fetch pages the user isn't on (sites block that — that
+// was the old enrichIfThin 401 problem). All job data comes from CAPTURE — the
+// content script reading pages the user actually has open.
+//
+// Bundled by esbuild. config.js is loaded at runtime from the extension root.
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
 
@@ -73,62 +74,43 @@ async function login(email, password) {
   await storeSession(d, email);
 }
 
-function hostOf(u) {
-  try {
-    return new URL(u).hostname;
-  } catch {
-    return "";
-  }
-}
-
-// If a saved Indeed job is missing a real description, fetch its /viewjob page
-// and pull the full description + salary + job type from the page's JSON-LD.
-// This is what gets full detail for home-feed captures (where the on-page
-// snippet is short/empty) and the extra fields worth filtering on later.
-async function enrichIfThin(job) {
-  const host = hostOf(job.url);
-  const isIndeedListing = host.endsWith("indeed.com") && /\/viewjob\b/.test(job.url);
-  const hasDescription = (job.description || "").length > 200;
-  const hasSalary = job.salary_min != null || job.salary_max != null;
-  // Fetch the listing if we're missing the full description OR the salary — the
-  // page's JSON-LD is the reliable source for both.
-  if (!isIndeedListing || (hasDescription && hasSalary)) return job;
-  try {
-    // Hard 5s cap — enrichment must NEVER hold up (or hang) the save. If Indeed
-    // is slow/blocks, we save without it.
-    const res = await fetch(job.url, {
-      credentials: "omit",
-      signal: AbortSignal.timeout(5000),
-    });
-    if (!res.ok) return job;
-    const extra = enrichFromHtml(await res.text(), job.url);
-    return {
-      ...job,
-      description: extra.description || job.description,
-      salary_min: job.salary_min ?? extra.salary_min ?? null,
-      salary_max: job.salary_max ?? extra.salary_max ?? null,
-      job_type: job.job_type || extra.job_type || "",
-    };
-  } catch {
-    return job; // enrichment is best-effort; never block a save on it
-  }
-}
-
 async function saveJob(job) {
   const token = await getValidToken();
   if (!token) throw new Error("NOT_SIGNED_IN");
-  const enriched = await enrichIfThin(job);
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/manual`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(enriched),
+    body: JSON.stringify(job),
   });
   if (res.status === 401) {
     await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
     throw new Error("NOT_SIGNED_IN");
   }
-  if (res.status === 409) throw new Error("Already in your tracker");
+  if (res.status === 409) {
+    // Already saved — but if THIS capture is richer than what we stored (user
+    // re-clicked Save on the real job page), quietly upgrade the listing.
+    await backfillJob(job).catch(() => {});
+    throw new Error("Already in your tracker");
+  }
   if (!res.ok) throw new Error((await res.text()) || "Save failed");
+  return res.json();
+}
+
+// Passive backfill: send full details captured from a job page for a job the
+// user already saved thin (e.g. from a feed). Server only ever upgrades.
+async function backfillJob(job) {
+  const token = await getValidToken();
+  if (!token) return { updated: false };
+  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/backfill`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(job),
+  });
+  if (res.status === 401) {
+    await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
+    return { updated: false };
+  }
+  if (!res.ok) return { updated: false };
   return res.json();
 }
 
@@ -149,7 +131,7 @@ async function checkSaved(job) {
   });
   if (!res.ok) return { saved: false, signedIn: true };
   const d = await res.json();
-  return { saved: !!d.saved, signedIn: true };
+  return { saved: !!d.saved, needs_details: !!d.needs_details, signedIn: true };
 }
 
 // The user's saved jobs (for the "Your saved jobs" list in the panel).
@@ -192,6 +174,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
+      } else if (msg.type === "backfillJob") {
+        sendResponse({ ok: true, ...(await backfillJob(msg.job)) });
       } else if (msg.type === "listSaved") {
         sendResponse({ ok: true, ...(await listSaved()) });
       } else if (msg.type === "saveJob") {

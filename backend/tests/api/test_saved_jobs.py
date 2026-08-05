@@ -165,6 +165,79 @@ async def test_check_saved_reflects_tracker(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_check_flags_thin_listing_and_backfill_upgrades_it(client: AsyncClient):
+    """Passive backfill flow: save thin from a feed -> /check says needs_details
+    -> extension sends full details from the job page -> listing upgraded."""
+    job = {"title": "Web Developer", "company": "Civic Canvas", "location": "LA"}
+
+    # Saved from the feed: no description.
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={"url": "https://example.com/thin/1", **job},
+    )
+    check = (await client.post("/v1/saved-jobs/check", json=job)).json()
+    assert check == {"saved": True, "needs_details": True}
+
+    # Later, on the real job page, the extension captures everything.
+    full_description = "Build accessible web apps for local government. " * 10
+    backfill = await client.post(
+        "/v1/saved-jobs/backfill",
+        json={
+            "url": "https://example.com/thin/1",
+            **job,
+            "description": full_description,
+            "salary_min": 80709,
+            "salary_max": 101757,
+            "job_type": "FULL_TIME",
+        },
+    )
+    assert backfill.status_code == 200
+    body = backfill.json()
+    assert body["updated"] is True
+    assert set(body["fields"]) == {"description", "salary_min", "salary_max", "job_type"}
+
+    # The listing is now rich: /check no longer asks for details...
+    check2 = (await client.post("/v1/saved-jobs/check", json=job)).json()
+    assert check2 == {"saved": True, "needs_details": False}
+    # ...and the saved job carries the upgraded data.
+    saved = (await client.get("/v1/saved-jobs/")).json()
+    jl = next(s["job_listing"] for s in saved if s["job_listing"]["title"] == "Web Developer")
+    assert jl["description"] == full_description
+    assert jl["salary_min"] == 80709
+    assert jl["job_type"] == "FULL_TIME"
+
+
+@pytest.mark.asyncio
+async def test_backfill_never_downgrades_or_touches_unsaved(client: AsyncClient):
+    job = {"title": "Data Engineer", "company": "PipeCo", "location": "Remote"}
+    long_desc = "Design and operate our data pipelines end to end. " * 8
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={"url": "https://example.com/rich/2", "description": long_desc, **job},
+    )
+
+    # A shorter description must NOT replace the longer one.
+    r = await client.post(
+        "/v1/saved-jobs/backfill",
+        json={"url": "https://example.com/rich/2", "description": "Short blurb.", **job},
+    )
+    assert r.json()["updated"] is False
+
+    # A job the user never saved is a no-op, not an error.
+    r2 = await client.post(
+        "/v1/saved-jobs/backfill",
+        json={
+            "url": "https://example.com/nope/1",
+            "title": "Never Saved",
+            "company": "GhostCo",
+            "description": long_desc,
+        },
+    )
+    assert r2.status_code == 200
+    assert r2.json() == {"updated": False, "fields": []}
+
+
+@pytest.mark.asyncio
 async def test_manual_add_rejects_non_http_url(client: AsyncClient):
     response = await client.post(
         "/v1/saved-jobs/manual",

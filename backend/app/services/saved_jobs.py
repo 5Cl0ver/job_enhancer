@@ -49,29 +49,76 @@ async def get_saved_job(
     return sj
 
 
-async def is_job_saved(
+# A listing with less than this much description text is "thin" — the extension
+# should send full details when it can see them (passive backfill).
+MIN_DESCRIPTION_CHARS = 200
+
+
+async def get_saved_listing(
     db: AsyncSession,
     user_id: uuid.UUID,
     title: str,
     company: str = "",
     location: str = "",
-) -> bool:
-    """Has this user already saved this job? Matches by the same content hash
-    used for dedup, so the extension can show "already saved" before a click."""
+) -> JobListing | None:
+    """The listing for this job IF this user has saved it, else None. Matches by
+    the same content hash used for dedup, so the extension can show "already
+    saved" (and whether details are still missing) before a click."""
     content_hash = job_content_hash(
         normalize(title), normalize(company), normalize(location)
     )
-    listing_id = await db.scalar(
-        select(JobListing.id).where(JobListing.content_hash == content_hash)
+    listing = await db.scalar(
+        select(JobListing).where(JobListing.content_hash == content_hash)
     )
-    if listing_id is None:
-        return False
+    if listing is None:
+        return None
     saved_id = await db.scalar(
         select(SavedJob.id).where(
-            SavedJob.user_id == user_id, SavedJob.job_listing_id == listing_id
+            SavedJob.user_id == user_id, SavedJob.job_listing_id == listing.id
         )
     )
-    return saved_id is not None
+    return listing if saved_id is not None else None
+
+
+def listing_needs_details(listing: JobListing) -> bool:
+    return len(listing.description or "") < MIN_DESCRIPTION_CHARS
+
+
+async def backfill_job_details(
+    db: AsyncSession, user_id: uuid.UUID, data: ManualJobCreate
+) -> list[str]:
+    """Upgrade a saved job's listing with richer details captured later.
+
+    Passive backfill: the user saved a job from a feed (thin — title only),
+    and later opened the actual job page, where the extension can capture the
+    full description/salary. Only jobs the USER has saved can be backfilled,
+    and fields are only ever upgraded (longer description, filling empty
+    salary/job_type) — never downgraded. Returns the list of updated fields.
+    """
+    listing = await get_saved_listing(
+        db, user_id, data.title, data.company, data.location
+    )
+    if listing is None:
+        return []
+
+    updated: list[str] = []
+    # A longer description is a fuller one (feed snippet -> real posting).
+    if data.description and len(data.description) > len(listing.description or ""):
+        listing.description = data.description
+        updated.append("description")
+    if data.salary_min and not listing.salary_min:
+        listing.salary_min = data.salary_min
+        updated.append("salary_min")
+    if data.salary_max and not listing.salary_max:
+        listing.salary_max = data.salary_max
+        updated.append("salary_max")
+    if data.job_type and not listing.job_type:
+        listing.job_type = data.job_type
+        updated.append("job_type")
+
+    if updated:
+        await db.flush()
+    return updated
 
 
 async def save_job(

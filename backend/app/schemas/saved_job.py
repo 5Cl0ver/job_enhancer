@@ -58,6 +58,16 @@ class JobSavedCheck(BaseModel):
 
 class JobSavedResult(BaseModel):
     saved: bool
+    # True when the job is saved but its listing has no real description yet —
+    # tells the extension "if you can see full details right now, send them".
+    needs_details: bool = False
+
+
+class BackfillResult(BaseModel):
+    """Outcome of a passive detail backfill from the extension."""
+
+    updated: bool
+    fields: list[str] = []
 
 
 class SavedJobUpdate(BaseModel):

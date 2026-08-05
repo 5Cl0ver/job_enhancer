@@ -64,7 +64,7 @@ export function extractJob(doc, url) {
   const result = mergeJob(candidates, url);
 
   // Canonicalize Indeed links in ONE place, whatever extraction path won — a
-  // home-feed ?vjk= url redirects to the front page and also skips enrichment.
+  // home-feed ?vjk= url redirects to Indeed's front page instead of the job.
   if (hostOf(url).includes("indeed.")) {
     result.url = canonicalIndeedUrl(result.url) || canonicalIndeedUrl(url) || result.url;
   }

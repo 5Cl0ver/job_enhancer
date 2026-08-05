@@ -1,7 +1,5 @@
-// Pure schema.org JobPosting helpers — NO DOM. Shared by:
-//   • jsonld.js        (reads <script> tags via querySelectorAll in the page)
-//   • enrich.js        (parses raw HTML in the background worker, where there's
-//                       no DOM) to backfill the full description/salary/type.
+// Pure schema.org JobPosting helpers — NO DOM. Used by jsonld.js (which reads
+// <script type="application/ld+json"> tags out of the open page's DOM).
 import { clean, stripHtml, looksRemote } from "./util.js";
 
 /** Walk arbitrary JSON-LD shapes (object, array, @graph) collecting JobPosting nodes. */
@@ -85,19 +83,4 @@ export function mapJobPosting(job, url) {
     salary_min,
     salary_max,
   };
-}
-
-/** Parse every application/ld+json <script> body out of raw HTML (worker-safe). */
-export function jobPostingsFromHtml(html) {
-  const postings = [];
-  const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-  let m;
-  while ((m = re.exec(html))) {
-    try {
-      collectJobPostings(JSON.parse(m[1].trim()), postings);
-    } catch {
-      /* malformed block — skip */
-    }
-  }
-  return postings;
 }

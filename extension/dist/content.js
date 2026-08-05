@@ -413,6 +413,12 @@
     return result;
   }
 
+  // src/backfill.js
+  var MIN_DESCRIPTION = 200;
+  function shouldBackfill(job, check) {
+    return !!(check?.saved && check?.needs_details && job?.title && (job.description || "").length >= MIN_DESCRIPTION);
+  }
+
   // src/inject.js
   var INDEED_TITLE_SELECTORS = [
     "h1.jobsearch-JobInfoHeader-title",
@@ -446,6 +452,7 @@
   var LABEL = "\uFF0B Save to Job Enhancer";
   var btn = null;
   var currentKey = "";
+  var backfilled = /* @__PURE__ */ new Set();
   if (IS_INDEED || IS_LINKEDIN) {
     injectStyles();
     sync();
@@ -479,6 +486,15 @@
     chrome.runtime.sendMessage({ type: "checkSaved", job }).then((res) => {
       if (!btn || keyFor(btn._job) !== key) return;
       if (res?.saved && btn.dataset.state === "idle") setState(btn, "saved", "\u2713 Already saved");
+      if (shouldBackfill(job, res) && !backfilled.has(key)) {
+        backfilled.add(key);
+        chrome.runtime.sendMessage({ type: "backfillJob", job }).then((r) => {
+          if (r?.updated && btn && keyFor(btn._job) === key) {
+            setState(btn, "saved", "\u2713 Details updated");
+          }
+        }).catch(() => {
+        });
+      }
     }).catch(() => {
     });
   }

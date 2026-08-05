@@ -11,6 +11,7 @@
 // Extraction itself is the shared, tested extractJob() (Indeed embedded JSON →
 // JSON-LD → selectors), which identifies the open job strictly by ?vjk=.
 import { extractJob } from "./extract/index.js";
+import { shouldBackfill } from "./backfill.js";
 import {
   INDEED_TITLE_SELECTORS,
   LINKEDIN_TITLE_SELECTORS,
@@ -28,6 +29,7 @@ const LABEL = "＋ Save to Job Enhancer";
 
 let btn = null;
 let currentKey = ""; // the open job we've reflected state for (so we only re-check on change)
+const backfilled = new Set(); // job keys we've already backfilled this page session
 
 if (IS_INDEED || IS_LINKEDIN) {
   injectStyles();
@@ -77,6 +79,20 @@ function sync() {
     .then((res) => {
       if (!btn || keyFor(btn._job) !== key) return; // moved to another job meanwhile
       if (res?.saved && btn.dataset.state === "idle") setState(btn, "saved", "✓ Already saved");
+
+      // Passive backfill: this job is saved but thin, and we can see the full
+      // posting right now — send it up. Once per job per page session.
+      if (shouldBackfill(job, res) && !backfilled.has(key)) {
+        backfilled.add(key);
+        chrome.runtime
+          .sendMessage({ type: "backfillJob", job })
+          .then((r) => {
+            if (r?.updated && btn && keyFor(btn._job) === key) {
+              setState(btn, "saved", "✓ Details updated");
+            }
+          })
+          .catch(() => {});
+      }
     })
     .catch(() => {});
 }

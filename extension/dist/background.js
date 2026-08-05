@@ -1,106 +1,4 @@
 (() => {
-  // src/extract/util.js
-  function clean(s) {
-    return (s || "").replace(/\s+/g, " ").trim();
-  }
-  function stripHtml(s) {
-    return clean((s || "").replace(/<[^>]*>/g, " "));
-  }
-  function looksRemote(...parts) {
-    return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
-  }
-
-  // src/extract/jsonld-map.js
-  function collectJobPostings(node, out) {
-    if (!node || typeof node !== "object") return;
-    if (Array.isArray(node)) {
-      for (const n of node) collectJobPostings(n, out);
-      return;
-    }
-    const type = node["@type"];
-    const isJob = Array.isArray(type) ? type.includes("JobPosting") : type === "JobPosting";
-    if (isJob) out.push(node);
-    if (Array.isArray(node["@graph"])) collectJobPostings(node["@graph"], out);
-  }
-  function orgName(hiringOrganization) {
-    if (!hiringOrganization) return "";
-    if (typeof hiringOrganization === "string") return clean(hiringOrganization);
-    if (Array.isArray(hiringOrganization)) return orgName(hiringOrganization[0]);
-    return clean(hiringOrganization.name);
-  }
-  function numOrNull(n) {
-    const v = typeof n === "string" ? parseInt(n.replace(/[^0-9]/g, ""), 10) : n;
-    return Number.isFinite(v) ? v : null;
-  }
-  function salaryFrom(job) {
-    const b = job.baseSalary;
-    const v = b?.value;
-    if (v && typeof v === "object") {
-      return {
-        salary_min: numOrNull(v.minValue ?? v.value),
-        salary_max: numOrNull(v.maxValue ?? v.value)
-      };
-    }
-    return { salary_min: numOrNull(v), salary_max: null };
-  }
-  function employmentType(job) {
-    const t = job.employmentType;
-    return clean(Array.isArray(t) ? t[0] : t);
-  }
-  function addressText(jobLocation) {
-    const loc = Array.isArray(jobLocation) ? jobLocation[0] : jobLocation;
-    const addr = loc?.address;
-    if (!addr) return "";
-    if (typeof addr === "string") return clean(addr);
-    const parts = [addr.addressLocality, addr.addressRegion, addr.addressCountry].map((p) => typeof p === "object" ? p?.name : p).filter(Boolean);
-    return clean(parts.join(", "));
-  }
-  function mapJobPosting(job, url) {
-    const title = clean(job.title);
-    if (!title) return null;
-    const location = addressText(job.jobLocation);
-    const description = stripHtml(job.description);
-    const remoteFlag = job.jobLocationType === "TELECOMMUTE" || !!job.applicantLocationRequirements || looksRemote(title, location, description);
-    const { salary_min, salary_max } = salaryFrom(job);
-    return {
-      title,
-      company: orgName(job.hiringOrganization),
-      location,
-      is_remote: remoteFlag,
-      url: clean(job.url) || url,
-      description,
-      job_type: employmentType(job),
-      salary_min,
-      salary_max
-    };
-  }
-  function jobPostingsFromHtml(html) {
-    const postings = [];
-    const re = /<script[^>]*type=["']application\/ld\+json["'][^>]*>([\s\S]*?)<\/script>/gi;
-    let m;
-    while (m = re.exec(html)) {
-      try {
-        collectJobPostings(JSON.parse(m[1].trim()), postings);
-      } catch {
-      }
-    }
-    return postings;
-  }
-
-  // src/enrich.js
-  function enrichFromHtml(html, url) {
-    const out = {};
-    const postings = jobPostingsFromHtml(html || "");
-    if (!postings.length) return out;
-    const f = mapJobPosting(postings[0], url);
-    if (!f) return out;
-    if (f.description) out.description = f.description;
-    if (f.salary_min != null) out.salary_min = f.salary_min;
-    if (f.salary_max != null) out.salary_max = f.salary_max;
-    if (f.job_type) out.job_type = f.job_type;
-    return out;
-  }
-
   // src/background.entry.js
   importScripts("/config.js");
   var cfg = self.JOB_ENHANCER_CONFIG;
@@ -158,52 +56,39 @@
     if (!res.ok) throw new Error(d.error_description || d.msg || "Sign-in failed");
     await storeSession(d, email);
   }
-  function hostOf(u) {
-    try {
-      return new URL(u).hostname;
-    } catch {
-      return "";
-    }
-  }
-  async function enrichIfThin(job) {
-    const host = hostOf(job.url);
-    const isIndeedListing = host.endsWith("indeed.com") && /\/viewjob\b/.test(job.url);
-    const hasDescription = (job.description || "").length > 200;
-    const hasSalary = job.salary_min != null || job.salary_max != null;
-    if (!isIndeedListing || hasDescription && hasSalary) return job;
-    try {
-      const res = await fetch(job.url, {
-        credentials: "omit",
-        signal: AbortSignal.timeout(5e3)
-      });
-      if (!res.ok) return job;
-      const extra = enrichFromHtml(await res.text(), job.url);
-      return {
-        ...job,
-        description: extra.description || job.description,
-        salary_min: job.salary_min ?? extra.salary_min ?? null,
-        salary_max: job.salary_max ?? extra.salary_max ?? null,
-        job_type: job.job_type || extra.job_type || ""
-      };
-    } catch {
-      return job;
-    }
-  }
   async function saveJob(job) {
     const token = await getValidToken();
     if (!token) throw new Error("NOT_SIGNED_IN");
-    const enriched = await enrichIfThin(job);
     const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/manual`, {
       method: "POST",
       headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify(enriched)
+      body: JSON.stringify(job)
     });
     if (res.status === 401) {
       await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
       throw new Error("NOT_SIGNED_IN");
     }
-    if (res.status === 409) throw new Error("Already in your tracker");
+    if (res.status === 409) {
+      await backfillJob(job).catch(() => {
+      });
+      throw new Error("Already in your tracker");
+    }
     if (!res.ok) throw new Error(await res.text() || "Save failed");
+    return res.json();
+  }
+  async function backfillJob(job) {
+    const token = await getValidToken();
+    if (!token) return { updated: false };
+    const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/backfill`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify(job)
+    });
+    if (res.status === 401) {
+      await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
+      return { updated: false };
+    }
+    if (!res.ok) return { updated: false };
     return res.json();
   }
   async function checkSaved(job) {
@@ -220,7 +105,7 @@
     });
     if (!res.ok) return { saved: false, signedIn: true };
     const d = await res.json();
-    return { saved: !!d.saved, signedIn: true };
+    return { saved: !!d.saved, needs_details: !!d.needs_details, signedIn: true };
   }
   async function listSaved() {
     const token = await getValidToken();
@@ -258,6 +143,8 @@
           sendResponse({ ok: true });
         } else if (msg.type === "checkSaved") {
           sendResponse({ ok: true, ...await checkSaved(msg.job) });
+        } else if (msg.type === "backfillJob") {
+          sendResponse({ ok: true, ...await backfillJob(msg.job) });
         } else if (msg.type === "listSaved") {
           sendResponse({ ok: true, ...await listSaved() });
         } else if (msg.type === "saveJob") {

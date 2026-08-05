@@ -9,6 +9,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.saved_job import (
+    BackfillResult,
     JobSavedCheck,
     JobSavedResult,
     ManualJobCreate,
@@ -65,9 +66,29 @@ async def check_saved(
     db: AsyncSession = Depends(get_db),
 ) -> JobSavedResult:
     """Is this job already in the user's tracker? Used by the extension to show
-    an 'already saved' state before the user clicks."""
-    saved = await svc.is_job_saved(db, user.id, data.title, data.company, data.location)
-    return JobSavedResult(saved=saved)
+    an 'already saved' state before the user clicks. `needs_details` invites a
+    passive backfill when the extension can see the full posting."""
+    listing = await svc.get_saved_listing(
+        db, user.id, data.title, data.company, data.location
+    )
+    if listing is None:
+        return JobSavedResult(saved=False)
+    return JobSavedResult(saved=True, needs_details=svc.listing_needs_details(listing))
+
+
+@router.post("/backfill", response_model=BackfillResult)
+async def backfill_details(
+    data: ManualJobCreate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> BackfillResult:
+    """Passive backfill: upgrade an already-saved job's listing with the full
+    details the extension captured from the actual job page. Only ever upgrades
+    (longer description / filling empty fields); no-op if the job isn't saved."""
+    fields = await svc.backfill_job_details(db, user.id, data)
+    if fields:
+        await db.commit()
+    return BackfillResult(updated=bool(fields), fields=fields)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobSchema)
