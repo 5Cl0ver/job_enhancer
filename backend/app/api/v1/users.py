@@ -3,8 +3,9 @@
 import json
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
+from slowapi import Limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -18,8 +19,17 @@ from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.schemas.user import ApplicationProfileSchema, UserProfile, UserUpdate
+from app.schemas.user import (
+    ApplicationProfileSchema,
+    ProfileFillResult,
+    UserProfile,
+    UserUpdate,
+)
+from app.services.profile_extract import extract_profile
 from app.services.users import soft_delete_user
+from app.utils.rate_limit import rate_limit_key
+
+_limiter = Limiter(key_func=rate_limit_key)
 
 router = APIRouter()
 
@@ -75,6 +85,45 @@ async def update_application_profile(
     await db.commit()
     await db.refresh(profile)
     return ApplicationProfileSchema.model_validate(profile)
+
+
+@router.post("/me/application-profile/from-resume", response_model=ProfileFillResult)
+@_limiter.limit("5/minute")
+async def fill_profile_from_resume(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ProfileFillResult:
+    """Fill EMPTY vault fields from the active resume (regex + LLM hybrid).
+    User-entered answers are never overwritten, and fields a resume can't
+    state (work auth, salary, notice) are never guessed."""
+    resume = await db.scalar(
+        select(Resume).where(Resume.user_id == user.id, Resume.is_active.is_(True))
+    )
+    if not resume or not resume.extracted_text:
+        raise HTTPException(status_code=404, detail="Upload a resume first")
+
+    extracted = await extract_profile(resume.extracted_text)
+
+    profile = await db.scalar(
+        select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
+    )
+    if profile is None:
+        profile = ApplicationProfile(user_id=user.id)
+        db.add(profile)
+
+    filled: list[str] = []
+    for key, value in extracted.items():
+        if getattr(profile, key, None) in (None, ""):
+            setattr(profile, key, value)
+            filled.append(key)
+
+    await db.commit()
+    await db.refresh(profile)
+    return ProfileFillResult(
+        profile=ApplicationProfileSchema.model_validate(profile),
+        filled=sorted(filled),
+    )
 
 
 @router.get("/me/export")

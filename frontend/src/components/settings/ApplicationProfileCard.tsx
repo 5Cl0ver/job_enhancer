@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { BriefcaseBusiness, Check, Loader2 } from "lucide-react";
+import { BriefcaseBusiness, Check, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -20,8 +20,10 @@ import {
 import {
   useApplicationProfile,
   useUpdateApplicationProfile,
+  useFillProfileFromResume,
   type ApplicationProfile,
 } from "@/hooks/useApplicationProfile";
+import { useResumes } from "@/hooks/useAI";
 
 /** Fields counted toward the completeness hint (what autofill can use). */
 const COMPLETENESS_KEYS: (keyof ApplicationProfile)[] = [
@@ -78,12 +80,41 @@ function TriState({
 export function ApplicationProfileCard() {
   const { data: saved, isLoading } = useApplicationProfile();
   const update = useUpdateApplicationProfile();
+  const fillFromResume = useFillProfileFromResume();
+  const { data: resumes = [] } = useResumes();
+  const hasResume = resumes.some((r) => r.is_active);
+  const [filledMsg, setFilledMsg] = useState<string | null>(null);
   const [form, setForm] = useState<ApplicationProfile | null>(null);
 
   // Load the saved profile into local form state once it arrives.
   useEffect(() => {
     if (saved && !form) setForm(saved);
   }, [saved, form]);
+
+  const handleFillFromResume = () => {
+    setFilledMsg(null);
+    fillFromResume.mutate(undefined, {
+      onSuccess: (result) => {
+        // Merge server-filled values into the form, but only where the LOCAL
+        // form is still empty — unsaved typing is never clobbered either.
+        setForm((f) => {
+          if (!f) return result.profile;
+          const merged = { ...f };
+          for (const key of result.filled as (keyof ApplicationProfile)[]) {
+            if (merged[key] === null || merged[key] === "") {
+              merged[key] = result.profile[key] as never;
+            }
+          }
+          return merged;
+        });
+        setFilledMsg(
+          result.filled.length
+            ? `Filled from your resume: ${result.filled.join(", ").replace(/_/g, " ")}`
+            : "Nothing new found — your resume doesn't state more than what's already here.",
+        );
+      },
+    });
+  };
 
   if (isLoading || !form) {
     return (
@@ -218,7 +249,7 @@ export function ApplicationProfileCard() {
           </div>
         </div>
 
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
           <Button onClick={handleSave} disabled={update.isPending} className="gap-2">
             {update.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
@@ -227,12 +258,37 @@ export function ApplicationProfileCard() {
             ) : null}
             {update.isPending ? "Saving…" : update.isSuccess ? "Saved" : "Save profile"}
           </Button>
+          <Button
+            variant="outline"
+            onClick={handleFillFromResume}
+            disabled={!hasResume || fillFromResume.isPending}
+            title={hasResume ? undefined : "Upload a resume in AI Apply first"}
+            className="gap-2"
+          >
+            {fillFromResume.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Sparkles className="h-4 w-4" />
+            )}
+            {fillFromResume.isPending ? "Reading resume…" : "Fill from resume"}
+          </Button>
           {update.isError && (
             <span className="text-xs text-destructive">
               Couldn't save — check the URLs start with https://
             </span>
           )}
+          {fillFromResume.isError && (
+            <span className="text-xs text-destructive">
+              Couldn't read your resume — try again in a minute.
+            </span>
+          )}
         </div>
+        {filledMsg && <p className="text-xs text-muted-foreground">{filledMsg}</p>}
+        {!hasResume && (
+          <p className="text-xs text-muted-foreground">
+            Tip: upload a resume in AI Apply and this can fill itself.
+          </p>
+        )}
       </CardContent>
     </Card>
   );

@@ -60,3 +60,11 @@ class ApplicationProfileSchema(BaseModel):
         return v
 
     model_config = {"from_attributes": True}
+
+
+class ProfileFillResult(BaseModel):
+    """Outcome of 'Fill from resume': the updated vault + which fields the
+    resume was able to fill (empty ones only — user answers are never touched)."""
+
+    profile: ApplicationProfileSchema
+    filled: list[str]

@@ -118,3 +118,52 @@ async def test_export_includes_application_profile(client: AsyncClient):
     )
     data = (await client.get("/v1/users/me/export")).json()
     assert data["application_profile"]["first_name"] == "Fabian"
+
+
+@pytest.mark.asyncio
+async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_session):
+    """POST from-resume: fills only EMPTY fields, never overwrites answers."""
+    import uuid as _uuid
+    from unittest.mock import AsyncMock, patch
+
+    from app.models.resume import Resume
+
+    # No resume yet → 404 with a helpful message.
+    r = await client.post("/v1/users/me/application-profile/from-resume")
+    assert r.status_code == 404
+
+    db_session.add(
+        Resume(
+            id=_uuid.uuid4(),
+            user_id=test_user.id,
+            filename="resume.pdf",
+            mime_type="application/pdf",
+            file_size_bytes=100,
+            extracted_text="Fabian Example — Los Angeles. (555) 010-0199",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+    # The user already answered phone — extraction must NOT overwrite it.
+    await client.put(
+        "/v1/users/me/application-profile", json={"phone": "MY-REAL-PHONE"}
+    )
+
+    with patch(
+        "app.api.v1.users.extract_profile",
+        new=AsyncMock(
+            return_value={
+                "first_name": "Fabian",
+                "city": "Los Angeles",
+                "phone": "(555) 010-0199",
+            }
+        ),
+    ):
+        r = await client.post("/v1/users/me/application-profile/from-resume")
+
+    assert r.status_code == 200
+    body = r.json()
+    assert sorted(body["filled"]) == ["city", "first_name"]  # phone NOT in filled
+    assert body["profile"]["first_name"] == "Fabian"
+    assert body["profile"]["phone"] == "MY-REAL-PHONE"  # untouched

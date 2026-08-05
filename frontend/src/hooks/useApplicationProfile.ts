@@ -40,3 +40,19 @@ export function useUpdateApplicationProfile() {
     onSuccess: (profile) => qc.setQueryData(["application-profile"], profile),
   });
 }
+
+export interface ProfileFillResult {
+  profile: ApplicationProfile;
+  /** Which fields the resume filled (empty ones only). */
+  filled: string[];
+}
+
+/** Fill empty vault fields from the uploaded resume (regex + LLM hybrid). */
+export function useFillProfileFromResume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: () =>
+      api.post<ProfileFillResult>("/v1/users/me/application-profile/from-resume", {}),
+    onSuccess: (result) => qc.setQueryData(["application-profile"], result.profile),
+  });
+}
