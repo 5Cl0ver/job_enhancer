@@ -7,9 +7,43 @@ export function clean(s) {
   return (s || "").replace(/\s+/g, " ").trim();
 }
 
-/** Strip HTML tags to plain text (JSON-LD descriptions are HTML). */
+/**
+ * HTML → readable plain text (JSON-LD / embedded descriptions are HTML).
+ * CRITICAL: drops <style>/<script> WITH their contents first — Indeed embeds a
+ * <style> block inside its description HTML, and naive tag-stripping leaks the
+ * CSS text into the saved description ("@layer htmlContent { … }" bug).
+ * Block-level closers become newlines so paragraphs survive.
+ */
 export function stripHtml(s) {
-  return clean((s || "").replace(/<[^>]*>/g, " "));
+  const text = (s || "")
+    .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
+    .replace(/<!--[\s\S]*?-->/g, " ")
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(p|div|li|ul|ol|h[1-6]|tr|section)>/gi, "\n")
+    .replace(/<[^>]*>/g, " ")
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&quot;/gi, '"');
+  return cleanMultiline(text);
+}
+
+/**
+ * Parse a visible salary string like "$80,299 - $104,389 a year" into numbers.
+ * Only YEARLY salaries are returned (that's what the app stores) — hourly/
+ * monthly figures would show up as nonsense ("$50" a year), so they're skipped.
+ * @returns {{salary_min:number|null, salary_max:number|null} | null}
+ */
+export function parseSalaryText(text) {
+  const t = clean(text);
+  if (!t || !/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) return null;
+  const nums = [...t.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)]
+    .map((m) => Math.round(parseFloat(m[1].replace(/,/g, ""))))
+    .filter((n) => Number.isFinite(n) && n > 1000); // yearly figures, not "$50"
+  if (!nums.length) return null;
+  return { salary_min: nums[0], salary_max: nums[1] ?? null };
 }
 
 /** Like clean, but keep paragraph breaks — for multi-line job descriptions. */
@@ -86,9 +120,9 @@ export function descriptionByHeading(doc) {
     for (let depth = 0; depth < 3 && node; depth++) {
       let text = "";
       for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
-        text += " " + stripHtml(sib.innerHTML || "");
+        text += "\n" + stripHtml(sib.innerHTML || "");
       }
-      const v = clean(text);
+      const v = cleanMultiline(text);
       if (v.length >= 200) return v; // a real description, not a stray label
       node = node.parentElement;
     }

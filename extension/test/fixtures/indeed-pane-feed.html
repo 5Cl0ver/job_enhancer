@@ -6,7 +6,7 @@
   <script>
     window.mosaic = window.mosaic || {};
     window.mosaic.providerData = window.mosaic.providerData || {};
-    window.mosaic.providerData["mosaic-provider-jobcards"] = {"metaData":{"mosaicProviderJobCardsModel":{"results":[{"jobkey":"pane1","title":"Fabulous Junior IT Solutions Engineer","company":"Squeeze Technology, Inc.","formattedLocation":"Lake Forest, CA 92630","snippet":"Short snippet only."}]}}};
+    window.mosaic.providerData["mosaic-provider-jobcards"] = {"metaData":{"mosaicProviderJobCardsModel":{"results":[{"jobkey":"pane1","title":"Fabulous Junior IT Solutions Engineer","company":"Squeeze Technology, Inc.","formattedLocation":"Lake Forest, CA 92630","snippet":"Short snippet only.","extractedSalary":{"min":60000,"max":70000,"type":"yearly"}}]}}};
   </script>
 
   <!-- The right pane: full description rendered under a heading, with NONE of
@@ -16,6 +16,7 @@
     <div class="salary-line">$60,000 - $70,000 a year</div>
     <h2>Full job description</h2>
     <div>
+      <style>@layer htmlContent { #react-native-html-content p { margin-top: 8px; } }</style>
       <p><strong>Company Overview</strong></p>
       <p>This is your opportunity to join a highly respected, fast-growing IT and AI
       consultancy in Orange County — and actually grow with it. This role was built

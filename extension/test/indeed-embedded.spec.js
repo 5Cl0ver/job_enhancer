@@ -59,6 +59,9 @@ describe("home-feed pane (regression: full description IS on screen — capture 
     expect(job.company).toBe("Squeeze Technology, Inc.");
     expect(job.description).toContain("highly respected, fast-growing IT and AI");
     expect(job.description.length).toBeGreaterThan(400); // the whole thing, not the snippet
+    expect(job.description).not.toContain("@layer"); // embedded <style> stays out
+    expect(job.salary_min).toBe(60000); // salary comes from the card's own data
+    expect(job.salary_max).toBe(70000);
     expect(job.url).toBe("https://www.indeed.com/viewjob?jk=pane1");
   });
 });
@@ -92,6 +95,63 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
     doc.documentElement.setAttribute("data-je-embedded", JSON.stringify(payload));
     return doc;
   }
+
+  it("strips Indeed's embedded <style> block out of descriptions (CSS-leak regression)", () => {
+    // Indeed's new renderer puts a <style> tag INSIDE the description HTML;
+    // naive tag-stripping saved the raw CSS as the job description.
+    const doc = bridgeDoc({
+      detail: {
+        jobKey: "css1",
+        jobTitle: "Full Stack Engineer - OE",
+        companyName: "Infosys",
+        formattedLocation: "Pomona, CA",
+        description:
+          "<style>@layer htmlContent { #react-native-html-content p { margin: 8px; } }</style>" +
+          "<p>Contribute to the requirements elicitation process by documenting assigned parts.</p>" +
+          "<p>Facilitate software application design discussions and document design decisions.</p>",
+      },
+    });
+    const job = extractJob(doc, "https://www.indeed.com/viewjob?jk=css1");
+    expect(job.description).toContain("requirements elicitation");
+    expect(job.description).not.toContain("@layer");
+    expect(job.description).not.toContain("react-native-html-content");
+  });
+
+  it("reads the salary from the open card's own data (extractedSalary / snippet)", () => {
+    const doc = bridgeDoc({
+      cards: [
+        {
+          jobkey: "sal1",
+          title: "Full Stack Engineer - OE",
+          company: "Infosys",
+          formattedLocation: "Pomona, CA",
+          extractedSalary: { min: 80299, max: 104389, type: "yearly" },
+        },
+        {
+          jobkey: "sal2",
+          title: "Backend Engineer",
+          company: "TextCo",
+          salarySnippet: "$90,000 - $120,000 a year",
+        },
+        {
+          jobkey: "sal3",
+          title: "AI Trainer",
+          company: "HourlyCo",
+          salarySnippet: "$50 - $100 an hour", // hourly → skipped, not "$50 a year"
+        },
+      ],
+    });
+    const structured = extractJob(doc, "https://www.indeed.com/?vjk=sal1");
+    expect(structured.salary_min).toBe(80299);
+    expect(structured.salary_max).toBe(104389);
+
+    const parsed = extractJob(doc, "https://www.indeed.com/?vjk=sal2");
+    expect(parsed.salary_min).toBe(90000);
+    expect(parsed.salary_max).toBe(120000);
+
+    const hourly = extractJob(doc, "https://www.indeed.com/?vjk=sal3");
+    expect(hourly.salary_min).toBeNull();
+  });
 
   it("reads a dedicated job page from the bridged detail (no vjk)", () => {
     const doc = bridgeDoc({

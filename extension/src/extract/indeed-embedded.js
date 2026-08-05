@@ -8,7 +8,7 @@
 // MAIN-world bridge (bridge.entry.js) mirrors the fields we need onto
 // <html data-je-embedded="…">. We read that first; if it's absent we fall back
 // to scanning static <script> text (works on server-rendered pages).
-import { clean, stripHtml, looksRemote } from "./util.js";
+import { clean, stripHtml, looksRemote, parseSalaryText } from "./util.js";
 
 // Turn ANY Indeed page url into the canonical /viewjob?jk= listing url, using the
 // job key in the url (vjk on the home feed / search pane, jk on a job page).
@@ -55,6 +55,20 @@ function normalizeDetail(detail, url) {
   };
 }
 
+// Salary from the card's own data: Indeed's structured extractedSalary
+// (min/max/type) first, else parse the visible "$80,299 - $104,389 a year"
+// snippet. Yearly only — the app stores annual figures.
+function cardSalary(card) {
+  const es = card?.extractedSalary;
+  if (es && (es.min || es.max) && /^year/i.test(es.type || "yearly")) {
+    return {
+      salary_min: es.min ? Math.round(es.min) : null,
+      salary_max: es.max ? Math.round(es.max) : null,
+    };
+  }
+  return parseSalaryText(card?.salarySnippet) || { salary_min: null, salary_max: null };
+}
+
 function normalizeCard(card, url) {
   const title = card?.title || card?.displayTitle;
   if (!title) return null;
@@ -66,6 +80,7 @@ function normalizeCard(card, url) {
     description: stripHtml(card.snippet || ""),
     is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
     url: indeedListingUrl(card.jobkey, url),
+    ...cardSalary(card),
   };
 }
 

@@ -1,7 +1,7 @@
 // Indeed detail-page (viewjob) selector fallback — used only when JSON-LD is
 // absent or partial. These target the OPEN job page, not search cards, which is
 // the reliable capture surface (one job, stable header markup).
-import { textFrom, looksRemote, descriptionByHeading } from "./util.js";
+import { textFrom, looksRemote, descriptionByHeading, stripHtml } from "./util.js";
 
 // The full job description as rendered on the page. Known containers first
 // (viewjob + search-pane markup); the home-feed pane uses different markup, so
@@ -16,7 +16,10 @@ function descriptionText(doc) {
     "[data-testid*='jobDescription']",
   ]) {
     const el = doc.querySelector(sel);
-    const t = (el?.textContent || "").trim();
+    if (!el) continue;
+    // innerHTML + stripHtml, NOT textContent — Indeed embeds a <style> block
+    // inside the description container and textContent leaks the CSS text.
+    const t = stripHtml(el.innerHTML || "") || (el.textContent || "").trim();
     if (t) return t;
   }
   return descriptionByHeading(doc);

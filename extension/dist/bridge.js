@@ -30,7 +30,11 @@
                 company: r.company,
                 formattedLocation: r.formattedLocation,
                 snippet: r.snippet,
-                remoteLocation: r.remoteLocation
+                remoteLocation: r.remoteLocation,
+                // Salary as Indeed's own card data states it (keyed to THIS job).
+                extractedSalary: r.extractedSalary || r.estimatedSalary || null,
+                salarySnippet: r.salarySnippet?.text || "",
+                jobTypes: r.jobTypes || null
               });
             }
           }

@@ -4,7 +4,15 @@
     return (s || "").replace(/\s+/g, " ").trim();
   }
   function stripHtml(s) {
-    return clean((s || "").replace(/<[^>]*>/g, " "));
+    const text = (s || "").replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, " ").replace(/<!--[\s\S]*?-->/g, " ").replace(/<br\s*\/?>/gi, "\n").replace(/<\/(p|div|li|ul|ol|h[1-6]|tr|section)>/gi, "\n").replace(/<[^>]*>/g, " ").replace(/&nbsp;/gi, " ").replace(/&amp;/gi, "&").replace(/&lt;/gi, "<").replace(/&gt;/gi, ">").replace(/&#39;|&apos;/gi, "'").replace(/&quot;/gi, '"');
+    return cleanMultiline(text);
+  }
+  function parseSalaryText(text) {
+    const t = clean(text);
+    if (!t || !/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) return null;
+    const nums = [...t.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)].map((m) => Math.round(parseFloat(m[1].replace(/,/g, "")))).filter((n) => Number.isFinite(n) && n > 1e3);
+    if (!nums.length) return null;
+    return { salary_min: nums[0], salary_max: nums[1] ?? null };
   }
   function cleanMultiline(s) {
     return (s || "").replace(/\r/g, "").replace(/[ \t]+/g, " ").replace(/ *\n */g, "\n").replace(/\n{3,}/g, "\n\n").trim();
@@ -39,9 +47,9 @@
       for (let depth = 0; depth < 3 && node; depth++) {
         let text = "";
         for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
-          text += " " + stripHtml(sib.innerHTML || "");
+          text += "\n" + stripHtml(sib.innerHTML || "");
         }
-        const v = clean(text);
+        const v = cleanMultiline(text);
         if (v.length >= 200) return v;
         node = node.parentElement;
       }
@@ -204,6 +212,16 @@
       url: indeedListingUrl(detail.jobKey, url)
     };
   }
+  function cardSalary(card) {
+    const es = card?.extractedSalary;
+    if (es && (es.min || es.max) && /^year/i.test(es.type || "yearly")) {
+      return {
+        salary_min: es.min ? Math.round(es.min) : null,
+        salary_max: es.max ? Math.round(es.max) : null
+      };
+    }
+    return parseSalaryText(card?.salarySnippet) || { salary_min: null, salary_max: null };
+  }
   function normalizeCard(card, url) {
     const title = card?.title || card?.displayTitle;
     if (!title) return null;
@@ -214,7 +232,8 @@
       location: loc,
       description: stripHtml(card.snippet || ""),
       is_remote: card.remoteLocation === true || looksRemote(loc, title, card.snippet),
-      url: indeedListingUrl(card.jobkey, url)
+      url: indeedListingUrl(card.jobkey, url),
+      ...cardSalary(card)
     };
   }
   function openCardKey(url) {
@@ -323,7 +342,8 @@
       "[data-testid*='jobDescription']"
     ]) {
       const el = doc.querySelector(sel);
-      const t = (el?.textContent || "").trim();
+      if (!el) continue;
+      const t = stripHtml(el.innerHTML || "") || (el.textContent || "").trim();
       if (t) return t;
     }
     return descriptionByHeading(doc);
