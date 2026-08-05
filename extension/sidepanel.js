@@ -218,6 +218,11 @@ document.addEventListener("DOMContentLoaded", () => {
     await send({ type: "signOut" });
     show("login");
   });
+
+  // Show which build Chrome actually loaded — after any update, this must
+  // match the manifest version, else the ↻ reload at chrome://extensions
+  // hasn't happened yet and old code is still running.
+  $("je-version").textContent = `v${chrome.runtime.getManifest().version}`;
 });
 
 // "Capture this page" / "Pick manually" stash the result in storage — fill the

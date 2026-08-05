@@ -72,6 +72,7 @@
       .review-x:hover { color: #dc2626; }
       footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
       .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
+      .version { color: #4b5563; font-size: 11px; }
     </style>
   </head>
   <body>
@@ -139,6 +140,9 @@
 
       <footer>
         <button id="open-app" class="link" type="button">Open my tracker ↗</button>
+        <!-- Build version — confirms which build Chrome actually loaded after
+             an update (reload at chrome://extensions bumps this). -->
+        <span id="je-version" class="version"></span>
         <button id="signout" class="link" type="button">Sign out</button>
       </footer>
     </div>
