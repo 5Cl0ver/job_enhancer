@@ -17,6 +17,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, getAccessToken, API_BASE } from "@/lib/api";
+import { ApplicationProfileCard } from "@/components/settings/ApplicationProfileCard";
 
 export default function SettingsPage() {
   const { data: profile } = useProfile();
@@ -29,6 +30,7 @@ export default function SettingsPage() {
         <p className="text-sm text-muted-foreground">Manage your account and data.</p>
       </div>
 
+      <ApplicationProfileCard />
       <DataExportCard />
       <DeleteAccountCard email={userEmail} />
     </div>

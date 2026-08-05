@@ -90,6 +90,13 @@ export const api = {
       body: JSON.stringify(body),
     }),
 
+  put: <T>(path: string, body: unknown, init?: RequestInit) =>
+    request<T>(path, {
+      ...init,
+      method: "PUT",
+      body: JSON.stringify(body),
+    }),
+
   delete: <T = void>(path: string, init?: RequestInit) =>
     request<T>(path, { ...init, method: "DELETE" }),
 

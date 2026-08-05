@@ -61,3 +61,60 @@ async def test_delete_account_soft_deletes(
     user = await db_session.scalar(select(User).where(User.id == test_user.id))
     assert user is not None
     assert user.deleted_at is not None  # purged permanently after grace period
+
+
+# ---------------------------------------------------------------------------
+# Application profile ("profile vault" — feeds ATS autofill)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_application_profile_empty_then_upsert(client: AsyncClient):
+    # Never filled → empty defaults, not a 404 (the Settings form just renders blank).
+    r = await client.get("/v1/users/me/application-profile")
+    assert r.status_code == 200
+    assert r.json()["first_name"] is None
+    assert r.json()["authorized_to_work"] is None
+
+    # Partial save.
+    r = await client.put(
+        "/v1/users/me/application-profile",
+        json={
+            "first_name": "Fabian",
+            "phone": "555-0100",
+            "linkedin_url": "https://linkedin.com/in/fabian",
+            "authorized_to_work": True,
+            "requires_sponsorship": False,
+        },
+    )
+    assert r.status_code == 200
+    body = r.json()
+    assert body["first_name"] == "Fabian"
+    assert body["authorized_to_work"] is True
+
+    # A later partial save must NOT wipe earlier answers.
+    r = await client.put(
+        "/v1/users/me/application-profile", json={"city": "Los Angeles"}
+    )
+    body = r.json()
+    assert body["city"] == "Los Angeles"
+    assert body["first_name"] == "Fabian"  # still there
+    assert body["requires_sponsorship"] is False  # still there
+
+
+@pytest.mark.asyncio
+async def test_application_profile_rejects_bad_url(client: AsyncClient):
+    r = await client.put(
+        "/v1/users/me/application-profile",
+        json={"github_url": "javascript:alert(1)"},
+    )
+    assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_export_includes_application_profile(client: AsyncClient):
+    await client.put(
+        "/v1/users/me/application-profile", json={"first_name": "Fabian"}
+    )
+    data = (await client.get("/v1/users/me/export")).json()
+    assert data["application_profile"]["first_name"] == "Fabian"

@@ -11,13 +11,14 @@ from sqlalchemy.orm import selectinload
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
+from app.models.application_profile import ApplicationProfile
 from app.models.collection import Collection
 from app.models.generated_document import GeneratedDocument
 from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.schemas.user import UserProfile, UserUpdate
+from app.schemas.user import ApplicationProfileSchema, UserProfile, UserUpdate
 from app.services.users import soft_delete_user
 
 router = APIRouter()
@@ -39,6 +40,41 @@ async def update_profile(
     await db.commit()
     await db.refresh(user)
     return UserProfile.model_validate(user)
+
+
+@router.get("/me/application-profile", response_model=ApplicationProfileSchema)
+async def get_application_profile(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationProfileSchema:
+    """The user's profile vault (empty defaults if never filled)."""
+    profile = await db.scalar(
+        select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
+    )
+    if profile is None:
+        return ApplicationProfileSchema()
+    return ApplicationProfileSchema.model_validate(profile)
+
+
+@router.put("/me/application-profile", response_model=ApplicationProfileSchema)
+async def update_application_profile(
+    data: ApplicationProfileSchema,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationProfileSchema:
+    """Upsert the profile vault. Only the fields sent are changed, so partial
+    saves from the Settings form never wipe other answers."""
+    profile = await db.scalar(
+        select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
+    )
+    if profile is None:
+        profile = ApplicationProfile(user_id=user.id)
+        db.add(profile)
+    for key, value in data.model_dump(exclude_unset=True).items():
+        setattr(profile, key, value)
+    await db.commit()
+    await db.refresh(profile)
+    return ApplicationProfileSchema.model_validate(profile)
 
 
 @router.get("/me/export")
@@ -89,6 +125,10 @@ async def export_data(
         )
         .scalars()
         .all()
+    )
+
+    app_profile = await db.scalar(
+        select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
     )
 
     def _dt(v: datetime | None) -> str | None:
@@ -143,6 +183,11 @@ async def export_data(
             }
             for d in documents
         ],
+        "application_profile": (
+            ApplicationProfileSchema.model_validate(app_profile).model_dump()
+            if app_profile
+            else None
+        ),
     }
 
     json_bytes = json.dumps(export, indent=2).encode()

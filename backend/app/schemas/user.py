@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field
+from pydantic import BaseModel, EmailStr, Field, field_validator
 
 
 class UserProfile(BaseModel):
@@ -28,3 +28,35 @@ class AdminUserUpdate(BaseModel):
     """Admin-only change to another user's role (promote/demote)."""
 
     role: Literal["user", "admin"]
+
+
+class ApplicationProfileSchema(BaseModel):
+    """The "profile vault": answers job applications always ask for. Everything
+    optional — the user shares only what they want. Consumed by ATS autofill."""
+
+    first_name: str | None = Field(None, max_length=100)
+    last_name: str | None = Field(None, max_length=100)
+    phone: str | None = Field(None, max_length=50)
+    city: str | None = Field(None, max_length=100)
+    state: str | None = Field(None, max_length=100)
+    country: str | None = Field(None, max_length=100)
+    linkedin_url: str | None = Field(None, max_length=500)
+    github_url: str | None = Field(None, max_length=500)
+    portfolio_url: str | None = Field(None, max_length=500)
+    authorized_to_work: bool | None = None
+    requires_sponsorship: bool | None = None
+    willing_to_relocate: bool | None = None
+    desired_salary: int | None = Field(None, ge=0)
+    notice_period: str | None = Field(None, max_length=100)
+
+    @field_validator("linkedin_url", "github_url", "portfolio_url")
+    @classmethod
+    def _http_only(cls, v: str | None) -> str | None:
+        # Empty string means "clear the field"; anything else must be a URL.
+        if not v:
+            return None
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        return v
+
+    model_config = {"from_attributes": True}
