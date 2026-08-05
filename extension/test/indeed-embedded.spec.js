@@ -49,6 +49,20 @@ describe("Indeed embedded JSON — static <script> fallback", () => {
   });
 });
 
+describe("home-feed pane (regression: full description IS on screen — capture it)", () => {
+  it("captures the full description via the 'Full job description' heading", () => {
+    // The home-feed pane doesn't use #jobDescriptionText; the mosaic card only
+    // has a snippet. The visible heading is the anchor.
+    const doc = docFrom("indeed-pane-feed.html");
+    const job = extractJob(doc, "https://www.indeed.com/?vjk=pane1");
+    expect(job.title).toBe("Fabulous Junior IT Solutions Engineer");
+    expect(job.company).toBe("Squeeze Technology, Inc.");
+    expect(job.description).toContain("highly respected, fast-growing IT and AI");
+    expect(job.description.length).toBeGreaterThan(400); // the whole thing, not the snippet
+    expect(job.url).toBe("https://www.indeed.com/viewjob?jk=pane1");
+  });
+});
+
 describe("canonical Indeed url (fixes 'View listing' → home page)", () => {
   it("rewrites a home-feed ?vjk= url to a real /viewjob link", () => {
     expect(canonicalIndeedUrl("https://www.indeed.com/?vjk=abc123")).toBe(

@@ -23,6 +23,31 @@
   function looksRemote(...parts) {
     return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
   }
+  var DESCRIPTION_HEADINGS = [
+    /^full job description/i,
+    /^job description/i,
+    /^about the job/i,
+    /^about the role/i
+  ];
+  function descriptionByHeading(doc) {
+    if (!doc?.querySelectorAll) return "";
+    for (const h of doc.querySelectorAll("h1,h2,h3,h4,strong,b")) {
+      const label = clean(h.textContent);
+      if (!label || label.length > 60) continue;
+      if (!DESCRIPTION_HEADINGS.some((re) => re.test(label))) continue;
+      let node = h;
+      for (let depth = 0; depth < 3 && node; depth++) {
+        let text = "";
+        for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+          text += " " + stripHtml(sib.innerHTML || "");
+        }
+        const v = clean(text);
+        if (v.length >= 200) return v;
+        node = node.parentElement;
+      }
+    }
+    return "";
+  }
   function mergeJob(candidates, url) {
     const out = {
       title: "",
@@ -54,7 +79,7 @@
       for (const c of candidates) {
         const v = c.data?.[field];
         if (v != null) {
-          out[field] = v;
+          out[field] = typeof v === "number" ? Math.round(v) : v;
           break;
         }
       }
@@ -294,13 +319,14 @@
       "#jobDescriptionText",
       "[id^='jobDescriptionText']",
       ".jobsearch-JobComponent-description",
-      "[class*='jobDescriptionText']"
+      "[class*='jobDescriptionText']",
+      "[data-testid*='jobDescription']"
     ]) {
       const el = doc.querySelector(sel);
       const t = (el?.textContent || "").trim();
       if (t) return t;
     }
-    return "";
+    return descriptionByHeading(doc);
   }
   function extractIndeed(doc, url) {
     const title = textFrom(doc, [

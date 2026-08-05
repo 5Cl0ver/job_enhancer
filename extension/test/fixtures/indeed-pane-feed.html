@@ -1,0 +1,31 @@
+<!doctype html>
+<html>
+<head><title>Indeed</title></head>
+<body>
+  <!-- Home feed: mosaic card data has only a snippet for the open job. -->
+  <script>
+    window.mosaic = window.mosaic || {};
+    window.mosaic.providerData = window.mosaic.providerData || {};
+    window.mosaic.providerData["mosaic-provider-jobcards"] = {"metaData":{"mosaicProviderJobCardsModel":{"results":[{"jobkey":"pane1","title":"Fabulous Junior IT Solutions Engineer","company":"Squeeze Technology, Inc.","formattedLocation":"Lake Forest, CA 92630","snippet":"Short snippet only."}]}}};
+  </script>
+
+  <!-- The right pane: full description rendered under a heading, with NONE of
+       the known ids/classes (#jobDescriptionText etc.) — home-feed markup. -->
+  <div class="feed-pane-wrapper">
+    <h2>Fabulous Junior IT Solutions Engineer</h2>
+    <div class="salary-line">$60,000 - $70,000 a year</div>
+    <h2>Full job description</h2>
+    <div>
+      <p><strong>Company Overview</strong></p>
+      <p>This is your opportunity to join a highly respected, fast-growing IT and AI
+      consultancy in Orange County — and actually grow with it. This role was built
+      for someone early in their career: a recent graduate or junior developer who
+      wants to build real solutions for real customers, not sit in the back row.</p>
+      <p>The Fabulous Junior IT Solutions Engineer helps design, build, and support
+      technology solutions where data is at the center — connecting business
+      applications, moving and shaping data, preparing it for AI, and turning it
+      into insights customers can act on.</p>
+    </div>
+  </div>
+</body>
+</html>

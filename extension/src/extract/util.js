@@ -61,6 +61,41 @@ export function looksRemote(...parts) {
   return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
 }
 
+const DESCRIPTION_HEADINGS = [
+  /^full job description/i,
+  /^job description/i,
+  /^about the job/i,
+  /^about the role/i,
+];
+
+/**
+ * Description fallback that works on ANY layout: find the visible
+ * "Full job description" (etc.) heading and capture the text that follows it.
+ * Sites change their ids/classes constantly, but the heading the USER reads is
+ * stable — if you can see the description, this can capture it.
+ * Climbs up to two ancestors when the heading is alone in a wrapper div.
+ */
+export function descriptionByHeading(doc) {
+  if (!doc?.querySelectorAll) return "";
+  for (const h of doc.querySelectorAll("h1,h2,h3,h4,strong,b")) {
+    const label = clean(h.textContent);
+    if (!label || label.length > 60) continue;
+    if (!DESCRIPTION_HEADINGS.some((re) => re.test(label))) continue;
+
+    let node = h;
+    for (let depth = 0; depth < 3 && node; depth++) {
+      let text = "";
+      for (let sib = node.nextElementSibling; sib; sib = sib.nextElementSibling) {
+        text += " " + stripHtml(sib.innerHTML || "");
+      }
+      const v = clean(text);
+      if (v.length >= 200) return v; // a real description, not a stray label
+      node = node.parentElement;
+    }
+  }
+  return "";
+}
+
 /**
  * Merge partial jobs by field priority (first non-empty wins per field).
  * `is_remote` is OR-ed across all sources. Records which source supplied the
@@ -92,7 +127,9 @@ export function mergeJob(candidates, url) {
     for (const c of candidates) {
       const v = c.data?.[field];
       if (v != null) {
-        out[field] = v;
+        // Sites list salaries with cents ("$80,708.90 a year"); the API stores
+        // whole units. Round here so no capture path can ship decimals.
+        out[field] = typeof v === "number" ? Math.round(v) : v;
         break;
       }
     }

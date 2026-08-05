@@ -1,4 +1,21 @@
 (() => {
+  // src/errors.js
+  function friendlyApiError(status, text) {
+    try {
+      const d = JSON.parse(text);
+      if (typeof d.detail === "string") return d.detail;
+      if (Array.isArray(d.detail)) {
+        const parts = d.detail.map((e) => {
+          const field = (e.loc || []).filter((p) => p !== "body").join(".");
+          return field && e.msg ? `${field}: ${e.msg}` : e.msg || "";
+        }).filter(Boolean);
+        if (parts.length) return parts.join("; ").slice(0, 140);
+      }
+    } catch {
+    }
+    return (text || "").slice(0, 140) || `Request failed (${status})`;
+  }
+
   // src/background.entry.js
   importScripts("/config.js");
   var cfg = self.JOB_ENHANCER_CONFIG;
@@ -73,7 +90,11 @@
       });
       throw new Error("Already in your tracker");
     }
-    if (!res.ok) throw new Error(await res.text() || "Save failed");
+    if (!res.ok) {
+      const text = await res.text().catch(() => "");
+      console.warn("JE save failed", res.status, text, job);
+      throw new Error(friendlyApiError(res.status, text) || "Save failed");
+    }
     return res.json();
   }
   async function backfillJob(job) {

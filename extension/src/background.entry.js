@@ -8,6 +8,8 @@
 // content script reading pages the user actually has open.
 //
 // Bundled by esbuild. config.js is loaded at runtime from the extension root.
+import { friendlyApiError } from "./errors.js";
+
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
 
@@ -92,7 +94,12 @@ async function saveJob(job) {
     await backfillJob(job).catch(() => {});
     throw new Error("Already in your tracker");
   }
-  if (!res.ok) throw new Error((await res.text()) || "Save failed");
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    // Full detail in the worker console for debugging; short + human in the UI.
+    console.warn("JE save failed", res.status, text, job);
+    throw new Error(friendlyApiError(res.status, text) || "Save failed");
+  }
   return res.json();
 }
 

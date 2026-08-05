@@ -1,23 +1,25 @@
 // Indeed detail-page (viewjob) selector fallback — used only when JSON-LD is
 // absent or partial. These target the OPEN job page, not search cards, which is
 // the reliable capture surface (one job, stable header markup).
-import { textFrom, looksRemote } from "./util.js";
+import { textFrom, looksRemote, descriptionByHeading } from "./util.js";
 
-// The full job description as rendered on the page (viewjob and the home-feed
-// pane both use #jobDescriptionText). This is how we get the WHOLE description,
-// not just the short card snippet.
+// The full job description as rendered on the page. Known containers first
+// (viewjob + search-pane markup); the home-feed pane uses different markup, so
+// fall back to anchoring on the visible "Full job description" heading — if the
+// user can read the description, we can capture it.
 function descriptionText(doc) {
   for (const sel of [
     "#jobDescriptionText",
     "[id^='jobDescriptionText']",
     ".jobsearch-JobComponent-description",
     "[class*='jobDescriptionText']",
+    "[data-testid*='jobDescription']",
   ]) {
     const el = doc.querySelector(sel);
     const t = (el?.textContent || "").trim();
     if (t) return t;
   }
-  return "";
+  return descriptionByHeading(doc);
 }
 
 export function extractIndeed(doc, url) {
