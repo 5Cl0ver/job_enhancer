@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
+import { AsYouType, isValidPhoneNumber } from "libphonenumber-js";
 import { BriefcaseBusiness, Check, Loader2, Sparkles } from "lucide-react";
+import { US_STATES, COUNTRIES, NOTICE_PERIODS } from "@/lib/form-options";
 import { Button } from "@/components/ui/button";
 import {
   Card,
@@ -41,6 +43,31 @@ const COMPLETENESS_KEYS: (keyof ApplicationProfile)[] = [
 
 // Radix Select forbids empty values — tri-state yes/no/unanswered sentinels.
 const UNSET = "unset";
+
+/** Format a phone as the user types — "(555) 010-0199" like real forms do.
+ *  Numbers starting with "+" format internationally. */
+function formatPhone(raw: string): string {
+  if (!raw) return "";
+  return new AsYouType(raw.startsWith("+") ? undefined : "US").input(raw);
+}
+
+/** A phone is acceptable when empty or actually dialable (libphonenumber —
+ *  the same validation real application forms use). */
+function phoneOk(value: string | null): boolean {
+  if (!value) return true;
+  return value.startsWith("+")
+    ? isValidPhoneNumber(value)
+    : isValidPhoneNumber(value, "US");
+}
+
+/** "linkedin.com/in/me" → "https://linkedin.com/in/me" on blur. */
+function normalizeUrl(value: string | null): string | null {
+  if (!value) return null;
+  const v = value.trim();
+  if (!v) return null;
+  if (/^https?:\/\//i.test(v)) return v;
+  return v.includes(".") ? `https://${v}` : v;
+}
 
 function TriState({
   id,
@@ -143,7 +170,12 @@ export function ApplicationProfileCard() {
       set(key, (e.target.value || null) as ApplicationProfile[typeof key]),
   });
 
-  const handleSave = () => update.mutate(form);
+  // Save is blocked while the phone is invalid — like a real form would.
+  const canSave = phoneOk(form.phone) && !update.isPending;
+  const handleSave = () => {
+    if (!canSave) return;
+    update.mutate(form);
+  };
 
   return (
     <Card>
@@ -174,19 +206,68 @@ export function ApplicationProfileCard() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-phone">Phone</Label>
-            <Input id="ap-phone" type="tel" autoComplete="tel" {...text("phone")} />
+            <Input
+              id="ap-phone"
+              type="tel"
+              autoComplete="tel"
+              placeholder="(555) 010-0199"
+              value={form.phone ?? ""}
+              onChange={(e) => set("phone", formatPhone(e.target.value) || null)}
+              aria-invalid={!phoneOk(form.phone)}
+              className={!phoneOk(form.phone) ? "border-destructive" : undefined}
+            />
+            {!phoneOk(form.phone) && (
+              <p className="text-xs text-destructive">
+                That doesn't look like a real phone number.
+              </p>
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-city">City</Label>
             <Input id="ap-city" {...text("city")} />
           </div>
           <div className="space-y-1.5">
-            <Label htmlFor="ap-state">State / Region</Label>
-            <Input id="ap-state" {...text("state")} />
+            <Label htmlFor="ap-state">State</Label>
+            {/* US → pick from the real state list; elsewhere → free text. */}
+            {!form.country || form.country === "United States" ? (
+              <Select
+                value={form.state ?? UNSET}
+                onValueChange={(v) => set("state", v === UNSET ? null : v)}
+              >
+                <SelectTrigger id="ap-state">
+                  <SelectValue placeholder="Select a state…" />
+                </SelectTrigger>
+                <SelectContent className="max-h-72">
+                  <SelectItem value={UNSET}>Not set</SelectItem>
+                  {US_STATES.map((s) => (
+                    <SelectItem key={s} value={s}>
+                      {s}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            ) : (
+              <Input id="ap-state" placeholder="State / region" {...text("state")} />
+            )}
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-country">Country</Label>
-            <Input id="ap-country" {...text("country")} />
+            <Select
+              value={form.country ?? UNSET}
+              onValueChange={(v) => set("country", v === UNSET ? null : v)}
+            >
+              <SelectTrigger id="ap-country">
+                <SelectValue placeholder="Select a country…" />
+              </SelectTrigger>
+              <SelectContent className="max-h-72">
+                <SelectItem value={UNSET}>Not set</SelectItem>
+                {COUNTRIES.map((c) => (
+                  <SelectItem key={c} value={c}>
+                    {c}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
@@ -195,17 +276,28 @@ export function ApplicationProfileCard() {
             <Label htmlFor="ap-linkedin">LinkedIn URL</Label>
             <Input
               id="ap-linkedin"
-              placeholder="https://linkedin.com/in/…"
+              placeholder="linkedin.com/in/…"
               {...text("linkedin_url")}
+              onBlur={() => set("linkedin_url", normalizeUrl(form.linkedin_url))}
             />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-github">GitHub URL</Label>
-            <Input id="ap-github" placeholder="https://github.com/…" {...text("github_url")} />
+            <Input
+              id="ap-github"
+              placeholder="github.com/…"
+              {...text("github_url")}
+              onBlur={() => set("github_url", normalizeUrl(form.github_url))}
+            />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-portfolio">Portfolio URL</Label>
-            <Input id="ap-portfolio" placeholder="https://…" {...text("portfolio_url")} />
+            <Input
+              id="ap-portfolio"
+              placeholder="yoursite.dev"
+              {...text("portfolio_url")}
+              onBlur={() => set("portfolio_url", normalizeUrl(form.portfolio_url))}
+            />
           </div>
         </div>
 
@@ -245,12 +337,34 @@ export function ApplicationProfileCard() {
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-notice">Notice period</Label>
-            <Input id="ap-notice" placeholder="e.g. 2 weeks" {...text("notice_period")} />
+            <Select
+              value={form.notice_period ?? UNSET}
+              onValueChange={(v) => set("notice_period", v === UNSET ? null : v)}
+            >
+              <SelectTrigger id="ap-notice">
+                <SelectValue placeholder="Select…" />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value={UNSET}>Not set</SelectItem>
+                {NOTICE_PERIODS.map((n) => (
+                  <SelectItem key={n} value={n}>
+                    {n}
+                  </SelectItem>
+                ))}
+                {/* Preserve a custom value saved before this became a dropdown. */}
+                {form.notice_period &&
+                  !NOTICE_PERIODS.includes(
+                    form.notice_period as (typeof NOTICE_PERIODS)[number],
+                  ) && (
+                    <SelectItem value={form.notice_period}>{form.notice_period}</SelectItem>
+                  )}
+              </SelectContent>
+            </Select>
           </div>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
-          <Button onClick={handleSave} disabled={update.isPending} className="gap-2">
+          <Button onClick={handleSave} disabled={!canSave} className="gap-2">
             {update.isPending ? (
               <Loader2 className="h-4 w-4 animate-spin" />
             ) : update.isSuccess ? (

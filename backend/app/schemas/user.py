@@ -59,6 +59,18 @@ class ApplicationProfileSchema(BaseModel):
             raise ValueError("URL must start with http:// or https://")
         return v
 
+    @field_validator("phone")
+    @classmethod
+    def _dialable(cls, v: str | None) -> str | None:
+        # The frontend formats/validates properly (libphonenumber); this is the
+        # backstop: a phone must at least be 7-15 digits (E.164 range).
+        if not v:
+            return None
+        digits = sum(c.isdigit() for c in v)
+        if not 7 <= digits <= 15:
+            raise ValueError("Enter a real phone number")
+        return v
+
     model_config = {"from_attributes": True}
 
 

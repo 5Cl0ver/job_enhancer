@@ -147,7 +147,7 @@ async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_sessi
 
     # The user already answered phone — extraction must NOT overwrite it.
     await client.put(
-        "/v1/users/me/application-profile", json={"phone": "MY-REAL-PHONE"}
+        "/v1/users/me/application-profile", json={"phone": "555-867-5309"}
     )
 
     with patch(
@@ -166,4 +166,16 @@ async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_sessi
     body = r.json()
     assert sorted(body["filled"]) == ["city", "first_name"]  # phone NOT in filled
     assert body["profile"]["first_name"] == "Fabian"
-    assert body["profile"]["phone"] == "MY-REAL-PHONE"  # untouched
+    assert body["profile"]["phone"] == "555-867-5309"  # untouched
+
+
+@pytest.mark.asyncio
+async def test_application_profile_rejects_fake_phone(client: AsyncClient):
+    r = await client.put(
+        "/v1/users/me/application-profile", json={"phone": "not a number"}
+    )
+    assert r.status_code == 422
+    ok = await client.put(
+        "/v1/users/me/application-profile", json={"phone": "(555) 010-0199"}
+    )
+    assert ok.status_code == 200
