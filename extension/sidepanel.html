@@ -61,6 +61,16 @@
         color: #16a34a; font-weight: 700;
       }
       .saved li.muted { color: #9ca3af; text-align: center; padding: 12px; }
+      .saved li .applied {
+        display: inline-block; margin-top: 3px; color: #16a34a; font-weight: 600;
+      }
+      .saved li .mark-applied {
+        display: inline-block; margin-top: 4px; padding: 2px 8px;
+        border: 1px solid #d1d5db; border-radius: 999px; background: #fff;
+        color: #374151; font-size: 11px; cursor: pointer;
+      }
+      .saved li .mark-applied:hover { border-color: #16a34a; color: #16a34a; }
+      .saved li .mark-applied:disabled { opacity: .6; cursor: default; }
       #saved-all-list { max-height: 300px; overflow-y: auto; padding-right: 2px; }
       .saved li { transition: border-color .12s, background .12s; }
       .saved li:hover { border-color: #16a34a; background: rgba(22,163,74,.04); }

@@ -213,6 +213,7 @@ async function listSaved() {
     company: sj.job_listing?.company || "",
     location: sj.job_listing?.location || "",
     url: sj.job_listing?.apply_url || "",
+    applied: !!sj.applied_at,
   }));
   return { signedIn: true, jobs };
 }

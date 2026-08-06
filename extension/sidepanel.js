@@ -57,6 +57,35 @@ function renderSavedAll(jobs) {
     const s = document.createElement("span");
     s.textContent = [j.company, j.location].filter(Boolean).join(" · ");
     li.append(b, s);
+    // Applied state: quick-applies (e.g. "Apply with Indeed") happen where we
+    // can't watch the submit — one click here marks it, no app round-trip.
+    if (j.applied) {
+      const done = document.createElement("span");
+      done.className = "applied";
+      done.textContent = "✓ Applied";
+      li.append(done);
+    } else {
+      const mark = document.createElement("button");
+      mark.type = "button";
+      mark.className = "mark-applied";
+      mark.textContent = "Mark applied";
+      mark.title = "I applied to this job (moves it to Applied in your tracker)";
+      mark.addEventListener("click", async () => {
+        mark.disabled = true;
+        mark.textContent = "…";
+        const res = await send({
+          type: "markApplied",
+          job: { title: j.title, company: j.company },
+        });
+        if (res?.matched) {
+          loadSaved(); // re-render with the ✓ Applied state
+        } else {
+          mark.disabled = false;
+          mark.textContent = "Mark applied";
+        }
+      });
+      li.append(mark);
+    }
     if (j.url) {
       const a = document.createElement("a");
       a.className = "open";
