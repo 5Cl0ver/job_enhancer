@@ -179,6 +179,38 @@ async function getAutofillData() {
   return { signedIn: true, profile, email: email || "", resume };
 }
 
+// AI cover letter for the job being applied to, written from the active
+// resume + the job's stored description. Returns { content } or { error }.
+async function generateCoverLetter(jobListingId) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const resumesRes = await fetch(`${cfg.API_BASE}/v1/ai/resumes`, { headers });
+  if (resumesRes.status === 401) return { error: "NOT_SIGNED_IN" };
+  const resumes = resumesRes.ok ? await resumesRes.json() : [];
+  const active = resumes.find((r) => r.is_active);
+  if (!active) return { error: "NO_RESUME" };
+
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/generate`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      resume_id: active.id,
+      document_type: "cover_letter",
+      job_listing_id: jobListingId,
+    }),
+  });
+  if (res.status === 429) return { error: "AI rate limit — try again in a minute" };
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn("JE cover letter failed", res.status, text);
+    return { error: friendlyApiError(res.status, text) || "Generation failed" };
+  }
+  const doc = await res.json();
+  return { content: doc.edited_content || doc.content || "" };
+}
+
 // Auto-track: the user submitted an application on an ATS page.
 async function markApplied(job) {
   const token = await getValidToken();
@@ -209,6 +241,7 @@ async function listSaved() {
   const data = await res.json().catch(() => []);
   const jobs = (Array.isArray(data) ? data : []).map((sj) => ({
     id: sj.id,
+    job_listing_id: sj.job_listing_id,
     title: sj.job_listing?.title || "Untitled",
     company: sj.job_listing?.company || "",
     location: sj.job_listing?.location || "",
@@ -239,6 +272,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await getAutofillData()) });
       } else if (msg.type === "markApplied") {
         sendResponse({ ok: true, ...(await markApplied(msg.job)) });
+      } else if (msg.type === "generateCoverLetter") {
+        const out = await generateCoverLetter(msg.job_listing_id);
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "listSaved") {
         sendResponse({ ok: true, ...(await listSaved()) });
       } else if (msg.type === "saveJob") {

@@ -19,51 +19,58 @@
       header b { font-size: 15px; }
       .sub { color: #6b7280; font-size: 12px; margin: 0 0 12px; }
       label { display: block; margin: 8px 0 2px; font-size: 12px; font-weight: 600; }
-      input[type="text"], input[type="email"], input[type="password"] {
+      input[type="text"], input[type="email"], input[type="password"], select, textarea {
         width: 100%; padding: 8px 10px; border: 1px solid #d1d5db;
         border-radius: 8px; font-size: 13px; background: transparent; color: inherit;
       }
-      .row { display: flex; align-items: center; gap: 6px; margin-top: 10px; }
-      .row label { margin: 0; font-weight: 400; }
+      textarea { resize: vertical; font-family: inherit; line-height: 1.45; }
       button { font-family: inherit; cursor: pointer; }
       button.primary {
-        width: 100%; margin-top: 12px; padding: 10px; border: 0; border-radius: 9px;
+        width: 100%; margin-top: 10px; padding: 10px; border: 0; border-radius: 9px;
         background: #16a34a; color: #fff; font-weight: 700; font-size: 14px;
       }
       button.dark { background: #111827; }
+      button.ai { background: #7c3aed; }
       button.primary:disabled { opacity: .6; cursor: default; }
       button.ghost {
-        width: 100%; padding: 8px; border: 1px solid #d1d5db; border-radius: 8px;
-        background: transparent; color: inherit; font-weight: 600; font-size: 13px;
-      }
-      .divider {
-        display: flex; align-items: center; gap: 8px; color: #9ca3af;
-        font-size: 11px; margin: 14px 0 4px;
-      }
-      .divider::before, .divider::after {
-        content: ""; flex: 1; height: 1px; background: #e5e7eb;
+        padding: 7px 10px; border: 1px solid #d1d5db; border-radius: 8px;
+        background: transparent; color: inherit; font-weight: 600; font-size: 12px;
       }
       .error { color: #dc2626; font-size: 12px; margin: 8px 0 0; min-height: 14px; }
       .status { font-size: 12px; margin: 8px 0 0; min-height: 14px; }
       .status.ok { color: #16a34a; }
+
+      /* Context card — what you're doing right now */
+      .context {
+        border: 1px solid #7c3aed55; background: rgba(124,58,237,.06);
+        border-radius: 10px; padding: 10px 12px; margin-bottom: 4px;
+      }
+      .context .kicker {
+        font-size: 10px; font-weight: 700; letter-spacing: .06em;
+        color: #7c3aed; text-transform: uppercase; margin-bottom: 3px;
+      }
+      .context b { display: block; font-size: 13px; }
+      .context span { color: #6b7280; font-size: 12px; }
+      .context .ctx-actions { margin-top: 8px; display: flex; gap: 6px; flex-wrap: wrap; }
+      .context .ctx-actions .done { color: #16a34a; font-weight: 700; font-size: 12px; }
+
       .saved { margin-top: 16px; }
       .saved h2 { font-size: 12px; color: #6b7280; text-transform: uppercase; letter-spacing: .04em; margin: 0 0 6px; }
+      .saved h2 .count { color: #9ca3af; font-weight: 400; text-transform: none; letter-spacing: 0; }
       .saved ul { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
       .saved li {
-        border: 1px solid #e5e7eb; border-radius: 8px; padding: 7px 9px; font-size: 12px;
+        position: relative; border: 1px solid #e5e7eb; border-radius: 8px;
+        padding: 7px 9px; font-size: 12px; transition: border-color .12s, background .12s;
       }
+      .saved li:hover { border-color: #16a34a; background: rgba(22,163,74,.04); }
       .saved li b { display: block; font-size: 13px; padding-right: 16px; }
       .saved li span { color: #6b7280; }
-      .saved h2 .count { color: #9ca3af; font-weight: 400; text-transform: none; letter-spacing: 0; }
-      .saved li { position: relative; }
       .saved li a.open {
         position: absolute; top: 7px; right: 8px; text-decoration: none;
         color: #16a34a; font-weight: 700;
       }
       .saved li.muted { color: #9ca3af; text-align: center; padding: 12px; }
-      .saved li .applied {
-        display: inline-block; margin-top: 3px; color: #16a34a; font-weight: 600;
-      }
+      .saved li .applied { display: inline-block; margin-top: 3px; color: #16a34a; font-weight: 600; }
       .saved li .mark-applied {
         display: inline-block; margin-top: 4px; padding: 2px 8px;
         border: 1px solid #d1d5db; border-radius: 999px; background: #fff;
@@ -71,15 +78,11 @@
       }
       .saved li .mark-applied:hover { border-color: #16a34a; color: #16a34a; }
       .saved li .mark-applied:disabled { opacity: .6; cursor: default; }
-      #saved-all-list { max-height: 300px; overflow-y: auto; padding-right: 2px; }
-      .saved li { transition: border-color .12s, background .12s; }
-      .saved li:hover { border-color: #16a34a; background: rgba(22,163,74,.04); }
-      .divider span { white-space: nowrap; }
-      .review-x {
-        background: none; border: 0; color: #9ca3af; cursor: pointer;
-        font-size: 11px; padding: 0 2px; line-height: 1;
-      }
-      .review-x:hover { color: #dc2626; }
+      #saved-all-list { max-height: 260px; overflow-y: auto; padding-right: 2px; }
+
+      .cl-row { display: flex; gap: 6px; margin-top: 6px; }
+      #cl-output { margin-top: 8px; font-size: 12px; }
+
       footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
       .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
       .version { color: #4b5563; font-size: 11px; }
@@ -104,38 +107,19 @@
       </form>
     </div>
 
-    <!-- Capture -->
-    <div id="capture-view" hidden>
+    <!-- Main -->
+    <div id="main-view" hidden>
       <p class="sub">
-        On Indeed/LinkedIn, use the green <b>Save</b> button right on the page.
-        On any other site, <b>Capture this page</b> below.
+        Save jobs with the green <b>Save</b> button on job pages — this panel
+        follows what you're doing and helps you apply.
       </p>
-      <button id="capture-btn" class="primary">📋 Capture this page</button>
-      <button id="pick-btn" class="ghost" style="margin-top: 8px">
-        🎯 Pick manually
-      </button>
 
-      <!-- Review form: hidden until a capture actually lands, so the panel stays clean. -->
-      <div id="review-section" hidden>
-        <div class="divider">
-          <span>review &amp; save</span>
-          <button id="review-cancel" class="review-x" type="button" title="Dismiss">✕</button>
-        </div>
-        <form id="save-form">
-          <label for="f-title">Title</label>
-          <input id="f-title" type="text" required />
-          <label for="f-company">Company</label>
-          <input id="f-company" type="text" />
-          <label for="f-location">Location</label>
-          <input id="f-location" type="text" placeholder="Not specified" />
-          <div class="row">
-            <input id="f-remote" type="checkbox" />
-            <label for="f-remote">Remote</label>
-          </div>
-          <input id="f-url" type="hidden" />
-          <button class="primary" type="submit">Save to tracker</button>
-          <p id="save-status" class="status"></p>
-        </form>
+      <!-- Context: what the active tab says you're doing right now -->
+      <div id="context-card" class="context" hidden>
+        <div id="context-kicker" class="kicker"></div>
+        <b id="context-title"></b>
+        <span id="context-sub"></span>
+        <div id="context-actions" class="ctx-actions"></div>
       </div>
 
       <div class="saved" id="saved-all-wrap">
@@ -143,15 +127,24 @@
         <ul id="saved-all-list"></ul>
       </div>
 
-      <div class="saved" id="saved-wrap" hidden>
-        <h2>Saved this session</h2>
-        <ul id="saved-list"></ul>
+      <!-- AI cover letter, right where you're applying -->
+      <div class="saved" id="ai-wrap">
+        <h2>AI cover letter</h2>
+        <select id="cl-job"></select>
+        <button id="cl-generate" class="primary ai" type="button">✍️ Write cover letter</button>
+        <p id="cl-status" class="status"></p>
+        <div id="cl-output-wrap" hidden>
+          <textarea id="cl-output" rows="10" aria-label="Generated cover letter"></textarea>
+          <div class="cl-row">
+            <button id="cl-copy" class="ghost" type="button">📋 Copy</button>
+            <button id="cl-regen" class="ghost" type="button">↻ Regenerate</button>
+          </div>
+        </div>
       </div>
 
       <footer>
         <button id="open-app" class="link" type="button">Open my tracker ↗</button>
-        <!-- Build version — confirms which build Chrome actually loaded after
-             an update (reload at chrome://extensions bumps this). -->
+        <!-- Build version — confirms which build Chrome actually loaded. -->
         <span id="je-version" class="version"></span>
         <button id="signout" class="link" type="button">Sign out</button>
       </footer>

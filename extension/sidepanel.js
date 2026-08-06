@@ -1,90 +1,57 @@
-// Side panel — the persistent UI. It never closes when you click the page, so
-// "Pick from page" captures land here instantly (via storage), and card saves
-// broadcast here. All API/auth work goes through the background service worker.
+// Side panel — the apply copilot. It watches the ACTIVE TAB and adapts:
+//   • applying on Indeed (smartapply)  → "mark applied when done" card
+//   • applying on Greenhouse/Lever     → autofill reminder (auto-tracked)
+//   • anywhere else                    → your saved jobs
+// Plus an AI cover-letter writer for the job you're applying to — generate,
+// copy, paste into the application. All API/auth work goes through the
+// background service worker.
 const cfg = self.JOB_ENHANCER_CONFIG;
 const $ = (id) => document.getElementById(id);
-const send = (msg) => chrome.runtime.sendMessage(msg);
+
+function send(msg) {
+  try {
+    return Promise.resolve(chrome.runtime.sendMessage(msg));
+  } catch (e) {
+    return Promise.reject(e);
+  }
+}
 
 function show(view) {
   $("login-view").hidden = view !== "login";
-  $("capture-view").hidden = view !== "capture";
+  $("main-view").hidden = view !== "main";
 }
 
-const savedThisSession = [];
-// The most recent capture, so richer fields (description, salary, type) that
-// aren't shown in the form still get saved.
-let lastCapture = null;
-function renderSaved() {
-  const wrap = $("saved-wrap");
-  if (!savedThisSession.length) {
-    wrap.hidden = true;
-    return;
-  }
-  wrap.hidden = false;
-  const list = $("saved-list");
-  list.innerHTML = "";
-  for (const j of savedThisSession.slice(0, 12)) {
-    const li = document.createElement("li");
-    const b = document.createElement("b");
-    b.textContent = j.title || "Untitled";
-    const s = document.createElement("span");
-    s.textContent = [j.company, j.location].filter(Boolean).join(" · ");
-    li.append(b, s);
-    list.append(li);
-  }
-}
-function addSaved(job) {
-  savedThisSession.unshift(job);
-  renderSaved();
-}
+let savedJobs = []; // [{id, job_listing_id, title, company, location, url, applied}]
 
-// "Your saved jobs" — the full library, pulled from the backend.
-function renderSavedAll(jobs) {
-  $("saved-all-count").textContent = jobs.length ? `(${jobs.length})` : "";
+// ---------------------------------------------------------------------------
+// Saved jobs list
+// ---------------------------------------------------------------------------
+
+function renderSavedAll() {
+  $("saved-all-count").textContent = savedJobs.length ? `(${savedJobs.length})` : "";
   const list = $("saved-all-list");
   list.innerHTML = "";
-  if (!jobs.length) {
+  if (!savedJobs.length) {
     const li = document.createElement("li");
     li.className = "muted";
-    li.textContent = "No saved jobs yet.";
+    li.textContent = "No saved jobs yet — use Save on a job page.";
     list.append(li);
     return;
   }
-  for (const j of jobs.slice(0, 50)) {
+  for (const j of savedJobs.slice(0, 50)) {
     const li = document.createElement("li");
     const b = document.createElement("b");
     b.textContent = j.title || "Untitled";
     const s = document.createElement("span");
     s.textContent = [j.company, j.location].filter(Boolean).join(" · ");
     li.append(b, s);
-    // Applied state: quick-applies (e.g. "Apply with Indeed") happen where we
-    // can't watch the submit — one click here marks it, no app round-trip.
     if (j.applied) {
       const done = document.createElement("span");
       done.className = "applied";
       done.textContent = "✓ Applied";
       li.append(done);
     } else {
-      const mark = document.createElement("button");
-      mark.type = "button";
-      mark.className = "mark-applied";
-      mark.textContent = "Mark applied";
-      mark.title = "I applied to this job (moves it to Applied in your tracker)";
-      mark.addEventListener("click", async () => {
-        mark.disabled = true;
-        mark.textContent = "…";
-        const res = await send({
-          type: "markApplied",
-          job: { title: j.title, company: j.company },
-        });
-        if (res?.matched) {
-          loadSaved(); // re-render with the ✓ Applied state
-        } else {
-          mark.disabled = false;
-          mark.textContent = "Mark applied";
-        }
-      });
-      li.append(mark);
+      li.append(makeMarkAppliedButton(j, "Mark applied"));
     }
     if (j.url) {
       const a = document.createElement("a");
@@ -100,73 +67,190 @@ function renderSavedAll(jobs) {
   }
 }
 
+function makeMarkAppliedButton(job, label) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "mark-applied";
+  btn.textContent = label;
+  btn.title = "Moves this job to Applied in your tracker";
+  btn.addEventListener("click", async () => {
+    btn.disabled = true;
+    btn.textContent = "…";
+    const res = await send({
+      type: "markApplied",
+      job: { title: job.title, company: job.company },
+    }).catch(() => null);
+    if (res?.matched) {
+      await loadSaved(); // re-renders list + context with ✓ Applied
+    } else {
+      btn.disabled = false;
+      btn.textContent = label;
+    }
+  });
+  return btn;
+}
+
 async function loadSaved() {
-  const res = await send({ type: "listSaved" });
+  const res = await send({ type: "listSaved" }).catch(() => null);
   // Session expired/wedged — bounce to sign-in instead of showing empty.
   if (res && res.signedIn === false) {
     show("login");
     return;
   }
-  renderSavedAll(res?.jobs || []);
+  savedJobs = res?.jobs || [];
+  renderSavedAll();
+  populateJobSelect();
+  renderContext(await detectContext());
 }
 
-function fillForm(job) {
-  $("f-title").value = job.title || "";
-  $("f-company").value = job.company || "";
-  $("f-location").value = job.location || "";
-  $("f-remote").checked = !!job.is_remote;
-  $("f-url").value = job.url || "";
+// ---------------------------------------------------------------------------
+// Context: what is the user doing in the active tab right now?
+// ---------------------------------------------------------------------------
+
+async function detectContext() {
+  let tab = null;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch {
+    return { kind: "none" };
+  }
+  const url = tab?.url || "";
+  const tabTitle = tab?.title || "";
+  let host = "";
+  try {
+    host = new URL(url).hostname;
+  } catch {
+    return { kind: "none" };
+  }
+  if (/smartapply\.indeed\.com$/i.test(host)) return { kind: "indeed-apply", tabTitle };
+  if (/indeed\./i.test(host) && /\bapply\b/i.test(url)) return { kind: "indeed-apply", tabTitle };
+  if (/greenhouse\.io$/i.test(host)) return { kind: "ats", ats: "Greenhouse", tabTitle };
+  if (/(^|\.)lever\.co$/i.test(host)) return { kind: "ats", ats: "Lever", tabTitle };
+  return { kind: "none" };
 }
 
-// The review form only appears once there's something to review (a capture),
-// keeping the panel uncluttered the rest of the time.
-function showReview() {
-  $("review-section").hidden = false;
-}
-function hideReview() {
-  $("review-section").hidden = true;
-  fillForm({});
-  const s = $("save-status");
-  s.textContent = "";
-  s.className = "status";
+/** The saved job this tab is most likely about (title appears in tab title). */
+function bestJobMatch(tabTitle) {
+  const t = (tabTitle || "").toLowerCase();
+  if (!t) return null;
+  return (
+    savedJobs.find((j) => j.title && t.includes(j.title.toLowerCase())) || null
+  );
 }
 
-async function currentUrl() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  return tab?.url || "";
-}
-
-async function refreshStatus() {
-  const res = await send({ type: "authStatus" });
-  const signedIn = !!res?.signedIn;
-  show(signedIn ? "capture" : "login");
-  if (signedIn) loadSaved();
-}
-
-// Inject a small script into the active tab and surface a friendly error if the
-// page can't be scripted (chrome:// pages, the Web Store, PDF viewer, etc.).
-async function injectIntoActiveTab(file, workingMsg) {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  const status = $("save-status");
-  if (!tab?.id || /^(chrome|edge|about|chrome-extension):/.test(tab.url || "")) {
-    status.className = "status";
-    status.textContent = "Open a real job page first, then try again.";
+function renderContext(ctx) {
+  const card = $("context-card");
+  if (!ctx || ctx.kind === "none") {
+    card.hidden = true;
     return;
   }
-  try {
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: [file] });
-    status.className = "status";
-    status.textContent = workingMsg;
-  } catch (e) {
-    status.className = "status";
-    status.textContent = "Can't run on this page (the site may block it).";
+  const match = bestJobMatch(ctx.tabTitle);
+  const actions = $("context-actions");
+  actions.innerHTML = "";
+
+  $("context-kicker").textContent =
+    ctx.kind === "indeed-apply" ? "Applying on Indeed" : `Applying on ${ctx.ats}`;
+  $("context-title").textContent = match ? match.title : "Application in progress";
+  $("context-sub").textContent = match
+    ? match.company
+    : "Tip: save the job first so it can be tracked.";
+
+  if (ctx.kind === "indeed-apply") {
+    // Indeed's quick-apply widget hides the submit from us — one honest click.
+    if (match?.applied) {
+      const done = document.createElement("span");
+      done.className = "done";
+      done.textContent = "✓ Tracked as Applied";
+      actions.append(done);
+    } else if (match) {
+      actions.append(makeMarkAppliedButton(match, "✓ I submitted — mark applied"));
+    }
+  } else {
+    const note = document.createElement("span");
+    note.textContent =
+      "Use the purple ⚡ Autofill button on the page — submit is tracked automatically.";
+    actions.append(note);
+  }
+
+  // Point the cover-letter tool at this job automatically.
+  if (match?.job_listing_id) $("cl-job").value = match.job_listing_id;
+
+  card.hidden = false;
+}
+
+async function refreshContext() {
+  renderContext(await detectContext());
+}
+
+// ---------------------------------------------------------------------------
+// AI cover letter
+// ---------------------------------------------------------------------------
+
+function populateJobSelect() {
+  const sel = $("cl-job");
+  const prev = sel.value;
+  sel.innerHTML = "";
+  if (!savedJobs.length) {
+    const opt = document.createElement("option");
+    opt.value = "";
+    opt.textContent = "Save a job first…";
+    sel.append(opt);
+    return;
+  }
+  for (const j of savedJobs) {
+    if (!j.job_listing_id) continue;
+    const opt = document.createElement("option");
+    opt.value = j.job_listing_id;
+    opt.textContent = [j.title, j.company].filter(Boolean).join(" — ");
+    sel.append(opt);
+  }
+  if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
+}
+
+async function generateCoverLetter() {
+  const jobListingId = $("cl-job").value;
+  const status = $("cl-status");
+  const btn = $("cl-generate");
+  if (!jobListingId) {
+    status.textContent = "Save the job first, then I can write for it.";
+    return;
+  }
+  btn.disabled = true;
+  $("cl-regen").disabled = true;
+  status.className = "status";
+  status.textContent = "Writing with AI — about 15 seconds…";
+
+  const res = await send({
+    type: "generateCoverLetter",
+    job_listing_id: jobListingId,
+  }).catch(() => null);
+
+  btn.disabled = false;
+  $("cl-regen").disabled = false;
+  if (res?.ok && res.content) {
+    $("cl-output").value = res.content;
+    $("cl-output-wrap").hidden = false;
+    status.className = "status ok";
+    status.textContent = "Done — copy it into the application.";
+  } else if (res?.error === "NOT_SIGNED_IN") {
+    show("login");
+  } else if (res?.error === "NO_RESUME") {
+    status.textContent = "Upload a resume in the app (AI Apply) first.";
+  } else {
+    status.textContent = res?.error || "Couldn't generate — try again.";
   }
 }
 
-// Primary path: auto-read the current page with the shared extractor.
-const captureThisPage = () => injectIntoActiveTab("dist/capture.js", "Reading this page…");
-// Fallback: let the user click the exact element to capture.
-const startPicker = () => injectIntoActiveTab("picker.js", "Now click the job title on the page…");
+// ---------------------------------------------------------------------------
+// Wiring
+// ---------------------------------------------------------------------------
+
+async function refreshStatus() {
+  const res = await send({ type: "authStatus" }).catch(() => null);
+  const signedIn = !!res?.signedIn;
+  show(signedIn ? "main" : "login");
+  if (signedIn) loadSaved();
+}
 
 document.addEventListener("DOMContentLoaded", () => {
   refreshStatus();
@@ -180,23 +264,17 @@ document.addEventListener("DOMContentLoaded", () => {
       type: "login",
       email: $("l-email").value,
       password: $("l-password").value,
-    });
+    }).catch(() => null);
     btn.disabled = false;
     if (res?.ok) refreshStatus();
     else $("login-error").textContent = res?.error || "Sign-in failed";
   });
 
-  $("capture-btn").addEventListener("click", captureThisPage);
-  $("pick-btn").addEventListener("click", startPicker);
-  $("review-cancel").addEventListener("click", hideReview);
-
-  // Keep "Your saved jobs" in sync with changes made elsewhere (removing/saving
-  // in the app or another tab): refresh when the panel regains focus, and poll
-  // gently while it's visible. Throttled so rapid focus/visibility events can't
-  // spam the API.
+  // Keep the list and the context card honest: refresh when the panel regains
+  // focus, when the active tab changes, and on a gentle poll. Throttled.
   let lastRefresh = 0;
   const maybeRefresh = () => {
-    if (document.hidden || $("capture-view").hidden) return;
+    if (document.hidden || $("main-view").hidden) return;
     const now = Date.now();
     if (now - lastRefresh < 4000) return;
     lastRefresh = now;
@@ -205,79 +283,39 @@ document.addEventListener("DOMContentLoaded", () => {
   document.addEventListener("visibilitychange", maybeRefresh);
   window.addEventListener("focus", maybeRefresh);
   setInterval(maybeRefresh, 15000);
+  // The context card should track tab switches quickly (it's cheap — no API).
+  try {
+    chrome.tabs.onActivated.addListener(refreshContext);
+    chrome.tabs.onUpdated.addListener((_id, info) => {
+      if (info.status === "complete" || info.title) refreshContext();
+    });
+  } catch {
+    /* tabs events unavailable — the poll still covers it */
+  }
+  setInterval(refreshContext, 3000);
 
-  $("save-form").addEventListener("submit", async (e) => {
-    e.preventDefault();
-    const status = $("save-status");
-    status.className = "status";
-    status.textContent = "Saving…";
-    const btn = e.submitter;
-    btn.disabled = true;
-    const job = {
-      url: $("f-url").value.trim() || (await currentUrl()),
-      title: $("f-title").value.trim(),
-      company: $("f-company").value.trim() || "Unknown",
-      location: $("f-location").value.trim() || "Not specified",
-      is_remote: $("f-remote").checked,
-    };
-    // Carry richer captured fields the form doesn't show.
-    if (lastCapture) {
-      if (lastCapture.description) job.description = lastCapture.description;
-      if (lastCapture.salary_min != null) job.salary_min = lastCapture.salary_min;
-      if (lastCapture.salary_max != null) job.salary_max = lastCapture.salary_max;
-      if (lastCapture.job_type) job.job_type = lastCapture.job_type;
-    }
-    const res = await send({ type: "saveJob", job });
-    btn.disabled = false;
-    if (res?.ok) {
-      addSaved(job);
-      loadSaved();
-      hideReview();
-    } else if (res?.error === "NOT_SIGNED_IN") {
-      show("login");
-    } else {
-      status.textContent = res?.error || "Save failed";
-    }
+  $("cl-generate").addEventListener("click", generateCoverLetter);
+  $("cl-regen").addEventListener("click", generateCoverLetter);
+  $("cl-copy").addEventListener("click", async () => {
+    await navigator.clipboard.writeText($("cl-output").value).catch(() => {});
+    const btn = $("cl-copy");
+    btn.textContent = "✓ Copied";
+    setTimeout(() => (btn.textContent = "📋 Copy"), 2000);
   });
 
   $("open-app").addEventListener("click", () =>
     chrome.tabs.create({ url: `${cfg.APP_URL}/saved` }),
   );
   $("signout").addEventListener("click", async () => {
-    await send({ type: "signOut" });
+    await send({ type: "signOut" }).catch(() => {});
     show("login");
   });
 
-  // Show which build Chrome actually loaded — after any update, this must
-  // match the manifest version, else the ↻ reload at chrome://extensions
-  // hasn't happened yet and old code is still running.
+  // Build version — must match the manifest after every extension reload.
   $("je-version").textContent = `v${chrome.runtime.getManifest().version}`;
 });
 
-// "Capture this page" / "Pick manually" stash the result in storage — fill the
-// form the moment it lands, whichever path produced it.
-chrome.storage.onChanged.addListener((changes, area) => {
-  if (area === "local" && changes.je_capture?.newValue) {
-    const job = changes.je_capture.newValue;
-    lastCapture = job;
-    fillForm(job);
-    showReview();
-    chrome.storage.local.remove("je_capture");
-    const status = $("save-status");
-    if (job.title) {
-      status.className = "status ok";
-      status.textContent = "Captured — review and save.";
-    } else {
-      status.className = "status";
-      status.textContent = "Couldn't read a title — fill it in or try Pick manually.";
-    }
-  }
-});
-
-// The on-page green "Save" button saves via the background, which pings us to update the list.
+// The on-page green "Save" button saves via the background, which pings us.
 chrome.runtime.onMessage.addListener((msg) => {
-  if (msg?.type === "jobSaved" && msg.job) {
-    addSaved(msg.job);
-    loadSaved();
-  }
+  if (msg?.type === "jobSaved") loadSaved();
 });

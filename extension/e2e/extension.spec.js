@@ -1,7 +1,6 @@
 // Integration tests: load the *built* extension into a real Chromium and prove
-// the pieces the unit tests can't — that the bundle loads, that injecting the
-// capture script actually stores a parsed job via chrome.storage, and that the
-// side panel page renders without a JS error.
+// the pieces the unit tests can't — that the bundles load, that the MAIN-world
+// bridge mirrors page data, and that the side panel renders without a JS error.
 //
 // MV3 extensions need a persistent context, launched headed (locally) or under
 // xvfb (CI). See README → "Testing".
@@ -52,30 +51,6 @@ test.beforeAll(async () => {
 test.afterAll(async () => {
   await context?.close();
   await new Promise((r) => server?.close(r));
-});
-
-test("capture.js parses a JobPosting page into chrome.storage", async () => {
-  const page = await context.newPage();
-  const url = `${baseUrl}/indeed-jsonld.html`;
-  await page.goto(url);
-
-  // Inject the built capture bundle exactly like the side panel does, then read
-  // what it stashed — this exercises the real extractor + chrome.storage path.
-  const captured = await worker.evaluate(async (pageUrl) => {
-    const [tab] = await chrome.tabs.query({ url: pageUrl });
-    await chrome.scripting.executeScript({ target: { tabId: tab.id }, files: ["dist/capture.js"] });
-    await new Promise((r) => setTimeout(r, 400));
-    const { je_capture } = await chrome.storage.local.get("je_capture");
-    return je_capture;
-  }, url);
-
-  expect(captured).toBeTruthy();
-  expect(captured.title).toBe("Senior Software Engineer");
-  expect(captured.company).toBe("Acme Corp");
-  expect(captured.is_remote).toBe(false);
-
-  await worker.evaluate(() => chrome.storage.local.remove("je_capture"));
-  await page.close();
 });
 
 test("MAIN-world bridge mirrors window._initialData onto <html data-je-embedded>", async () => {
