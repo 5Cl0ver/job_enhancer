@@ -128,6 +128,48 @@
     const d = await res.json();
     return { saved: !!d.saved, needs_details: !!d.needs_details, signedIn: true };
   }
+  async function getAutofillData() {
+    const token = await getValidToken();
+    if (!token) return { signedIn: false };
+    const headers = { Authorization: `Bearer ${token}` };
+    const profRes = await fetch(`${cfg.API_BASE}/v1/users/me/application-profile`, {
+      headers
+    });
+    const profile = profRes.ok ? await profRes.json() : null;
+    let { je_email: email } = await chrome.storage.local.get("je_email");
+    if (!email) {
+      const me = await fetch(`${cfg.API_BASE}/v1/users/me`, { headers });
+      if (me.ok) email = (await me.json()).email;
+    }
+    let resume = null;
+    const fileRes = await fetch(`${cfg.API_BASE}/v1/ai/resumes/active/file`, {
+      headers
+    });
+    if (fileRes.ok) {
+      const bytes = new Uint8Array(await fileRes.arrayBuffer());
+      let binary = "";
+      for (let i = 0; i < bytes.length; i += 32768) {
+        binary += String.fromCharCode(...bytes.subarray(i, i + 32768));
+      }
+      resume = {
+        b64: btoa(binary),
+        filename: fileRes.headers.get("X-Resume-Filename") || "resume.pdf",
+        mime: fileRes.headers.get("Content-Type") || "application/pdf"
+      };
+    }
+    return { signedIn: true, profile, email: email || "", resume };
+  }
+  async function markApplied(job) {
+    const token = await getValidToken();
+    if (!token) return { matched: false };
+    const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ title: job.title || "", company: job.company || "" })
+    });
+    if (!res.ok) return { matched: false };
+    return res.json();
+  }
   async function listSaved() {
     const token = await getValidToken();
     if (!token) return { signedIn: false, jobs: [] };
@@ -166,6 +208,10 @@
           sendResponse({ ok: true, ...await checkSaved(msg.job) });
         } else if (msg.type === "backfillJob") {
           sendResponse({ ok: true, ...await backfillJob(msg.job) });
+        } else if (msg.type === "getAutofillData") {
+          sendResponse({ ok: true, ...await getAutofillData() });
+        } else if (msg.type === "markApplied") {
+          sendResponse({ ok: true, ...await markApplied(msg.job) });
         } else if (msg.type === "listSaved") {
           sendResponse({ ok: true, ...await listSaved() });
         } else if (msg.type === "saveJob") {

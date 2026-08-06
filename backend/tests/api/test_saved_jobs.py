@@ -316,3 +316,35 @@ async def test_update_and_delete_saved_job(client: AsyncClient, sample_job: JobL
 
     response = await client.get("/v1/saved-jobs/")
     assert response.json() == []
+
+
+@pytest.mark.asyncio
+async def test_mark_applied_moves_job_to_applied(client: AsyncClient):
+    """Auto-track: submit detected on an ATS page -> saved job moves to Applied."""
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://boards.greenhouse.io/acme/jobs/1",
+            "title": "Backend Engineer",
+            "company": "Acme Corp",
+            "location": "NYC",
+        },
+    )
+
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": "Backend Engineer", "company": "Acme Corp"},
+    )
+    assert r.status_code == 200
+    assert r.json()["matched"] is True
+
+    saved = (await client.get("/v1/saved-jobs/")).json()
+    sj = next(s for s in saved if s["job_listing"]["title"] == "Backend Engineer")
+    assert sj["applied_at"] is not None
+
+    # A job that was never saved: honest no-op, nothing invented.
+    r2 = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": "Ghost Job", "company": "NoCo"},
+    )
+    assert r2.json()["matched"] is False

@@ -2,7 +2,7 @@
 
 import uuid
 from collections.abc import Sequence
-from datetime import UTC
+from datetime import UTC, datetime
 
 from fastapi import HTTPException
 from sqlalchemy import select
@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.models.job_listing import JobListing
+from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.schemas.saved_job import ManualJobCreate, SavedJobCreate, SavedJobUpdate
 from app.services.dedup import job_content_hash, normalize
@@ -222,6 +223,46 @@ async def save_manual_job(
             notes=data.notes,
         ),
     )
+
+
+async def mark_applied(
+    db: AsyncSession, user_id: uuid.UUID, title: str, company: str
+) -> bool:
+    """Auto-track: the extension saw the user SUBMIT an application — move the
+    matching saved job to Applied. Matches by normalized title+company (the
+    application page doesn't state our location string). No match → no-op:
+    we never invent tracker entries."""
+    title_norm = normalize(title)
+    company_norm = normalize(company)
+    if not title_norm:
+        return False
+
+    sj = await db.scalar(
+        select(SavedJob)
+        .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+        .where(
+            SavedJob.user_id == user_id,
+            JobListing.title_normalized == title_norm,
+            JobListing.company_normalized == company_norm,
+        )
+        .limit(1)
+    )
+    if sj is None:
+        return False
+
+    now = datetime.now(UTC)
+    if sj.applied_at is None:
+        sj.applied_at = now
+    stage = await db.scalar(
+        select(PipelineStage).where(
+            PipelineStage.user_id == user_id, PipelineStage.name == "Applied"
+        )
+    )
+    if stage and sj.pipeline_stage_id != stage.id:
+        sj.pipeline_stage_id = stage.id
+        sj.last_stage_change = now
+    await db.flush()
+    return True
 
 
 async def update_saved_job(

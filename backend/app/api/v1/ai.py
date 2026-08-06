@@ -78,11 +78,42 @@ async def upload_resume(
         mime_type=file.content_type,
         file_size_bytes=len(content),
         extracted_text=parsed_text,
+        file_data=content,  # original bytes — ATS autofill re-attaches the real file
         is_active=True,
     )
     db.add(resume)
     await db.commit()
     return ResumeSchema.model_validate(resume)
+
+
+@router.get("/resumes/active/file")
+async def download_active_resume_file(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """The active resume's ORIGINAL file bytes — the extension attaches them to
+    ATS upload fields (a form needs the real PDF/DOCX, not extracted text)."""
+    import io
+
+    resume = await db.scalar(
+        select(Resume).where(Resume.user_id == user.id, Resume.is_active.is_(True))
+    )
+    if not resume:
+        raise HTTPException(status_code=404, detail="No resume uploaded")
+    if not resume.file_data:
+        raise HTTPException(
+            status_code=404,
+            detail="Resume file not stored — re-upload your resume once",
+        )
+    return StreamingResponse(
+        io.BytesIO(resume.file_data),
+        media_type=resume.mime_type,
+        headers={
+            "Content-Disposition": f'attachment; filename="{resume.filename}"',
+            # The extension needs these to rebuild the File object.
+            "X-Resume-Filename": resume.filename,
+        },
+    )
 
 
 @router.get("/resumes", response_model=list[ResumeSchema])

@@ -1,14 +1,25 @@
 """Resume ORM model — the user's uploaded base resume.
 
-Only the extracted text is persisted (used for AI generation); the
-original file bytes are not stored — free-tier hosts have ephemeral
-filesystems, and re-uploading is cheap.
+Both the extracted text (used for AI generation) AND the original file bytes
+are persisted. The bytes power ATS autofill: the extension rebuilds the real
+PDF/DOCX in memory and attaches it to application upload fields. A resume is
+~100KB — trivial in Postgres at this scale, and free-tier hosts have
+ephemeral filesystems so the DB is the only durable place for it.
 """
 
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    LargeBinary,
+    String,
+    Text,
+    func,
+)
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -31,6 +42,9 @@ class Resume(Base):
     mime_type: Mapped[str] = mapped_column(String(100), nullable=False)
     file_size_bytes: Mapped[int] = mapped_column(Integer, nullable=False)
     extracted_text: Mapped[str | None] = mapped_column(Text)
+    # Original file bytes (nullable: resumes uploaded before this column
+    # existed have text only — re-upload restores the file).
+    file_data: Mapped[bytes | None] = mapped_column(LargeBinary)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()

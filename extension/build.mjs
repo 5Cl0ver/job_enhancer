@@ -13,6 +13,7 @@ const options = {
     capture: "src/capture.entry.js", // injected on demand by "Capture this page"
     bridge: "src/bridge.entry.js", // MAIN-world: mirrors Indeed's page JSON to the DOM
     background: "src/background.entry.js", // service worker (API/auth/backfill)
+    autofill: "src/autofill.entry.js", // ATS application pages (Greenhouse/Lever)
   },
   bundle: true,
   format: "iife",

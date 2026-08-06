@@ -72,6 +72,17 @@ class BackfillResult(BaseModel):
     fields: list[str] = []
 
 
+class MarkAppliedRequest(BaseModel):
+    """Auto-track: the extension saw an application get submitted."""
+
+    title: str = Field(min_length=1, max_length=500)
+    company: str = Field(default="", max_length=255)
+
+
+class MarkAppliedResult(BaseModel):
+    matched: bool
+
+
 class SavedJobUpdate(BaseModel):
     collection_id: uuid.UUID | None = None
     pipeline_stage_id: uuid.UUID | None = None

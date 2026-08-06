@@ -13,6 +13,8 @@ from app.schemas.saved_job import (
     JobSavedCheck,
     JobSavedResult,
     ManualJobCreate,
+    MarkAppliedRequest,
+    MarkAppliedResult,
     SavedJobCreate,
     SavedJobSchema,
     SavedJobUpdate,
@@ -89,6 +91,20 @@ async def backfill_details(
     if fields:
         await db.commit()
     return BackfillResult(updated=bool(fields), fields=fields)
+
+
+@router.post("/mark-applied", response_model=MarkAppliedResult)
+async def mark_applied(
+    data: MarkAppliedRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> MarkAppliedResult:
+    """Auto-track: the extension detected an application SUBMIT on an ATS page.
+    Moves the matching saved job to Applied (sets applied_at). No match → no-op."""
+    matched = await svc.mark_applied(db, user.id, data.title, data.company)
+    if matched:
+        await db.commit()
+    return MarkAppliedResult(matched=matched)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobSchema)

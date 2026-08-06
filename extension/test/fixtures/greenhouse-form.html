@@ -1,0 +1,75 @@
+<!doctype html>
+<html>
+<head><title>Job Application for Full Stack Engineer at Acme</title></head>
+<body>
+  <h1 class="app-title">Full Stack Engineer</h1>
+  <span class="company-name">at Acme Corp</span>
+  <form id="application_form">
+    <div class="field">
+      <label for="first_name">First Name <span>*</span></label>
+      <input id="first_name" name="job_application[first_name]" type="text" />
+    </div>
+    <div class="field">
+      <label for="last_name">Last Name <span>*</span></label>
+      <input id="last_name" name="job_application[last_name]" type="text" />
+    </div>
+    <div class="field">
+      <label for="email">Email <span>*</span></label>
+      <input id="email" name="job_application[email]" type="email" />
+    </div>
+    <div class="field">
+      <label for="phone">Phone</label>
+      <input id="phone" name="job_application[phone]" type="text" />
+    </div>
+    <div class="field">
+      <label for="resume">Resume/CV <span>*</span></label>
+      <input id="resume" name="resume" type="file" />
+    </div>
+    <div class="field">
+      <label for="cover_letter">Cover Letter</label>
+      <input id="cover_letter" name="cover_letter" type="file" />
+    </div>
+    <div class="field">
+      <label for="job_application_location">Location (City)</label>
+      <input id="job_application_location" name="job_application[location]" type="text" />
+    </div>
+    <!-- Company-specific custom questions -->
+    <div class="field">
+      <label for="job_application_answers_attributes_0_text_value">LinkedIn Profile</label>
+      <input id="job_application_answers_attributes_0_text_value" type="text" />
+    </div>
+    <div class="field">
+      <label for="job_application_answers_attributes_1_text_value">Website / Portfolio</label>
+      <input id="job_application_answers_attributes_1_text_value" type="text" />
+    </div>
+    <div class="field">
+      <label for="job_application_answers_attributes_2_boolean_value">
+        Are you legally authorized to work in the United States?
+      </label>
+      <select id="job_application_answers_attributes_2_boolean_value">
+        <option value=""></option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="job_application_answers_attributes_3_boolean_value">
+        Will you now or in the future require sponsorship for employment visa status?
+      </label>
+      <select id="job_application_answers_attributes_3_boolean_value">
+        <option value=""></option>
+        <option value="1">Yes</option>
+        <option value="0">No</option>
+      </select>
+    </div>
+    <div class="field">
+      <label for="job_application_answers_attributes_4_text_value">
+        Why do you want to work at Acme?
+      </label>
+      <textarea id="job_application_answers_attributes_4_text_value"></textarea>
+    </div>
+    <input type="hidden" name="csrf_token" value="tok" />
+    <button type="submit">Submit Application</button>
+  </form>
+</body>
+</html>

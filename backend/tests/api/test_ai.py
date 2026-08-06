@@ -98,3 +98,33 @@ async def test_generate_requires_existing_resume(client: AsyncClient):
         json={"resume_id": str(uuid.uuid4()), "document_type": "resume"},
     )
     assert response.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_resume_file_roundtrip(client: AsyncClient):
+    """Upload stores the ORIGINAL bytes; /resumes/active/file returns them
+    (the extension attaches this real file to ATS upload fields)."""
+    from unittest.mock import AsyncMock, patch
+
+    pdf_bytes = b"%PDF-1.4 fake resume bytes"
+    with patch(
+        "app.api.v1.ai.resume_parser.parse_resume",
+        new=AsyncMock(return_value="parsed text"),
+    ):
+        up = await client.post(
+            "/v1/ai/resumes",
+            files={"file": ("resume.pdf", pdf_bytes, "application/pdf")},
+        )
+    assert up.status_code == 201
+
+    r = await client.get("/v1/ai/resumes/active/file")
+    assert r.status_code == 200
+    assert r.content == pdf_bytes
+    assert r.headers["content-type"].startswith("application/pdf")
+    assert "resume.pdf" in r.headers["content-disposition"]
+
+
+@pytest.mark.asyncio
+async def test_resume_file_404_when_none(client: AsyncClient):
+    r = await client.get("/v1/ai/resumes/active/file")
+    assert r.status_code == 404
