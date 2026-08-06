@@ -557,18 +557,42 @@
   var TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELECTORS;
   var BTN_ID = "je-save-btn";
   var LABEL = "\uFF0B Save to Job Enhancer";
+  var STALE_LABEL = "\u21BB Refresh page \u2014 extension updated";
   var btn = null;
   var currentKey = "";
   var backfilled = /* @__PURE__ */ new Set();
+  function orphaned() {
+    try {
+      return !chrome.runtime?.id;
+    } catch {
+      return true;
+    }
+  }
+  function safeSend(msg) {
+    try {
+      return Promise.resolve(chrome.runtime.sendMessage(msg));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
   if (IS_INDEED || IS_LINKEDIN) {
     injectStyles();
     sync();
     let t;
-    new MutationObserver(() => {
+    const observer = new MutationObserver(() => {
       clearTimeout(t);
       t = setTimeout(sync, 300);
-    }).observe(document.body, { childList: true, subtree: true });
-    setInterval(sync, 2e3);
+    });
+    observer.observe(document.body, { childList: true, subtree: true });
+    const poll = setInterval(() => {
+      if (orphaned()) {
+        clearInterval(poll);
+        observer.disconnect();
+        if (btn) setState(btn, "stale", STALE_LABEL);
+        return;
+      }
+      sync();
+    }, 2e3);
   }
   function keyFor(job) {
     return `${job.title}|${job.company}`.toLowerCase();
@@ -590,12 +614,12 @@
     if (key === currentKey) return;
     currentKey = key;
     setState(btn, "idle", LABEL);
-    chrome.runtime.sendMessage({ type: "checkSaved", job }).then((res) => {
+    safeSend({ type: "checkSaved", job }).then((res) => {
       if (!btn || keyFor(btn._job) !== key) return;
       if (res?.saved && btn.dataset.state === "idle") setState(btn, "saved", "\u2713 Already saved");
       if (shouldBackfill(job, res) && !backfilled.has(key)) {
         backfilled.add(key);
-        chrome.runtime.sendMessage({ type: "backfillJob", job }).then((r) => {
+        safeSend({ type: "backfillJob", job }).then((r) => {
           if (r?.updated && btn && keyFor(btn._job) === key) {
             setState(btn, "saved", "\u2713 Details updated");
           }
@@ -615,6 +639,10 @@
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
+        if (btn.dataset.state === "stale") {
+          location.reload();
+          return;
+        }
         onSave();
       });
       btn._wired = true;
@@ -634,6 +662,10 @@
   }
   async function onSave() {
     if (!btn || btn.dataset.state === "busy" || btn.dataset.state === "saved") return;
+    if (orphaned()) {
+      setState(btn, "stale", STALE_LABEL);
+      return;
+    }
     const job = extractJob(document, location.href);
     btn._job = job;
     if (!job.title) {
@@ -643,13 +675,18 @@
     }
     setState(btn, "busy", "Saving\u2026");
     const res = await Promise.race([
-      chrome.runtime.sendMessage({ type: "saveJob", job }),
+      safeSend({ type: "saveJob", job }),
       new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "Timed out \u2014 try again" }), 12e3))
-    ]).catch(() => ({ ok: false, error: "error" }));
+    ]).catch((e) => ({
+      ok: false,
+      error: /context invalidated/i.test(String(e?.message)) ? "STALE" : "error"
+    }));
     if (res?.ok) {
       setState(btn, "saved", "\u2713 Saved");
     } else if (res?.error === "Already in your tracker") {
       setState(btn, "saved", "\u2713 Already saved");
+    } else if (res?.error === "STALE") {
+      setState(btn, "stale", STALE_LABEL);
     } else if (res?.error === "NOT_SIGNED_IN") {
       setState(btn, "error", "Open panel & sign in");
       setTimeout(() => btn && setState(btn, "idle", LABEL), 3e3);
@@ -679,6 +716,7 @@
     .je-btn[data-state="busy"]     { background: #6b7280; cursor: default; }
     .je-btn[data-state="saved"]    { background: #2563eb; cursor: default; }  /* blue */
     .je-btn[data-state="error"]    { background: #dc2626; }
+    .je-btn[data-state="stale"]    { background: #d97706; }  /* amber: refresh me */
     .je-fab {
       position: fixed; right: 20px; bottom: 20px;
       box-shadow: 0 6px 20px rgba(0,0,0,.28);

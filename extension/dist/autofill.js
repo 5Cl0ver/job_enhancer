@@ -203,10 +203,26 @@
     btn.addEventListener("click", () => run(btn));
     document.body.appendChild(btn);
   }
+  function safeSend(msg) {
+    try {
+      return Promise.resolve(chrome.runtime.sendMessage(msg));
+    } catch (e) {
+      return Promise.reject(e);
+    }
+  }
   async function run(btn) {
     if (btn.dataset.state === "busy") return;
+    try {
+      if (!chrome.runtime?.id) {
+        setState(btn, "error", "\u21BB Refresh page \u2014 extension updated");
+        return;
+      }
+    } catch {
+      setState(btn, "error", "\u21BB Refresh page \u2014 extension updated");
+      return;
+    }
     setState(btn, "busy", "Filling\u2026");
-    const res = await chrome.runtime.sendMessage({ type: "getAutofillData" }).catch(() => null);
+    const res = await safeSend({ type: "getAutofillData" }).catch(() => null);
     if (!res?.ok || !res.signedIn) {
       setState(btn, "error", "Open panel & sign in");
       setTimeout(() => setState(btn, "idle", LABEL), 3500);
@@ -261,7 +277,7 @@
         sent = true;
         const job = jobInfo();
         if (!job.title) return;
-        chrome.runtime.sendMessage({ type: "markApplied", job }).catch(() => {
+        safeSend({ type: "markApplied", job }).catch(() => {
         });
         const btn = document.getElementById(BTN_ID);
         if (btn) setState(btn, "done", "\u2713 Tracked in Job Enhancer");

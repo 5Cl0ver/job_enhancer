@@ -26,23 +26,55 @@ const TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELE
 
 const BTN_ID = "je-save-btn";
 const LABEL = "＋ Save to Job Enhancer";
+const STALE_LABEL = "↻ Refresh page — extension updated";
 
 let btn = null;
 let currentKey = ""; // the open job we've reflected state for (so we only re-check on change)
 const backfilled = new Set(); // job keys we've already backfilled this page session
 
+// When the extension is reloaded/updated, the copy of this script already
+// running in an open tab is ORPHANED — chrome.runtime dies and every
+// sendMessage throws "Extension context invalidated". That sync throw used to
+// wedge the button on "Saving…" forever. Detect it and say what to do instead.
+function orphaned() {
+  try {
+    return !chrome.runtime?.id;
+  } catch {
+    return true;
+  }
+}
+
+/** sendMessage that NEVER throws synchronously — always yields a promise. */
+function safeSend(msg) {
+  try {
+    return Promise.resolve(chrome.runtime.sendMessage(msg));
+  } catch (e) {
+    return Promise.reject(e);
+  }
+}
+
 if (IS_INDEED || IS_LINKEDIN) {
   injectStyles();
   sync();
   let t;
-  new MutationObserver(() => {
+  const observer = new MutationObserver(() => {
     clearTimeout(t);
     t = setTimeout(sync, 300);
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
   // The pane can swap jobs via history (?vjk=) without a DOM mutation we catch —
   // a light poll keeps the button honest when you click another card. (2s to
   // stay light on Indeed's busy, constantly-mutating feed.)
-  setInterval(sync, 2000);
+  const poll = setInterval(() => {
+    if (orphaned()) {
+      // Stop everything and tell the user the one action that fixes it.
+      clearInterval(poll);
+      observer.disconnect();
+      if (btn) setState(btn, "stale", STALE_LABEL);
+      return;
+    }
+    sync();
+  }, 2000);
 }
 
 function keyFor(job) {
@@ -74,8 +106,7 @@ function sync() {
   // check runs in the background and only UPGRADES the button to blue if it
   // confirms; if it's slow or fails, the button still works.
   setState(btn, "idle", LABEL);
-  chrome.runtime
-    .sendMessage({ type: "checkSaved", job })
+  safeSend({ type: "checkSaved", job })
     .then((res) => {
       if (!btn || keyFor(btn._job) !== key) return; // moved to another job meanwhile
       if (res?.saved && btn.dataset.state === "idle") setState(btn, "saved", "✓ Already saved");
@@ -84,8 +115,7 @@ function sync() {
       // posting right now — send it up. Once per job per page session.
       if (shouldBackfill(job, res) && !backfilled.has(key)) {
         backfilled.add(key);
-        chrome.runtime
-          .sendMessage({ type: "backfillJob", job })
+        safeSend({ type: "backfillJob", job })
           .then((r) => {
             if (r?.updated && btn && keyFor(btn._job) === key) {
               setState(btn, "saved", "✓ Details updated");
@@ -107,6 +137,12 @@ function ensureButton() {
     btn.addEventListener("click", (e) => {
       e.preventDefault();
       e.stopPropagation();
+      // A stale (orphaned) button has ONE useful action: reload the page so a
+      // fresh, connected copy of this script takes over.
+      if (btn.dataset.state === "stale") {
+        location.reload();
+        return;
+      }
       onSave();
     });
     btn._wired = true;
@@ -128,6 +164,10 @@ function placeButton(titleEl) {
 
 async function onSave() {
   if (!btn || btn.dataset.state === "busy" || btn.dataset.state === "saved") return;
+  if (orphaned()) {
+    setState(btn, "stale", STALE_LABEL);
+    return;
+  }
   const job = extractJob(document, location.href); // re-read fresh at click time
   btn._job = job;
   if (!job.title) {
@@ -138,14 +178,19 @@ async function onSave() {
   setState(btn, "busy", "Saving…");
   // Never hang on "Saving…" — bail after 12s so the button stays usable.
   const res = await Promise.race([
-    chrome.runtime.sendMessage({ type: "saveJob", job }),
+    safeSend({ type: "saveJob", job }),
     new Promise((resolve) => setTimeout(() => resolve({ ok: false, error: "Timed out — try again" }), 12000)),
-  ]).catch(() => ({ ok: false, error: "error" }));
+  ]).catch((e) => ({
+    ok: false,
+    error: /context invalidated/i.test(String(e?.message)) ? "STALE" : "error",
+  }));
 
   if (res?.ok) {
     setState(btn, "saved", "✓ Saved");
   } else if (res?.error === "Already in your tracker") {
     setState(btn, "saved", "✓ Already saved");
+  } else if (res?.error === "STALE") {
+    setState(btn, "stale", STALE_LABEL);
   } else if (res?.error === "NOT_SIGNED_IN") {
     setState(btn, "error", "Open panel & sign in");
     setTimeout(() => btn && setState(btn, "idle", LABEL), 3000);
@@ -177,6 +222,7 @@ function injectStyles() {
     .je-btn[data-state="busy"]     { background: #6b7280; cursor: default; }
     .je-btn[data-state="saved"]    { background: #2563eb; cursor: default; }  /* blue */
     .je-btn[data-state="error"]    { background: #dc2626; }
+    .je-btn[data-state="stale"]    { background: #d97706; }  /* amber: refresh me */
     .je-fab {
       position: fixed; right: 20px; bottom: 20px;
       box-shadow: 0 6px 20px rgba(0,0,0,.28);
