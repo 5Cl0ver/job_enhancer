@@ -207,7 +207,23 @@ function populateJobSelect() {
   if (prev && [...sel.options].some((o) => o.value === prev)) sel.value = prev;
 }
 
-async function generateCoverLetter() {
+let docType = "cover_letter"; // "cover_letter" | "resume"
+let lastDocId = null;
+
+function setDocType(type) {
+  docType = type;
+  $("seg-cover").classList.toggle("on", type === "cover_letter");
+  $("seg-resume").classList.toggle("on", type === "resume");
+  $("cl-generate").textContent =
+    type === "resume" ? "📄 Tailor my resume" : "✍️ Write cover letter";
+  // Output belongs to the previous type — clear so the two don't get confused.
+  $("cl-output-wrap").hidden = true;
+  $("cl-output").value = "";
+  lastDocId = null;
+  $("cl-status").textContent = "";
+}
+
+async function generateDoc() {
   const jobListingId = $("cl-job").value;
   const status = $("cl-status");
   const btn = $("cl-generate");
@@ -221,17 +237,22 @@ async function generateCoverLetter() {
   status.textContent = "Writing with AI — about 15 seconds…";
 
   const res = await send({
-    type: "generateCoverLetter",
+    type: "generateDocument",
     job_listing_id: jobListingId,
+    docType,
   }).catch(() => null);
 
   btn.disabled = false;
   $("cl-regen").disabled = false;
   if (res?.ok && res.content) {
     $("cl-output").value = res.content;
+    lastDocId = res.docId || null;
     $("cl-output-wrap").hidden = false;
     status.className = "status ok";
-    status.textContent = "Done — copy it into the application.";
+    status.textContent =
+      docType === "resume"
+        ? "Done — download the PDF to upload to the application."
+        : "Done — copy it into the application.";
   } else if (res?.error === "NOT_SIGNED_IN") {
     show("login");
   } else if (res?.error === "NO_RESUME") {
@@ -239,6 +260,27 @@ async function generateCoverLetter() {
   } else {
     status.textContent = res?.error || "Couldn't generate — try again.";
   }
+}
+
+async function downloadPdf() {
+  if (!lastDocId) return;
+  const btn = $("cl-pdf");
+  btn.disabled = true;
+  const res = await send({ type: "getDocumentPdf", docId: lastDocId }).catch(() => null);
+  btn.disabled = false;
+  if (!res?.ok || !res.b64) {
+    $("cl-status").textContent = "Couldn't build the PDF — try again.";
+    return;
+  }
+  const bytes = Uint8Array.from(atob(res.b64), (c) => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = docType === "resume" ? "tailored-resume.pdf" : "cover-letter.pdf";
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
 }
 
 // ---------------------------------------------------------------------------
@@ -294,8 +336,11 @@ document.addEventListener("DOMContentLoaded", () => {
   }
   setInterval(refreshContext, 3000);
 
-  $("cl-generate").addEventListener("click", generateCoverLetter);
-  $("cl-regen").addEventListener("click", generateCoverLetter);
+  $("seg-cover").addEventListener("click", () => setDocType("cover_letter"));
+  $("seg-resume").addEventListener("click", () => setDocType("resume"));
+  $("cl-generate").addEventListener("click", generateDoc);
+  $("cl-regen").addEventListener("click", generateDoc);
+  $("cl-pdf").addEventListener("click", downloadPdf);
   $("cl-copy").addEventListener("click", async () => {
     await navigator.clipboard.writeText($("cl-output").value).catch(() => {});
     const btn = $("cl-copy");

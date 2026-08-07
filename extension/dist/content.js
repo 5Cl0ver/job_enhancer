@@ -32,6 +32,11 @@
     }
     return "";
   }
+  function posSalary(v) {
+    if (typeof v !== "number" || !Number.isFinite(v)) return null;
+    const n = Math.round(v);
+    return n > 0 ? n : null;
+  }
   function looksRemote(...parts) {
     return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
   }
@@ -110,13 +115,19 @@
       const v = cleanMultiline(c.data?.description || "");
       if (v.length > out.description.length) out.description = v;
     }
-    for (const field of ["salary_min", "salary_max", "salary_period"]) {
+    for (const field of ["salary_min", "salary_max"]) {
       for (const c of candidates) {
-        const v = c.data?.[field];
+        const v = posSalary(c.data?.[field]);
         if (v != null) {
-          out[field] = typeof v === "number" ? Math.round(v) : v;
+          out[field] = v;
           break;
         }
+      }
+    }
+    for (const c of candidates) {
+      if (c.data?.salary_period) {
+        out.salary_period = c.data.salary_period;
+        break;
       }
     }
     out.is_remote = candidates.some((c) => c.data?.is_remote === true);
@@ -251,12 +262,13 @@
   }
   function cardSalary(card) {
     const es = card?.extractedSalary;
-    if (es && (es.min || es.max)) {
+    if (es && (posSalary(es.min) || posSalary(es.max))) {
       const type = (es.type || "yearly").toLowerCase();
       if (type.startsWith("year") || type.startsWith("hour")) {
         return {
-          salary_min: es.min ? Math.round(es.min) : null,
-          salary_max: es.max ? Math.round(es.max) : null,
+          // posSalary drops Indeed's -1 "no max" sentinel.
+          salary_min: posSalary(es.min),
+          salary_max: posSalary(es.max),
           salary_period: type.startsWith("hour") ? "hourly" : "yearly"
         };
       }
@@ -526,6 +538,52 @@
     return !!(check?.saved && check?.needs_details && job?.title && (job.description || "").length >= MIN_DESCRIPTION);
   }
 
+  // src/indeed-apply.js
+  function isIndeedApplyUrl(url) {
+    try {
+      const u = new URL(url);
+      if (/(^|\.)smartapply\.indeed\.com$/i.test(u.hostname)) return true;
+      return /(^|\.)indeed\./i.test(u.hostname) && /apply/i.test(u.pathname);
+    } catch {
+      return false;
+    }
+  }
+  var SUBMITTED_RE = /your application (?:was|has been) submitted(?:\s+to\s+([^\n.!]+))?/i;
+  function submittedCompany(doc) {
+    const body = doc?.body?.textContent || "";
+    const m = SUBMITTED_RE.exec(body);
+    if (!m) return null;
+    return m[1] ? clean(m[1]).slice(0, 120) : "";
+  }
+  function isSubmitted(doc) {
+    return submittedCompany(doc) !== null;
+  }
+  var CO_LOC_RE = /^(.{2,80}?)\s+[-–·•]\s+(?:remote|[A-Za-z .'&]+,\s*[A-Z]{2}(?:\s+\d{5})?)/i;
+  function nearestTitle(el) {
+    let node = el;
+    for (let hops = 0; hops < 6 && node; hops++) {
+      for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+        const t = clean(sib.textContent);
+        if (t && t.length <= 120 && !CO_LOC_RE.test(t)) return t;
+      }
+      node = node.parentElement;
+    }
+    return "";
+  }
+  function scrapeApplyHeader(doc) {
+    if (!doc?.querySelectorAll) return null;
+    for (const el of doc.querySelectorAll("h1,h2,h3,h4,p,span,div,a")) {
+      if (el.querySelector?.("*")) continue;
+      const t = clean(el.textContent);
+      const m = CO_LOC_RE.exec(t);
+      if (!m) continue;
+      const company = clean(m[1]);
+      const title = nearestTitle(el);
+      if (company) return { title, company };
+    }
+    return null;
+  }
+
   // src/inject.js
   var INDEED_TITLE_SELECTORS = [
     "h1.jobsearch-JobInfoHeader-title",
@@ -574,6 +632,29 @@
     } catch (e) {
       return Promise.reject(e);
     }
+  }
+  if (IS_INDEED && isIndeedApplyUrl(location.href)) {
+    let lastJob = null;
+    let fired = false;
+    const applyTick = () => {
+      if (orphaned()) return;
+      const header = scrapeApplyHeader(document);
+      if (header?.company) lastJob = header;
+      if (!fired && isSubmitted(document)) {
+        fired = true;
+        const company = lastJob?.company || submittedCompany(document) || "";
+        const title = lastJob?.title || "";
+        if (company || title) {
+          safeSend({ type: "markApplied", job: { title, company } }).catch(() => {
+          });
+        }
+      }
+    };
+    applyTick();
+    new MutationObserver(() => applyTick()).observe(document.body, {
+      childList: true,
+      subtree: true
+    });
   }
   if (IS_INDEED || IS_LINKEDIN) {
     injectStyles();

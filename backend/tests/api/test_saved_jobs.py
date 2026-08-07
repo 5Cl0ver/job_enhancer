@@ -348,3 +348,41 @@ async def test_mark_applied_moves_job_to_applied(client: AsyncClient):
         json={"title": "Ghost Job", "company": "NoCo"},
     )
     assert r2.json()["matched"] is False
+
+
+@pytest.mark.asyncio
+async def test_manual_add_drops_negative_salary_sentinel(client: AsyncClient):
+    """Indeed sends -1 for 'no max'; it must be dropped, not stored/shown."""
+    r = await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://example.com/sentinel/1",
+            "title": "Development Operations Engineer",
+            "company": "Speed Express",
+            "salary_min": 80000,
+            "salary_max": -1,
+        },
+    )
+    assert r.status_code == 201
+    jl = r.json()["job_listing"]
+    assert jl["salary_min"] == 80000
+    assert jl["salary_max"] is None
+
+
+@pytest.mark.asyncio
+async def test_mark_applied_company_only_fallback(client: AsyncClient):
+    """Indeed's confirmation states only the company — a company-only signal
+    still tracks (newest not-yet-applied job at that company)."""
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={"url": "https://example.com/co/1", "title": "Desktop Engineer", "company": "Align Communications"},
+    )
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": "", "company": "Align Communications"},
+    )
+    assert r.status_code == 200
+    assert r.json()["matched"] is True
+    saved = (await client.get("/v1/saved-jobs/")).json()
+    sj = next(s for s in saved if s["job_listing"]["company"] == "Align Communications")
+    assert sj["applied_at"] is not None

@@ -179,9 +179,10 @@ async function getAutofillData() {
   return { signedIn: true, profile, email: email || "", resume };
 }
 
-// AI cover letter for the job being applied to, written from the active
-// resume + the job's stored description. Returns { content } or { error }.
-async function generateCoverLetter(jobListingId) {
+// AI document for the job being applied to, written from the active resume +
+// the job's stored description. docType is "cover_letter" or "resume".
+// Returns { content, docId } or { error }.
+async function generateDocument(jobListingId, docType) {
   const token = await getValidToken();
   if (!token) return { error: "NOT_SIGNED_IN" };
   const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
@@ -197,18 +198,35 @@ async function generateCoverLetter(jobListingId) {
     headers,
     body: JSON.stringify({
       resume_id: active.id,
-      document_type: "cover_letter",
+      document_type: docType === "resume" ? "resume" : "cover_letter",
       job_listing_id: jobListingId,
     }),
   });
   if (res.status === 429) return { error: "AI rate limit — try again in a minute" };
   if (!res.ok) {
     const text = await res.text().catch(() => "");
-    console.warn("JE cover letter failed", res.status, text);
+    console.warn("JE doc generation failed", res.status, text);
     return { error: friendlyApiError(res.status, text) || "Generation failed" };
   }
   const doc = await res.json();
-  return { content: doc.edited_content || doc.content || "" };
+  return { content: doc.edited_content || doc.content || "", docId: doc.id };
+}
+
+// A generated document's PDF, base64-encoded so the panel can trigger a
+// download (the /pdf endpoint needs the auth header — window.open can't).
+async function getDocumentPdf(docId) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/documents/${docId}/pdf`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return { error: "Couldn't build the PDF" };
+  const bytes = new Uint8Array(await res.arrayBuffer());
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return { b64: btoa(binary) };
 }
 
 // Auto-track: the user submitted an application on an ATS page.
@@ -272,8 +290,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await getAutofillData()) });
       } else if (msg.type === "markApplied") {
         sendResponse({ ok: true, ...(await markApplied(msg.job)) });
-      } else if (msg.type === "generateCoverLetter") {
-        const out = await generateCoverLetter(msg.job_listing_id);
+      } else if (msg.type === "generateDocument") {
+        const out = await generateDocument(msg.job_listing_id, msg.docType);
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
+      } else if (msg.type === "getDocumentPdf") {
+        const out = await getDocumentPdf(msg.docId);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "listSaved") {
         sendResponse({ ok: true, ...(await listSaved()) });

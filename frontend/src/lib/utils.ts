@@ -23,10 +23,15 @@ export function formatSalary(
       maximumFractionDigits: 0,
     }).format(n);
 
+  // Ignore non-positive sentinels (Indeed's -1 "no max") so stale rows that
+  // still hold one don't render "$80,000 – -$1".
+  const lo = min && min > 0 ? min : null;
+  const hi = max && max > 0 ? max : null;
+
   let range: string | null = null;
-  if (min && max) range = `${fmt(min)} – ${fmt(max)}`;
-  else if (min) range = `${fmt(min)}+`;
-  else if (max) range = `Up to ${fmt(max)}`;
+  if (lo && hi) range = `${fmt(lo)} – ${fmt(hi)}`;
+  else if (lo) range = `${fmt(lo)}+`;
+  else if (hi) range = `Up to ${fmt(hi)}`;
   if (!range) return null;
 
   return period === "hourly" ? `${range} /hr` : range;

@@ -8,7 +8,7 @@
 // MAIN-world bridge (bridge.entry.js) mirrors the fields we need onto
 // <html data-je-embedded="…">. We read that first; if it's absent we fall back
 // to scanning static <script> text (works on server-rendered pages).
-import { clean, stripHtml, looksRemote, parseSalaryText } from "./util.js";
+import { clean, stripHtml, looksRemote, parseSalaryText, posSalary } from "./util.js";
 
 // Turn ANY Indeed page url into the canonical /viewjob?jk= listing url, using the
 // job key in the url (vjk on the home feed / search pane, jk on a job page).
@@ -63,12 +63,13 @@ function normalizeDetail(detail, url) {
 // the app can label them honestly.
 function cardSalary(card) {
   const es = card?.extractedSalary;
-  if (es && (es.min || es.max)) {
+  if (es && (posSalary(es.min) || posSalary(es.max))) {
     const type = (es.type || "yearly").toLowerCase();
     if (type.startsWith("year") || type.startsWith("hour")) {
       return {
-        salary_min: es.min ? Math.round(es.min) : null,
-        salary_max: es.max ? Math.round(es.max) : null,
+        // posSalary drops Indeed's -1 "no max" sentinel.
+        salary_min: posSalary(es.min),
+        salary_max: posSalary(es.max),
         salary_period: type.startsWith("hour") ? "hourly" : "yearly",
       };
     }

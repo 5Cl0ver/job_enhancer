@@ -80,6 +80,12 @@
       .saved li .mark-applied:disabled { opacity: .6; cursor: default; }
       #saved-all-list { max-height: 260px; overflow-y: auto; padding-right: 2px; }
 
+      .seg { display: flex; gap: 0; margin: 8px 0 2px; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; }
+      .seg-btn {
+        flex: 1; padding: 6px 8px; border: 0; background: transparent; color: inherit;
+        font-size: 12px; font-weight: 600; cursor: pointer;
+      }
+      .seg-btn.on { background: #7c3aed; color: #fff; }
       .cl-row { display: flex; gap: 6px; margin-top: 6px; }
       #cl-output { margin-top: 8px; font-size: 12px; }
 
@@ -127,16 +133,21 @@
         <ul id="saved-all-list"></ul>
       </div>
 
-      <!-- AI cover letter, right where you're applying -->
+      <!-- AI apply helper, right where you're applying -->
       <div class="saved" id="ai-wrap">
-        <h2>AI cover letter</h2>
+        <h2>AI apply helper</h2>
         <select id="cl-job"></select>
+        <div class="seg" role="tablist">
+          <button id="seg-cover" class="seg-btn on" type="button">Cover letter</button>
+          <button id="seg-resume" class="seg-btn" type="button">Tailored resume</button>
+        </div>
         <button id="cl-generate" class="primary ai" type="button">✍️ Write cover letter</button>
         <p id="cl-status" class="status"></p>
         <div id="cl-output-wrap" hidden>
-          <textarea id="cl-output" rows="10" aria-label="Generated cover letter"></textarea>
+          <textarea id="cl-output" rows="10" aria-label="Generated document"></textarea>
           <div class="cl-row">
             <button id="cl-copy" class="ghost" type="button">📋 Copy</button>
+            <button id="cl-pdf" class="ghost" type="button">⬇ PDF</button>
             <button id="cl-regen" class="ghost" type="button">↻ Regenerate</button>
           </div>
         </div>

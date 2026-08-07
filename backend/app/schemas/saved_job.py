@@ -35,11 +35,12 @@ class ManualJobCreate(BaseModel):
     @field_validator("salary_min", "salary_max", mode="before")
     @classmethod
     def _round_salary(cls, v: object) -> object:
-        # Sites list salaries with cents (Indeed: "$80,708.90 a year"). The
-        # strict int fields rejected those floats (422 int_from_float) and the
-        # save failed — round instead; nobody needs the cents.
-        if isinstance(v, float):
-            return round(v)
+        # Sites list salaries with cents (Indeed: "$80,708.90 a year"). Round
+        # them. Also drop non-positive sentinels — Indeed sends -1 for "no max",
+        # which otherwise displayed as "$80,000 – -$1".
+        if isinstance(v, (int, float)):
+            n = round(v)
+            return n if n > 0 else None
         return v
 
     @field_validator("url")
@@ -73,9 +74,10 @@ class BackfillResult(BaseModel):
 
 
 class MarkAppliedRequest(BaseModel):
-    """Auto-track: the extension saw an application get submitted."""
+    """Auto-track: the extension saw an application get submitted. At least one
+    of title/company is needed (Indeed's confirmation gives only the company)."""
 
-    title: str = Field(min_length=1, max_length=500)
+    title: str = Field(default="", max_length=500)
     company: str = Field(default="", max_length=255)
 
 

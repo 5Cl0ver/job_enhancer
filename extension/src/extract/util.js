@@ -96,6 +96,17 @@ export function absolutize(href, base) {
   }
 }
 
+/**
+ * A salary value the API can store, or null. Rounds cents and — crucially —
+ * DROPS non-positive sentinels: Indeed uses -1 for "no max", which otherwise
+ * saved and displayed as "$80,000 – -$1".
+ */
+export function posSalary(v) {
+  if (typeof v !== "number" || !Number.isFinite(v)) return null;
+  const n = Math.round(v);
+  return n > 0 ? n : null;
+}
+
 /** True if any of the given strings mention remote work. */
 export function looksRemote(...parts) {
   return /\b(remote|work from home|wfh|telecommute|anywhere)\b/i.test(parts.filter(Boolean).join(" "));
@@ -190,15 +201,19 @@ export function mergeJob(candidates, url) {
     const v = cleanMultiline(c.data?.description || "");
     if (v.length > out.description.length) out.description = v;
   }
-  for (const field of ["salary_min", "salary_max", "salary_period"]) {
+  for (const field of ["salary_min", "salary_max"]) {
     for (const c of candidates) {
-      const v = c.data?.[field];
+      const v = posSalary(c.data?.[field]);
       if (v != null) {
-        // Sites list salaries with cents ("$80,708.90 a year"); the API stores
-        // whole units. Round here so no capture path can ship decimals.
-        out[field] = typeof v === "number" ? Math.round(v) : v;
+        out[field] = v;
         break;
       }
+    }
+  }
+  for (const c of candidates) {
+    if (c.data?.salary_period) {
+      out.salary_period = c.data.salary_period;
+      break;
     }
   }
   out.is_remote = candidates.some((c) => c.data?.is_remote === true);

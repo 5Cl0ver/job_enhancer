@@ -12,6 +12,7 @@
 // JSON-LD → selectors), which identifies the open job strictly by ?vjk=.
 import { extractJob } from "./extract/index.js";
 import { shouldBackfill } from "./backfill.js";
+import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
 import {
   INDEED_TITLE_SELECTORS,
   LINKEDIN_TITLE_SELECTORS,
@@ -51,6 +52,33 @@ function safeSend(msg) {
   } catch (e) {
     return Promise.reject(e);
   }
+}
+
+// ---- Indeed Quick-Apply auto-track ----------------------------------------
+// Follows the apply flow: remembers the job as the user steps through, then
+// marks it applied the moment the "submitted" confirmation appears — no manual
+// click, no trip back to the app.
+if (IS_INDEED && isIndeedApplyUrl(location.href)) {
+  let lastJob = null; // {title, company} seen on the apply steps
+  let fired = false;
+  const applyTick = () => {
+    if (orphaned()) return;
+    const header = scrapeApplyHeader(document);
+    if (header?.company) lastJob = header;
+    if (!fired && isSubmitted(document)) {
+      fired = true;
+      const company = lastJob?.company || submittedCompany(document) || "";
+      const title = lastJob?.title || "";
+      if (company || title) {
+        safeSend({ type: "markApplied", job: { title, company } }).catch(() => {});
+      }
+    }
+  };
+  applyTick();
+  new MutationObserver(() => applyTick()).observe(document.body, {
+    childList: true,
+    subtree: true,
+  });
 }
 
 if (IS_INDEED || IS_LINKEDIN) {

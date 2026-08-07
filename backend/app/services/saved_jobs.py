@@ -229,24 +229,35 @@ async def mark_applied(
     db: AsyncSession, user_id: uuid.UUID, title: str, company: str
 ) -> bool:
     """Auto-track: the extension saw the user SUBMIT an application — move the
-    matching saved job to Applied. Matches by normalized title+company (the
-    application page doesn't state our location string). No match → no-op:
-    we never invent tracker entries."""
+    matching saved job to Applied. Prefers a title+company match; falls back to
+    company-only (Indeed's confirmation states just the company) picking the
+    most recent not-yet-applied saved job there. No match → no-op: we never
+    invent tracker entries."""
     title_norm = normalize(title)
     company_norm = normalize(company)
-    if not title_norm:
+    if not title_norm and not company_norm:
         return False
 
-    sj = await db.scalar(
+    base = (
         select(SavedJob)
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
-        .where(
-            SavedJob.user_id == user_id,
-            JobListing.title_normalized == title_norm,
-            JobListing.company_normalized == company_norm,
-        )
-        .limit(1)
+        .where(SavedJob.user_id == user_id)
     )
+    sj = None
+    if title_norm and company_norm:
+        sj = await db.scalar(
+            base.where(
+                JobListing.title_normalized == title_norm,
+                JobListing.company_normalized == company_norm,
+            ).limit(1)
+        )
+    if sj is None and company_norm:
+        # Company-only fallback: prefer a job not already applied, newest first.
+        sj = await db.scalar(
+            base.where(JobListing.company_normalized == company_norm)
+            .order_by(SavedJob.applied_at.is_(None).desc(), SavedJob.created_at.desc())
+            .limit(1)
+        )
     if sj is None:
         return False
 
