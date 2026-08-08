@@ -58,13 +58,31 @@ function safeSend(msg) {
 // Follows the apply flow: remembers the job as the user steps through, then
 // marks it applied the moment the "submitted" confirmation appears — no manual
 // click, no trip back to the app.
-if (IS_INDEED && isIndeedApplyUrl(location.href)) {
+const ON_INDEED_APPLY = IS_INDEED && isIndeedApplyUrl(location.href);
+
+if (ON_INDEED_APPLY) {
   let lastJob = null; // {title, company} seen on the apply steps
   let fired = false;
+  let badge = null;
+
+  const setBadge = (text, done) => {
+    injectStyles();
+    if (!badge) {
+      badge = document.createElement("div");
+      badge.id = "je-apply-badge";
+      badge.className = "je-btn je-fab";
+      document.body.appendChild(badge);
+    }
+    if (!document.contains(badge)) document.body.appendChild(badge);
+    badge.textContent = text;
+    badge.dataset.state = done ? "saved" : "checking";
+  };
+
   const applyTick = () => {
     if (orphaned()) return;
     const header = scrapeApplyHeader(document);
     if (header?.company) lastJob = header;
+
     if (!fired && isSubmitted(document)) {
       fired = true;
       const company = lastJob?.company || submittedCompany(document) || "";
@@ -72,6 +90,13 @@ if (IS_INDEED && isIndeedApplyUrl(location.href)) {
       if (company || title) {
         safeSend({ type: "markApplied", job: { title, company } }).catch(() => {});
       }
+      setBadge("✓ Applied — tracked", true);
+      return;
+    }
+    // Contextual status: which job you're applying to.
+    if (!fired) {
+      const name = lastJob?.title || lastJob?.company;
+      setBadge(name ? `📝 Applying to ${name}`.slice(0, 46) : "📝 Applying…", false);
     }
   };
   applyTick();
@@ -81,7 +106,9 @@ if (IS_INDEED && isIndeedApplyUrl(location.href)) {
   });
 }
 
-if (IS_INDEED || IS_LINKEDIN) {
+// The normal Save button runs on job/search pages — NOT the apply flow (there's
+// no job card to save there; the badge above takes over).
+if ((IS_INDEED && !ON_INDEED_APPLY) || IS_LINKEDIN) {
   injectStyles();
   sync();
   let t;

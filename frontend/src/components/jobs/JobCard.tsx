@@ -12,9 +12,11 @@ interface JobCardProps {
   job: JobListing;
   onSave?: (jobId: string) => void;
   isSaved?: boolean;
+  /** Show an "Applied" badge (the saved job has an applied_at). */
+  applied?: boolean;
 }
 
-export function JobCard({ job, onSave, isSaved = false }: JobCardProps) {
+export function JobCard({ job, onSave, isSaved = false, applied = false }: JobCardProps) {
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
@@ -37,6 +39,9 @@ export function JobCard({ job, onSave, isSaved = false }: JobCardProps) {
             </div>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
+            {applied && (
+              <Badge className="bg-green-600 text-xs hover:bg-green-600">✓ Applied</Badge>
+            )}
             <Badge variant="outline" className="text-xs capitalize">
               {job.source}
             </Badge>

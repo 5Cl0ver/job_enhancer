@@ -61,6 +61,7 @@ export default function SavedPage() {
                   key={sj.id}
                   job={sj.job_listing}
                   isSaved
+                  applied={!!sj.applied_at}
                   onSave={() => unsaveJob.mutate(sj.id)}
                 />
               ))}

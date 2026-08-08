@@ -41,7 +41,7 @@ dependencies = [
     "python-docx>=1.1.0",
 
     # PDF generation
-    "weasyprint>=62.0",
+    "fpdf2>=2.7.0",
 
     # Rate limiting
     "slowapi>=0.1.9",

@@ -230,10 +230,12 @@ async def download_document_pdf(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
-    """Render the latest content as PDF using weasyprint."""
+    """Render the latest content as a PDF. Uses fpdf2 — pure Python, so it works
+    on Windows and free-tier Linux with no native GTK/Cairo libraries (which is
+    why weasyprint was dropped)."""
     import io
 
-    import weasyprint
+    from fpdf import FPDF
 
     doc = await db.scalar(
         select(GeneratedDocument).where(
@@ -243,17 +245,19 @@ async def download_document_pdf(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    text_content = doc.edited_content or doc.content
-    html = f"""<!DOCTYPE html>
-<html><head>
-<meta charset="utf-8">
-<style>
-  body {{ font-family: Arial, sans-serif; font-size: 11pt; line-height: 1.5;
-         margin: 2cm; white-space: pre-wrap; }}
-</style>
-</head><body>{text_content}</body></html>"""
+    text_content = doc.edited_content or doc.content or ""
 
-    pdf_bytes = weasyprint.HTML(string=html).write_pdf()
+    pdf = FPDF(format="letter")
+    pdf.set_auto_page_break(auto=True, margin=18)
+    pdf.add_page()
+    pdf.set_margins(18, 18, 18)
+    pdf.set_font("Helvetica", size=11)
+    # Latin-1 is fpdf2's core-font encoding; replace anything outside it (smart
+    # quotes, em dashes from the LLM) so a stray character can't 500 the render.
+    safe = text_content.encode("latin-1", "replace").decode("latin-1")
+    pdf.multi_cell(0, 6, safe)
+    pdf_bytes = bytes(pdf.output())
+
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",

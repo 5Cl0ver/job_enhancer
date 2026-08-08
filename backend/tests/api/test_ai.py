@@ -128,3 +128,25 @@ async def test_resume_file_roundtrip(client: AsyncClient):
 async def test_resume_file_404_when_none(client: AsyncClient):
     r = await client.get("/v1/ai/resumes/active/file")
     assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_document_pdf_download(client: AsyncClient, db_session, test_user):
+    """The /pdf endpoint returns a real PDF (fpdf2, no native libs needed)."""
+    import uuid as _uuid
+
+    from app.models.generated_document import GeneratedDocument
+
+    doc = GeneratedDocument(
+        id=_uuid.uuid4(),
+        user_id=test_user.id,
+        document_type="cover_letter",
+        content="Dear Hiring Manager,\n\nI'm excited — with smart quotes “like this”.",
+    )
+    db_session.add(doc)
+    await db_session.commit()
+
+    r = await client.get(f"/v1/ai/documents/{doc.id}/pdf")
+    assert r.status_code == 200
+    assert r.headers["content-type"] == "application/pdf"
+    assert r.content[:4] == b"%PDF"  # a real PDF, and no 500 on the smart quotes

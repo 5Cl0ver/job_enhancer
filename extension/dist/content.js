@@ -633,9 +633,23 @@
       return Promise.reject(e);
     }
   }
-  if (IS_INDEED && isIndeedApplyUrl(location.href)) {
+  var ON_INDEED_APPLY = IS_INDEED && isIndeedApplyUrl(location.href);
+  if (ON_INDEED_APPLY) {
     let lastJob = null;
     let fired = false;
+    let badge = null;
+    const setBadge = (text, done) => {
+      injectStyles();
+      if (!badge) {
+        badge = document.createElement("div");
+        badge.id = "je-apply-badge";
+        badge.className = "je-btn je-fab";
+        document.body.appendChild(badge);
+      }
+      if (!document.contains(badge)) document.body.appendChild(badge);
+      badge.textContent = text;
+      badge.dataset.state = done ? "saved" : "checking";
+    };
     const applyTick = () => {
       if (orphaned()) return;
       const header = scrapeApplyHeader(document);
@@ -648,6 +662,12 @@
           safeSend({ type: "markApplied", job: { title, company } }).catch(() => {
           });
         }
+        setBadge("\u2713 Applied \u2014 tracked", true);
+        return;
+      }
+      if (!fired) {
+        const name = lastJob?.title || lastJob?.company;
+        setBadge(name ? `\u{1F4DD} Applying to ${name}`.slice(0, 46) : "\u{1F4DD} Applying\u2026", false);
       }
     };
     applyTick();
@@ -656,7 +676,7 @@
       subtree: true
     });
   }
-  if (IS_INDEED || IS_LINKEDIN) {
+  if (IS_INDEED && !ON_INDEED_APPLY || IS_LINKEDIN) {
     injectStyles();
     sync();
     let t;
