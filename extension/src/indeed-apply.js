@@ -30,7 +30,11 @@ export function submittedCompany(doc) {
   const body = doc?.body?.textContent || "";
   const m = SUBMITTED_RE.exec(body);
   if (!m) return null;
-  return m[1] ? clean(m[1]).slice(0, 120) : "";
+  if (!m[1]) return "";
+  // The confirmation's next line ("You will get an email…") can run straight
+  // into the company name in textContent — cut it off.
+  const co = m[1].split(/You will|You'll|Thank you|Return to|We['’]ll/i)[0];
+  return clean(co).slice(0, 60);
 }
 
 export function isSubmitted(doc) {
@@ -59,9 +63,14 @@ function nearestTitle(el) {
  */
 export function scrapeApplyHeader(doc) {
   if (!doc?.querySelectorAll) return null;
+  let scanned = 0;
+  // The header card sits near the top, so a leaf-line "Company - Location"
+  // shows up early. Cap the scan so a huge React tree can't cost much per poll.
   for (const el of doc.querySelectorAll("h1,h2,h3,h4,p,span,div,a")) {
+    if (++scanned > 3000) break;
     if (el.querySelector?.("*")) continue; // leaf line only ("Company - Location")
     const t = clean(el.textContent);
+    if (t.length > 90) continue; // a header line is short — skip long paragraphs cheaply
     const m = CO_LOC_RE.exec(t);
     if (!m) continue;
     const company = clean(m[1]);

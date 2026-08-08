@@ -64,22 +64,30 @@ if (ON_INDEED_APPLY) {
   let lastJob = null; // {title, company} seen on the apply steps
   let fired = false;
   let badge = null;
+  let lastBadge = ""; // last text we wrote — so we never write the same thing twice
 
   const setBadge = (text, done) => {
+    if (text === lastBadge) return; // CRITICAL: no redundant DOM writes
+    lastBadge = text;
     injectStyles();
-    if (!badge) {
+    if (!badge || !document.contains(badge)) {
       badge = document.createElement("div");
       badge.id = "je-apply-badge";
       badge.className = "je-btn je-fab";
       document.body.appendChild(badge);
     }
-    if (!document.contains(badge)) document.body.appendChild(badge);
     badge.textContent = text;
     badge.dataset.state = done ? "saved" : "checking";
   };
 
-  const applyTick = () => {
-    if (orphaned()) return;
+  // A THROTTLED POLL — never a MutationObserver here. Observing body mutations
+  // and then writing the badge (itself a mutation) looped infinitely and froze
+  // Indeed's apply page. A 1.5s poll is plenty to catch step changes + submit.
+  const timer = setInterval(() => {
+    if (orphaned()) {
+      clearInterval(timer);
+      return;
+    }
     const header = scrapeApplyHeader(document);
     if (header?.company) lastJob = header;
 
@@ -93,17 +101,11 @@ if (ON_INDEED_APPLY) {
       setBadge("✓ Applied — tracked", true);
       return;
     }
-    // Contextual status: which job you're applying to.
     if (!fired) {
       const name = lastJob?.title || lastJob?.company;
       setBadge(name ? `📝 Applying to ${name}`.slice(0, 46) : "📝 Applying…", false);
     }
-  };
-  applyTick();
-  new MutationObserver(() => applyTick()).observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
+  }, 1500);
 }
 
 // The normal Save button runs on job/search pages — NOT the apply flow (there's

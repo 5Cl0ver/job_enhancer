@@ -553,7 +553,9 @@
     const body = doc?.body?.textContent || "";
     const m = SUBMITTED_RE.exec(body);
     if (!m) return null;
-    return m[1] ? clean(m[1]).slice(0, 120) : "";
+    if (!m[1]) return "";
+    const co = m[1].split(/You will|You'll|Thank you|Return to|We['’]ll/i)[0];
+    return clean(co).slice(0, 60);
   }
   function isSubmitted(doc) {
     return submittedCompany(doc) !== null;
@@ -572,9 +574,12 @@
   }
   function scrapeApplyHeader(doc) {
     if (!doc?.querySelectorAll) return null;
+    let scanned = 0;
     for (const el of doc.querySelectorAll("h1,h2,h3,h4,p,span,div,a")) {
+      if (++scanned > 3e3) break;
       if (el.querySelector?.("*")) continue;
       const t = clean(el.textContent);
+      if (t.length > 90) continue;
       const m = CO_LOC_RE.exec(t);
       if (!m) continue;
       const company = clean(m[1]);
@@ -638,20 +643,25 @@
     let lastJob = null;
     let fired = false;
     let badge = null;
+    let lastBadge = "";
     const setBadge = (text, done) => {
+      if (text === lastBadge) return;
+      lastBadge = text;
       injectStyles();
-      if (!badge) {
+      if (!badge || !document.contains(badge)) {
         badge = document.createElement("div");
         badge.id = "je-apply-badge";
         badge.className = "je-btn je-fab";
         document.body.appendChild(badge);
       }
-      if (!document.contains(badge)) document.body.appendChild(badge);
       badge.textContent = text;
       badge.dataset.state = done ? "saved" : "checking";
     };
-    const applyTick = () => {
-      if (orphaned()) return;
+    const timer = setInterval(() => {
+      if (orphaned()) {
+        clearInterval(timer);
+        return;
+      }
       const header = scrapeApplyHeader(document);
       if (header?.company) lastJob = header;
       if (!fired && isSubmitted(document)) {
@@ -669,12 +679,7 @@
         const name = lastJob?.title || lastJob?.company;
         setBadge(name ? `\u{1F4DD} Applying to ${name}`.slice(0, 46) : "\u{1F4DD} Applying\u2026", false);
       }
-    };
-    applyTick();
-    new MutationObserver(() => applyTick()).observe(document.body, {
-      childList: true,
-      subtree: true
-    });
+    }, 1500);
   }
   if (IS_INDEED && !ON_INDEED_APPLY || IS_LINKEDIN) {
     injectStyles();
