@@ -80,6 +80,12 @@
       .saved li .mark-applied:disabled { opacity: .6; cursor: default; }
       #saved-all-list { max-height: 260px; overflow-y: auto; padding-right: 2px; }
 
+      /* The job <select>: give it a solid, theme-correct background so its
+         dropdown list isn't white-on-dark. */
+      #cl-job { color-scheme: light dark; }
+      @media (prefers-color-scheme: dark) {
+        #cl-job, #cl-job option { background-color: #1f2937; color: #f3f4f6; }
+      }
       .seg { display: flex; gap: 0; margin: 8px 0 2px; border: 1px solid #d1d5db; border-radius: 8px; overflow: hidden; }
       .seg-btn {
         flex: 1; padding: 6px 8px; border: 0; background: transparent; color: inherit;

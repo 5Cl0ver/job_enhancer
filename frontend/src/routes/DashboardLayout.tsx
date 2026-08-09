@@ -10,8 +10,7 @@ import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 // Next.js file `app/(dashboard)/layout.tsx`.
 const NAV = [
   { to: "/search", label: "Search" },
-  { to: "/saved", label: "Saved" },
-  { to: "/tracker", label: "Tracker" },
+  { to: "/jobs", label: "My Jobs" },
   { to: "/matches", label: "Matches" },
   { to: "/analytics", label: "Analytics" },
   { to: "/ai-apply", label: "AI Apply" },
