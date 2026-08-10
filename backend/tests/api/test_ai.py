@@ -101,6 +101,78 @@ async def test_generate_requires_existing_resume(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_build_prompt_bridge(client: AsyncClient):
+    """/prompt returns a self-contained prompt (no LLM call) for the user's own
+    Claude — it must include the resume text and the doc-type instructions."""
+    with patch(
+        "app.api.v1.ai.resume_parser.parse_resume",
+        new=AsyncMock(return_value="Jane Dev — React, TypeScript, Node"),
+    ):
+        resume = (
+            await client.post(
+                "/v1/ai/resumes",
+                files={"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
+        ).json()
+
+    # Resume prompt: structured Markdown so our PDF renderer reproduces the
+    # user's template (## sections, job header with a trailing date range).
+    response = await client.post(
+        "/v1/ai/prompt",
+        json={"resume_id": resume["id"], "document_type": "resume"},
+    )
+    assert response.status_code == 200
+    prompt = response.json()["prompt"]
+    assert "Jane Dev — React, TypeScript, Node" in prompt
+    assert "artifact" in prompt.lower()  # forbidden — artifacts are slow
+    assert "markdown" in prompt.lower()
+    assert "work experience" in prompt.lower()  # the structured section layout
+    assert "[x]" in prompt.lower()  # placeholders explicitly forbidden
+
+    # Cover letter: same guardrails, but prose (no forced section structure).
+    cover = await client.post(
+        "/v1/ai/prompt",
+        json={"resume_id": resume["id"], "document_type": "cover_letter"},
+    )
+    assert cover.status_code == 200
+    assert "cover letter" in cover.json()["prompt"].lower()
+
+
+@pytest.mark.asyncio
+async def test_save_manual_document_bridge(client: AsyncClient):
+    """Content produced in the user's own Claude saves as a document and flows
+    into the same PDF pipeline (so Copy/PDF work identically)."""
+    with patch(
+        "app.api.v1.ai.resume_parser.parse_resume",
+        new=AsyncMock(return_value="base text"),
+    ):
+        resume = (
+            await client.post(
+                "/v1/ai/resumes",
+                files={"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
+            )
+        ).json()
+
+    saved = await client.post(
+        "/v1/ai/documents/manual",
+        json={
+            "resume_id": resume["id"],
+            "document_type": "cover_letter",
+            "content": "Dear Hiring Manager, I wrote this in my own Claude.",
+        },
+    )
+    assert saved.status_code == 201
+    doc = saved.json()
+    assert doc["content"].startswith("Dear Hiring Manager")
+    assert doc["model_used"] == "claude (my subscription)"
+
+    # It renders as a PDF like any AI-generated document.
+    pdf = await client.get(f"/v1/ai/documents/{doc['id']}/pdf")
+    assert pdf.status_code == 200
+    assert pdf.content[:4] == b"%PDF"
+
+
+@pytest.mark.asyncio
 async def test_resume_file_roundtrip(client: AsyncClient):
     """Upload stores the ORIGINAL bytes; /resumes/active/file returns them
     (the extension attaches this real file to ATS upload fields)."""
@@ -150,3 +222,25 @@ async def test_document_pdf_download(client: AsyncClient, db_session, test_user)
     assert r.status_code == 200
     assert r.headers["content-type"] == "application/pdf"
     assert r.content[:4] == b"%PDF"  # a real PDF, and no 500 on the smart quotes
+
+
+@pytest.mark.asyncio
+async def test_document_pdf_renders_markdown(client: AsyncClient, db_session, test_user):
+    """A pasted-back Claude doc is Markdown — the PDF must render it (headings,
+    bullets, bold) without 500-ing, not dump literal # and * symbols."""
+    import uuid as _uuid
+
+    from app.models.generated_document import GeneratedDocument
+
+    doc = GeneratedDocument(
+        id=_uuid.uuid4(),
+        user_id=test_user.id,
+        document_type="resume",
+        content="# Jane Dev\n\n## EXPERIENCE\n\n- Built **scalable** APIs\n- Shipped `features`",
+    )
+    db_session.add(doc)
+    await db_session.commit()
+
+    r = await client.get(f"/v1/ai/documents/{doc.id}/pdf")
+    assert r.status_code == 200
+    assert r.content[:4] == b"%PDF"

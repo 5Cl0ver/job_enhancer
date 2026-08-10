@@ -34,6 +34,90 @@ Use a professional but engaging tone. Output ONLY the cover letter text.
 Do not include commentary or explanations."""
 
 
+# --- Prompt builders (shared by the NVIDIA path AND the "bring your own Claude"
+# bridge, which pastes these into the user's own Claude). One definition, so the
+# free model and the user's model are asked for exactly the same thing. --------
+
+
+def _resume_user_content(
+    resume_text: str, job_description: str, job_title: str, company: str
+) -> str:
+    return f"""JOB TITLE: {job_title}
+COMPANY: {company}
+JOB DESCRIPTION:
+{job_description}
+
+BASE RESUME:
+{resume_text}
+
+Please tailor the resume to highlight relevant experience and skills for this role."""
+
+
+def _cover_letter_user_content(
+    resume_text: str, job_description: str, job_title: str, company: str
+) -> str:
+    return f"""JOB TITLE: {job_title}
+COMPANY: {company}
+JOB DESCRIPTION:
+{job_description}
+
+APPLICANT RESUME:
+{resume_text}
+
+Write a tailored cover letter for this position."""
+
+
+# The fast flow: the user copies our prompt into their Claude, copies the reply,
+# and pastes it back into the extension — which renders a formatted PDF. So we
+# want the answer RIGHT IN THE CHAT (artifacts are slow to build), cleanly
+# Markdown-formatted (our PDF renderer turns ##/-/** into headings/bullets/bold),
+# with no commentary or placeholders. Rules go FIRST — leading text carries most weight.
+def _bridge_output_rules(doc_label: str) -> str:
+    common = f"""IMPORTANT — follow these output rules exactly:
+- Write the {doc_label} directly in this chat so I can copy it immediately. Do NOT put it in an artifact, canvas, or downloadable document — that is slower; I just need the text in your reply.
+- Output ONLY the {doc_label} itself — no introduction, no commentary, no notes, no questions, and no closing remarks (don't say "here's your resume" or "let me know if…").
+- Use ONLY the information provided below. Do NOT invent facts and do NOT insert bracketed placeholders like [X] — if something isn't given, simply leave it out.
+"""
+    if "resume" in doc_label:
+        return common + """- Format it as Markdown with this EXACT structure so it renders into a clean PDF:
+  # Full Name
+  City, ST | phone | email | github/linkedin links   (one line, right under the name)
+  ## SUMMARY            (then a short paragraph)
+  ## SKILLS             (one line per category: **Category:** comma, separated, list)
+  ## WORK EXPERIENCE
+  **Company Name** | *Job Title* | Start Date – End Date     (ONE line per role, exactly this order; put the date range LAST)
+  - achievement bullet
+  - achievement bullet
+  ## PROJECTS and ## EDUCATION as needed, same style.
+- Use "# " only for the name and "## " for every section heading. Use "- " for bullets and **bold** for the skill category labels.
+"""
+    return common + """- Format it as normal business-letter paragraphs (plain text, blank line between paragraphs). You may start with "# Full Name" and a contact line, then the letter body. Do NOT use section headings or bullet lists.
+"""
+
+
+def build_prompt(
+    document_type: str,
+    resume_text: str,
+    job_description: str,
+    job_title: str = "",
+    company: str = "",
+) -> str:
+    """Assemble a single, self-contained prompt the user can paste straight into
+    their own Claude (or any chat AI). Combines strict output rules (so the reply
+    is one clean, copy-pasteable block) with the instructions + job/resume."""
+    if document_type == "resume":
+        system, user = _RESUME_SYSTEM_PROMPT, _resume_user_content(
+            resume_text, job_description, job_title, company
+        )
+        rules = _bridge_output_rules("tailored resume")
+    else:
+        system, user = _COVER_LETTER_SYSTEM_PROMPT, _cover_letter_user_content(
+            resume_text, job_description, job_title, company
+        )
+        rules = _bridge_output_rules("cover letter")
+    return f"{rules}\n{system}\n\n{user}"
+
+
 def _get_client() -> ChatNVIDIA:
     return ChatNVIDIA(
         model=_MODEL_ID,
@@ -95,16 +179,7 @@ async def generate_tailored_resume(
     company: str = "",
 ) -> tuple[str, str, int]:
     """Return (content, model_used, generation_ms)."""
-    user_content = f"""JOB TITLE: {job_title}
-COMPANY: {company}
-JOB DESCRIPTION:
-{job_description}
-
-BASE RESUME:
-{resume_text}
-
-Please tailor the resume to highlight relevant experience and skills for this role."""
-
+    user_content = _resume_user_content(resume_text, job_description, job_title, company)
     content, ms = await _invoke(_RESUME_SYSTEM_PROMPT, user_content)
     return content, _MODEL_ID, ms
 
@@ -116,15 +191,8 @@ async def generate_cover_letter(
     company: str = "",
 ) -> tuple[str, str, int]:
     """Return (content, model_used, generation_ms)."""
-    user_content = f"""JOB TITLE: {job_title}
-COMPANY: {company}
-JOB DESCRIPTION:
-{job_description}
-
-APPLICANT RESUME:
-{resume_text}
-
-Write a tailored cover letter for this position."""
-
+    user_content = _cover_letter_user_content(
+        resume_text, job_description, job_title, company
+    )
     content, ms = await _invoke(_COVER_LETTER_SYSTEM_PROMPT, user_content)
     return content, _MODEL_ID, ms
