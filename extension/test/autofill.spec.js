@@ -21,8 +21,11 @@ const PROFILE = {
   first_name: "Fabian",
   last_name: "Example",
   phone: "(555) 010-0199",
+  address_line1: "123 Main St",
+  address_line2: "Apt 4",
   city: "Los Angeles",
   state: "California",
+  postal_code: "90001",
   country: "United States",
   linkedin_url: "https://linkedin.com/in/fabian",
   github_url: "https://github.com/5Cl0ver",
@@ -124,6 +127,56 @@ describe("Lever form mapping (name-attribute + placeholder style)", () => {
     expect(doc.querySelector("[name='name']").value).toBe("Fabian Example");
     expect(doc.querySelector("[name='comments']").value).toBe("");
     expect(filled).toContain("full_name");
+  });
+});
+
+describe("universal matching — autocomplete + address (any site, e.g. Amazon Jobs)", () => {
+  function amazonForm() {
+    const w = new Window();
+    w.document.write(`
+      <form>
+        <label for="fn">First name</label><input id="fn" autocomplete="given-name" />
+        <label for="ln">Last name</label><input id="ln" autocomplete="family-name" />
+        <label for="em">Email address</label><input id="em" type="email" />
+        <label for="ph">Phone number</label><input id="ph" type="tel" />
+        <label for="a1">Address line 1 (Street address, P.O. Box, etc...)</label><input id="a1" />
+        <label for="a2">Address line 2 (Unit, suite, etc...)</label><input id="a2" />
+        <label for="ct">City</label><input id="ct" />
+        <label for="pc">Postal/Zip code</label><input id="pc" />
+        <label for="co">Country/Region</label><select id="co"><option value=""></option><option>United States</option></select>
+        <label for="st">Province/State</label><select id="st"><option value=""></option><option>California</option></select>
+      </form>`);
+    return w.document;
+  }
+
+  it("maps contact + address fields via autocomplete attrs and labels", () => {
+    const doc = amazonForm();
+    const byKey = Object.fromEntries(collectFields(doc).map((f) => [f.key, f.el]));
+    expect(byKey.first_name.id).toBe("fn"); // autocomplete="given-name"
+    expect(byKey.last_name.id).toBe("ln");
+    expect(byKey.email.id).toBe("em");
+    expect(byKey.phone.id).toBe("ph");
+    expect(byKey.address_line1.id).toBe("a1");
+    expect(byKey.address_line2.id).toBe("a2");
+    expect(byKey.city.id).toBe("ct");
+    expect(byKey.postal_code.id).toBe("pc");
+    expect(byKey.country.id).toBe("co"); // "Country/Region" beats the /region/ state alias
+    expect(byKey.state.id).toBe("st");
+  });
+
+  it("fills the whole contact step, selects included", () => {
+    const doc = amazonForm();
+    const { filled } = fillFields(collectFields(doc), buildValues(PROFILE, "fabian@example.com"), null);
+    expect(doc.querySelector("#fn").value).toBe("Fabian");
+    expect(doc.querySelector("#a1").value).toBe("123 Main St");
+    expect(doc.querySelector("#a2").value).toBe("Apt 4");
+    expect(doc.querySelector("#ct").value).toBe("Los Angeles");
+    expect(doc.querySelector("#pc").value).toBe("90001");
+    expect(doc.querySelector("#co").value).toBe("United States");
+    expect(doc.querySelector("#st").value).toBe("California");
+    expect(filled).toEqual(
+      expect.arrayContaining(["first_name", "address_line1", "city", "postal_code", "country", "state"]),
+    );
   });
 });
 

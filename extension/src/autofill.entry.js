@@ -10,18 +10,22 @@
 import { detectAts, collectFields } from "./autofill/mapper.js";
 import { fillFields, buildValues } from "./autofill/fill.js";
 
-const ATS = detectAts(location.href);
+const ATS = detectAts(location.href); // still used for submit auto-tracking
 const BTN_ID = "je-autofill-btn";
 const LABEL = "⚡ Autofill from Job Enhancer";
 
-if (ATS) {
+// Universal: run on ANY page. The button only appears when the page actually
+// has an application form (see hasFillableForm), so random sites stay clean.
+if (document.body) {
   injectStyles();
   ensureButton();
-  // ATS pages render/replace their forms with JS — keep the button alive.
-  new MutationObserver(() => ensureButton()).observe(document.body, {
-    childList: true,
-    subtree: true,
-  });
+  // Forms render/replace via JS — keep the button in sync, but DEBOUNCE so busy
+  // pages (Amazon/Workday) don't thrash on every mutation.
+  let _t;
+  new MutationObserver(() => {
+    clearTimeout(_t);
+    _t = setTimeout(ensureButton, 500);
+  }).observe(document.body, { childList: true, subtree: true });
   watchForSubmit();
 }
 

@@ -38,19 +38,49 @@ export function labelTextFor(el, doc) {
   return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
 }
 
-// Ordered rules: FIRST match wins, so specific beats generic ("first name"
-// must be checked before the bare "name" rule Lever uses for full name).
+// The HTML `autocomplete` attribute is the standardized, most reliable signal —
+// Amazon/Workday/most modern forms set it, so this works site-agnostically.
+const AUTOCOMPLETE_MAP = {
+  "given-name": "first_name",
+  "family-name": "last_name",
+  name: "full_name",
+  email: "email",
+  tel: "phone",
+  "tel-national": "phone",
+  "street-address": "address_line1",
+  "address-line1": "address_line1",
+  "address-line2": "address_line2",
+  "address-level2": "city", // city/locality
+  "address-level1": "state", // state/province
+  "postal-code": "postal_code",
+  country: "country",
+  "country-name": "country",
+  url: "portfolio_url",
+};
+
+// Ordered label rules: FIRST match wins, so specific beats generic ("first name"
+// before the bare "name"; "address line 2" before "address line 1";
+// "Country/Region" before "state" so the /region/ alias doesn't steal it).
 const RULES = [
-  { key: "first_name", re: /first[\s_-]*name/i },
+  { key: "first_name", re: /first[\s_-]*name|given[\s_-]*name/i },
   { key: "last_name", re: /last[\s_-]*name|surname|family[\s_-]*name/i },
   { key: "full_name", re: /full[\s_-]*name|your[\s_-]*name|^name$/i },
   { key: "email", re: /e-?mail/i },
-  { key: "phone", re: /phone|mobile/i },
+  { key: "phone", re: /phone|mobile|telephone/i },
   { key: "linkedin_url", re: /linked[\s_-]*in/i },
   { key: "github_url", re: /git[\s_-]*hub/i },
   { key: "portfolio_url", re: /portfolio|personal[\s_-]*(web)?site|website/i },
-  { key: "location", re: /location|current[\s_-]*city|^city$/i },
-  { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*work/i },
+  // A single combined "location" field (Greenhouse/Lever) — checked before the
+  // granular address rules so it wins over the discrete city/state of forms
+  // like Amazon (whose "City" field has no "location" in its text).
+  { key: "location", re: /location/i },
+  { key: "address_line2", re: /address[\s_-]*line[\s_-]*2|apartment|apt\b|unit\b|suite/i },
+  { key: "address_line1", re: /address[\s_-]*line[\s_-]*1|street[\s_-]*address|^street|^address\b/i },
+  { key: "city", re: /\bcity\b|town/i },
+  { key: "postal_code", re: /postal|zip/i },
+  { key: "country", re: /country/i },
+  { key: "state", re: /\bstate\b|province|region/i },
+  { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*work|eligib[\s\S]*work/i },
   { key: "requires_sponsorship", re: /sponsor/i },
   { key: "willing_to_relocate", re: /relocat/i },
   { key: "desired_salary", re: /salary|compensation[\s_-]*expect/i },
@@ -65,12 +95,21 @@ export function keyFor(el, doc) {
   const type = (el.getAttribute?.("type") || el.tagName || "").toLowerCase();
   if (["hidden", "submit", "button", "checkbox", "radio"].includes(type)) return null;
 
-  const text = labelTextFor(el, doc);
-  if (!text || SKIP.test(text)) return null;
+  // 1) autocomplete attribute — standardized and site-agnostic; trust it first.
+  const ac = (el.getAttribute?.("autocomplete") || "").toLowerCase().trim();
+  if (ac && ac !== "off" && ac !== "on") {
+    for (const token of ac.split(/\s+/)) {
+      if (AUTOCOMPLETE_MAP[token]) return AUTOCOMPLETE_MAP[token];
+    }
+  }
 
+  const text = labelTextFor(el, doc);
   if (type === "file") {
     return /resume|cv\b/i.test(text) ? "resume_file" : null;
   }
+  if (!text || SKIP.test(text)) return null;
+
+  // 2) label / placeholder / name regex.
   for (const rule of RULES) {
     if (rule.re.test(text)) return rule.key;
   }
