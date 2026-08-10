@@ -13,9 +13,9 @@ the job boards you already use, not replace them.
 Built as a real, publicly hosted app (running entirely on free tiers) and as a
 portfolio piece demonstrating spec-driven development end to end.
 
-> **Status:** core product complete and tested; deploying next. AI quick-apply
-> and the browser extension are the final build phases.
-> Screenshots and the live demo link land here with the first deploy.
+> **Status:** core product, AI quick-apply, and the browser extension are all
+> built and tested; deploying next. Screenshots and the live demo link land
+> here with the first deploy.
 
 ---
 
@@ -38,40 +38,48 @@ portfolio piece demonstrating spec-driven development end to end.
   service (owner-only)
 - 👤 **Full account self-service** — email/password + Google/GitHub sign-in
   (Supabase Auth), JSON data export, and permanent account deletion
-- 🤖 **AI quick-apply** *(final phase)* — NVIDIA-hosted Llama 3.3 tailors your
-  resume and drafts cover letters per job, downloadable as PDF
-- 🧩 **Browser extension** *(final phase)* — one-click "save to tracker" from
-  any job page (v1) and application form auto-fill that never submits for
-  you (v2)
+- 🤖 **AI quick-apply** — tailors your resume and drafts cover letters per job,
+  downloadable as a **Calibri-matched PDF**. Runs on a free NVIDIA-hosted model
+  by default, or **bring your own Claude**: the extension builds a ready-to-paste
+  prompt and captures the result back into the app — no API key required
+- 🧩 **Browser extension ("Job Catcher")** — save a job from **any** site (reads
+  the page's structured data, with a review-and-fix card for unknown sites), an
+  apply-copilot side panel, application-form **auto-fill** on Greenhouse/Lever
+  (never submits for you), and **auto-tracking** when you submit on Indeed
+- 🎯 **Filter your jobs** — search plus remote, pay, job-type, location, and
+  applied-status filters over everything you've saved
 
 ## Tech Stack
 
 | Layer | Technology | Why |
 |---|---|---|
-| Frontend | Next.js 16 (App Router) + TypeScript + Tailwind CSS v4 + shadcn/ui (Radix) | Industry-standard React stack; strict types end to end |
+| Frontend | Vite 7 + React + React Router v7 + TypeScript + Tailwind CSS v4 + shadcn/ui (Radix) | Fast SPA build; explicit routing; strict types end to end |
 | Data fetching | TanStack Query v5 | Cache-first UX; optimistic Kanban updates |
 | Backend | FastAPI (Python 3.11) + SQLAlchemy 2 async + Alembic | Async throughout; OpenAPI generated from code |
 | Database + Auth | Supabase (PostgreSQL + Auth) | Free tier; email/password **and** OAuth without custom credential handling |
 | Job data | Adzuna API + JSearch (RapidAPI) | Free tiers; results cached in Postgres to stretch quotas |
-| AI *(final phase)* | NVIDIA NIM (`meta/llama-3.3-70b-instruct`) via LangChain | Free hosted inference |
-| Testing | pytest (38 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
+| AI | NVIDIA NIM (Llama 3.1) via LangChain — or bring your own Claude | Free hosted inference by default; use your own model for top quality |
+| Extension | Chrome MV3 (esbuild) + Vitest + Playwright | Capture jobs, apply copilot, ATS auto-fill — all client-side |
+| Testing | pytest (74 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
 | Hosting | Vercel + Render + Supabase — **$0/month** | Free tiers, kept awake by a scheduled ping |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    B[Browser] -->|HTTPS| V[Next.js on Vercel]
+    B[Browser] -->|HTTPS| V[Vite SPA on Vercel]
     B -->|Bearer JWT| R[FastAPI on Render]
+    E[Chrome extension] -->|Bearer JWT| R
     V -->|Auth session| S[(Supabase\nPostgres + Auth)]
     R -->|asyncpg via pooler| S
     R --> A[Adzuna API]
     R --> J[JSearch API]
-    R -.->|final phase| N[NVIDIA NIM]
+    R --> N[NVIDIA NIM]
 ```
 
-- Supabase Auth issues the session; the frontend attaches the access token as
-  a `Bearer` header, and FastAPI verifies it with the project JWT secret.
+- Supabase Auth issues the session; the frontend and extension attach the access
+  token as a `Bearer` header, and FastAPI verifies it against the project's JWKS
+  public keys (asymmetric ES256 — no shared secret).
 - All frontend↔backend traffic goes through the OpenAPI-documented `/v1` API
   ([contract](specs/001-job-search-mvp/contracts/openapi.yml) is regenerated
   from the live app; TypeScript types are generated from it at build time).
@@ -97,12 +105,13 @@ Then fill in the env files:
 
 1. **`backend/.env`** — from your dev Supabase project: the *Transaction
    pooler* connection string as `DATABASE_URL` (swap the prefix to
-   `postgresql+asyncpg://`), `SUPABASE_URL`, `SUPABASE_JWT_SECRET`
-   (Settings → API), plus [Adzuna](https://developer.adzuna.com) and
+   `postgresql+asyncpg://`) and `SUPABASE_URL` (the backend verifies JWTs via
+   the project JWKS, so no shared secret is needed), plus
+   [Adzuna](https://developer.adzuna.com) and
    [JSearch](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) keys and
-   your `ADMIN_EMAIL`.
-2. **`frontend/.env.local`** — `NEXT_PUBLIC_SUPABASE_URL` and
-   `NEXT_PUBLIC_SUPABASE_ANON_KEY` from the same project.
+   your `ADMIN_EMAIL`. Optional: `NVIDIA_API_KEY` to enable AI generation.
+2. **`frontend/.env`** — `VITE_API_URL` (e.g. `http://localhost:8000`),
+   `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` from the same project.
 
 Run it:
 
@@ -110,7 +119,7 @@ Run it:
 # terminal 1 — API on :8000 (applies migrations first)
 cd backend && .venv/bin/alembic upgrade head && .venv/bin/uvicorn app.main:app --reload
 
-# terminal 2 — web app on :3000
+# terminal 2 — web app on :5173 (Vite)
 cd frontend && npm run dev
 ```
 
@@ -122,9 +131,10 @@ dashboard (Authentication → Providers); email/password works immediately.
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest        # 38 API + service tests (in-memory DB)
+cd backend && .venv/bin/python -m pytest        # 74 API + service tests (in-memory DB)
 cd frontend && npm run test                     # Vitest component tests
 cd frontend && npx playwright test              # E2E against your running local stack
+cd extension && npm test                        # 47 extension unit tests (Vitest)
 ```
 
 CI (GitHub Actions) runs Ruff, pytest, ESLint, `tsc`, Vitest, and the
@@ -149,7 +159,8 @@ refreshes are Adzuna-only by design).
 
 ```
 backend/     FastAPI app — models, services, /v1 routers, Alembic migrations, pytest suite
-frontend/    Next.js app — App Router pages, components, TanStack Query hooks, tests
+frontend/    Vite + React SPA — routes, components, TanStack Query hooks, tests
+extension/   Chrome MV3 "Job Catcher" — content scripts, side panel, esbuild bundle, tests
 specs/       Spec-driven development artifacts: spec, plan, tasks, contracts
 docs/        Architecture notes
 scripts/     setup.sh (one-time local setup)
@@ -164,6 +175,10 @@ the [specification](specs/001-job-search-mvp/spec.md) defines *what*, the
 ## Roadmap
 
 1. ✅ Core product: search, saved searches, collections, tracker, analytics, admin
-2. 🔜 Deploy to Vercel + Render + Supabase (live link here)
-3. 🔜 AI quick-apply: resume tailoring + cover letters + PDF export
-4. 🔜 Browser extension v1 "job catcher", then v2 form auto-fill
+2. ✅ AI quick-apply: resume tailoring + cover letters + Calibri-matched PDF, plus
+   "bring your own Claude"
+3. ✅ Browser extension "Job Catcher": save from any site, apply copilot,
+   Greenhouse/Lever auto-fill, Indeed auto-tracking
+4. 🔜 Deploy to Vercel + Render + Supabase (live link here)
+5. 🔜 Broaden auto-fill (Glassdoor + more ATSs); optional MCP connector so your
+   own Claude can read your jobs and write tailored docs back into the app
