@@ -222,9 +222,31 @@ export function ApplicationProfileCard() {
               </p>
             )}
           </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="ap-addr1">Address line 1</Label>
+            <Input
+              id="ap-addr1"
+              autoComplete="address-line1"
+              placeholder="Street address, P.O. Box…"
+              {...text("address_line1")}
+            />
+          </div>
+          <div className="space-y-1.5 sm:col-span-2">
+            <Label htmlFor="ap-addr2">Address line 2</Label>
+            <Input
+              id="ap-addr2"
+              autoComplete="address-line2"
+              placeholder="Apt, suite, unit (optional)"
+              {...text("address_line2")}
+            />
+          </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-city">City</Label>
-            <Input id="ap-city" {...text("city")} />
+            <Input id="ap-city" autoComplete="address-level2" {...text("city")} />
+          </div>
+          <div className="space-y-1.5">
+            <Label htmlFor="ap-zip">Postal / ZIP code</Label>
+            <Input id="ap-zip" autoComplete="postal-code" {...text("postal_code")} />
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="ap-state">State</Label>
