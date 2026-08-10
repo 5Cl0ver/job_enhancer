@@ -209,7 +209,72 @@ async function generateDocument(jobListingId, docType) {
     return { error: friendlyApiError(res.status, text) || "Generation failed" };
   }
   const doc = await res.json();
-  return { content: doc.edited_content || doc.content || "", docId: doc.id };
+  return {
+    content: doc.edited_content || doc.content || "",
+    docId: doc.id,
+    resumeFilename: active.filename || "",
+  };
+}
+
+// The "use my own Claude" bridge: build a ready-to-paste prompt (job + resume +
+// instructions) on the server so it matches exactly what NVIDIA is asked. The
+// user pastes it into their OWN Claude — no key, no ToS risk. Returns
+// { prompt, job_title, company } or { error }.
+async function buildPrompt(jobListingId, docType) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
+
+  const resumesRes = await fetch(`${cfg.API_BASE}/v1/ai/resumes`, { headers });
+  if (resumesRes.status === 401) return { error: "NOT_SIGNED_IN" };
+  const resumes = resumesRes.ok ? await resumesRes.json() : [];
+  const active = resumes.find((r) => r.is_active);
+  if (!active) return { error: "NO_RESUME" };
+
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/prompt`, {
+    method: "POST",
+    headers,
+    body: JSON.stringify({
+      resume_id: active.id,
+      document_type: docType === "resume" ? "resume" : "cover_letter",
+      job_listing_id: jobListingId,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return { error: friendlyApiError(res.status, text) || "Couldn't build the prompt" };
+  }
+  const d = await res.json();
+  return {
+    prompt: d.prompt,
+    jobTitle: d.job_title,
+    company: d.company,
+    resumeId: active.id,
+    resumeFilename: active.filename || "",
+  };
+}
+
+// Save text the user generated in their own Claude (the bridge) so it lands in
+// the same document + PDF pipeline as AI-generated docs. Returns { docId } or { error }.
+async function saveManualDocument(jobListingId, docType, content, resumeId) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/documents/manual`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      resume_id: resumeId || null,
+      document_type: docType === "resume" ? "resume" : "cover_letter",
+      job_listing_id: jobListingId,
+      content,
+    }),
+  });
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    return { error: friendlyApiError(res.status, text) || "Couldn't save" };
+  }
+  const doc = await res.json();
+  return { docId: doc.id };
 }
 
 // A generated document's PDF, base64-encoded so the panel can trigger a
@@ -292,6 +357,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await markApplied(msg.job)) });
       } else if (msg.type === "generateDocument") {
         const out = await generateDocument(msg.job_listing_id, msg.docType);
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
+      } else if (msg.type === "buildPrompt") {
+        const out = await buildPrompt(msg.job_listing_id, msg.docType);
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
+      } else if (msg.type === "saveManualDocument") {
+        const out = await saveManualDocument(
+          msg.job_listing_id,
+          msg.docType,
+          msg.content,
+          msg.resume_id,
+        );
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "getDocumentPdf") {
         const out = await getDocumentPdf(msg.docId);

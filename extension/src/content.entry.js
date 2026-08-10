@@ -65,6 +65,9 @@ if (ON_INDEED_APPLY) {
   let fired = false;
   let badge = null;
   let lastBadge = ""; // last text we wrote — so we never write the same thing twice
+  let saveBtn = null;
+  let saved = false;
+  let checkedKey = ""; // job we've already asked "already saved?" about
 
   const setBadge = (text, done) => {
     if (text === lastBadge) return; // CRITICAL: no redundant DOM writes
@@ -80,6 +83,45 @@ if (ON_INDEED_APPLY) {
     badge.dataset.state = done ? "saved" : "checking";
   };
 
+  const setSaveState = (state, text) => {
+    if (!saveBtn) return;
+    saveBtn.dataset.state = state;
+    saveBtn.textContent = text;
+  };
+
+  async function saveApplyJob() {
+    if (saved || !lastJob?.company || !lastJob?.title) return;
+    if (orphaned()) return;
+    setSaveState("busy", "Saving…");
+    const job = { title: lastJob.title, company: lastJob.company, url: location.href };
+    const res = await safeSend({ type: "saveJob", job }).catch(() => ({ ok: false }));
+    if (res?.ok || res?.error === "Already in your tracker") {
+      saved = true;
+      setSaveState("saved", "✓ Saved");
+    } else if (res?.error === "NOT_SIGNED_IN") {
+      setSaveState("error", "Open panel & sign in");
+      setTimeout(() => setSaveState("idle", "＋ Save this job"), 3000);
+    } else {
+      setSaveState("error", (res?.error || "Failed").slice(0, 22));
+      setTimeout(() => setSaveState("idle", "＋ Save this job"), 3000);
+    }
+  }
+
+  // A Save button on the apply page too — in case you forgot to save the job
+  // before hitting Apply. Sits just above the "Applying to…" badge.
+  const ensureSaveBtn = () => {
+    if (saveBtn && document.contains(saveBtn)) return;
+    injectStyles();
+    saveBtn = document.createElement("button");
+    saveBtn.id = "je-apply-save";
+    saveBtn.type = "button";
+    saveBtn.className = "je-btn je-fab";
+    saveBtn.style.bottom = "66px"; // stack above the badge (bottom: 20px)
+    saveBtn.addEventListener("click", saveApplyJob);
+    document.body.appendChild(saveBtn);
+    setSaveState("idle", "＋ Save this job");
+  };
+
   // A THROTTLED POLL — never a MutationObserver here. Observing body mutations
   // and then writing the badge (itself a mutation) looped infinitely and froze
   // Indeed's apply page. A 1.5s poll is plenty to catch step changes + submit.
@@ -90,6 +132,27 @@ if (ON_INDEED_APPLY) {
     }
     const header = scrapeApplyHeader(document);
     if (header?.company) lastJob = header;
+
+    // Once we can read the job, show the Save button and check if it's already
+    // saved (so the user doesn't create a duplicate).
+    if (lastJob?.company && lastJob?.title) {
+      ensureSaveBtn();
+      const key = `${lastJob.title}|${lastJob.company}`.toLowerCase();
+      if (!saved && key !== checkedKey) {
+        checkedKey = key;
+        safeSend({
+          type: "checkSaved",
+          job: { title: lastJob.title, company: lastJob.company, location: "" },
+        })
+          .then((r) => {
+            if (r?.saved) {
+              saved = true;
+              setSaveState("saved", "✓ Already saved");
+            }
+          })
+          .catch(() => {});
+      }
+    }
 
     if (!fired && isSubmitted(document)) {
       fired = true;

@@ -644,6 +644,9 @@
     let fired = false;
     let badge = null;
     let lastBadge = "";
+    let saveBtn = null;
+    let saved = false;
+    let checkedKey = "";
     const setBadge = (text, done) => {
       if (text === lastBadge) return;
       lastBadge = text;
@@ -657,6 +660,40 @@
       badge.textContent = text;
       badge.dataset.state = done ? "saved" : "checking";
     };
+    const setSaveState = (state, text) => {
+      if (!saveBtn) return;
+      saveBtn.dataset.state = state;
+      saveBtn.textContent = text;
+    };
+    async function saveApplyJob() {
+      if (saved || !lastJob?.company || !lastJob?.title) return;
+      if (orphaned()) return;
+      setSaveState("busy", "Saving\u2026");
+      const job = { title: lastJob.title, company: lastJob.company, url: location.href };
+      const res = await safeSend({ type: "saveJob", job }).catch(() => ({ ok: false }));
+      if (res?.ok || res?.error === "Already in your tracker") {
+        saved = true;
+        setSaveState("saved", "\u2713 Saved");
+      } else if (res?.error === "NOT_SIGNED_IN") {
+        setSaveState("error", "Open panel & sign in");
+        setTimeout(() => setSaveState("idle", "\uFF0B Save this job"), 3e3);
+      } else {
+        setSaveState("error", (res?.error || "Failed").slice(0, 22));
+        setTimeout(() => setSaveState("idle", "\uFF0B Save this job"), 3e3);
+      }
+    }
+    const ensureSaveBtn = () => {
+      if (saveBtn && document.contains(saveBtn)) return;
+      injectStyles();
+      saveBtn = document.createElement("button");
+      saveBtn.id = "je-apply-save";
+      saveBtn.type = "button";
+      saveBtn.className = "je-btn je-fab";
+      saveBtn.style.bottom = "66px";
+      saveBtn.addEventListener("click", saveApplyJob);
+      document.body.appendChild(saveBtn);
+      setSaveState("idle", "\uFF0B Save this job");
+    };
     const timer = setInterval(() => {
       if (orphaned()) {
         clearInterval(timer);
@@ -664,6 +701,23 @@
       }
       const header = scrapeApplyHeader(document);
       if (header?.company) lastJob = header;
+      if (lastJob?.company && lastJob?.title) {
+        ensureSaveBtn();
+        const key = `${lastJob.title}|${lastJob.company}`.toLowerCase();
+        if (!saved && key !== checkedKey) {
+          checkedKey = key;
+          safeSend({
+            type: "checkSaved",
+            job: { title: lastJob.title, company: lastJob.company, location: "" }
+          }).then((r) => {
+            if (r?.saved) {
+              saved = true;
+              setSaveState("saved", "\u2713 Already saved");
+            }
+          }).catch(() => {
+          });
+        }
+      }
       if (!fired && isSubmitted(document)) {
         fired = true;
         const company = lastJob?.company || submittedCompany(document) || "";

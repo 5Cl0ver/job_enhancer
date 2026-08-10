@@ -94,6 +94,9 @@
       .seg-btn.on { background: #7c3aed; color: #fff; }
       .cl-row { display: flex; gap: 6px; margin-top: 6px; }
       #cl-output { margin-top: 8px; font-size: 12px; }
+      #claude-settings { margin-top: 12px; }
+      #claude-settings summary { cursor: pointer; font-size: 11px; color: #6b7280; }
+      #claude-settings summary:hover { color: #7c3aed; }
 
       footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
       .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
@@ -134,6 +137,55 @@
         <div id="context-actions" class="ctx-actions"></div>
       </div>
 
+      <!-- Universal capture: save the job on ANY page (JSON-LD + heuristics),
+           not just Indeed/LinkedIn. On unknown sites you review + fix before saving. -->
+      <button id="save-page" class="primary" type="button">➕ Save the job on this page</button>
+      <p id="save-page-status" class="status"></p>
+
+      <!-- Review & fix what we captured, then save. Works on ANY site. -->
+      <div id="capture-edit" hidden>
+        <label for="cap-title">Title</label>
+        <input id="cap-title" type="text" />
+        <label for="cap-company">Company</label>
+        <input id="cap-company" type="text" />
+        <div class="cl-row">
+          <div style="flex: 1">
+            <label for="cap-location">Location</label>
+            <input id="cap-location" type="text" />
+          </div>
+          <label style="display: flex; align-items: center; gap: 6px; font-size: 12px; margin-top: 24px; white-space: nowrap">
+            <input id="cap-remote" type="checkbox" style="width: auto" /> Remote
+          </label>
+        </div>
+        <div class="cl-row">
+          <div style="flex: 1">
+            <label for="cap-min">Pay min</label>
+            <input id="cap-min" type="number" />
+          </div>
+          <div style="flex: 1">
+            <label for="cap-max">Pay max</label>
+            <input id="cap-max" type="number" />
+          </div>
+          <div style="flex: 1">
+            <label for="cap-period">Per</label>
+            <select id="cap-period">
+              <option value="">—</option>
+              <option value="yearly">year</option>
+              <option value="hourly">hour</option>
+            </select>
+          </div>
+        </div>
+        <label for="cap-desc">Description</label>
+        <textarea id="cap-desc" rows="5"></textarea>
+        <p class="sub" style="margin: 4px 0">
+          Tip: highlight the job description on the page before clicking Save — it grabs exactly that.
+        </p>
+        <div class="cl-row">
+          <button id="cap-save" class="primary" type="button">💾 Save job</button>
+          <button id="cap-cancel" class="ghost" type="button">Cancel</button>
+        </div>
+      </div>
+
       <div class="saved" id="saved-all-wrap">
         <h2>Your saved jobs <span id="saved-all-count" class="count"></span></h2>
         <ul id="saved-all-list"></ul>
@@ -147,8 +199,28 @@
           <button id="seg-cover" class="seg-btn on" type="button">Cover letter</button>
           <button id="seg-resume" class="seg-btn" type="button">Tailored resume</button>
         </div>
+
+        <!-- Which brain writes it: our free model, or the user's own Claude. -->
+        <label>Generate with</label>
+        <div class="seg" role="tablist">
+          <button id="eng-nvidia" class="seg-btn on" type="button" title="Free, instant, on our servers">🟢 Free AI</button>
+          <button id="eng-claude" class="seg-btn" type="button" title="Uses your own Claude — top quality, your subscription">🟣 My Claude</button>
+        </div>
+
         <button id="cl-generate" class="primary ai" type="button">✍️ Write cover letter</button>
         <p id="cl-status" class="status"></p>
+
+        <!-- Bridge: paste the prompt into your Claude, paste the answer back. -->
+        <div id="cl-paste-wrap" hidden>
+          <div class="cl-row" style="margin-top:2px">
+            <button id="cl-copy-prompt" class="ghost" type="button">📋 Copy prompt again</button>
+            <button id="cl-open-claude" class="ghost" type="button">↗ Open Claude</button>
+          </div>
+          <label for="cl-paste">Paste Claude's reply here</label>
+          <textarea id="cl-paste" rows="8" placeholder="Paste what Claude wrote, then Save to get a formatted PDF…"></textarea>
+          <button id="cl-paste-save" class="primary ai" type="button">💾 Save &amp; get PDF</button>
+        </div>
+
         <div id="cl-output-wrap" hidden>
           <textarea id="cl-output" rows="10" aria-label="Generated document"></textarea>
           <div class="cl-row">
@@ -157,6 +229,13 @@
             <button id="cl-regen" class="ghost" type="button">↻ Regenerate</button>
           </div>
         </div>
+
+        <details id="claude-settings">
+          <summary>⚙ Claude project (optional)</summary>
+          <label for="claude-url">Paste a Claude Project link. New drafts open there, and a job's resume + cover letter stay in one chat — just paste both into the same conversation.</label>
+          <input id="claude-url" type="text" placeholder="https://claude.ai/project/…" spellcheck="false" />
+          <p class="sub" style="margin:6px 0 0">Leave blank to use a normal Claude chat. If a Claude tab is already open, drafts reuse it instead of opening a new one.</p>
+        </details>
       </div>
 
       <footer>
