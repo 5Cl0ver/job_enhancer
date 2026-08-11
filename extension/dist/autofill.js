@@ -17,8 +17,8 @@
   function labelTextFor(el, doc) {
     const parts = [];
     if (el.id) {
-      const esc = globalThis.CSS?.escape ? globalThis.CSS.escape(el.id) : el.id;
-      const label = doc.querySelector(`label[for="${esc}"]`);
+      const esc2 = globalThis.CSS?.escape ? globalThis.CSS.escape(el.id) : el.id;
+      const label = doc.querySelector(`label[for="${esc2}"]`);
       if (label) parts.push(label.textContent);
     }
     const wrapping = el.closest?.("label");
@@ -118,8 +118,8 @@
   function visibleLabelFor(el, doc) {
     const parts = [];
     if (el.id) {
-      const esc = globalThis.CSS?.escape ? globalThis.CSS.escape(el.id) : el.id;
-      const label = doc.querySelector(`label[for="${esc}"]`);
+      const esc2 = globalThis.CSS?.escape ? globalThis.CSS.escape(el.id) : el.id;
+      const label = doc.querySelector(`label[for="${esc2}"]`);
       if (label) parts.push(label.textContent);
     }
     const wrapping = el.closest?.("label");
@@ -177,6 +177,8 @@
     else el.value = value;
     el.dispatchEvent(new Event("input", { bubbles: true }));
     el.dispatchEvent(new Event("change", { bubbles: true }));
+    el.dispatchEvent(new Event("blur", { bubbles: true }));
+    el.dispatchEvent(new Event("focusout", { bubbles: true }));
   }
   function setSelectValue(el, wanted) {
     const target = String(wanted).toLowerCase();
@@ -186,6 +188,8 @@
       if (text === target || value === target || text.startsWith(target)) {
         el.value = opt.value;
         el.dispatchEvent(new Event("change", { bubbles: true }));
+        el.dispatchEvent(new Event("blur", { bubbles: true }));
+        el.dispatchEvent(new Event("focusout", { bubbles: true }));
         return true;
       }
     }
@@ -261,14 +265,14 @@
       if (el.tagName === "SELECT") {
         if (setSelectValue(el, match.answer)) {
           el.classList.add(HIGHLIGHT);
-          learned.push(questionKey);
+          learned.push({ questionKey, questionText, value: match.answer });
         } else {
           remaining.push({ questionText, questionKey });
         }
       } else {
         setNativeValue(el, String(match.answer));
         el.classList.add(HIGHLIGHT);
-        learned.push(questionKey);
+        learned.push({ questionKey, questionText, value: match.answer });
       }
     }
     return { learned, remaining };
@@ -324,7 +328,31 @@
   var ATS = detectAts(location.href);
   var BTN_ID = "je-autofill-btn";
   var REMEMBER_ID = "je-remember-btn";
+  var PANEL_ID = "je-autofill-panel";
   var LABEL = "\u26A1 Autofill from Job Enhancer";
+  var LABELS = {
+    first_name: "First name",
+    last_name: "Last name",
+    full_name: "Full name",
+    email: "Email",
+    phone: "Phone",
+    address_line1: "Address line 1",
+    address_line2: "Address line 2",
+    city: "City",
+    state: "State",
+    postal_code: "Postal / ZIP",
+    country: "Country",
+    location: "Location",
+    linkedin_url: "LinkedIn",
+    github_url: "GitHub",
+    portfolio_url: "Portfolio / website",
+    authorized_to_work: "Work authorization",
+    requires_sponsorship: "Needs sponsorship",
+    willing_to_relocate: "Willing to relocate",
+    desired_salary: "Desired salary",
+    notice_period: "Notice period / start date",
+    resume_file: "R\xE9sum\xE9"
+  };
   if (document.body) {
     injectStyles();
     ensureButton();
@@ -387,11 +415,8 @@
       } catch {
       }
     }
-    const report = fillFields(
-      collectFields(document),
-      buildValues(res.profile, res.email),
-      resumeFile
-    );
+    const values = buildValues(res.profile, res.email);
+    const report = fillFields(collectFields(document), values, resumeFile);
     const custom = fillCustomAnswers(
       collectUnmapped(document),
       res.customAnswers || [],
@@ -405,6 +430,40 @@
       toAnswer ? `\u2713 Filled ${filled} \xB7 ${toAnswer} to answer` : `\u2713 Filled ${filled} \u2014 review & submit`
     );
     ensureRememberButton(toAnswer > 0 || custom.learned.length > 0);
+    showAutofillPanel({
+      filled: report.filled.map((k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) })),
+      learned: custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+      toAnswer: custom.remaining.map((r) => ({ label: r.questionText })),
+      missing: report.attention.filter((k) => k !== "resume_file" || !resumeFile).map((k) => ({ label: LABELS[k] || k }))
+    });
+  }
+  function displayValue(key, values, resumeFile) {
+    if (key === "resume_file") return resumeFile ? resumeFile.name || "attached" : "";
+    const v = values[key];
+    if (typeof v === "boolean") return v ? "Yes" : "No";
+    return String(v ?? "");
+  }
+  function esc(s) {
+    return String(s ?? "").replace(
+      /[&<>"]/g,
+      (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]
+    );
+  }
+  function showAutofillPanel(data) {
+    document.getElementById(PANEL_ID)?.remove();
+    const trunc = (s) => s.length > 42 ? s.slice(0, 41) + "\u2026" : s;
+    const section = (title, items, cls, withValue) => {
+      if (!items.length) return "";
+      const rows = items.map(
+        (i) => `<div class="je-row"><span>${esc(trunc(i.label))}</span>${withValue && i.value ? `<em>${esc(trunc(i.value))}</em>` : ""}</div>`
+      ).join("");
+      return `<div class="je-sec"><div class="je-sec-h ${cls}">${title} (${items.length})</div>${rows}</div>`;
+    };
+    const panel = document.createElement("div");
+    panel.id = PANEL_ID;
+    panel.innerHTML = `<div class="je-p-head"><b>Autofill summary</b><button class="je-p-close" type="button" aria-label="Close">\u2715</button></div><div class="je-p-body">` + section("Filled", data.filled, "ok", true) + section("Learned", data.learned, "learn", true) + section("Answer these", data.toAnswer, "warn", false) + section("No data saved", data.missing, "muted", false) + `</div>`;
+    document.body.appendChild(panel);
+    panel.querySelector(".je-p-close").addEventListener("click", () => panel.remove());
   }
   function ensureRememberButton(show) {
     let rb = document.getElementById(REMEMBER_ID);
@@ -509,6 +568,37 @@
     #${REMEMBER_ID}[data-state="done"] { background: #16a34a; }
     #${REMEMBER_ID}[data-state="error"] { background: #dc2626; }
     .je-autofilled { outline: 2px solid #7c3aed55 !important; border-radius: 4px; }
+    #${PANEL_ID} {
+      position: fixed; right: 20px; bottom: 112px; z-index: 2147483647;
+      width: 300px; max-height: 46vh; overflow: auto;
+      background: #fff; color: #111827; border-radius: 12px;
+      box-shadow: 0 12px 34px rgba(0,0,0,.28);
+      font: 13px/1.45 system-ui, -apple-system, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) { #${PANEL_ID} { background: #1f2937; color: #f3f4f6; } }
+    #${PANEL_ID} .je-p-head {
+      position: sticky; top: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 10px 12px; background: inherit;
+      border-bottom: 1px solid rgba(148,163,184,.3);
+    }
+    #${PANEL_ID} .je-p-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
+    #${PANEL_ID} .je-p-body { padding: 6px 12px 12px; }
+    #${PANEL_ID} .je-sec-h {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; margin: 10px 0 4px;
+    }
+    #${PANEL_ID} .je-sec-h.ok { color: #16a34a; }
+    #${PANEL_ID} .je-sec-h.learn { color: #2563eb; }
+    #${PANEL_ID} .je-sec-h.warn { color: #d97706; }
+    #${PANEL_ID} .je-sec-h.muted { color: #9ca3af; }
+    #${PANEL_ID} .je-row {
+      display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
+      border-bottom: 1px solid rgba(148,163,184,.15);
+    }
+    #${PANEL_ID} .je-row em {
+      color: #6b7280; font-style: normal; text-align: right;
+      max-width: 55%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    }
   `;
     document.documentElement.appendChild(style);
   }

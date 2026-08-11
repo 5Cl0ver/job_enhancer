@@ -237,7 +237,8 @@ describe("learn-as-you-go — custom question memory", () => {
     ];
     const { learned, remaining } = fillCustomAnswers(collectUnmapped(doc), mem, matchAnswer);
     expect(doc.querySelector("#q1").value).toBe("3");
-    expect(learned).toContain("years of react experience");
+    expect(learned.map((l) => l.questionKey)).toContain("years of react experience");
+    expect(learned[0].value).toBe("3");
     const remKeys = remaining.map((r) => r.questionKey);
     expect(remKeys).toContain("how did you hear about us");
     expect(remKeys).toContain("what is your favorite programming language");

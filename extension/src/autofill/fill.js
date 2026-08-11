@@ -18,6 +18,11 @@ export function setNativeValue(el, value) {
   else el.value = value;
   el.dispatchEvent(new Event("input", { bubbles: true }));
   el.dispatchEvent(new Event("change", { bubbles: true }));
+  // CRITICAL: many forms only mark a field "touched"/valid on blur, so
+  // Save/Continue reports it empty even though the value is visibly there.
+  // Fire blur + focusout (React listens for focusout) so validation runs.
+  el.dispatchEvent(new Event("blur", { bubbles: true }));
+  el.dispatchEvent(new Event("focusout", { bubbles: true }));
 }
 
 /** Pick the <select> option matching the wanted text ("Yes"/"No"/a state…). */
@@ -29,6 +34,8 @@ export function setSelectValue(el, wanted) {
     if (text === target || value === target || text.startsWith(target)) {
       el.value = opt.value;
       el.dispatchEvent(new Event("change", { bubbles: true }));
+      el.dispatchEvent(new Event("blur", { bubbles: true }));
+      el.dispatchEvent(new Event("focusout", { bubbles: true }));
       return true;
     }
   }
@@ -134,14 +141,14 @@ export function fillCustomAnswers(unmapped, answers, matchFn) {
     if (el.tagName === "SELECT") {
       if (setSelectValue(el, match.answer)) {
         el.classList.add(HIGHLIGHT);
-        learned.push(questionKey);
+        learned.push({ questionKey, questionText, value: match.answer });
       } else {
         remaining.push({ questionText, questionKey });
       }
     } else {
       setNativeValue(el, String(match.answer));
       el.classList.add(HIGHLIGHT);
-      learned.push(questionKey);
+      learned.push({ questionKey, questionText, value: match.answer });
     }
   }
   return { learned, remaining };
