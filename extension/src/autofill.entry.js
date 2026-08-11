@@ -7,8 +7,21 @@
 //
 // Auto-track rides along: when the user submits, tell the backend so the
 // matching saved job moves to Applied by itself.
-import { detectAts, collectFields, collectUnmapped, matchAnswer } from "./autofill/mapper.js";
-import { fillFields, buildValues, fillCustomAnswers, captureAnswers } from "./autofill/fill.js";
+import {
+  detectAts,
+  collectFields,
+  collectUnmapped,
+  collectRadioGroups,
+  matchAnswer,
+} from "./autofill/mapper.js";
+import {
+  fillFields,
+  buildValues,
+  fillCustomAnswers,
+  fillRadioGroups,
+  captureAnswers,
+  captureRadioAnswers,
+} from "./autofill/fill.js";
 
 const ATS = detectAts(location.href); // still used for submit auto-tracking
 const BTN_ID = "je-autofill-btn";
@@ -44,7 +57,9 @@ if (document.body) {
 }
 
 function hasFillableForm() {
-  return collectFields(document).length >= 2; // a real application form, not a search box
+  // Count text/select fields AND radio groups, so question-only steps (e.g.
+  // Amazon's "Work Eligibility") still show the button.
+  return collectFields(document).length + collectRadioGroups(document).length >= 2;
 }
 
 function ensureButton() {
@@ -109,14 +124,15 @@ async function run(btn) {
 
   // Learn-as-you-go: fill custom questions we've learned before, and count the
   // ones we still don't know (the user answers those, then hits Remember).
-  const custom = fillCustomAnswers(
-    collectUnmapped(document),
-    res.customAnswers || [],
-    matchAnswer,
-  );
+  const answers = res.customAnswers || [];
+  const custom = fillCustomAnswers(collectUnmapped(document), answers, matchAnswer);
+  // Yes/no radio questions (work eligibility, "previously applied?", etc.).
+  const radios = fillRadioGroups(collectRadioGroups(document), values, answers, matchAnswer);
 
-  const filled = report.filled.length + custom.learned.length;
-  const toAnswer = custom.remaining.length;
+  const filled =
+    report.filled.length + custom.learned.length + radios.filled.length + radios.learned.length;
+  const toAnswer = custom.remaining.length + radios.remaining.length;
+  const anyLearned = custom.learned.length + radios.learned.length;
   setState(
     btn,
     "done",
@@ -124,14 +140,20 @@ async function run(btn) {
       ? `✓ Filled ${filled} · ${toAnswer} to answer`
       : `✓ Filled ${filled} — review & submit`,
   );
-  // Offer to remember whenever there are unmapped questions on the page.
-  ensureRememberButton(toAnswer > 0 || custom.learned.length > 0);
+  ensureRememberButton(toAnswer > 0 || anyLearned > 0);
 
   // The "what did it do?" popout — exactly what was filled, learned, and left.
+  const val = (k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) });
   showAutofillPanel({
-    filled: report.filled.map((k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) })),
-    learned: custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
-    toAnswer: custom.remaining.map((r) => ({ label: r.questionText })),
+    filled: [...report.filled.map(val), ...radios.filled.map(val)],
+    learned: [
+      ...custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+      ...radios.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+    ],
+    toAnswer: [
+      ...custom.remaining.map((r) => ({ label: r.questionText })),
+      ...radios.remaining.map((r) => ({ label: r.questionText })),
+    ],
     missing: report.attention
       .filter((k) => k !== "resume_file" || !resumeFile)
       .map((k) => ({ label: LABELS[k] || k })),
@@ -204,7 +226,10 @@ function ensureRememberButton(show) {
 async function rememberAnswers(rb) {
   rb.dataset.state = "busy";
   rb.textContent = "Saving…";
-  const answers = captureAnswers(collectUnmapped(document));
+  const answers = [
+    ...captureAnswers(collectUnmapped(document)),
+    ...captureRadioAnswers(collectRadioGroups(document)),
+  ];
   if (!answers.length) {
     rb.dataset.state = "";
     rb.textContent = "Answer some questions first";

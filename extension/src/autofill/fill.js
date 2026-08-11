@@ -42,6 +42,27 @@ export function setSelectValue(el, wanted) {
   return false;
 }
 
+/** Check the radio in a group whose label/value matches `wanted` ("Yes"/"No"…). */
+export function setRadioValue(options, wanted) {
+  const target = String(wanted).toLowerCase().trim();
+  if (!target) return false;
+  for (const { el, label } of options) {
+    const l = (label || "").toLowerCase().trim();
+    const v = (el.value || "").toLowerCase().trim();
+    if (l === target || v === target || l.startsWith(target) || target.startsWith(l)) {
+      if (!el.checked) {
+        el.checked = true;
+        el.dispatchEvent(new Event("click", { bubbles: true }));
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      el.classList.add(HIGHLIGHT);
+      return true;
+    }
+  }
+  return false;
+}
+
 /** Attach a File to a file input via DataTransfer (the drag-and-drop path —
  *  the one way scripts may hand a file input data they legitimately hold). */
 export function attachFile(el, file) {
@@ -173,6 +194,60 @@ export function captureAnswers(unmapped) {
     out.push({
       question_key: questionKey,
       question_text: questionText.slice(0, 500),
+      answer,
+    });
+  }
+  return out;
+}
+
+/**
+ * Fill yes/no RADIO groups: profile-mapped ones from the vault bool, custom
+ * ones from learned answers. Never changes a group the user already answered.
+ * @returns {{filled: string[], learned: Array, remaining: Array}}
+ */
+export function fillRadioGroups(groups, values, answers, matchFn) {
+  const filled = [];
+  const learned = [];
+  const remaining = [];
+  for (const g of groups) {
+    if (g.options.some((o) => o.el.checked)) continue; // respect the user
+    let wanted = null;
+    let isLearned = false;
+    if (g.key) {
+      const v = values[g.key];
+      wanted = v === true ? "Yes" : v === false ? "No" : null;
+    } else {
+      const m = matchFn(g.questionKey, answers);
+      if (m) {
+        wanted = m.answer;
+        isLearned = true;
+      }
+    }
+    if (wanted == null || wanted === "") {
+      if (!g.key) remaining.push({ questionText: g.question, questionKey: g.questionKey });
+      continue;
+    }
+    if (setRadioValue(g.options, wanted)) {
+      if (isLearned) learned.push({ questionKey: g.questionKey, questionText: g.question, value: wanted });
+      else filled.push(g.key);
+    } else if (!g.key) {
+      remaining.push({ questionText: g.question, questionKey: g.questionKey });
+    }
+  }
+  return { filled, learned, remaining };
+}
+
+/** Capture the user's radio choices for CUSTOM questions (to remember them). */
+export function captureRadioAnswers(groups) {
+  const out = [];
+  for (const g of groups) {
+    if (g.key) continue; // profile-driven, not a learned answer
+    const checked = g.options.find((o) => o.el.checked);
+    const answer = (checked?.label || checked?.el.value || "").trim();
+    if (!answer) continue;
+    out.push({
+      question_key: g.questionKey,
+      question_text: g.question.slice(0, 500),
       answer,
     });
   }

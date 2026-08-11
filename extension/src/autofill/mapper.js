@@ -80,7 +80,7 @@ const RULES = [
   { key: "postal_code", re: /postal|zip/i },
   { key: "country", re: /country/i },
   { key: "state", re: /\bstate\b|province|region/i },
-  { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*work|eligib[\s\S]*work/i },
+  { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ|begin)/i },
   { key: "requires_sponsorship", re: /sponsor/i },
   { key: "willing_to_relocate", re: /relocat/i },
   { key: "desired_salary", re: /salary|compensation[\s_-]*expect/i },
@@ -107,14 +107,25 @@ export function keyFor(el, doc) {
   if (type === "file") {
     return /resume|cv\b/i.test(text) ? "resume_file" : null;
   }
-  if (!text || SKIP.test(text)) return null;
-
   // 2) label / placeholder / name regex.
+  return keyForText(text);
+}
+
+/** The profile key for a piece of TEXT (a label or a radio-group question). */
+export function keyForText(text) {
+  if (!text || SKIP.test(text)) return null;
   for (const rule of RULES) {
     if (rule.re.test(text)) return rule.key;
   }
   return null;
 }
+
+// Profile keys that are yes/no — the ones a radio group can answer.
+const BOOL_KEYS = new Set([
+  "authorized_to_work",
+  "requires_sponsorship",
+  "willing_to_relocate",
+]);
 
 /**
  * Every mappable control on the page.
@@ -185,6 +196,51 @@ export function collectUnmapped(doc) {
     if (seen.has(questionKey)) continue;
     seen.add(questionKey);
     out.push({ el, questionText, questionKey });
+  }
+  return out;
+}
+
+/** The question text for a radio group (fieldset legend, else the smallest
+ *  container around the options minus the option labels). */
+function groupQuestion(els, options, doc) {
+  const fs = els[0].closest?.("fieldset");
+  const legend = fs?.querySelector?.("legend");
+  if (legend?.textContent?.trim()) {
+    return legend.textContent.replace(/\s+/g, " ").trim().slice(0, 500);
+  }
+  let a = els[0];
+  while (a && !els.every((e) => a.contains?.(e))) a = a.parentElement;
+  a = a || doc.body;
+  let text = (a.textContent || "").replace(/\s+/g, " ").trim();
+  for (const o of options) {
+    if (o.label) text = text.split(o.label).join(" ");
+  }
+  return text.replace(/\s+/g, " ").trim().slice(0, 500);
+}
+
+/**
+ * Radio groups (yes/no questions) mapped to a profile bool key, or left as a
+ * custom question we can learn. Checkboxes are intentionally excluded (never
+ * auto-agree to legal terms).
+ * @returns {Array<{question, questionKey, key: string|null, options: Array<{el, label}>}>}
+ */
+export function collectRadioGroups(doc) {
+  const byName = new Map();
+  for (const el of doc.querySelectorAll('input[type="radio"]')) {
+    const name = el.getAttribute("name");
+    if (!name) continue;
+    if (!byName.has(name)) byName.set(name, []);
+    byName.get(name).push(el);
+  }
+  const out = [];
+  for (const els of byName.values()) {
+    if (els.length < 2) continue; // a real choice needs >=2 options
+    const options = els.map((el) => ({ el, label: visibleLabelFor(el, doc) || el.value || "" }));
+    const question = groupQuestion(els, options, doc);
+    const questionKey = normalizeQuestion(question);
+    if (questionKey.length < 3) continue;
+    const k = keyForText(question);
+    out.push({ question, questionKey, key: BOOL_KEYS.has(k) ? k : null, options });
   }
   return out;
 }

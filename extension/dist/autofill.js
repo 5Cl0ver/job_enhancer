@@ -67,7 +67,7 @@
     { key: "postal_code", re: /postal|zip/i },
     { key: "country", re: /country/i },
     { key: "state", re: /\bstate\b|province|region/i },
-    { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*work|eligib[\s\S]*work/i },
+    { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ|begin)/i },
     { key: "requires_sponsorship", re: /sponsor/i },
     { key: "willing_to_relocate", re: /relocat/i },
     { key: "desired_salary", re: /salary|compensation[\s_-]*expect/i },
@@ -87,12 +87,20 @@
     if (type === "file") {
       return /resume|cv\b/i.test(text) ? "resume_file" : null;
     }
+    return keyForText(text);
+  }
+  function keyForText(text) {
     if (!text || SKIP.test(text)) return null;
     for (const rule of RULES) {
       if (rule.re.test(text)) return rule.key;
     }
     return null;
   }
+  var BOOL_KEYS = /* @__PURE__ */ new Set([
+    "authorized_to_work",
+    "requires_sponsorship",
+    "willing_to_relocate"
+  ]);
   function collectFields(doc) {
     const out = [];
     const seen = /* @__PURE__ */ new Set();
@@ -147,6 +155,41 @@
     }
     return out;
   }
+  function groupQuestion(els, options, doc) {
+    const fs = els[0].closest?.("fieldset");
+    const legend = fs?.querySelector?.("legend");
+    if (legend?.textContent?.trim()) {
+      return legend.textContent.replace(/\s+/g, " ").trim().slice(0, 500);
+    }
+    let a = els[0];
+    while (a && !els.every((e) => a.contains?.(e))) a = a.parentElement;
+    a = a || doc.body;
+    let text = (a.textContent || "").replace(/\s+/g, " ").trim();
+    for (const o of options) {
+      if (o.label) text = text.split(o.label).join(" ");
+    }
+    return text.replace(/\s+/g, " ").trim().slice(0, 500);
+  }
+  function collectRadioGroups(doc) {
+    const byName = /* @__PURE__ */ new Map();
+    for (const el of doc.querySelectorAll('input[type="radio"]')) {
+      const name = el.getAttribute("name");
+      if (!name) continue;
+      if (!byName.has(name)) byName.set(name, []);
+      byName.get(name).push(el);
+    }
+    const out = [];
+    for (const els of byName.values()) {
+      if (els.length < 2) continue;
+      const options = els.map((el) => ({ el, label: visibleLabelFor(el, doc) || el.value || "" }));
+      const question = groupQuestion(els, options, doc);
+      const questionKey = normalizeQuestion(question);
+      if (questionKey.length < 3) continue;
+      const k = keyForText(question);
+      out.push({ question, questionKey, key: BOOL_KEYS.has(k) ? k : null, options });
+    }
+    return out;
+  }
   function matchAnswer(questionKey, answers) {
     if (!answers?.length) return null;
     const exact = answers.find((a) => a.question_key === questionKey);
@@ -190,6 +233,25 @@
         el.dispatchEvent(new Event("change", { bubbles: true }));
         el.dispatchEvent(new Event("blur", { bubbles: true }));
         el.dispatchEvent(new Event("focusout", { bubbles: true }));
+        return true;
+      }
+    }
+    return false;
+  }
+  function setRadioValue(options, wanted) {
+    const target = String(wanted).toLowerCase().trim();
+    if (!target) return false;
+    for (const { el, label } of options) {
+      const l = (label || "").toLowerCase().trim();
+      const v = (el.value || "").toLowerCase().trim();
+      if (l === target || v === target || l.startsWith(target) || target.startsWith(l)) {
+        if (!el.checked) {
+          el.checked = true;
+          el.dispatchEvent(new Event("click", { bubbles: true }));
+          el.dispatchEvent(new Event("input", { bubbles: true }));
+          el.dispatchEvent(new Event("change", { bubbles: true }));
+        }
+        el.classList.add(HIGHLIGHT);
         return true;
       }
     }
@@ -296,6 +358,52 @@
     }
     return out;
   }
+  function fillRadioGroups(groups, values, answers, matchFn) {
+    const filled = [];
+    const learned = [];
+    const remaining = [];
+    for (const g of groups) {
+      if (g.options.some((o) => o.el.checked)) continue;
+      let wanted = null;
+      let isLearned = false;
+      if (g.key) {
+        const v = values[g.key];
+        wanted = v === true ? "Yes" : v === false ? "No" : null;
+      } else {
+        const m = matchFn(g.questionKey, answers);
+        if (m) {
+          wanted = m.answer;
+          isLearned = true;
+        }
+      }
+      if (wanted == null || wanted === "") {
+        if (!g.key) remaining.push({ questionText: g.question, questionKey: g.questionKey });
+        continue;
+      }
+      if (setRadioValue(g.options, wanted)) {
+        if (isLearned) learned.push({ questionKey: g.questionKey, questionText: g.question, value: wanted });
+        else filled.push(g.key);
+      } else if (!g.key) {
+        remaining.push({ questionText: g.question, questionKey: g.questionKey });
+      }
+    }
+    return { filled, learned, remaining };
+  }
+  function captureRadioAnswers(groups) {
+    const out = [];
+    for (const g of groups) {
+      if (g.key) continue;
+      const checked = g.options.find((o) => o.el.checked);
+      const answer = (checked?.label || checked?.el.value || "").trim();
+      if (!answer) continue;
+      out.push({
+        question_key: g.questionKey,
+        question_text: g.question.slice(0, 500),
+        answer
+      });
+    }
+    return out;
+  }
   function buildValues(profile, email) {
     const p = profile || {};
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ");
@@ -364,7 +472,7 @@
     watchForSubmit();
   }
   function hasFillableForm() {
-    return collectFields(document).length >= 2;
+    return collectFields(document).length + collectRadioGroups(document).length >= 2;
   }
   function ensureButton() {
     let btn = document.getElementById(BTN_ID);
@@ -417,23 +525,29 @@
     }
     const values = buildValues(res.profile, res.email);
     const report = fillFields(collectFields(document), values, resumeFile);
-    const custom = fillCustomAnswers(
-      collectUnmapped(document),
-      res.customAnswers || [],
-      matchAnswer
-    );
-    const filled = report.filled.length + custom.learned.length;
-    const toAnswer = custom.remaining.length;
+    const answers = res.customAnswers || [];
+    const custom = fillCustomAnswers(collectUnmapped(document), answers, matchAnswer);
+    const radios = fillRadioGroups(collectRadioGroups(document), values, answers, matchAnswer);
+    const filled = report.filled.length + custom.learned.length + radios.filled.length + radios.learned.length;
+    const toAnswer = custom.remaining.length + radios.remaining.length;
+    const anyLearned = custom.learned.length + radios.learned.length;
     setState(
       btn,
       "done",
       toAnswer ? `\u2713 Filled ${filled} \xB7 ${toAnswer} to answer` : `\u2713 Filled ${filled} \u2014 review & submit`
     );
-    ensureRememberButton(toAnswer > 0 || custom.learned.length > 0);
+    ensureRememberButton(toAnswer > 0 || anyLearned > 0);
+    const val = (k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) });
     showAutofillPanel({
-      filled: report.filled.map((k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) })),
-      learned: custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
-      toAnswer: custom.remaining.map((r) => ({ label: r.questionText })),
+      filled: [...report.filled.map(val), ...radios.filled.map(val)],
+      learned: [
+        ...custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+        ...radios.learned.map((l) => ({ label: l.questionText, value: String(l.value) }))
+      ],
+      toAnswer: [
+        ...custom.remaining.map((r) => ({ label: r.questionText })),
+        ...radios.remaining.map((r) => ({ label: r.questionText }))
+      ],
       missing: report.attention.filter((k) => k !== "resume_file" || !resumeFile).map((k) => ({ label: LABELS[k] || k }))
     });
   }
@@ -482,7 +596,10 @@
   async function rememberAnswers(rb) {
     rb.dataset.state = "busy";
     rb.textContent = "Saving\u2026";
-    const answers = captureAnswers(collectUnmapped(document));
+    const answers = [
+      ...captureAnswers(collectUnmapped(document)),
+      ...captureRadioAnswers(collectRadioGroups(document))
+    ];
     if (!answers.length) {
       rb.dataset.state = "";
       rb.textContent = "Answer some questions first";

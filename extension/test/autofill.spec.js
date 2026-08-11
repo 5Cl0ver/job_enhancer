@@ -12,6 +12,7 @@ import {
   keyFor,
   normalizeQuestion,
   collectUnmapped,
+  collectRadioGroups,
   matchAnswer,
 } from "../src/autofill/mapper.js";
 import {
@@ -20,7 +21,9 @@ import {
   setNativeValue,
   setSelectValue,
   fillCustomAnswers,
+  fillRadioGroups,
   captureAnswers,
+  captureRadioAnswers,
 } from "../src/autofill/fill.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -254,6 +257,67 @@ describe("learn-as-you-go — custom question memory", () => {
     expect(byKey["what is your favorite programming language"]).toBe("2026-09-01");
     // Empty question (q1) isn't captured.
     expect(byKey["years of react experience"]).toBeUndefined();
+  });
+});
+
+describe("radio groups — yes/no questions (e.g. Amazon Work Eligibility)", () => {
+  function radioForm() {
+    const w = new Window();
+    w.document.write(`
+      <form>
+        <div>
+          <p>If offered employment by Amazon, would you be legally eligible to begin employment immediately?</p>
+          <label><input type="radio" name="elig" value="Yes" />Yes</label>
+          <label><input type="radio" name="elig" value="No" />No</label>
+        </div>
+        <div>
+          <p>Have you previously applied to Amazon or any subsidiary?</p>
+          <label><input type="radio" name="prev" value="Yes" />Yes</label>
+          <label><input type="radio" name="prev" value="No" />No</label>
+        </div>
+      </form>`);
+    return w.document;
+  }
+
+  it("maps a work-eligibility group to the profile, leaves others custom", () => {
+    const groups = collectRadioGroups(radioForm());
+    const elig = groups.find((g) => g.questionKey.includes("legally eligible"));
+    const prev = groups.find((g) => g.questionKey.includes("previously applied"));
+    expect(elig.key).toBe("authorized_to_work");
+    expect(prev.key).toBeNull(); // custom → learnable
+    expect(elig.options.map((o) => o.label)).toEqual(["Yes", "No"]);
+  });
+
+  it("fills profile yes/no + learned yes/no, and reports the rest", () => {
+    const doc = radioForm();
+    const groups = collectRadioGroups(doc);
+    const mem = [
+      {
+        question_key: normalizeQuestion("Have you previously applied to Amazon or any subsidiary?"),
+        answer: "No",
+      },
+    ];
+    const { filled, learned } = fillRadioGroups(
+      groups,
+      buildValues({ authorized_to_work: true }, ""),
+      mem,
+      matchAnswer,
+    );
+    expect(doc.querySelector('input[name="elig"][value="Yes"]').checked).toBe(true);
+    expect(doc.querySelector('input[name="prev"][value="No"]').checked).toBe(true);
+    expect(filled).toContain("authorized_to_work");
+    expect(learned[0].value).toBe("No");
+  });
+
+  it("captures the user's radio choice for CUSTOM questions only", () => {
+    const doc = radioForm();
+    doc.querySelector('input[name="prev"][value="Yes"]').checked = true;
+    doc.querySelector('input[name="elig"][value="No"]').checked = true;
+    const captured = captureRadioAnswers(collectRadioGroups(doc));
+    // Only the custom "previously applied" question is remembered (elig is profile-driven).
+    expect(captured).toHaveLength(1);
+    expect(captured[0].answer).toBe("Yes");
+    expect(captured[0].question_key).toContain("previously applied");
   });
 });
 
