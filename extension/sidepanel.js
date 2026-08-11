@@ -184,6 +184,12 @@ function renderContext(ctx) {
     }
   } else {
     const autoTracked = ctx.ats === "Greenhouse" || ctx.ats === "Lever";
+    // A reliable trigger that doesn't depend on the on-page button appearing.
+    const fill = document.createElement("button");
+    fill.className = "mark-applied";
+    fill.textContent = "⚡ Autofill this page";
+    fill.addEventListener("click", () => autofillActiveTab(fill));
+    actions.append(fill);
     const note = document.createElement("span");
     note.textContent = autoTracked
       ? "Use the purple ⚡ Autofill button on the page — submit is tracked automatically."
@@ -210,6 +216,27 @@ function renderContext(ctx) {
 
 async function refreshContext() {
   renderContext(await detectContext());
+}
+
+// Trigger the on-page autofill from the panel (works even if the on-page button
+// never appeared). Messages the content script running in the active tab.
+async function autofillActiveTab(btn) {
+  btn.disabled = true;
+  btn.textContent = "Filling…";
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch {
+    /* ignore */
+  }
+  const res = tab?.id
+    ? await chrome.tabs.sendMessage(tab.id, { type: "runAutofill" }).catch(() => null)
+    : null;
+  btn.disabled = false;
+  btn.textContent = res?.ok ? "✓ Filled — check the page" : "⚡ Autofill this page";
+  setTimeout(() => {
+    if (btn) btn.textContent = "⚡ Autofill this page";
+  }, 4000);
 }
 
 // ---------------------------------------------------------------------------

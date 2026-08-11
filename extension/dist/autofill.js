@@ -473,6 +473,16 @@
     }).observe(document.body, { childList: true, subtree: true });
     watchForSubmit();
   }
+  try {
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (msg?.type !== "runAutofill") return;
+      if (window !== window.top && !hasFillableForm()) return;
+      const btn = forceButton();
+      run(btn).then(() => sendResponse({ ok: true })).catch(() => sendResponse({ ok: false }));
+      return true;
+    });
+  } catch {
+  }
   function hasFillableForm() {
     return collectFields(document).length + collectRadioGroups(document).length >= 2;
   }
@@ -489,6 +499,18 @@
     btn.textContent = LABEL;
     btn.addEventListener("click", () => run(btn));
     document.body.appendChild(btn);
+  }
+  function forceButton() {
+    const existing = document.getElementById(BTN_ID);
+    if (existing) return existing;
+    injectStyles();
+    const btn = document.createElement("button");
+    btn.id = BTN_ID;
+    btn.type = "button";
+    btn.textContent = LABEL;
+    btn.addEventListener("click", () => run(btn));
+    document.body.appendChild(btn);
+    return btn;
   }
   function safeSend(msg) {
     try {

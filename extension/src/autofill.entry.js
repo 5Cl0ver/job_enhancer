@@ -57,6 +57,22 @@ if (document.body) {
   watchForSubmit();
 }
 
+// The side panel can trigger autofill directly — reliable even when the on-page
+// button hasn't appeared (sparse pages). Only the frame with the form responds.
+try {
+  chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+    if (msg?.type !== "runAutofill") return;
+    if (window !== window.top && !hasFillableForm()) return; // skip empty iframes
+    const btn = forceButton();
+    run(btn)
+      .then(() => sendResponse({ ok: true }))
+      .catch(() => sendResponse({ ok: false }));
+    return true; // keep the channel open for the async response
+  });
+} catch {
+  /* no runtime (orphaned) */
+}
+
 function hasFillableForm() {
   // Count text/select fields AND radio groups, so question-only steps (e.g.
   // Amazon's "Work Eligibility") still show the button.
@@ -76,6 +92,20 @@ function ensureButton() {
   btn.textContent = LABEL;
   btn.addEventListener("click", () => run(btn));
   document.body.appendChild(btn);
+}
+
+/** Create the button unconditionally (used by the panel-triggered autofill). */
+function forceButton() {
+  const existing = document.getElementById(BTN_ID);
+  if (existing) return existing;
+  injectStyles();
+  const btn = document.createElement("button");
+  btn.id = BTN_ID;
+  btn.type = "button";
+  btn.textContent = LABEL;
+  btn.addEventListener("click", () => run(btn));
+  document.body.appendChild(btn);
+  return btn;
 }
 
 // Orphan-safe messaging: after an extension update, this script's copy in an
