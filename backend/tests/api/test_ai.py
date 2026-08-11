@@ -101,6 +101,37 @@ async def test_generate_requires_existing_resume(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_autofill_map(client: AsyncClient):
+    """The AI field mapper returns {id: value}; the LLM is mocked."""
+    with patch(
+        "app.api.v1.ai.ai_service.map_fields",
+        new=AsyncMock(return_value={"f0": "Bachelor's degree"}),
+    ):
+        r = await client.post(
+            "/v1/ai/autofill-map",
+            json={
+                "fields": [
+                    {
+                        "id": "f0",
+                        "label": "Highest level of education",
+                        "type": "select",
+                        "options": ["High school", "Bachelor's degree", "Master's"],
+                    }
+                ]
+            },
+        )
+    assert r.status_code == 200
+    assert r.json()["mappings"]["f0"] == "Bachelor's degree"
+
+
+@pytest.mark.asyncio
+async def test_autofill_map_empty_is_noop(client: AsyncClient):
+    r = await client.post("/v1/ai/autofill-map", json={"fields": []})
+    assert r.status_code == 200
+    assert r.json()["mappings"] == {}
+
+
+@pytest.mark.asyncio
 async def test_build_prompt_bridge(client: AsyncClient):
     """/prompt returns a self-contained prompt (no LLM call) for the user's own
     Claude — it must include the resume text and the doc-type instructions."""

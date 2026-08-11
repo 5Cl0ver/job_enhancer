@@ -6,7 +6,9 @@ Constitution Principle III requires logging model_used and generation_ms.
 """
 
 import asyncio
+import json
 import logging
+import re
 import time
 
 from fastapi import HTTPException
@@ -170,6 +172,53 @@ async def _invoke(system: str, user_content: str) -> tuple[str, int]:
         len(content),
     )
     return content, generation_ms
+
+
+_AUTOFILL_SYSTEM = """You map a job application form's fields to a user's saved data.
+
+Rules (follow EXACTLY):
+- Use ONLY the USER DATA provided. NEVER invent facts. If the data doesn't
+  clearly answer a field, OMIT that field entirely.
+- For a field with OPTIONS, return the EXACT option text that best fits.
+- For a plain text field, return the value as a short string.
+- Respond with ONLY a JSON object mapping each field "id" to its value.
+  No prose, no markdown, no explanation. Example: {"f0":"Bachelor's","r1":"No"}"""
+
+
+async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
+    """Grounded, schema-constrained field mapping: given the user's data and the
+    form fields the deterministic pass couldn't fill, return {field_id: value}
+    using ONLY that data. Any failure returns {} (autofill degrades gracefully)."""
+    if not fields:
+        return {}
+    user = (
+        f"USER DATA:\n{user_data}\n\n"
+        f"FORM FIELDS (JSON):\n{json.dumps(fields, ensure_ascii=False)}\n\n"
+        'Return ONLY the JSON object mapping id -> value.'
+    )
+    try:
+        content, _ = await _invoke(_AUTOFILL_SYSTEM, user)
+    except Exception as exc:  # never let AI mapping break autofill
+        logger.warning("autofill map_fields failed: %s", exc)
+        return {}
+
+    # Extract the JSON object from the reply (models sometimes wrap it).
+    match = re.search(r"\{.*\}", content, re.DOTALL)
+    if not match:
+        return {}
+    try:
+        data = json.loads(match.group(0))
+    except (ValueError, TypeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    # Keep only string-ish values, capped, keyed by known field ids.
+    ids = {f.get("id") for f in fields}
+    out: dict[str, str] = {}
+    for k, v in data.items():
+        if k in ids and isinstance(v, (str, int, float, bool)) and str(v).strip():
+            out[k] = str(v).strip()[:500]
+    return out
 
 
 async def generate_tailored_resume(

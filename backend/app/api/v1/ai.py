@@ -19,11 +19,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
+from app.models.application_profile import ApplicationProfile
+from app.models.custom_answer import CustomAnswer
 from app.models.generated_document import GeneratedDocument
 from app.models.job_listing import JobListing
 from app.models.resume import Resume
 from app.models.user import User
 from app.schemas.resume import (
+    AutofillMapRequest,
+    AutofillMapResponse,
     GeneratedDocumentCreate,
     GeneratedDocumentSchema,
     GeneratedDocumentUpdate,
@@ -188,6 +192,61 @@ async def build_document_prompt(
         company,
     )
     return PromptResponse(prompt=prompt, job_title=job_title, company=company)
+
+
+def _user_data_text(profile: ApplicationProfile | None, answers: list[CustomAnswer]) -> str:
+    """Compact, grounded 'here is everything we know about the user' block."""
+    p = profile
+    tri = lambda v: "Yes" if v is True else "No" if v is False else None  # noqa: E731
+    pairs = [
+        ("Full name", " ".join(x for x in [p and p.first_name, p and p.last_name] if x) or None),
+        ("Email", None),  # email lives on the user row; the extension fills it directly
+        ("Phone", p and p.phone),
+        ("Address", p and p.address_line1),
+        ("Address line 2", p and p.address_line2),
+        ("City", p and p.city),
+        ("State/Region", p and p.state),
+        ("Postal code", p and p.postal_code),
+        ("Country", p and p.country),
+        ("LinkedIn", p and p.linkedin_url),
+        ("GitHub", p and p.github_url),
+        ("Portfolio", p and p.portfolio_url),
+        ("Authorized to work", tri(p and p.authorized_to_work)),
+        ("Requires visa sponsorship", tri(p and p.requires_sponsorship)),
+        ("Willing to relocate", tri(p and p.willing_to_relocate)),
+        ("Desired salary (USD/yr)", p and p.desired_salary),
+        ("Notice period / earliest start", p and p.notice_period),
+    ]
+    lines = [f"- {k}: {v}" for k, v in pairs if v not in (None, "")]
+    if answers:
+        lines.append("Previously answered questions:")
+        lines += [f'- "{a.question_text}" -> {a.answer}' for a in answers]
+    return "\n".join(lines) or "(no saved data)"
+
+
+@router.post("/autofill-map", response_model=AutofillMapResponse)
+@_limiter.limit("20/minute")
+async def autofill_map(
+    request: Request,
+    data: AutofillMapRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> AutofillMapResponse:
+    """AI field mapper: the extension sends the fields its deterministic pass
+    couldn't fill; we ground the model on the user's profile + learned answers
+    and return {field_id: value}. Only the user's own data is used."""
+    if not data.fields:
+        return AutofillMapResponse(mappings={})
+    profile = await db.scalar(
+        select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
+    )
+    answers = list(
+        await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
+    )
+    user_data = _user_data_text(profile, answers)
+    fields = [f.model_dump() for f in data.fields]
+    mappings = await ai_service.map_fields(user_data, fields)
+    return AutofillMapResponse(mappings=mappings)
 
 
 @router.post("/documents/manual", response_model=GeneratedDocumentSchema, status_code=201)

@@ -44,6 +44,23 @@ class ManualDocumentCreate(BaseModel):
     model_used: str = "claude (my subscription)"
 
 
+class AutofillField(BaseModel):
+    """One form field the deterministic pass couldn't map — sent to the AI."""
+
+    id: str = Field(min_length=1, max_length=40)
+    label: str = Field(max_length=600)
+    type: str = Field(default="text", max_length=20)  # text | select | radio
+    options: list[str] = Field(default_factory=list, max_length=60)
+
+
+class AutofillMapRequest(BaseModel):
+    fields: list[AutofillField] = Field(default_factory=list, max_length=60)
+
+
+class AutofillMapResponse(BaseModel):
+    mappings: dict[str, str] = Field(default_factory=dict)
+
+
 class GeneratedDocumentUpdate(BaseModel):
     edited_content: str = Field(..., min_length=1)
 
