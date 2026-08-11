@@ -49,7 +49,10 @@ export function setRadioValue(options, wanted) {
   for (const { el, label } of options) {
     const l = (label || "").toLowerCase().trim();
     const v = (el.value || "").toLowerCase().trim();
-    if (l === target || v === target || l.startsWith(target) || target.startsWith(l)) {
+    // Exact, value, or option-starts-with-answer. Only allow answer-starts-with-
+    // option for LONGER labels — otherwise a garbage value like "NoContinue…"
+    // would loosely match the 2-char option "No".
+    if (l === target || v === target || l.startsWith(target) || (l.length >= 4 && target.startsWith(l))) {
       if (!el.checked) {
         el.checked = true;
         el.dispatchEvent(new Event("click", { bubbles: true }));

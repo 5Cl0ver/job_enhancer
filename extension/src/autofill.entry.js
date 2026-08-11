@@ -42,7 +42,7 @@ const LABELS = {
   authorized_to_work: "Work authorization", requires_sponsorship: "Needs sponsorship",
   willing_to_relocate: "Willing to relocate", desired_salary: "Desired salary",
   notice_period: "Notice period / start date", today_date: "Today's date",
-  resume_file: "Résumé",
+  resume_file: "Résumé (from your app)",
 };
 
 // Universal: run on ANY page. The button only appears when the page actually
@@ -293,16 +293,23 @@ function showAutofillPanel(data) {
       .join("");
     return `<div class="je-sec"><div class="je-sec-h ${cls}">${title} (${items.length})</div>${rows}</div>`;
   };
+  const totalFilled = data.filled.length + data.ai.length + data.learned.length;
+  const nudge =
+    data.missing.length && totalFilled <= 2
+      ? `<div class="je-p-nudge">Most fields were skipped because your profile is nearly empty. Fill <b>Settings → Application Profile</b> once and far more will auto-fill next time.</div>`
+      : "";
   const panel = document.createElement("div");
   panel.id = PANEL_ID;
   panel.innerHTML =
     `<div class="je-p-head"><b>Autofill summary</b><button class="je-p-close" type="button" aria-label="Close">✕</button></div>` +
+    `<div class="je-p-legend">🟢 from your profile · 🟣 AI-mapped · 🟠 only you can answer</div>` +
     `<div class="je-p-body">` +
-    section("Filled", data.filled, "ok", true) +
-    section("AI-filled", data.ai, "ai", true) +
-    section("Learned", data.learned, "learn", true) +
-    section("Answer these", data.toAnswer, "warn", false) +
-    section("No data saved", data.missing, "muted", false) +
+    nudge +
+    section("Filled from your profile", data.filled, "ok", true) +
+    section("AI-mapped", data.ai, "ai", true) +
+    section("Remembered from before", data.learned, "learn", true) +
+    section("Only you can answer these", data.toAnswer, "warn", false) +
+    section("No data saved for these", data.missing, "muted", false) +
     `</div>`;
   document.body.appendChild(panel);
   panel.querySelector(".je-p-close").addEventListener("click", () => panel.remove());
@@ -448,6 +455,14 @@ function injectStyles() {
       border-bottom: 1px solid rgba(148,163,184,.3);
     }
     #${PANEL_ID} .je-p-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
+    #${PANEL_ID} .je-p-legend {
+      padding: 6px 12px; font-size: 11px; color: #6b7280;
+      border-bottom: 1px solid rgba(148,163,184,.2);
+    }
+    #${PANEL_ID} .je-p-nudge {
+      margin: 8px 0; padding: 8px 10px; border-radius: 8px; font-size: 12px;
+      background: rgba(124,58,237,.1); color: inherit;
+    }
     #${PANEL_ID} .je-p-body { padding: 6px 12px 12px; }
     #${PANEL_ID} .je-sec-h {
       font-size: 10px; font-weight: 700; text-transform: uppercase;
