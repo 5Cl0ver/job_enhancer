@@ -133,3 +133,81 @@ export function collectFields(doc) {
   }
   return out;
 }
+
+// --- Learn-as-you-go: questions the profile can't map -----------------------
+
+const UNFILLABLE = new Set([
+  "hidden", "submit", "button", "checkbox", "radio", "file", "password", "search",
+]);
+
+/** The human-visible question ONLY (label/aria/placeholder) — deliberately
+ *  excludes name/id, which differ across sites and would break reuse. */
+export function visibleLabelFor(el, doc) {
+  const parts = [];
+  if (el.id) {
+    const esc = globalThis.CSS?.escape ? globalThis.CSS.escape(el.id) : el.id;
+    const label = doc.querySelector(`label[for="${esc}"]`);
+    if (label) parts.push(label.textContent);
+  }
+  const wrapping = el.closest?.("label");
+  if (wrapping) parts.push(wrapping.textContent);
+  parts.push(el.getAttribute?.("aria-label"));
+  parts.push(el.getAttribute?.("placeholder"));
+  return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+}
+
+/** Normalize a question into a stable match key (case/punctuation-insensitive). */
+export function normalizeQuestion(text) {
+  return String(text || "")
+    .toLowerCase()
+    .replace(/\(required\)|\(optional\)|required|optional/g, " ")
+    .replace(/[^a-z0-9 ]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 255);
+}
+
+/**
+ * Every fillable control we did NOT map to a profile key — the custom/
+ * job-specific questions we can learn answers for.
+ * @returns {Array<{el: Element, questionText: string, questionKey: string}>}
+ */
+export function collectUnmapped(doc) {
+  const out = [];
+  const seen = new Set();
+  for (const el of doc.querySelectorAll("input, textarea, select")) {
+    const type = (el.getAttribute?.("type") || el.tagName || "").toLowerCase();
+    if (UNFILLABLE.has(type)) continue;
+    if (keyFor(el, doc)) continue; // handled by the profile mapper
+    const questionText = visibleLabelFor(el, doc);
+    const questionKey = normalizeQuestion(questionText);
+    if (questionKey.length < 3) continue;
+    if (seen.has(questionKey)) continue;
+    seen.add(questionKey);
+    out.push({ el, questionText, questionKey });
+  }
+  return out;
+}
+
+/** Find a learned answer for a question: exact key, else fuzzy token overlap. */
+export function matchAnswer(questionKey, answers) {
+  if (!answers?.length) return null;
+  const exact = answers.find((a) => a.question_key === questionKey);
+  if (exact) return exact;
+  const qTokens = new Set(questionKey.split(" ").filter((t) => t.length > 2));
+  if (qTokens.size < 2) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const a of answers) {
+    const aTokens = new Set((a.question_key || "").split(" ").filter((t) => t.length > 2));
+    if (!aTokens.size) continue;
+    let shared = 0;
+    for (const t of qTokens) if (aTokens.has(t)) shared++;
+    const score = shared / new Set([...qTokens, ...aTokens]).size; // Jaccard
+    if (score > bestScore) {
+      bestScore = score;
+      best = a;
+    }
+  }
+  return bestScore >= 0.6 ? best : null;
+}

@@ -157,7 +157,22 @@
         mime: fileRes.headers.get("Content-Type") || "application/pdf"
       };
     }
-    return { signedIn: true, profile, email: email || "", resume };
+    let customAnswers = [];
+    const caRes = await fetch(`${cfg.API_BASE}/v1/users/me/custom-answers`, { headers });
+    if (caRes.ok) customAnswers = await caRes.json().catch(() => []);
+    return { signedIn: true, profile, email: email || "", resume, customAnswers };
+  }
+  async function saveCustomAnswers(answers) {
+    const token = await getValidToken();
+    if (!token) return { error: "NOT_SIGNED_IN" };
+    const res = await fetch(`${cfg.API_BASE}/v1/users/me/custom-answers`, {
+      method: "PUT",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ answers })
+    });
+    if (!res.ok) return { error: "Couldn't save answers" };
+    const saved = await res.json().catch(() => []);
+    return { saved: Array.isArray(saved) ? saved.length : 0 };
   }
   async function generateDocument(jobListingId, docType) {
     const token = await getValidToken();
@@ -308,6 +323,9 @@
           sendResponse({ ok: true, ...await backfillJob(msg.job) });
         } else if (msg.type === "getAutofillData") {
           sendResponse({ ok: true, ...await getAutofillData() });
+        } else if (msg.type === "saveCustomAnswers") {
+          const out = await saveCustomAnswers(msg.answers || []);
+          sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
         } else if (msg.type === "markApplied") {
           sendResponse({ ok: true, ...await markApplied(msg.job) });
         } else if (msg.type === "generateDocument") {

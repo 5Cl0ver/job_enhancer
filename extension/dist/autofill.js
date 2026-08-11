@@ -105,6 +105,69 @@
     }
     return out;
   }
+  var UNFILLABLE = /* @__PURE__ */ new Set([
+    "hidden",
+    "submit",
+    "button",
+    "checkbox",
+    "radio",
+    "file",
+    "password",
+    "search"
+  ]);
+  function visibleLabelFor(el, doc) {
+    const parts = [];
+    if (el.id) {
+      const esc = globalThis.CSS?.escape ? globalThis.CSS.escape(el.id) : el.id;
+      const label = doc.querySelector(`label[for="${esc}"]`);
+      if (label) parts.push(label.textContent);
+    }
+    const wrapping = el.closest?.("label");
+    if (wrapping) parts.push(wrapping.textContent);
+    parts.push(el.getAttribute?.("aria-label"));
+    parts.push(el.getAttribute?.("placeholder"));
+    return parts.filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  }
+  function normalizeQuestion(text) {
+    return String(text || "").toLowerCase().replace(/\(required\)|\(optional\)|required|optional/g, " ").replace(/[^a-z0-9 ]+/g, " ").replace(/\s+/g, " ").trim().slice(0, 255);
+  }
+  function collectUnmapped(doc) {
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const el of doc.querySelectorAll("input, textarea, select")) {
+      const type = (el.getAttribute?.("type") || el.tagName || "").toLowerCase();
+      if (UNFILLABLE.has(type)) continue;
+      if (keyFor(el, doc)) continue;
+      const questionText = visibleLabelFor(el, doc);
+      const questionKey = normalizeQuestion(questionText);
+      if (questionKey.length < 3) continue;
+      if (seen.has(questionKey)) continue;
+      seen.add(questionKey);
+      out.push({ el, questionText, questionKey });
+    }
+    return out;
+  }
+  function matchAnswer(questionKey, answers) {
+    if (!answers?.length) return null;
+    const exact = answers.find((a) => a.question_key === questionKey);
+    if (exact) return exact;
+    const qTokens = new Set(questionKey.split(" ").filter((t) => t.length > 2));
+    if (qTokens.size < 2) return null;
+    let best = null;
+    let bestScore = 0;
+    for (const a of answers) {
+      const aTokens = new Set((a.question_key || "").split(" ").filter((t) => t.length > 2));
+      if (!aTokens.size) continue;
+      let shared = 0;
+      for (const t of qTokens) if (aTokens.has(t)) shared++;
+      const score = shared / (/* @__PURE__ */ new Set([...qTokens, ...aTokens])).size;
+      if (score > bestScore) {
+        bestScore = score;
+        best = a;
+      }
+    }
+    return bestScore >= 0.6 ? best : null;
+  }
 
   // src/autofill/fill.js
   function setNativeValue(el, value) {
@@ -185,6 +248,50 @@
     }
     return { filled, attention };
   }
+  function fillCustomAnswers(unmapped, answers, matchFn) {
+    const learned = [];
+    const remaining = [];
+    for (const { el, questionText, questionKey } of unmapped) {
+      if ((el.value || "").trim()) continue;
+      const match = matchFn(questionKey, answers);
+      if (!match) {
+        remaining.push({ questionText, questionKey });
+        continue;
+      }
+      if (el.tagName === "SELECT") {
+        if (setSelectValue(el, match.answer)) {
+          el.classList.add(HIGHLIGHT);
+          learned.push(questionKey);
+        } else {
+          remaining.push({ questionText, questionKey });
+        }
+      } else {
+        setNativeValue(el, String(match.answer));
+        el.classList.add(HIGHLIGHT);
+        learned.push(questionKey);
+      }
+    }
+    return { learned, remaining };
+  }
+  function captureAnswers(unmapped) {
+    const out = [];
+    for (const { el, questionText, questionKey } of unmapped) {
+      let answer = "";
+      if (el.tagName === "SELECT") {
+        const opt = el.options?.[el.selectedIndex];
+        answer = (opt?.textContent || opt?.value || "").trim();
+      } else {
+        answer = (el.value || "").trim();
+      }
+      if (!answer || answer.length > 2e3) continue;
+      out.push({
+        question_key: questionKey,
+        question_text: questionText.slice(0, 500),
+        answer
+      });
+    }
+    return out;
+  }
   function buildValues(profile, email) {
     const p = profile || {};
     const fullName = [p.first_name, p.last_name].filter(Boolean).join(" ");
@@ -216,6 +323,7 @@
   // src/autofill.entry.js
   var ATS = detectAts(location.href);
   var BTN_ID = "je-autofill-btn";
+  var REMEMBER_ID = "je-remember-btn";
   var LABEL = "\u26A1 Autofill from Job Enhancer";
   if (document.body) {
     injectStyles();
@@ -284,12 +392,57 @@
       buildValues(res.profile, res.email),
       resumeFile
     );
-    const left = report.attention.length;
+    const custom = fillCustomAnswers(
+      collectUnmapped(document),
+      res.customAnswers || [],
+      matchAnswer
+    );
+    const filled = report.filled.length + custom.learned.length;
+    const toAnswer = custom.remaining.length;
     setState(
       btn,
       "done",
-      left ? `\u2713 Filled ${report.filled.length} \xB7 ${left} need you` : `\u2713 Filled ${report.filled.length} \u2014 review & submit`
+      toAnswer ? `\u2713 Filled ${filled} \xB7 ${toAnswer} to answer` : `\u2713 Filled ${filled} \u2014 review & submit`
     );
+    ensureRememberButton(toAnswer > 0 || custom.learned.length > 0);
+  }
+  function ensureRememberButton(show) {
+    let rb = document.getElementById(REMEMBER_ID);
+    if (!show) {
+      rb?.remove();
+      return;
+    }
+    if (rb) return;
+    rb = document.createElement("button");
+    rb.id = REMEMBER_ID;
+    rb.type = "button";
+    rb.textContent = "\u{1F4BE} Remember my answers";
+    rb.addEventListener("click", () => rememberAnswers(rb));
+    document.body.appendChild(rb);
+  }
+  async function rememberAnswers(rb) {
+    rb.dataset.state = "busy";
+    rb.textContent = "Saving\u2026";
+    const answers = captureAnswers(collectUnmapped(document));
+    if (!answers.length) {
+      rb.dataset.state = "";
+      rb.textContent = "Answer some questions first";
+      setTimeout(() => rb.textContent = "\u{1F4BE} Remember my answers", 2500);
+      return;
+    }
+    const res = await safeSend({ type: "saveCustomAnswers", answers }).catch(() => null);
+    if (res?.ok) {
+      rb.dataset.state = "done";
+      rb.textContent = `\u2713 Remembered ${res.saved} \u2014 reused next time`;
+      setTimeout(() => rb.remove(), 3500);
+    } else {
+      rb.dataset.state = "error";
+      rb.textContent = res?.error === "NOT_SIGNED_IN" ? "Sign in first" : "Couldn't save";
+      setTimeout(() => {
+        rb.dataset.state = "";
+        rb.textContent = "\u{1F4BE} Remember my answers";
+      }, 3e3);
+    }
   }
   function setState(el, state, text) {
     el.dataset.state = state;
@@ -345,6 +498,16 @@
     #${BTN_ID}[data-state="busy"] { background: #6b7280; cursor: default; }
     #${BTN_ID}[data-state="done"] { background: #16a34a; }
     #${BTN_ID}[data-state="error"] { background: #dc2626; }
+    #${REMEMBER_ID} {
+      position: fixed; right: 20px; bottom: 66px; z-index: 2147483647;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 15px; border: 0; border-radius: 999px;
+      font: 600 13px/1 system-ui, -apple-system, sans-serif; color: #fff;
+      background: #2563eb; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.28);
+    }
+    #${REMEMBER_ID}[data-state="busy"] { background: #6b7280; cursor: default; }
+    #${REMEMBER_ID}[data-state="done"] { background: #16a34a; }
+    #${REMEMBER_ID}[data-state="error"] { background: #dc2626; }
     .je-autofilled { outline: 2px solid #7c3aed55 !important; border-radius: 4px; }
   `;
     document.documentElement.appendChild(style);

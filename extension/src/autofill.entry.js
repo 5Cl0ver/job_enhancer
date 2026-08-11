@@ -7,11 +7,12 @@
 //
 // Auto-track rides along: when the user submits, tell the backend so the
 // matching saved job moves to Applied by itself.
-import { detectAts, collectFields } from "./autofill/mapper.js";
-import { fillFields, buildValues } from "./autofill/fill.js";
+import { detectAts, collectFields, collectUnmapped, matchAnswer } from "./autofill/mapper.js";
+import { fillFields, buildValues, fillCustomAnswers, captureAnswers } from "./autofill/fill.js";
 
 const ATS = detectAts(location.href); // still used for submit auto-tracking
 const BTN_ID = "je-autofill-btn";
+const REMEMBER_ID = "je-remember-btn";
 const LABEL = "⚡ Autofill from Job Enhancer";
 
 // Universal: run on ANY page. The button only appears when the page actually
@@ -96,14 +97,67 @@ async function run(btn) {
     resumeFile,
   );
 
-  const left = report.attention.length;
+  // Learn-as-you-go: fill custom questions we've learned before, and count the
+  // ones we still don't know (the user answers those, then hits Remember).
+  const custom = fillCustomAnswers(
+    collectUnmapped(document),
+    res.customAnswers || [],
+    matchAnswer,
+  );
+
+  const filled = report.filled.length + custom.learned.length;
+  const toAnswer = custom.remaining.length;
   setState(
     btn,
     "done",
-    left
-      ? `✓ Filled ${report.filled.length} · ${left} need you`
-      : `✓ Filled ${report.filled.length} — review & submit`,
+    toAnswer
+      ? `✓ Filled ${filled} · ${toAnswer} to answer`
+      : `✓ Filled ${filled} — review & submit`,
   );
+  // Offer to remember whenever there are unmapped questions on the page.
+  ensureRememberButton(toAnswer > 0 || custom.learned.length > 0);
+}
+
+// A second button: capture the user's answers to unmapped questions so they
+// auto-fill next time (learn-as-you-go). Sits above the Autofill button.
+function ensureRememberButton(show) {
+  let rb = document.getElementById(REMEMBER_ID);
+  if (!show) {
+    rb?.remove();
+    return;
+  }
+  if (rb) return;
+  rb = document.createElement("button");
+  rb.id = REMEMBER_ID;
+  rb.type = "button";
+  rb.textContent = "💾 Remember my answers";
+  rb.addEventListener("click", () => rememberAnswers(rb));
+  document.body.appendChild(rb);
+}
+
+async function rememberAnswers(rb) {
+  rb.dataset.state = "busy";
+  rb.textContent = "Saving…";
+  const answers = captureAnswers(collectUnmapped(document));
+  if (!answers.length) {
+    rb.dataset.state = "";
+    rb.textContent = "Answer some questions first";
+    setTimeout(() => (rb.textContent = "💾 Remember my answers"), 2500);
+    return;
+  }
+  const res = await safeSend({ type: "saveCustomAnswers", answers }).catch(() => null);
+  if (res?.ok) {
+    rb.dataset.state = "done";
+    rb.textContent = `✓ Remembered ${res.saved} — reused next time`;
+    setTimeout(() => rb.remove(), 3500);
+  } else {
+    rb.dataset.state = "error";
+    rb.textContent = res?.error === "NOT_SIGNED_IN" ? "Sign in first" : "Couldn't save";
+    setTimeout(() => {
+      rb.dataset.state = "";
+      rb.textContent = "💾 Remember my answers";
+    }, 3000);
+  }
 }
 
 function setState(el, state, text) {
@@ -176,6 +230,16 @@ function injectStyles() {
     #${BTN_ID}[data-state="busy"] { background: #6b7280; cursor: default; }
     #${BTN_ID}[data-state="done"] { background: #16a34a; }
     #${BTN_ID}[data-state="error"] { background: #dc2626; }
+    #${REMEMBER_ID} {
+      position: fixed; right: 20px; bottom: 66px; z-index: 2147483647;
+      display: inline-flex; align-items: center; gap: 6px;
+      padding: 10px 15px; border: 0; border-radius: 999px;
+      font: 600 13px/1 system-ui, -apple-system, sans-serif; color: #fff;
+      background: #2563eb; cursor: pointer; box-shadow: 0 6px 20px rgba(0,0,0,.28);
+    }
+    #${REMEMBER_ID}[data-state="busy"] { background: #6b7280; cursor: default; }
+    #${REMEMBER_ID}[data-state="done"] { background: #16a34a; }
+    #${REMEMBER_ID}[data-state="error"] { background: #dc2626; }
     .je-autofilled { outline: 2px solid #7c3aed55 !important; border-radius: 4px; }
   `;
   document.documentElement.appendChild(style);

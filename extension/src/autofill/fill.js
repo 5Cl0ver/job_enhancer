@@ -115,6 +115,63 @@ export function fillFields(fields, values, resumeFile) {
   return { filled, attention };
 }
 
+/**
+ * Fill custom questions from LEARNED answers (the learn-as-you-go memory).
+ * Never overwrites what's already there. `matchFn(questionKey, answers)` is the
+ * mapper's matcher (passed in to avoid a circular import).
+ * @returns {{learned: string[], remaining: Array<{questionText, questionKey}>}}
+ */
+export function fillCustomAnswers(unmapped, answers, matchFn) {
+  const learned = [];
+  const remaining = [];
+  for (const { el, questionText, questionKey } of unmapped) {
+    if ((el.value || "").trim()) continue; // respect the user's input
+    const match = matchFn(questionKey, answers);
+    if (!match) {
+      remaining.push({ questionText, questionKey });
+      continue;
+    }
+    if (el.tagName === "SELECT") {
+      if (setSelectValue(el, match.answer)) {
+        el.classList.add(HIGHLIGHT);
+        learned.push(questionKey);
+      } else {
+        remaining.push({ questionText, questionKey });
+      }
+    } else {
+      setNativeValue(el, String(match.answer));
+      el.classList.add(HIGHLIGHT);
+      learned.push(questionKey);
+    }
+  }
+  return { learned, remaining };
+}
+
+/**
+ * Capture the user's OWN answers to unmapped questions, to remember them.
+ * Only fields that actually have a value are returned.
+ * @returns {Array<{question_key, question_text, answer}>}
+ */
+export function captureAnswers(unmapped) {
+  const out = [];
+  for (const { el, questionText, questionKey } of unmapped) {
+    let answer = "";
+    if (el.tagName === "SELECT") {
+      const opt = el.options?.[el.selectedIndex];
+      answer = (opt?.textContent || opt?.value || "").trim();
+    } else {
+      answer = (el.value || "").trim();
+    }
+    if (!answer || answer.length > 2000) continue;
+    out.push({
+      question_key: questionKey,
+      question_text: questionText.slice(0, 500),
+      answer,
+    });
+  }
+  return out;
+}
+
 /** The vault → mapper-key value table (adds derived keys like full_name). */
 export function buildValues(profile, email) {
   const p = profile || {};

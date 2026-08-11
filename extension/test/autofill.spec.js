@@ -6,8 +6,22 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Window } from "happy-dom";
-import { detectAts, collectFields, keyFor } from "../src/autofill/mapper.js";
-import { fillFields, buildValues, setNativeValue, setSelectValue } from "../src/autofill/fill.js";
+import {
+  detectAts,
+  collectFields,
+  keyFor,
+  normalizeQuestion,
+  collectUnmapped,
+  matchAnswer,
+} from "../src/autofill/mapper.js";
+import {
+  fillFields,
+  buildValues,
+  setNativeValue,
+  setSelectValue,
+  fillCustomAnswers,
+  captureAnswers,
+} from "../src/autofill/fill.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 function docFrom(fixture) {
@@ -177,6 +191,68 @@ describe("universal matching — autocomplete + address (any site, e.g. Amazon J
     expect(filled).toEqual(
       expect.arrayContaining(["first_name", "address_line1", "city", "postal_code", "country", "state"]),
     );
+  });
+});
+
+describe("learn-as-you-go — custom question memory", () => {
+  function questionForm() {
+    const w = new Window();
+    w.document.write(`
+      <form>
+        <label for="fn">First name</label><input id="fn" autocomplete="given-name" />
+        <label for="q1">Years of React experience? *</label><input id="q1" />
+        <label for="q2">How did you hear about us?</label><input id="q2" />
+        <label for="q3">What is your favorite programming language?</label><input id="q3" type="text" />
+      </form>`);
+    return w.document;
+  }
+
+  it("normalizes questions into stable keys", () => {
+    expect(normalizeQuestion("Years of React experience? *")).toBe("years of react experience");
+    expect(normalizeQuestion("How did you hear about us? (required)")).toBe(
+      "how did you hear about us",
+    );
+  });
+
+  it("collects only the UNMAPPED questions (skips profile fields)", () => {
+    const keys = collectUnmapped(questionForm()).map((u) => u.questionKey);
+    expect(keys).toContain("years of react experience");
+    expect(keys).toContain("how did you hear about us");
+    expect(keys).toContain("what is your favorite programming language");
+    expect(keys).not.toContain("first name"); // that one maps to the profile
+  });
+
+  it("matches by exact key, then fuzzy token overlap", () => {
+    const mem = [{ question_key: "years of react experience", answer: "3" }];
+    expect(matchAnswer("years of react experience", mem)?.answer).toBe("3");
+    // Reworded/extended question still matches (Jaccard ≥ 0.6).
+    expect(matchAnswer("years of react experience at acme", mem)?.answer).toBe("3");
+    expect(matchAnswer("favorite programming language", mem)).toBeNull();
+  });
+
+  it("fills learned answers and reports what still needs answering", () => {
+    const doc = questionForm();
+    const mem = [
+      { question_key: "years of react experience", question_text: "Years…", answer: "3" },
+    ];
+    const { learned, remaining } = fillCustomAnswers(collectUnmapped(doc), mem, matchAnswer);
+    expect(doc.querySelector("#q1").value).toBe("3");
+    expect(learned).toContain("years of react experience");
+    const remKeys = remaining.map((r) => r.questionKey);
+    expect(remKeys).toContain("how did you hear about us");
+    expect(remKeys).toContain("what is your favorite programming language");
+  });
+
+  it("captures the user's own answers to remember them", () => {
+    const doc = questionForm();
+    setNativeValue(doc.querySelector("#q2"), "LinkedIn");
+    setNativeValue(doc.querySelector("#q3"), "2026-09-01");
+    const captured = captureAnswers(collectUnmapped(doc));
+    const byKey = Object.fromEntries(captured.map((c) => [c.question_key, c.answer]));
+    expect(byKey["how did you hear about us"]).toBe("LinkedIn");
+    expect(byKey["what is your favorite programming language"]).toBe("2026-09-01");
+    // Empty question (q1) isn't captured.
+    expect(byKey["years of react experience"]).toBeUndefined();
   });
 });
 
