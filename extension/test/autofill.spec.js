@@ -321,6 +321,20 @@ describe("radio groups — yes/no questions (e.g. Amazon Work Eligibility)", () 
   });
 });
 
+describe("today's date", () => {
+  it("maps a signature date field and fills today", () => {
+    const w = new Window();
+    w.document.write(`<label for="d">Today's date</label><input id="d" placeholder="YYYY-MM-DD" />`);
+    const doc = w.document;
+    const byKey = Object.fromEntries(collectFields(doc).map((f) => [f.key, f.el]));
+    expect(byKey.today_date.id).toBe("d");
+    const values = buildValues({}, "");
+    values.today_date = "2026-08-10";
+    fillFields(collectFields(doc), values, null);
+    expect(doc.querySelector("#d").value).toBe("2026-08-10");
+  });
+});
+
 describe("select matching", () => {
   it("matches by text, value, or prefix", () => {
     const w = new Window();

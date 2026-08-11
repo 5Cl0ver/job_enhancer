@@ -71,7 +71,8 @@
     { key: "requires_sponsorship", re: /sponsor/i },
     { key: "willing_to_relocate", re: /relocat/i },
     { key: "desired_salary", re: /salary|compensation[\s_-]*expect/i },
-    { key: "notice_period", re: /notice[\s_-]*period|start[\s_-]*date/i }
+    { key: "notice_period", re: /notice[\s_-]*period|start[\s_-]*date/i },
+    { key: "today_date", re: /today['’]?s?[\s_-]*date|current[\s_-]*date|date[\s_-]*signed|signature[\s_-]*date|date[\s_-]*today/i }
   ];
   var SKIP = /cover[\s_-]*letter|why[\s\S]*(join|work|interested)|additional[\s_-]*info|comments|token|captcha/i;
   function keyFor(el, doc) {
@@ -459,6 +460,7 @@
     willing_to_relocate: "Willing to relocate",
     desired_salary: "Desired salary",
     notice_period: "Notice period / start date",
+    today_date: "Today's date",
     resume_file: "R\xE9sum\xE9"
   };
   if (document.body) {
@@ -524,6 +526,7 @@
       }
     }
     const values = buildValues(res.profile, res.email);
+    values.today_date = (/* @__PURE__ */ new Date()).toISOString().slice(0, 10);
     const report = fillFields(collectFields(document), values, resumeFile);
     const answers = res.customAnswers || [];
     const custom = fillCustomAnswers(collectUnmapped(document), answers, matchAnswer);

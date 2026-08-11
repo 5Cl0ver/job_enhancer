@@ -85,6 +85,7 @@ const RULES = [
   { key: "willing_to_relocate", re: /relocat/i },
   { key: "desired_salary", re: /salary|compensation[\s_-]*expect/i },
   { key: "notice_period", re: /notice[\s_-]*period|start[\s_-]*date/i },
+  { key: "today_date", re: /today['’]?s?[\s_-]*date|current[\s_-]*date|date[\s_-]*signed|signature[\s_-]*date|date[\s_-]*today/i },
 ];
 
 // Controls we must never touch: cover letters, free-text essays, hidden/meta.

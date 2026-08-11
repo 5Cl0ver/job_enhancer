@@ -38,7 +38,8 @@ const LABELS = {
   linkedin_url: "LinkedIn", github_url: "GitHub", portfolio_url: "Portfolio / website",
   authorized_to_work: "Work authorization", requires_sponsorship: "Needs sponsorship",
   willing_to_relocate: "Willing to relocate", desired_salary: "Desired salary",
-  notice_period: "Notice period / start date", resume_file: "Résumé",
+  notice_period: "Notice period / start date", today_date: "Today's date",
+  resume_file: "Résumé",
 };
 
 // Universal: run on ANY page. The button only appears when the page actually
@@ -120,6 +121,7 @@ async function run(btn) {
   }
 
   const values = buildValues(res.profile, res.email);
+  values.today_date = new Date().toISOString().slice(0, 10); // signature "date" fields → today
   const report = fillFields(collectFields(document), values, resumeFile);
 
   // Learn-as-you-go: fill custom questions we've learned before, and count the
