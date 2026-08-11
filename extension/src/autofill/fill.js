@@ -83,6 +83,23 @@ export function attachFile(el, file) {
 
 const HIGHLIGHT = "je-autofilled";
 
+const _SRC_TITLE = {
+  profile: "Filled from your profile",
+  learned: "Remembered from a past application",
+  ai: "AI-mapped from your saved data",
+};
+
+/** Highlight a filled control AND tag its source (color + hover title). */
+export function markFilled(el, source) {
+  if (!el) return;
+  el.classList.add(HIGHLIGHT, "je-src-" + source);
+  try {
+    el.title = _SRC_TITLE[source] || "Filled by Job Enhancer";
+  } catch {
+    /* some controls disallow title */
+  }
+}
+
 /** Values a bool key should type/select. */
 function boolAnswer(v) {
   return v === true ? "Yes" : v === false ? "No" : null;
@@ -104,7 +121,7 @@ export function fillFields(fields, values, resumeFile) {
     if (key === "resume_file") {
       if (resumeFile && (!el.files || el.files.length === 0)) {
         if (attachFile(el, resumeFile)) {
-          el.classList.add(HIGHLIGHT);
+          markFilled(el, "profile");
           filled.push(key);
         } else {
           attention.push(key);
@@ -127,7 +144,7 @@ export function fillFields(fields, values, resumeFile) {
 
     if (el.tagName === "SELECT") {
       if (setSelectValue(el, value)) {
-        el.classList.add(HIGHLIGHT);
+        markFilled(el, "profile");
         filled.push(key);
       } else {
         attention.push(key); // no matching option — human judgment needed
@@ -139,7 +156,7 @@ export function fillFields(fields, values, resumeFile) {
     if ((el.value || "").trim()) continue;
 
     setNativeValue(el, String(value));
-    el.classList.add(HIGHLIGHT);
+    markFilled(el, "profile");
     filled.push(key);
   }
 
@@ -164,14 +181,14 @@ export function fillCustomAnswers(unmapped, answers, matchFn) {
     }
     if (el.tagName === "SELECT") {
       if (setSelectValue(el, match.answer)) {
-        el.classList.add(HIGHLIGHT);
+        markFilled(el, "learned");
         learned.push({ questionKey, questionText, value: match.answer });
       } else {
         remaining.push({ questionText, questionKey });
       }
     } else {
       setNativeValue(el, String(match.answer));
-      el.classList.add(HIGHLIGHT);
+      markFilled(el, "learned");
       learned.push({ questionKey, questionText, value: match.answer });
     }
   }
@@ -231,6 +248,7 @@ export function fillRadioGroups(groups, values, answers, matchFn) {
       continue;
     }
     if (setRadioValue(g.options, wanted)) {
+      markFilled(g.options.find((o) => o.el.checked)?.el, isLearned ? "learned" : "profile");
       if (isLearned) learned.push({ questionKey: g.questionKey, questionText: g.question, value: wanted });
       else filled.push(g.key);
     } else if (!g.key) {

@@ -24,12 +24,14 @@ import {
   setNativeValue,
   setSelectValue,
   setRadioValue,
+  markFilled,
 } from "./autofill/fill.js";
 
 const ATS = detectAts(location.href); // still used for submit auto-tracking
 const BTN_ID = "je-autofill-btn";
 const REMEMBER_ID = "je-remember-btn";
 const PANEL_ID = "je-autofill-panel";
+const REVIEW_ID = "je-review-panel";
 const LABEL = "⚡ Autofill from Job Enhancer";
 
 // Pretty names for the summary popout.
@@ -250,10 +252,15 @@ async function aiPass(btn) {
     const v = mappings[t.id];
     if (v == null || v === "") continue;
     let ok = false;
-    if (t.kind === "radio") ok = setRadioValue(t.ref, v);
-    else if (t.kind === "select") ok = setSelectValue(t.ref, v);
-    else {
+    if (t.kind === "radio") {
+      ok = setRadioValue(t.ref, v);
+      if (ok) markFilled(t.ref.find((o) => o.el.checked)?.el, "ai");
+    } else if (t.kind === "select") {
+      ok = setSelectValue(t.ref, v);
+      if (ok) markFilled(t.ref, "ai");
+    } else {
       setNativeValue(t.ref, String(v));
+      markFilled(t.ref, "ai");
       ok = true;
     }
     if (ok) done.push({ label: t.label, value: String(v) });
@@ -332,9 +339,7 @@ function ensureRememberButton(show) {
   document.body.appendChild(rb);
 }
 
-async function rememberAnswers(rb) {
-  rb.dataset.state = "busy";
-  rb.textContent = "Saving…";
+function rememberAnswers(rb) {
   const answers = [
     ...captureAnswers(collectUnmapped(document)),
     ...captureRadioAnswers(collectRadioGroups(document)),
@@ -345,19 +350,95 @@ async function rememberAnswers(rb) {
     setTimeout(() => (rb.textContent = "💾 Remember my answers"), 2500);
     return;
   }
-  const res = await safeSend({ type: "saveCustomAnswers", answers }).catch(() => null);
-  if (res?.ok) {
-    rb.dataset.state = "done";
-    rb.textContent = `✓ Remembered ${res.saved} — reused next time`;
-    setTimeout(() => rb.remove(), 3500);
-  } else {
-    rb.dataset.state = "error";
-    rb.textContent = res?.error === "NOT_SIGNED_IN" ? "Sign in first" : "Couldn't save";
-    setTimeout(() => {
-      rb.dataset.state = "";
-      rb.textContent = "💾 Remember my answers";
-    }, 3000);
-  }
+  showRememberReview(answers, rb); // let the user SEE + edit what gets saved
+}
+
+// Review-before-save: show exactly the Q&As about to be remembered, each with a
+// keep toggle and an editable answer. Nothing is saved until the user confirms.
+function showRememberReview(items, rb) {
+  document.getElementById(REVIEW_ID)?.remove();
+  injectStyles();
+  const panel = document.createElement("div");
+  panel.id = REVIEW_ID;
+
+  const head = document.createElement("div");
+  head.className = "je-p-head";
+  head.innerHTML = "<b>Save these answers?</b>";
+  const close = document.createElement("button");
+  close.className = "je-p-close";
+  close.type = "button";
+  close.textContent = "✕";
+  close.addEventListener("click", () => panel.remove());
+  head.appendChild(close);
+  panel.appendChild(head);
+
+  const sub = document.createElement("div");
+  sub.className = "je-p-legend";
+  sub.textContent = "Uncheck anything you don't want stored. Edit an answer if needed.";
+  panel.appendChild(sub);
+
+  const body = document.createElement("div");
+  body.className = "je-p-body";
+  const rows = items.map((it) => {
+    const row = document.createElement("div");
+    row.className = "je-rv-row";
+    const top = document.createElement("label");
+    top.className = "je-rv-top";
+    const keep = document.createElement("input");
+    keep.type = "checkbox";
+    keep.checked = true;
+    const q = document.createElement("span");
+    q.className = "je-rv-q";
+    q.textContent = it.question_text;
+    top.append(keep, q);
+    const a = document.createElement("input");
+    a.type = "text";
+    a.className = "je-rv-a";
+    a.value = it.answer;
+    row.append(top, a);
+    row._data = { it, keep, a };
+    body.appendChild(row);
+    return row;
+  });
+  panel.appendChild(body);
+
+  const foot = document.createElement("div");
+  foot.className = "je-rv-foot";
+  const cancel = document.createElement("button");
+  cancel.className = "je-rv-cancel";
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => panel.remove());
+  const save = document.createElement("button");
+  save.className = "je-rv-save";
+  save.type = "button";
+  save.textContent = "💾 Save";
+  save.addEventListener("click", async () => {
+    const chosen = rows
+      .filter((r) => r._data.keep.checked)
+      .map((r) => ({
+        question_key: r._data.it.question_key,
+        question_text: r._data.it.question_text,
+        answer: r._data.a.value.trim(),
+      }))
+      .filter((x) => x.answer);
+    if (!chosen.length) {
+      panel.remove();
+      return;
+    }
+    save.disabled = true;
+    save.textContent = "Saving…";
+    const res = await safeSend({ type: "saveCustomAnswers", answers: chosen }).catch(() => null);
+    panel.remove();
+    if (rb) {
+      rb.dataset.state = res?.ok ? "done" : "error";
+      rb.textContent = res?.ok ? `✓ Remembered ${res.saved}` : "Couldn't save";
+      setTimeout(() => rb.remove(), 3000);
+    }
+  });
+  foot.append(cancel, save);
+  panel.appendChild(foot);
+  document.body.appendChild(panel);
 }
 
 function setState(el, state, text) {
@@ -441,6 +522,40 @@ function injectStyles() {
     #${REMEMBER_ID}[data-state="done"] { background: #16a34a; }
     #${REMEMBER_ID}[data-state="error"] { background: #dc2626; }
     .je-autofilled { outline: 2px solid #7c3aed55 !important; border-radius: 4px; }
+    /* Live source labels: color the outline by where the value came from. */
+    .je-src-profile.je-autofilled { outline-color: #16a34a99 !important; }
+    .je-src-learned.je-autofilled { outline-color: #2563eb99 !important; }
+    .je-src-ai.je-autofilled { outline-color: #7c3aedcc !important; }
+    /* Review-before-save panel */
+    #${REVIEW_ID} {
+      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+      width: 340px; max-height: 72vh; overflow: auto;
+      background: #fff; color: #111827; border-radius: 12px;
+      box-shadow: 0 12px 34px rgba(0,0,0,.3);
+      font: 13px/1.45 system-ui, -apple-system, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) { #${REVIEW_ID} { background: #1f2937; color: #f3f4f6; } }
+    #${REVIEW_ID} .je-p-head {
+      position: sticky; top: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 10px 12px; background: inherit;
+      border-bottom: 1px solid rgba(148,163,184,.3);
+    }
+    #${REVIEW_ID} .je-p-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
+    #${REVIEW_ID} .je-p-legend { padding: 6px 12px; font-size: 11px; color: #6b7280; }
+    #${REVIEW_ID} .je-p-body { padding: 2px 12px; }
+    #${REVIEW_ID} .je-rv-row { padding: 8px 0; border-bottom: 1px solid rgba(148,163,184,.18); }
+    #${REVIEW_ID} .je-rv-top { display: flex; gap: 8px; align-items: flex-start; cursor: pointer; }
+    #${REVIEW_ID} .je-rv-q { font-weight: 600; font-size: 12px; }
+    #${REVIEW_ID} .je-rv-a {
+      width: 100%; margin-top: 6px; padding: 7px 9px; border: 1px solid #d1d5db;
+      border-radius: 8px; font: inherit; background: transparent; color: inherit;
+    }
+    #${REVIEW_ID} .je-rv-foot {
+      position: sticky; bottom: 0; display: flex; justify-content: flex-end; gap: 8px;
+      padding: 10px 12px; background: inherit; border-top: 1px solid rgba(148,163,184,.3);
+    }
+    #${REVIEW_ID} .je-rv-save { background: #16a34a; color: #fff; border: 0; border-radius: 8px; padding: 8px 14px; font-weight: 700; cursor: pointer; }
+    #${REVIEW_ID} .je-rv-cancel { background: transparent; color: inherit; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
     #${PANEL_ID} {
       position: fixed; right: 20px; bottom: 112px; z-index: 2147483647;
       width: 300px; max-height: 46vh; overflow: auto;
