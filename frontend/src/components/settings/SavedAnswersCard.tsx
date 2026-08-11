@@ -16,10 +16,24 @@ import {
   type CustomAnswer,
 } from "@/hooks/useCustomAnswers";
 
+/** "3 days ago" style relative time for when an answer was last saved. */
+function relTime(iso?: string | null): string {
+  if (!iso) return "";
+  const secs = Math.max(0, (Date.now() - new Date(iso).getTime()) / 1000);
+  if (secs < 60) return "just now";
+  const mins = secs / 60;
+  if (mins < 60) return `${Math.floor(mins)}m ago`;
+  const hrs = mins / 60;
+  if (hrs < 24) return `${Math.floor(hrs)}h ago`;
+  const days = hrs / 24;
+  if (days < 30) return `${Math.floor(days)}d ago`;
+  return `${Math.floor(days / 30)}mo ago`;
+}
+
 /**
  * "Saved Answers" — the manager for the extension's learn-as-you-go memory.
- * Solves the edge case where it remembered something wrong: search, fix, or
- * delete any learned answer; changes sync to the extension.
+ * Solves the edge case where it remembered something wrong: search, sort, fix,
+ * or delete any learned answer; changes sync to the extension.
  */
 export function SavedAnswersCard() {
   const { data: answers = [], isLoading } = useCustomAnswers();
@@ -27,18 +41,26 @@ export function SavedAnswersCard() {
   const del = useDeleteCustomAnswer();
 
   const [q, setQ] = useState("");
+  const [sort, setSort] = useState<"recent" | "az">("recent");
   const [edits, setEdits] = useState<Record<string, string>>({});
   const [savedKey, setSavedKey] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const needle = q.toLowerCase().trim();
-    if (!needle) return answers;
-    return answers.filter(
-      (a) =>
-        a.question_text.toLowerCase().includes(needle) ||
-        a.answer.toLowerCase().includes(needle),
+    const base = needle
+      ? answers.filter(
+          (a) =>
+            a.question_text.toLowerCase().includes(needle) ||
+            a.answer.toLowerCase().includes(needle),
+        )
+      : answers.slice();
+    base.sort((a, b) =>
+      sort === "az"
+        ? a.question_text.localeCompare(b.question_text)
+        : (b.updated_at ?? "").localeCompare(a.updated_at ?? ""),
     );
-  }, [answers, q]);
+    return base;
+  }, [answers, q, sort]);
 
   const onSave = (a: CustomAnswer) => {
     const next = edits[a.question_key];
@@ -85,14 +107,25 @@ export function SavedAnswersCard() {
           </p>
         ) : (
           <>
-            <div className="relative">
-              <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
-              <Input
-                className="pl-8"
-                placeholder="Search questions or answers…"
-                value={q}
-                onChange={(e) => setQ(e.target.value)}
-              />
+            <div className="flex items-center gap-2">
+              <div className="relative flex-1">
+                <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+                <Input
+                  className="pl-8"
+                  placeholder="Search questions or answers…"
+                  value={q}
+                  onChange={(e) => setQ(e.target.value)}
+                />
+              </div>
+              <select
+                value={sort}
+                onChange={(e) => setSort(e.target.value as "recent" | "az")}
+                className="h-9 rounded-md border bg-background px-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                aria-label="Sort answers"
+              >
+                <option value="recent">Recent</option>
+                <option value="az">A–Z</option>
+              </select>
             </div>
 
             <ul className="space-y-2.5">
@@ -121,6 +154,8 @@ export function SavedAnswersCard() {
                           </span>
                         ) : changed ? (
                           "Unsaved change"
+                        ) : a.updated_at ? (
+                          `Updated ${relTime(a.updated_at)}`
                         ) : (
                           ""
                         )}

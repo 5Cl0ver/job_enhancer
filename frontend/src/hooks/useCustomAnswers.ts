@@ -10,6 +10,7 @@ export interface CustomAnswer {
   question_key: string;
   question_text: string;
   answer: string;
+  updated_at?: string | null;
 }
 
 export function useCustomAnswers() {

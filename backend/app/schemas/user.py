@@ -83,6 +83,9 @@ class CustomAnswerSchema(BaseModel):
     question_key: str = Field(min_length=1, max_length=255)
     question_text: str = Field(min_length=1, max_length=500)
     answer: str = Field(min_length=1)
+    # Optional so the extension's upserts (which omit it) still validate; the
+    # GET populates it from the row for the Settings dashboard.
+    updated_at: datetime | None = None
 
     model_config = {"from_attributes": True}
 
