@@ -14,6 +14,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.application_profile import ApplicationProfile
 from app.models.collection import Collection
+from app.models.custom_answer import CustomAnswer
 from app.models.generated_document import GeneratedDocument
 from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
@@ -21,6 +22,8 @@ from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.schemas.user import (
     ApplicationProfileSchema,
+    CustomAnswersUpsert,
+    CustomAnswerSchema,
     ProfileFillResult,
     UserProfile,
     UserUpdate,
@@ -124,6 +127,53 @@ async def fill_profile_from_resume(
         profile=ApplicationProfileSchema.model_validate(profile),
         filled=sorted(filled),
     )
+
+
+# ---------------------------------------------------------------------------
+# Learn-as-you-go: remembered answers to questions the profile can't map.
+# ---------------------------------------------------------------------------
+
+
+@router.get("/me/custom-answers", response_model=list[CustomAnswerSchema])
+async def get_custom_answers(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CustomAnswerSchema]:
+    """The autofill memory — answers keyed by a normalized question. The
+    extension fetches these to fill custom questions on any form."""
+    rows = await db.scalars(
+        select(CustomAnswer).where(CustomAnswer.user_id == user.id)
+    )
+    return [CustomAnswerSchema.model_validate(r) for r in rows]
+
+
+@router.put("/me/custom-answers", response_model=list[CustomAnswerSchema])
+async def upsert_custom_answers(
+    data: CustomAnswersUpsert,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CustomAnswerSchema]:
+    """Save answers the user just taught us — upsert by question_key so
+    re-answering a question updates it instead of duplicating."""
+    existing = {
+        r.question_key: r
+        for r in await db.scalars(
+            select(CustomAnswer).where(CustomAnswer.user_id == user.id)
+        )
+    }
+    for item in data.answers:
+        row = existing.get(item.question_key)
+        if row is None:
+            row = CustomAnswer(user_id=user.id, question_key=item.question_key)
+            db.add(row)
+            existing[item.question_key] = row
+        row.question_text = item.question_text
+        row.answer = item.answer
+    await db.commit()
+    rows = await db.scalars(
+        select(CustomAnswer).where(CustomAnswer.user_id == user.id)
+    )
+    return [CustomAnswerSchema.model_validate(r) for r in rows]
 
 
 @router.get("/me/export")

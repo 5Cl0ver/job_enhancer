@@ -112,6 +112,53 @@ async def test_application_profile_rejects_bad_url(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_custom_answers_learn_and_reuse(client: AsyncClient):
+    """Learn-as-you-go: empty at first, then upsert-by-key (re-answering a
+    question updates it, doesn't duplicate)."""
+    r = await client.get("/v1/users/me/custom-answers")
+    assert r.status_code == 200
+    assert r.json() == []
+
+    r = await client.put(
+        "/v1/users/me/custom-answers",
+        json={
+            "answers": [
+                {
+                    "question_key": "years of react experience",
+                    "question_text": "Years of React experience?",
+                    "answer": "3",
+                },
+                {
+                    "question_key": "how did you hear about us",
+                    "question_text": "How did you hear about us?",
+                    "answer": "LinkedIn",
+                },
+            ]
+        },
+    )
+    assert r.status_code == 200
+    assert len(r.json()) == 2
+
+    # Re-answer one → updates in place (still 2 rows, new value).
+    r = await client.put(
+        "/v1/users/me/custom-answers",
+        json={
+            "answers": [
+                {
+                    "question_key": "years of react experience",
+                    "question_text": "Years of React experience?",
+                    "answer": "4",
+                }
+            ]
+        },
+    )
+    rows = {a["question_key"]: a["answer"] for a in r.json()}
+    assert len(rows) == 2
+    assert rows["years of react experience"] == "4"
+    assert rows["how did you hear about us"] == "LinkedIn"
+
+
+@pytest.mark.asyncio
 async def test_export_includes_application_profile(client: AsyncClient):
     await client.put(
         "/v1/users/me/application-profile", json={"first_name": "Fabian"}

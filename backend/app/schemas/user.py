@@ -77,6 +77,22 @@ class ApplicationProfileSchema(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class CustomAnswerSchema(BaseModel):
+    """One learned answer to a question the profile vault can't map."""
+
+    question_key: str = Field(min_length=1, max_length=255)
+    question_text: str = Field(min_length=1, max_length=500)
+    answer: str = Field(min_length=1)
+
+    model_config = {"from_attributes": True}
+
+
+class CustomAnswersUpsert(BaseModel):
+    """Bulk save of answers the user just taught us (learn-as-you-go)."""
+
+    answers: list[CustomAnswerSchema] = Field(default_factory=list, max_length=200)
+
+
 class ProfileFillResult(BaseModel):
     """Outcome of 'Fill from resume': the updated vault + which fields the
     resume was able to fill (empty ones only — user answers are never touched)."""
