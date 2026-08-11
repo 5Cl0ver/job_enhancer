@@ -117,8 +117,11 @@ async function detectContext() {
   const url = tab?.url || "";
   const tabTitle = tab?.title || "";
   let host = "";
+  let path = "";
   try {
-    host = new URL(url).hostname;
+    const u = new URL(url);
+    host = u.hostname;
+    path = u.pathname;
   } catch {
     return { kind: "none" };
   }
@@ -126,7 +129,21 @@ async function detectContext() {
   if (/indeed\./i.test(host) && /\bapply\b/i.test(url)) return { kind: "indeed-apply", tabTitle };
   if (/greenhouse\.io$/i.test(host)) return { kind: "ats", ats: "Greenhouse", tabTitle };
   if (/(^|\.)lever\.co$/i.test(host)) return { kind: "ats", ats: "Lever", tabTitle };
+  // ANY other site whose URL path is an application form — Amazon Jobs,
+  // Workday, iCIMS, company careers pages. Path-based (not the query string or
+  // hostname) so job LISTINGS don't false-trigger "you're applying".
+  if (/\b(apply|application)/i.test(path)) return { kind: "ats", ats: siteLabel(host), tabTitle };
   return { kind: "none" };
+}
+
+/** A friendly site name from a host, e.g. "www.amazon.jobs" → "Amazon". */
+function siteLabel(host) {
+  const skip = new Set(["www", "jobs", "careers", "career", "boards", "job-boards", "apply", "account", "my"]);
+  const name = host
+    .replace(/^www\./, "")
+    .split(".")
+    .find((p) => !skip.has(p) && p.length > 1) || host;
+  return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
 /** The saved job this tab is most likely about (title appears in tab title). */
@@ -166,10 +183,23 @@ function renderContext(ctx) {
       actions.append(makeMarkAppliedButton(match, "✓ I submitted — mark applied"));
     }
   } else {
+    const autoTracked = ctx.ats === "Greenhouse" || ctx.ats === "Lever";
     const note = document.createElement("span");
-    note.textContent =
-      "Use the purple ⚡ Autofill button on the page — submit is tracked automatically.";
+    note.textContent = autoTracked
+      ? "Use the purple ⚡ Autofill button on the page — submit is tracked automatically."
+      : "Use the purple ⚡ Autofill button on the page to fill it fast.";
     actions.append(note);
+    // On sites we can't auto-track (Amazon, company forms), offer one click.
+    if (!autoTracked) {
+      if (match?.applied) {
+        const done = document.createElement("span");
+        done.className = "done";
+        done.textContent = "✓ Tracked as Applied";
+        actions.append(done);
+      } else if (match) {
+        actions.append(makeMarkAppliedButton(match, "✓ I submitted — mark applied"));
+      }
+    }
   }
 
   // Point the cover-letter tool at this job automatically.
