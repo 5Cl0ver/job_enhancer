@@ -75,6 +75,7 @@
     { key: "today_date", re: /today['’]?s?[\s_-]*date|current[\s_-]*date|date[\s_-]*signed|signature[\s_-]*date|date[\s_-]*today/i }
   ];
   var SKIP = /cover[\s_-]*letter|why[\s\S]*(join|work|interested)|additional[\s_-]*info|comments|token|captcha/i;
+  var NOISE = /preference|personaliz|cookie|consent|newsletter|subscrib|marketing|notification/i;
   function keyFor(el, doc) {
     const type = (el.getAttribute?.("type") || el.tagName || "").toLowerCase();
     if (["hidden", "submit", "button", "checkbox", "radio"].includes(type)) return null;
@@ -148,6 +149,7 @@
       if (UNFILLABLE.has(type)) continue;
       if (keyFor(el, doc)) continue;
       const questionText = visibleLabelFor(el, doc);
+      if (!questionText || NOISE.test(questionText)) continue;
       const questionKey = normalizeQuestion(questionText);
       if (questionKey.length < 3) continue;
       if (seen.has(questionKey)) continue;
@@ -184,6 +186,7 @@
       if (els.length < 2) continue;
       const options = els.map((el) => ({ el, label: visibleLabelFor(el, doc) || el.value || "" }));
       const question = groupQuestion(els, options, doc);
+      if (NOISE.test(question)) continue;
       const questionKey = normalizeQuestion(question);
       if (questionKey.length < 3) continue;
       const k = keyForText(question);

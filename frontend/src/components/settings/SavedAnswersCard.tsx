@@ -18,8 +18,8 @@ import {
 
 /**
  * "Saved Answers" — the manager for the extension's learn-as-you-go memory.
- * The edge case this solves: it remembered something you typed wrong. Here you
- * can search, fix, or delete any learned answer; changes sync to the extension.
+ * Solves the edge case where it remembered something wrong: search, fix, or
+ * delete any learned answer; changes sync to the extension.
  */
 export function SavedAnswersCard() {
   const { data: answers = [], isLoading } = useCustomAnswers();
@@ -27,8 +27,8 @@ export function SavedAnswersCard() {
   const del = useDeleteCustomAnswer();
 
   const [q, setQ] = useState("");
-  // Local edits keyed by question_key; a row shows "Save" only when changed.
   const [edits, setEdits] = useState<Record<string, string>>({});
+  const [savedKey, setSavedKey] = useState<string | null>(null);
 
   const filtered = useMemo(() => {
     const needle = q.toLowerCase().trim();
@@ -46,11 +46,14 @@ export function SavedAnswersCard() {
     save.mutate(
       { ...a, answer: next },
       {
-        onSuccess: () =>
+        onSuccess: () => {
           setEdits((e) => {
             const { [a.question_key]: _drop, ...rest } = e;
             return rest;
-          }),
+          });
+          setSavedKey(a.question_key);
+          setTimeout(() => setSavedKey(null), 1500);
+        },
       },
     );
   };
@@ -61,14 +64,12 @@ export function SavedAnswersCard() {
         <CardTitle className="flex items-center gap-2 text-base">
           <Brain className="h-4 w-4 text-primary" /> Saved Answers
           {answers.length > 0 && (
-            <span className="text-sm font-normal text-muted-foreground">
-              ({answers.length})
-            </span>
+            <span className="text-sm font-normal text-muted-foreground">({answers.length})</span>
           )}
         </CardTitle>
         <CardDescription>
-          Answers the extension learned as you applied. Fix a typo or delete
-          anything wrong — changes sync to the extension automatically.
+          Answers the extension learned as you applied — these auto-fill on future
+          applications. Edit a typo or delete anything wrong; changes sync instantly.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-3">
@@ -77,10 +78,10 @@ export function SavedAnswersCard() {
             <Loader2 className="h-4 w-4 animate-spin" /> Loading…
           </div>
         ) : answers.length === 0 ? (
-          <p className="py-6 text-center text-sm text-muted-foreground">
-            Nothing learned yet. As you apply and hit{" "}
+          <p className="rounded-lg border border-dashed py-8 text-center text-sm text-muted-foreground">
+            Nothing learned yet. When you apply and tap{" "}
             <span className="font-medium">“Remember my answers”</span> in the
-            extension, your answers show up here.
+            extension, your answers appear here.
           </p>
         ) : (
           <>
@@ -94,50 +95,62 @@ export function SavedAnswersCard() {
               />
             </div>
 
-            <ul className="divide-y rounded-md border">
+            <ul className="space-y-2.5">
               {filtered.map((a) => {
                 const value = edits[a.question_key] ?? a.answer;
                 const changed = value !== a.answer;
+                const justSaved = savedKey === a.question_key;
                 return (
-                  <li key={a.question_key} className="space-y-1.5 p-3">
-                    <p className="text-sm font-medium">{a.question_text}</p>
-                    <div className="flex items-center gap-2">
-                      <Input
-                        value={value}
-                        onChange={(e) =>
-                          setEdits((prev) => ({ ...prev, [a.question_key]: e.target.value }))
-                        }
-                        onKeyDown={(e) => e.key === "Enter" && onSave(a)}
-                      />
-                      {changed && (
+                  <li key={a.question_key} className="rounded-lg border bg-card p-3">
+                    <p className="mb-1.5 text-sm font-medium leading-snug">
+                      {a.question_text}
+                    </p>
+                    <textarea
+                      className="w-full min-h-[40px] resize-y rounded-md border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                      rows={1}
+                      value={value}
+                      onChange={(e) =>
+                        setEdits((prev) => ({ ...prev, [a.question_key]: e.target.value }))
+                      }
+                    />
+                    <div className="mt-1.5 flex items-center justify-between">
+                      <span className="text-xs text-muted-foreground">
+                        {justSaved ? (
+                          <span className="flex items-center gap-1 text-green-600">
+                            <Check className="h-3.5 w-3.5" /> Saved
+                          </span>
+                        ) : changed ? (
+                          "Unsaved change"
+                        ) : (
+                          ""
+                        )}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {changed && (
+                          <Button size="sm" onClick={() => onSave(a)} disabled={save.isPending}>
+                            {save.isPending ? (
+                              <Loader2 className="h-4 w-4 animate-spin" />
+                            ) : (
+                              "Save"
+                            )}
+                          </Button>
+                        )}
                         <Button
                           size="sm"
-                          onClick={() => onSave(a)}
-                          disabled={save.isPending}
+                          variant="ghost"
+                          className="text-muted-foreground hover:text-destructive"
+                          onClick={() => del.mutate(a.question_key)}
+                          disabled={del.isPending}
                         >
-                          {save.isPending ? (
-                            <Loader2 className="h-4 w-4 animate-spin" />
-                          ) : (
-                            <Check className="h-4 w-4" />
-                          )}
+                          <Trash2 className="mr-1 h-4 w-4" /> Delete
                         </Button>
-                      )}
-                      <Button
-                        size="sm"
-                        variant="ghost"
-                        className="text-muted-foreground hover:text-destructive"
-                        onClick={() => del.mutate(a.question_key)}
-                        disabled={del.isPending}
-                        aria-label="Delete answer"
-                      >
-                        <Trash2 className="h-4 w-4" />
-                      </Button>
+                      </div>
                     </div>
                   </li>
                 );
               })}
               {filtered.length === 0 && (
-                <li className="p-4 text-center text-sm text-muted-foreground">
+                <li className="py-6 text-center text-sm text-muted-foreground">
                   No answers match “{q}”.
                 </li>
               )}

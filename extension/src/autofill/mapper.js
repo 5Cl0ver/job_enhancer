@@ -91,6 +91,10 @@ const RULES = [
 // Controls we must never touch: cover letters, free-text essays, hidden/meta.
 const SKIP = /cover[\s_-]*letter|why[\s\S]*(join|work|interested)|additional[\s_-]*info|comments|token|captcha/i;
 
+// Page widgets that are NOT application questions — never fill OR learn these
+// (e.g. Amazon's "Choose your AI preference" personalization/consent banner).
+const NOISE = /preference|personaliz|cookie|consent|newsletter|subscrib|marketing|notification/i;
+
 /** Map one control to a vault key (or null when we honestly don't know). */
 export function keyFor(el, doc) {
   const type = (el.getAttribute?.("type") || el.tagName || "").toLowerCase();
@@ -192,6 +196,7 @@ export function collectUnmapped(doc) {
     if (UNFILLABLE.has(type)) continue;
     if (keyFor(el, doc)) continue; // handled by the profile mapper
     const questionText = visibleLabelFor(el, doc);
+    if (!questionText || NOISE.test(questionText)) continue; // skip consent/marketing widgets
     const questionKey = normalizeQuestion(questionText);
     if (questionKey.length < 3) continue;
     if (seen.has(questionKey)) continue;
@@ -238,6 +243,7 @@ export function collectRadioGroups(doc) {
     if (els.length < 2) continue; // a real choice needs >=2 options
     const options = els.map((el) => ({ el, label: visibleLabelFor(el, doc) || el.value || "" }));
     const question = groupQuestion(els, options, doc);
+    if (NOISE.test(question)) continue; // skip consent/marketing widgets (not app questions)
     const questionKey = normalizeQuestion(question);
     if (questionKey.length < 3) continue;
     const k = keyForText(question);
