@@ -21,6 +21,9 @@ import {
   fillRadioGroups,
   captureAnswers,
   captureRadioAnswers,
+  setNativeValue,
+  setSelectValue,
+  setRadioValue,
 } from "./autofill/fill.js";
 
 const ATS = detectAts(location.href); // still used for submit auto-tracking
@@ -161,10 +164,30 @@ async function run(btn) {
   // Yes/no radio questions (work eligibility, "previously applied?", etc.).
   const radios = fillRadioGroups(collectRadioGroups(document), values, answers, matchAnswer);
 
-  const filled =
-    report.filled.length + custom.learned.length + radios.filled.length + radios.learned.length;
-  const toAnswer = custom.remaining.length + radios.remaining.length;
-  const anyLearned = custom.learned.length + radios.learned.length;
+  // AI pass: whatever the deterministic passes couldn't fill goes to a grounded
+  // model that maps it from the user's data — this is what makes it work on ANY
+  // site without per-field rules. Degrades gracefully (no AI → nothing changes).
+  const aiFilled = await aiPass(btn);
+
+  // Recompute what's genuinely left AFTER every pass, so counts are honest.
+  const toAnswerList = [
+    ...collectUnmapped(document)
+      .filter((u) => !(u.el.value || "").trim())
+      .map((u) => ({ label: u.questionText })),
+    ...collectRadioGroups(document)
+      .filter((g) => !g.key && !g.options.some((o) => o.el.checked))
+      .map((g) => ({ label: g.question })),
+  ];
+
+  const val = (k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) });
+  const learned = [
+    ...custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+    ...radios.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+  ];
+  const filledList = [...report.filled.map(val), ...radios.filled.map(val)];
+
+  const filled = filledList.length + learned.length + aiFilled.length;
+  const toAnswer = toAnswerList.length;
   setState(
     btn,
     "done",
@@ -172,24 +195,70 @@ async function run(btn) {
       ? `✓ Filled ${filled} · ${toAnswer} to answer`
       : `✓ Filled ${filled} — review & submit`,
   );
-  ensureRememberButton(toAnswer > 0 || anyLearned > 0);
+  ensureRememberButton(toAnswer > 0 || learned.length > 0 || aiFilled.length > 0);
 
-  // The "what did it do?" popout — exactly what was filled, learned, and left.
-  const val = (k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) });
   showAutofillPanel({
-    filled: [...report.filled.map(val), ...radios.filled.map(val)],
-    learned: [
-      ...custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
-      ...radios.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
-    ],
-    toAnswer: [
-      ...custom.remaining.map((r) => ({ label: r.questionText })),
-      ...radios.remaining.map((r) => ({ label: r.questionText })),
-    ],
+    filled: filledList,
+    learned,
+    ai: aiFilled,
+    toAnswer: toAnswerList,
     missing: report.attention
       .filter((k) => k !== "resume_file" || !resumeFile)
       .map((k) => ({ label: LABELS[k] || k })),
   });
+}
+
+// Send the still-unfilled fields to the AI mapper and apply what comes back.
+async function aiPass(btn) {
+  const targets = [];
+  for (const u of collectUnmapped(document)) {
+    if ((u.el.value || "").trim()) continue;
+    const isSelect = u.el.tagName === "SELECT";
+    targets.push({
+      ref: u.el,
+      kind: isSelect ? "select" : "text",
+      id: "t" + targets.length,
+      label: u.questionText,
+      type: isSelect ? "select" : "text",
+      options: isSelect
+        ? [...u.el.options].map((o) => o.text.trim()).filter(Boolean).slice(0, 60)
+        : [],
+    });
+  }
+  for (const g of collectRadioGroups(document)) {
+    if (g.key || g.options.some((o) => o.el.checked)) continue;
+    targets.push({
+      ref: g.options,
+      kind: "radio",
+      id: "r" + targets.length,
+      label: g.question,
+      type: "radio",
+      options: g.options.map((o) => o.label).slice(0, 60),
+    });
+  }
+  if (!targets.length) return [];
+
+  setState(btn, "busy", "🤖 AI mapping…");
+  const res = await safeSend({
+    type: "aiMapFields",
+    fields: targets.map((t) => ({ id: t.id, label: t.label, type: t.type, options: t.options })),
+  }).catch(() => null);
+  const mappings = res?.mappings || {};
+
+  const done = [];
+  for (const t of targets) {
+    const v = mappings[t.id];
+    if (v == null || v === "") continue;
+    let ok = false;
+    if (t.kind === "radio") ok = setRadioValue(t.ref, v);
+    else if (t.kind === "select") ok = setSelectValue(t.ref, v);
+    else {
+      setNativeValue(t.ref, String(v));
+      ok = true;
+    }
+    if (ok) done.push({ label: t.label, value: String(v) });
+  }
+  return done;
 }
 
 function displayValue(key, values, resumeFile) {
@@ -230,6 +299,7 @@ function showAutofillPanel(data) {
     `<div class="je-p-head"><b>Autofill summary</b><button class="je-p-close" type="button" aria-label="Close">✕</button></div>` +
     `<div class="je-p-body">` +
     section("Filled", data.filled, "ok", true) +
+    section("AI-filled", data.ai, "ai", true) +
     section("Learned", data.learned, "learn", true) +
     section("Answer these", data.toAnswer, "warn", false) +
     section("No data saved", data.missing, "muted", false) +
@@ -384,6 +454,7 @@ function injectStyles() {
       letter-spacing: .05em; margin: 10px 0 4px;
     }
     #${PANEL_ID} .je-sec-h.ok { color: #16a34a; }
+    #${PANEL_ID} .je-sec-h.ai { color: #7c3aed; }
     #${PANEL_ID} .je-sec-h.learn { color: #2563eb; }
     #${PANEL_ID} .je-sec-h.warn { color: #d97706; }
     #${PANEL_ID} .je-sec-h.muted { color: #9ca3af; }

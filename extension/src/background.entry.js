@@ -184,6 +184,20 @@ async function getAutofillData() {
   return { signedIn: true, profile, email: email || "", resume, customAnswers };
 }
 
+// AI field mapper: send the fields the deterministic pass couldn't fill; the
+// backend grounds the model on the user's data and returns { mappings }.
+async function aiMapFields(fields) {
+  const token = await getValidToken();
+  if (!token) return { mappings: {} };
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/autofill-map`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ fields }),
+  });
+  if (!res.ok) return { mappings: {} };
+  return res.json().catch(() => ({ mappings: {} }));
+}
+
 // Save answers the user just taught us (learn-as-you-go). Returns { saved }.
 async function saveCustomAnswers(answers) {
   const token = await getValidToken();
@@ -372,6 +386,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await backfillJob(msg.job)) });
       } else if (msg.type === "getAutofillData") {
         sendResponse({ ok: true, ...(await getAutofillData()) });
+      } else if (msg.type === "aiMapFields") {
+        sendResponse({ ok: true, ...(await aiMapFields(msg.fields || [])) });
       } else if (msg.type === "saveCustomAnswers") {
         const out = await saveCustomAnswers(msg.answers || []);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });

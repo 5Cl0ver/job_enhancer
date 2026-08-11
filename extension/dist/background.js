@@ -162,6 +162,17 @@
     if (caRes.ok) customAnswers = await caRes.json().catch(() => []);
     return { signedIn: true, profile, email: email || "", resume, customAnswers };
   }
+  async function aiMapFields(fields) {
+    const token = await getValidToken();
+    if (!token) return { mappings: {} };
+    const res = await fetch(`${cfg.API_BASE}/v1/ai/autofill-map`, {
+      method: "POST",
+      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ fields })
+    });
+    if (!res.ok) return { mappings: {} };
+    return res.json().catch(() => ({ mappings: {} }));
+  }
   async function saveCustomAnswers(answers) {
     const token = await getValidToken();
     if (!token) return { error: "NOT_SIGNED_IN" };
@@ -323,6 +334,8 @@
           sendResponse({ ok: true, ...await backfillJob(msg.job) });
         } else if (msg.type === "getAutofillData") {
           sendResponse({ ok: true, ...await getAutofillData() });
+        } else if (msg.type === "aiMapFields") {
+          sendResponse({ ok: true, ...await aiMapFields(msg.fields || []) });
         } else if (msg.type === "saveCustomAnswers") {
           const out = await saveCustomAnswers(msg.answers || []);
           sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
