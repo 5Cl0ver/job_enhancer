@@ -157,6 +157,13 @@ async def test_custom_answers_learn_and_reuse(client: AsyncClient):
     assert rows["years of react experience"] == "4"
     assert rows["how did you hear about us"] == "LinkedIn"
 
+    # Delete one (the user fixed a wrong one in Settings) → only the other remains.
+    d = await client.delete("/v1/users/me/custom-answers/how%20did%20you%20hear%20about%20us")
+    assert d.status_code == 204
+    r = await client.get("/v1/users/me/custom-answers")
+    keys = [a["question_key"] for a in r.json()]
+    assert keys == ["years of react experience"]
+
 
 @pytest.mark.asyncio
 async def test_export_includes_application_profile(client: AsyncClient):

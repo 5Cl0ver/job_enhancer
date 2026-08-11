@@ -18,6 +18,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, getAccessToken, API_BASE } from "@/lib/api";
 import { ApplicationProfileCard } from "@/components/settings/ApplicationProfileCard";
+import { SavedAnswersCard } from "@/components/settings/SavedAnswersCard";
 
 export default function SettingsPage() {
   const { data: profile } = useProfile();
@@ -31,6 +32,7 @@ export default function SettingsPage() {
       </div>
 
       <ApplicationProfileCard />
+      <SavedAnswersCard />
       <DataExportCard />
       <DeleteAccountCard email={userEmail} />
     </div>

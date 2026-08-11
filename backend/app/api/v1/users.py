@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from slowapi import Limiter
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -174,6 +174,22 @@ async def upsert_custom_answers(
         select(CustomAnswer).where(CustomAnswer.user_id == user.id)
     )
     return [CustomAnswerSchema.model_validate(r) for r in rows]
+
+
+@router.delete("/me/custom-answers/{question_key:path}", status_code=204)
+async def delete_custom_answer(
+    question_key: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Forget one learned answer (the user fixed/removed it in Settings)."""
+    await db.execute(
+        delete(CustomAnswer).where(
+            CustomAnswer.user_id == user.id,
+            CustomAnswer.question_key == question_key,
+        )
+    )
+    await db.commit()
 
 
 @router.get("/me/export")
