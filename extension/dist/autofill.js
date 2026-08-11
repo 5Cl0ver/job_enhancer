@@ -579,8 +579,8 @@
     const radios = fillRadioGroups(collectRadioGroups(document), values, answers, matchAnswer);
     const aiFilled = await aiPass(btn);
     const toAnswerList = [
-      ...collectUnmapped(document).filter((u) => !(u.el.value || "").trim()).map((u) => ({ label: u.questionText })),
-      ...collectRadioGroups(document).filter((g) => !g.key && !g.options.some((o) => o.el.checked)).map((g) => ({ label: g.question }))
+      ...collectUnmapped(document).filter((u) => !(u.el.value || "").trim()).map((u) => ({ label: u.questionText, el: u.el })),
+      ...collectRadioGroups(document).filter((g) => !g.key && !g.options.some((o) => o.el.checked)).map((g) => ({ label: g.question, el: g.options[0]?.el }))
     ];
     const val = (k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) });
     const learned = [
@@ -668,13 +668,23 @@
       (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]
     );
   }
+  function flashField(el) {
+    if (!el) return;
+    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    try {
+      el.focus({ preventScroll: true });
+    } catch {
+    }
+    el.classList.add("je-flash");
+    setTimeout(() => el.classList.remove("je-flash"), 1600);
+  }
   function showAutofillPanel(data) {
     document.getElementById(PANEL_ID)?.remove();
     const trunc = (s) => s.length > 42 ? s.slice(0, 41) + "\u2026" : s;
-    const section = (title, items, cls, withValue) => {
+    const section = (title, items, cls, withValue, clickable) => {
       if (!items.length) return "";
       const rows = items.map(
-        (i) => `<div class="je-row"><span>${esc(trunc(i.label))}</span>${withValue && i.value ? `<em>${esc(trunc(i.value))}</em>` : ""}</div>`
+        (i, idx) => `<div class="je-row${clickable ? " je-jump" : ""}"${clickable ? ` data-jump="${idx}"` : ""}><span>${esc(trunc(i.label))}</span>${withValue && i.value ? `<em>${esc(trunc(i.value))}</em>` : clickable ? `<em class="je-jump-hint">jump \u2192</em>` : ""}</div>`
       ).join("");
       return `<div class="je-sec"><div class="je-sec-h ${cls}">${title} (${items.length})</div>${rows}</div>`;
     };
@@ -682,9 +692,12 @@
     const nudge = data.missing.length && totalFilled <= 2 ? `<div class="je-p-nudge">Most fields were skipped because your profile is nearly empty. Fill <b>Settings \u2192 Application Profile</b> once and far more will auto-fill next time.</div>` : "";
     const panel = document.createElement("div");
     panel.id = PANEL_ID;
-    panel.innerHTML = `<div class="je-p-head"><b>Autofill summary</b><button class="je-p-close" type="button" aria-label="Close">\u2715</button></div><div class="je-p-legend">\u{1F7E2} from your profile \xB7 \u{1F7E3} AI-mapped \xB7 \u{1F7E0} only you can answer</div><div class="je-p-body">` + nudge + section("Filled from your profile", data.filled, "ok", true) + section("AI-mapped", data.ai, "ai", true) + section("Remembered from before", data.learned, "learn", true) + section("Only you can answer these", data.toAnswer, "warn", false) + section("No data saved for these", data.missing, "muted", false) + `</div>`;
+    panel.innerHTML = `<div class="je-p-head"><b>Autofill summary</b><button class="je-p-close" type="button" aria-label="Close">\u2715</button></div><div class="je-p-count"><span class="je-c-ok">\u2713 ${totalFilled} filled</span>${data.toAnswer.length ? `<span class="je-c-warn">${data.toAnswer.length} need you</span>` : ""}</div><div class="je-p-legend">\u{1F7E2} profile \xB7 \u{1F7E3} AI \xB7 \u{1F535} remembered \xB7 \u{1F7E0} only you</div><div class="je-p-body">` + nudge + section("Filled from your profile", data.filled, "ok", true) + section("AI-mapped", data.ai, "ai", true) + section("Remembered from before", data.learned, "learn", true) + section("Only you can answer these \u2193 tap to jump", data.toAnswer, "warn", false, true) + section("No data saved for these", data.missing, "muted", false) + `</div>`;
     document.body.appendChild(panel);
     panel.querySelector(".je-p-close").addEventListener("click", () => panel.remove());
+    panel.querySelectorAll(".je-jump[data-jump]").forEach((row) => {
+      row.addEventListener("click", () => flashField(data.toAnswer[+row.dataset.jump]?.el));
+    });
   }
   function ensureRememberButton(show) {
     let rb = document.getElementById(REMEMBER_ID);
@@ -904,10 +917,19 @@
       border-bottom: 1px solid rgba(148,163,184,.3);
     }
     #${PANEL_ID} .je-p-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
+    #${PANEL_ID} .je-p-count {
+      display: flex; gap: 8px; padding: 8px 12px 4px; font-weight: 700; font-size: 15px;
+    }
+    #${PANEL_ID} .je-c-ok { color: #16a34a; }
+    #${PANEL_ID} .je-c-warn { color: #d97706; }
     #${PANEL_ID} .je-p-legend {
-      padding: 6px 12px; font-size: 11px; color: #6b7280;
+      padding: 2px 12px 6px; font-size: 11px; color: #6b7280;
       border-bottom: 1px solid rgba(148,163,184,.2);
     }
+    #${PANEL_ID} .je-jump { cursor: pointer; border-radius: 6px; }
+    #${PANEL_ID} .je-jump:hover { background: rgba(217,119,6,.12); }
+    #${PANEL_ID} .je-jump-hint { color: #d97706; font-style: normal; opacity: .85; }
+    .je-flash { outline: 3px solid #f59e0b !important; outline-offset: 1px; border-radius: 4px; transition: outline .2s; }
     #${PANEL_ID} .je-p-nudge {
       margin: 8px 0; padding: 8px 10px; border-radius: 8px; font-size: 12px;
       background: rgba(124,58,237,.1); color: inherit;
