@@ -309,6 +309,23 @@ describe("radio groups — yes/no questions (e.g. Amazon Work Eligibility)", () 
     expect(learned[0].value).toBe("No");
   });
 
+  it("finds the question when it sits OUTSIDE the radio group (Amazon structure)", () => {
+    const w = new Window();
+    w.document.write(`
+      <div class="q-block">
+        <label aria-hidden="true">Are you a veteran?</label>
+        <div role="radiogroup">
+          <label><input type="radio" name="vet" value="Yes" />Yes</label>
+          <label><input type="radio" name="vet" value="No" />No</label>
+          <label><input type="radio" name="vet" value="X" />I choose not to self-identify</label>
+        </div>
+      </div>`);
+    const groups = collectRadioGroups(w.document);
+    expect(groups).toHaveLength(1);
+    expect(groups[0].questionKey).toContain("are you a veteran");
+    expect(groups[0].options.map((o) => o.label)).toContain("Yes");
+  });
+
   it("captures the user's radio choice for CUSTOM questions only", () => {
     const doc = radioForm();
     doc.querySelector('input[name="prev"][value="Yes"]').checked = true;

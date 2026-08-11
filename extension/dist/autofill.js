@@ -159,19 +159,25 @@
     return out;
   }
   function groupQuestion(els, options, doc) {
-    const fs = els[0].closest?.("fieldset");
-    const legend = fs?.querySelector?.("legend");
-    if (legend?.textContent?.trim()) {
-      return legend.textContent.replace(/\s+/g, " ").trim().slice(0, 500);
+    const clean = (s) => (s || "").replace(/\s+/g, " ").trim().slice(0, 500);
+    const legend = els[0].closest?.("fieldset")?.querySelector?.("legend");
+    if (legend?.textContent?.trim()) return clean(legend.textContent);
+    const grp = els[0].closest?.('[role="radiogroup"]');
+    if (grp?.getAttribute?.("aria-label")?.trim()) return clean(grp.getAttribute("aria-label"));
+    const lb = grp?.getAttribute?.("aria-labelledby");
+    if (lb) {
+      const t = lb.split(/\s+/).map((id) => doc.getElementById(id)?.textContent || "").join(" ").trim();
+      if (t) return clean(t);
     }
     let a = els[0];
     while (a && !els.every((e) => a.contains?.(e))) a = a.parentElement;
-    a = a || doc.body;
-    let text = (a.textContent || "").replace(/\s+/g, " ").trim();
-    for (const o of options) {
-      if (o.label) text = text.split(o.label).join(" ");
+    for (let hops = 0; a && hops < 5; hops++, a = a.parentElement) {
+      let text = clean(a.textContent);
+      for (const o of options) if (o.label) text = text.split(o.label).join(" ");
+      text = clean(text);
+      if (text.length >= 6) return text;
     }
-    return text.replace(/\s+/g, " ").trim().slice(0, 500);
+    return "";
   }
   function collectRadioGroups(doc) {
     const byName = /* @__PURE__ */ new Map();

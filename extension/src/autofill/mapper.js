@@ -209,19 +209,38 @@ export function collectUnmapped(doc) {
 /** The question text for a radio group (fieldset legend, else the smallest
  *  container around the options minus the option labels). */
 function groupQuestion(els, options, doc) {
-  const fs = els[0].closest?.("fieldset");
-  const legend = fs?.querySelector?.("legend");
-  if (legend?.textContent?.trim()) {
-    return legend.textContent.replace(/\s+/g, " ").trim().slice(0, 500);
+  const clean = (s) => (s || "").replace(/\s+/g, " ").trim().slice(0, 500);
+
+  // 1) A <fieldset><legend> — the cleanest source.
+  const legend = els[0].closest?.("fieldset")?.querySelector?.("legend");
+  if (legend?.textContent?.trim()) return clean(legend.textContent);
+
+  // 2) An explicit aria label on the radiogroup.
+  const grp = els[0].closest?.('[role="radiogroup"]');
+  if (grp?.getAttribute?.("aria-label")?.trim()) return clean(grp.getAttribute("aria-label"));
+  const lb = grp?.getAttribute?.("aria-labelledby");
+  if (lb) {
+    const t = lb
+      .split(/\s+/)
+      .map((id) => doc.getElementById(id)?.textContent || "")
+      .join(" ")
+      .trim();
+    if (t) return clean(t);
   }
+
+  // 3) Walk UP from the smallest container of the radios until an ancestor's
+  //    text (minus the option labels) actually holds the question. Amazon puts
+  //    "Are you a veteran?" in a <label> OUTSIDE the radios' immediate box, so
+  //    stopping at that box gave an empty question and the group was dropped.
   let a = els[0];
   while (a && !els.every((e) => a.contains?.(e))) a = a.parentElement;
-  a = a || doc.body;
-  let text = (a.textContent || "").replace(/\s+/g, " ").trim();
-  for (const o of options) {
-    if (o.label) text = text.split(o.label).join(" ");
+  for (let hops = 0; a && hops < 5; hops++, a = a.parentElement) {
+    let text = clean(a.textContent);
+    for (const o of options) if (o.label) text = text.split(o.label).join(" ");
+    text = clean(text);
+    if (text.length >= 6) return text;
   }
-  return text.replace(/\s+/g, " ").trim().slice(0, 500);
+  return "";
 }
 
 /**
