@@ -13,9 +13,10 @@ the job boards you already use, not replace them.
 Built as a real, publicly hosted app (running entirely on free tiers) and as a
 portfolio piece demonstrating spec-driven development end to end.
 
-> **Status:** core product, AI quick-apply, and the browser extension are all
-> built and tested; deploying next. Screenshots and the live demo link land
-> here with the first deploy.
+> **Status: actively in development (building in public).** The core product,
+> AI quick-apply, and the browser extension are built and tested; a public
+> deploy with screenshots and a live demo link is coming next. See the
+> [roadmap](#roadmap) for what's done and what's in progress.
 
 ---
 
@@ -145,7 +146,7 @@ scenarios activate when `E2E_EMAIL`/`E2E_PASSWORD` are set.
 
 | Piece | Service | How |
 |---|---|---|
-| Frontend | Vercel (Hobby) | Import repo, set root directory to `frontend/`, add the `NEXT_PUBLIC_*` env vars |
+| Frontend | Vercel (Hobby) | Import repo, set root directory to `frontend/`, add the `VITE_*` env vars |
 | Backend | Render (free) | Blueprint in [render.yaml](render.yaml) — Docker deploy with health checks and auto-deploy on push |
 | Database + Auth | Supabase (free) | Production project; URL/keys go into Render + Vercel env |
 | Keep-awake | GitHub Actions | [keep-alive.yml](.github/workflows/keep-alive.yml) pings the API every 10 min (set the `BACKEND_URL` repo variable) |

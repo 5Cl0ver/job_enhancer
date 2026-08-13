@@ -34,6 +34,13 @@ extension/config.js
 *.key
 *.p12
 
+# ── Local dev tooling (kept per-machine, not part of the published repo) ──────
+CLAUDE.md
+.mcp.json
+.claude/
+.serena/
+.specify/
+
 # ── OS ───────────────────────────────────────────────────────────────────────
 .DS_Store
 Thumbs.db

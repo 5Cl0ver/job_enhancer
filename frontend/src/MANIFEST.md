@@ -24,4 +24,3 @@ See [docs/architecture.md](../../docs/architecture.md) for the frontend data flo
 | `hooks/` | TanStack Query data hooks (call the API) |
 | `lib/` | `api.ts` (typed fetch + Bearer token) + `supabase/` client + `utils.ts` |
 | `types/` | Shared TypeScript types (incl. generated `api.gen.d.ts`) — *no manifest, self-explanatory* |
-| `app/` | ⚠️ **Legacy Next.js files** (unimported), pending cleanup — only `globals.css` is used |

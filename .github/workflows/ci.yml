@@ -2,9 +2,7 @@ name: CI
 
 on:
   push:
-    branches: [main, "feat/**", "fix/**"]
   pull_request:
-    branches: [main]
 
 jobs:
   # ── Backend ──────────────────────────────────────────────────────────────────
@@ -36,7 +34,7 @@ jobs:
       - name: Run tests
         env:
           DATABASE_URL: "sqlite+aiosqlite:///:memory:"
-          SUPABASE_JWT_SECRET: "test-secret-for-ci-only"
+          SUPABASE_URL: "https://example.supabase.co"
           NVIDIA_API_KEY: "test"
           ADZUNA_APP_ID: "test"
           ADZUNA_APP_KEY: "test"
@@ -77,7 +75,7 @@ jobs:
 
       - name: Build
         env:
-          NEXT_PUBLIC_API_URL: "http://localhost:8000"
-          NEXTAUTH_URL: "http://localhost:3000"
-          NEXTAUTH_SECRET: "test-secret"
+          VITE_API_URL: "http://localhost:8000"
+          VITE_SUPABASE_URL: "https://example.supabase.co"
+          VITE_SUPABASE_ANON_KEY: "public-anon-key-for-ci"
         run: npm run build
