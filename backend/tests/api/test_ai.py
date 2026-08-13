@@ -256,7 +256,9 @@ async def test_document_pdf_download(client: AsyncClient, db_session, test_user)
 
 
 @pytest.mark.asyncio
-async def test_document_pdf_renders_markdown(client: AsyncClient, db_session, test_user):
+async def test_document_pdf_renders_markdown(
+    client: AsyncClient, db_session, test_user
+):
     """A pasted-back Claude doc is Markdown — the PDF must render it (headings,
     bullets, bold) without 500-ing, not dump literal # and * symbols."""
     import uuid as _uuid
@@ -286,7 +288,9 @@ async def test_work_history_no_resume_is_empty(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_work_history_parses_active_resume(client: AsyncClient, db_session, test_user):
+async def test_work_history_parses_active_resume(
+    client: AsyncClient, db_session, test_user
+):
     """With an active résumé, the endpoint returns the parsed (mocked) entries."""
     import uuid as _uuid
 

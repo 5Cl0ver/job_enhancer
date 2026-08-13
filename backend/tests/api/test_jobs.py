@@ -100,8 +100,11 @@ async def test_match_score_flow(client: AsyncClient, db_session, test_user, samp
     r = await client.get(f"/v1/jobs/{sample_job.id}/match")
     assert r.status_code == 200
     assert r.json() == {
-        "has_resume": False, "has_description": True,
-        "score": 0, "matched": [], "missing": [],
+        "has_resume": False,
+        "has_description": True,
+        "score": 0,
+        "matched": [],
+        "missing": [],
     }
 
     # Active resume covering some of the keywords.

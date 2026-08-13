@@ -236,14 +236,30 @@ async def aggregate_and_deduplicate(
     See docs/job-data-architecture.md.
     """
     result = await _query_page(
-        db, q, location, remote_only, salary_min, salary_max,
-        experience, job_type, page, page_size,
+        db,
+        q,
+        location,
+        remote_only,
+        salary_min,
+        salary_max,
+        experience,
+        job_type,
+        page,
+        page_size,
     )
     if refresh or result.meta.total == 0:
         await _ingest_live(db, q, location, page, page_size, sources)
         result = await _query_page(
-            db, q, location, remote_only, salary_min, salary_max,
-            experience, job_type, page, page_size,
+            db,
+            q,
+            location,
+            remote_only,
+            salary_min,
+            salary_max,
+            experience,
+            job_type,
+            page,
+            page_size,
         )
     return result
 
@@ -318,7 +334,9 @@ async def ingest_curated_jobs(
         after = await db.scalar(select(func.count()).select_from(JobListing)) or 0
 
     new_count = after - before
-    logger.info("Curated ingest: %d new listing(s) added (pool now %d)", new_count, after)
+    logger.info(
+        "Curated ingest: %d new listing(s) added (pool now %d)", new_count, after
+    )
     return new_count
 
 

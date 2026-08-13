@@ -8,6 +8,7 @@ Revises: a1b2c3d4e5f6
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "b2c3d4e5f6a7"
@@ -17,7 +18,9 @@ depends_on = None
 
 
 def upgrade() -> None:
-    op.add_column("job_listings", sa.Column("salary_period", sa.String(20), nullable=True))
+    op.add_column(
+        "job_listings", sa.Column("salary_period", sa.String(20), nullable=True)
+    )
 
 
 def downgrade() -> None:

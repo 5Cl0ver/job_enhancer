@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import uuid
 from contextlib import asynccontextmanager
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 from typing import Any
 
 from fastmcp import FastMCP
@@ -137,7 +137,10 @@ async def _master_profile_text(db, user: User) -> str:
 
     tri = lambda v: "Yes" if v is True else "No" if v is False else None  # noqa: E731
     pairs = [
-        ("Name", " ".join(x for x in [p and p.first_name, p and p.last_name] if x) or None),
+        (
+            "Name",
+            " ".join(x for x in [p and p.first_name, p and p.last_name] if x) or None,
+        ),
         ("Email", user.email),
         ("Phone", p and p.phone),
         ("Location", ", ".join(x for x in [p and p.city, p and p.state] if x) or None),
@@ -156,7 +159,8 @@ async def _master_profile_text(db, user: User) -> str:
         lines += [f'- "{a.question_text}" -> {a.answer}' for a in answers]
     if resume_text and resume_text.strip():
         lines.append(
-            "\nRésumé (source of truth — job titles, employers, dates, education, skills):"
+            "\nRésumé (source of truth — job titles, employers, dates, "
+            "education, skills):"
         )
         lines.append(resume_text.strip())
     return "\n".join(lines) or "(no profile or résumé saved yet)"
@@ -246,7 +250,11 @@ async def save_draft(job_id: str, document_type: str, content: str) -> dict:
         )
         db.add(doc)
         await db.commit()
-        return {"draft_id": str(doc.id), "document_type": document_type, "job_id": job_id}
+        return {
+            "draft_id": str(doc.id),
+            "document_type": document_type,
+            "job_id": job_id,
+        }
 
 
 @mcp.tool
@@ -272,7 +280,7 @@ async def mark_emailed(job_id: str) -> dict:
     user actually sent it."""
     async with _session_user() as (db, user):
         sj = await sj_svc.get_saved_job(db, _uuid(job_id), user.id)
-        sj.emailed_at = datetime.now(tz=timezone.utc)
+        sj.emailed_at = datetime.now(tz=UTC)
         await db.commit()
         stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
         return _job_summary(sj, stages.get(sj.pipeline_stage_id))

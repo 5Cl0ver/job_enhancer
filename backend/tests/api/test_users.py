@@ -158,7 +158,9 @@ async def test_custom_answers_learn_and_reuse(client: AsyncClient):
     assert rows["how did you hear about us"] == "LinkedIn"
 
     # Delete one (the user fixed a wrong one in Settings) → only the other remains.
-    d = await client.delete("/v1/users/me/custom-answers/how%20did%20you%20hear%20about%20us")
+    d = await client.delete(
+        "/v1/users/me/custom-answers/how%20did%20you%20hear%20about%20us"
+    )
     assert d.status_code == 204
     r = await client.get("/v1/users/me/custom-answers")
     keys = [a["question_key"] for a in r.json()]
@@ -167,9 +169,7 @@ async def test_custom_answers_learn_and_reuse(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_export_includes_application_profile(client: AsyncClient):
-    await client.put(
-        "/v1/users/me/application-profile", json={"first_name": "Fabian"}
-    )
+    await client.put("/v1/users/me/application-profile", json={"first_name": "Fabian"})
     data = (await client.get("/v1/users/me/export")).json()
     assert data["application_profile"]["first_name"] == "Fabian"
 
@@ -200,9 +200,7 @@ async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_sessi
     await db_session.commit()
 
     # The user already answered phone — extraction must NOT overwrite it.
-    await client.put(
-        "/v1/users/me/application-profile", json={"phone": "555-867-5309"}
-    )
+    await client.put("/v1/users/me/application-profile", json={"phone": "555-867-5309"})
 
     with patch(
         "app.api.v1.users.extract_profile",

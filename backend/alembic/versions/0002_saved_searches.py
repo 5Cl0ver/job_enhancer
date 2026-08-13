@@ -8,8 +8,9 @@ Create Date: 2026-07-16
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0002"
 down_revision: str | None = "0001"
@@ -30,7 +31,9 @@ def upgrade() -> None:
         sa.Column("name", sa.String(255), nullable=False),
         sa.Column("q", sa.String(255), nullable=False),
         sa.Column("location", sa.String(255), nullable=True),
-        sa.Column("remote_only", sa.Boolean(), nullable=False, server_default=sa.false()),
+        sa.Column(
+            "remote_only", sa.Boolean(), nullable=False, server_default=sa.false()
+        ),
         sa.Column("salary_min", sa.Integer(), nullable=True),
         sa.Column("salary_max", sa.Integer(), nullable=True),
         sa.Column("experience", sa.String(20), nullable=True),

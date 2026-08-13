@@ -16,8 +16,18 @@ communication."""
 
 def test_extract_keywords_finds_named_skills():
     kws = extract_keywords(JOB)
-    for expected in ["react", "typescript", "python", "fastapi", "postgresql",
-                     "redis", "docker", "ci/cd", "aws", "communication"]:
+    for expected in [
+        "react",
+        "typescript",
+        "python",
+        "fastapi",
+        "postgresql",
+        "redis",
+        "docker",
+        "ci/cd",
+        "aws",
+        "communication",
+    ]:
         assert expected in kws, f"{expected} missing from {kws}"
     # Not named in the description → not a keyword.
     assert "kubernetes" not in kws

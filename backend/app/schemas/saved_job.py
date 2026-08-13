@@ -102,7 +102,9 @@ class ApplicationSyncItem(BaseModel):
 class ApplicationSyncRequest(BaseModel):
     """Bulk sync of applications the user already made on a job board."""
 
-    applications: list[ApplicationSyncItem] = Field(default_factory=list, max_length=500)
+    applications: list[ApplicationSyncItem] = Field(
+        default_factory=list, max_length=500
+    )
 
 
 class ApplicationSyncOutcome(BaseModel):

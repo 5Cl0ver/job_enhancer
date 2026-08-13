@@ -20,7 +20,9 @@ from app.services import ai_service
 logger = logging.getLogger(__name__)
 
 _PHONE = re.compile(r"(?:\+?1[\s.\-]?)?\(?\d{3}\)?[\s.\-]\d{3}[\s.\-]\d{4}")
-_LINKEDIN = re.compile(r"(?:https?://)?(?:www\.)?linkedin\.com/[A-Za-z0-9_%/.\-]+", re.I)
+_LINKEDIN = re.compile(
+    r"(?:https?://)?(?:www\.)?linkedin\.com/[A-Za-z0-9_%/.\-]+", re.I
+)
 _GITHUB = re.compile(r"(?:https?://)?(?:www\.)?github\.com/[A-Za-z0-9_%/.\-]+", re.I)
 _URL = re.compile(r"https?://[^\s)>\]]+", re.I)
 
@@ -46,6 +48,7 @@ def extract_contact_heuristics(text: str) -> dict[str, str]:
         out["portfolio_url"] = u
         break
     return out
+
 
 # Fields the LLM may contribute (heuristics always win where both found one).
 _AI_KEYS = (

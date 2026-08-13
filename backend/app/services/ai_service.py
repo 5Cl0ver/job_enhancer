@@ -81,7 +81,9 @@ def _bridge_output_rules(doc_label: str) -> str:
 - Use ONLY the information provided below. Do NOT invent facts and do NOT insert bracketed placeholders like [X] — if something isn't given, simply leave it out.
 """
     if "resume" in doc_label:
-        return common + """- Format it as Markdown with this EXACT structure so it renders into a clean PDF:
+        return (
+            common
+            + """- Format it as Markdown with this EXACT structure so it renders into a clean PDF:
   # Full Name
   City, ST | phone | email | github/linkedin links   (one line, right under the name)
   ## SUMMARY            (then a short paragraph)
@@ -93,8 +95,12 @@ def _bridge_output_rules(doc_label: str) -> str:
   ## PROJECTS and ## EDUCATION as needed, same style.
 - Use "# " only for the name and "## " for every section heading. Use "- " for bullets and **bold** for the skill category labels.
 """
-    return common + """- Format it as normal business-letter paragraphs (plain text, blank line between paragraphs). You may start with "# Full Name" and a contact line, then the letter body. Do NOT use section headings or bullet lists.
+        )
+    return (
+        common
+        + """- Format it as normal business-letter paragraphs (plain text, blank line between paragraphs). You may start with "# Full Name" and a contact line, then the letter body. Do NOT use section headings or bullet lists.
 """
+    )
 
 
 def build_prompt(
@@ -108,13 +114,17 @@ def build_prompt(
     their own Claude (or any chat AI). Combines strict output rules (so the reply
     is one clean, copy-pasteable block) with the instructions + job/resume."""
     if document_type == "resume":
-        system, user = _RESUME_SYSTEM_PROMPT, _resume_user_content(
-            resume_text, job_description, job_title, company
+        system, user = (
+            _RESUME_SYSTEM_PROMPT,
+            _resume_user_content(resume_text, job_description, job_title, company),
         )
         rules = _bridge_output_rules("tailored resume")
     else:
-        system, user = _COVER_LETTER_SYSTEM_PROMPT, _cover_letter_user_content(
-            resume_text, job_description, job_title, company
+        system, user = (
+            _COVER_LETTER_SYSTEM_PROMPT,
+            _cover_letter_user_content(
+                resume_text, job_description, job_title, company
+            ),
         )
         rules = _bridge_output_rules("cover letter")
     return f"{rules}\n{system}\n\n{user}"
@@ -140,7 +150,7 @@ async def _invoke(system: str, user_content: str) -> tuple[str, int]:
         response = await asyncio.wait_for(
             client.ainvoke(messages), timeout=_REQUEST_TIMEOUT_S
         )
-    except asyncio.TimeoutError:
+    except TimeoutError:
         logger.warning(
             "NVIDIA NIM timed out after %ss (model=%s)", _REQUEST_TIMEOUT_S, _MODEL_ID
         )
@@ -194,7 +204,7 @@ async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
     user = (
         f"USER DATA:\n{user_data}\n\n"
         f"FORM FIELDS (JSON):\n{json.dumps(fields, ensure_ascii=False)}\n\n"
-        'Return ONLY the JSON object mapping id -> value.'
+        "Return ONLY the JSON object mapping id -> value."
     )
     try:
         content, _ = await _invoke(_AUTOFILL_SYSTEM, user)
@@ -308,7 +318,9 @@ async def generate_tailored_resume(
     company: str = "",
 ) -> tuple[str, str, int]:
     """Return (content, model_used, generation_ms)."""
-    user_content = _resume_user_content(resume_text, job_description, job_title, company)
+    user_content = _resume_user_content(
+        resume_text, job_description, job_title, company
+    )
     content, ms = await _invoke(_RESUME_SYSTEM_PROMPT, user_content)
     return content, _MODEL_ID, ms
 

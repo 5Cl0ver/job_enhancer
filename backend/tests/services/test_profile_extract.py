@@ -25,5 +25,7 @@ def test_heuristics_ignore_missing_fields():
 
 
 def test_phone_format_variants():
-    assert extract_contact_heuristics("call 555-010-0199 now")["phone"] == "555-010-0199"
+    assert (
+        extract_contact_heuristics("call 555-010-0199 now")["phone"] == "555-010-0199"
+    )
     assert extract_contact_heuristics("+1 555.010.0199")["phone"] == "+1 555.010.0199"

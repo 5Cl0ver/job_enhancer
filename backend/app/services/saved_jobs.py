@@ -131,8 +131,10 @@ async def backfill_job_details(
     if data.salary_max and not listing.salary_max:
         listing.salary_max = data.salary_max
         updated.append("salary_max")
-    if data.salary_period and not listing.salary_period and (
-        "salary_min" in updated or "salary_max" in updated
+    if (
+        data.salary_period
+        and not listing.salary_period
+        and ("salary_min" in updated or "salary_max" in updated)
     ):
         listing.salary_period = data.salary_period
         updated.append("salary_period")
@@ -340,17 +342,22 @@ async def sync_applications(
         ).scalars()
     }
     saved = (
-        await db.execute(
-            select(SavedJob)
-            .options(selectinload(SavedJob.job_listing))
-            .where(SavedJob.user_id == user_id)
+        (
+            await db.execute(
+                select(SavedJob)
+                .options(selectinload(SavedJob.job_listing))
+                .where(SavedJob.user_id == user_id)
+            )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     candidates: list[tuple[SavedJob, str, str]] = [
         (
             sj,
             sj.job_listing.title_normalized or normalize(sj.job_listing.title or ""),
-            sj.job_listing.company_normalized or normalize(sj.job_listing.company or ""),
+            sj.job_listing.company_normalized
+            or normalize(sj.job_listing.company or ""),
         )
         for sj in saved
         if sj.job_listing is not None
@@ -369,7 +376,10 @@ async def sync_applications(
             result.skipped += 1
             result.outcomes.append(
                 ApplicationSyncOutcome(
-                    title=item.title, company=item.company, stage=item.stage, action="skipped"
+                    title=item.title,
+                    company=item.company,
+                    stage=item.stage,
+                    action="skipped",
                 )
             )
             continue
@@ -384,7 +394,10 @@ async def sync_applications(
             result.updated += 1
             result.outcomes.append(
                 ApplicationSyncOutcome(
-                    title=item.title, company=item.company, stage=item.stage, action="updated"
+                    title=item.title,
+                    company=item.company,
+                    stage=item.stage,
+                    action="updated",
                 )
             )
             continue
@@ -406,7 +419,10 @@ async def sync_applications(
             result.skipped += 1
             result.outcomes.append(
                 ApplicationSyncOutcome(
-                    title=item.title, company=item.company, stage=item.stage, action="skipped"
+                    title=item.title,
+                    company=item.company,
+                    stage=item.stage,
+                    action="skipped",
                 )
             )
             continue
@@ -420,7 +436,10 @@ async def sync_applications(
         result.imported += 1
         result.outcomes.append(
             ApplicationSyncOutcome(
-                title=item.title, company=item.company, stage=item.stage, action="imported"
+                title=item.title,
+                company=item.company,
+                stage=item.stage,
+                action="imported",
             )
         )
 

@@ -21,13 +21,53 @@ from app.models.job_listing import JobListing  # noqa: E402
 from app.services.dedup import job_content_hash, normalize  # noqa: E402
 
 SAMPLE_JOBS = [
-    ("Senior Python Developer", "Stripe", "New York, NY", False, 150000, 200000, "FULLTIME"),
+    (
+        "Senior Python Developer",
+        "Stripe",
+        "New York, NY",
+        False,
+        150000,
+        200000,
+        "FULLTIME",
+    ),
     ("Frontend Engineer (React)", "Linear", "Remote", True, 120000, 170000, "FULLTIME"),
-    ("Full-Stack Developer", "Shopify", "Toronto, ON", True, 100000, 140000, "FULLTIME"),
+    (
+        "Full-Stack Developer",
+        "Shopify",
+        "Toronto, ON",
+        True,
+        100000,
+        140000,
+        "FULLTIME",
+    ),
     ("Junior Data Analyst", "Spotify", "Boston, MA", False, 65000, 85000, "FULLTIME"),
-    ("Staff Software Engineer", "Datadog", "New York, NY", False, 190000, 250000, "FULLTIME"),
-    ("Backend Engineer (Go)", "Cloudflare", "Austin, TX", True, 130000, 175000, "FULLTIME"),
-    ("Machine Learning Intern", "Hugging Face", "Remote", True, None, None, "INTERNSHIP"),
+    (
+        "Staff Software Engineer",
+        "Datadog",
+        "New York, NY",
+        False,
+        190000,
+        250000,
+        "FULLTIME",
+    ),
+    (
+        "Backend Engineer (Go)",
+        "Cloudflare",
+        "Austin, TX",
+        True,
+        130000,
+        175000,
+        "FULLTIME",
+    ),
+    (
+        "Machine Learning Intern",
+        "Hugging Face",
+        "Remote",
+        True,
+        None,
+        None,
+        "INTERNSHIP",
+    ),
     ("DevOps Engineer", "GitLab", "Remote", True, 110000, 160000, "CONTRACT"),
 ]
 
@@ -70,7 +110,9 @@ async def seed() -> None:
             )
             created += 1
         await db.commit()
-    print(f"Seeded {created} sample listing(s) ({len(SAMPLE_JOBS) - created} already present).")
+    print(
+        f"Seeded {created} sample listing(s) ({len(SAMPLE_JOBS) - created} already present)."
+    )
 
 
 if __name__ == "__main__":

@@ -56,9 +56,7 @@ class JobicySource(JobSource):
                 return None
 
             job_types = raw.get("jobType") or []
-            job_type = (
-                _JOB_TYPE_MAP.get(job_types[0].lower()) if job_types else None
-            )
+            job_type = _JOB_TYPE_MAP.get(job_types[0].lower()) if job_types else None
 
             return {
                 "external_id": f"jobicy_{raw['id']}",

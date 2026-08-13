@@ -205,7 +205,10 @@ def _user_data_text(
     p = profile
     tri = lambda v: "Yes" if v is True else "No" if v is False else None  # noqa: E731
     pairs = [
-        ("Full name", " ".join(x for x in [p and p.first_name, p and p.last_name] if x) or None),
+        (
+            "Full name",
+            " ".join(x for x in [p and p.first_name, p and p.last_name] if x) or None,
+        ),
         ("Email", None),  # email lives on the user row; the extension fills it directly
         ("Phone", p and p.phone),
         ("Address", p and p.address_line1),
@@ -294,7 +297,9 @@ async def work_history(
     return WorkHistoryResponse(entries=[WorkExperienceEntry(**e) for e in entries])
 
 
-@router.post("/documents/manual", response_model=GeneratedDocumentSchema, status_code=201)
+@router.post(
+    "/documents/manual", response_model=GeneratedDocumentSchema, status_code=201
+)
 async def save_manual_document(
     data: ManualDocumentCreate,
     user: User = Depends(get_current_user),
@@ -445,10 +450,19 @@ def _render_markdown(pdf, text: str) -> None:
     FONT = _register_fonts(pdf)
     BODY = 10.5
 
-    def para(txt: str, h: float, align: str = "L", style: str = "", size: float = BODY) -> None:
+    def para(
+        txt: str, h: float, align: str = "L", style: str = "", size: float = BODY
+    ) -> None:
         pdf.set_font(FONT, style, size)
-        pdf.multi_cell(0, h, _md_inline(txt), align=align, markdown=True,
-                       new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.multi_cell(
+            0,
+            h,
+            _md_inline(txt),
+            align=align,
+            markdown=True,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
 
     def seg_style(seg: str) -> tuple[str, str]:
         if seg.startswith("**") and seg.endswith("**"):
@@ -493,8 +507,14 @@ def _render_markdown(pdf, text: str) -> None:
         if stripped.startswith("# ") and not stripped.startswith("## "):
             # Name — large, centered.
             pdf.set_font(FONT, "B", 17)
-            pdf.multi_cell(0, 8, _strip_md(stripped[2:]), align="C",
-                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(
+                0,
+                8,
+                _strip_md(stripped[2:]),
+                align="C",
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
             pdf.set_font(FONT, "", BODY)
             in_header = True
             continue
@@ -504,8 +524,13 @@ def _render_markdown(pdf, text: str) -> None:
             in_header = False
             pdf.ln(2)
             pdf.set_font(FONT, "B", 11.5)
-            pdf.multi_cell(0, 5.5, _strip_md(stripped[3:]).upper(),
-                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(
+                0,
+                5.5,
+                _strip_md(stripped[3:]).upper(),
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
             y = pdf.get_y() + 0.3
             pdf.set_draw_color(70, 70, 70)
             pdf.set_line_width(0.3)
@@ -521,8 +546,14 @@ def _render_markdown(pdf, text: str) -> None:
                 continue
             # Title / contact line — centered under the name.
             pdf.set_font(FONT, "", 10)
-            pdf.multi_cell(0, 5, _strip_md(stripped), align="C",
-                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(
+                0,
+                5,
+                _strip_md(stripped),
+                align="C",
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
             pdf.set_font(FONT, "", BODY)
             continue
 
@@ -537,8 +568,14 @@ def _render_markdown(pdf, text: str) -> None:
         if stripped.startswith(("- ", "* ")):
             pdf.set_x(pdf.l_margin + 3)
             pdf.set_font(FONT, "", BODY)
-            pdf.multi_cell(0, 5, "•  " + _md_inline(stripped[2:]), markdown=True,
-                           new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.multi_cell(
+                0,
+                5,
+                "•  " + _md_inline(stripped[2:]),
+                markdown=True,
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
             continue
 
         # A job-header line: starts bold and ends with a date range.

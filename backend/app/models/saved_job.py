@@ -1,7 +1,7 @@
 """SavedJob ORM model — user's saved job with tracking state."""
 
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from sqlalchemy import (
     Boolean,
@@ -50,7 +50,7 @@ class SavedJob(Base):
         # column was created without a DB default, so relying on the server to
         # fill it inserted NULL and violated NOT NULL. Sending the value from
         # the ORM makes saves work regardless of DB-schema drift.
-        default=lambda: datetime.now(timezone.utc),
+        default=lambda: datetime.now(UTC),
         server_default=func.now(),
     )
     follow_up_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

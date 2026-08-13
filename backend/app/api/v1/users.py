@@ -22,8 +22,8 @@ from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.schemas.user import (
     ApplicationProfileSchema,
-    CustomAnswersUpsert,
     CustomAnswerSchema,
+    CustomAnswersUpsert,
     ProfileFillResult,
     UserProfile,
     UserUpdate,
@@ -141,9 +141,7 @@ async def get_custom_answers(
 ) -> list[CustomAnswerSchema]:
     """The autofill memory — answers keyed by a normalized question. The
     extension fetches these to fill custom questions on any form."""
-    rows = await db.scalars(
-        select(CustomAnswer).where(CustomAnswer.user_id == user.id)
-    )
+    rows = await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
     return [CustomAnswerSchema.model_validate(r) for r in rows]
 
 
@@ -170,9 +168,7 @@ async def upsert_custom_answers(
         row.question_text = item.question_text
         row.answer = item.answer
     await db.commit()
-    rows = await db.scalars(
-        select(CustomAnswer).where(CustomAnswer.user_id == user.id)
-    )
+    rows = await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
     return [CustomAnswerSchema.model_validate(r) for r in rows]
 
 

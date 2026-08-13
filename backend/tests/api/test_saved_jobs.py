@@ -220,14 +220,21 @@ async def test_check_flags_thin_listing_and_backfill_upgrades_it(client: AsyncCl
     assert backfill.status_code == 200
     body = backfill.json()
     assert body["updated"] is True
-    assert set(body["fields"]) == {"description", "salary_min", "salary_max", "job_type"}
+    assert set(body["fields"]) == {
+        "description",
+        "salary_min",
+        "salary_max",
+        "job_type",
+    }
 
     # The listing is now rich: /check no longer asks for details...
     check2 = (await client.post("/v1/saved-jobs/check", json=job)).json()
     assert check2 == {"saved": True, "needs_details": False}
     # ...and the saved job carries the upgraded data.
     saved = (await client.get("/v1/saved-jobs/")).json()
-    jl = next(s["job_listing"] for s in saved if s["job_listing"]["title"] == "Web Developer")
+    jl = next(
+        s["job_listing"] for s in saved if s["job_listing"]["title"] == "Web Developer"
+    )
     assert jl["description"] == full_description
     assert jl["salary_min"] == 80709
     assert jl["job_type"] == "FULL_TIME"
@@ -245,7 +252,11 @@ async def test_backfill_never_downgrades_or_touches_unsaved(client: AsyncClient)
     # A shorter description must NOT replace the longer one.
     r = await client.post(
         "/v1/saved-jobs/backfill",
-        json={"url": "https://example.com/rich/2", "description": "Short blurb.", **job},
+        json={
+            "url": "https://example.com/rich/2",
+            "description": "Short blurb.",
+            **job,
+        },
     )
     assert r.json()["updated"] is False
 
@@ -267,7 +278,11 @@ async def test_backfill_never_downgrades_or_touches_unsaved(client: AsyncClient)
 async def test_backfill_corrects_false_remote_flag(client: AsyncClient):
     """Early captures falsely flagged on-site jobs as Remote (whole-page text
     scan). A backfill from the job's own page corrects the flag."""
-    job = {"title": "Junior ML Engineer", "company": "Tax Relief Advocates", "location": "Irvine, CA"}
+    job = {
+        "title": "Junior ML Engineer",
+        "company": "Tax Relief Advocates",
+        "location": "Irvine, CA",
+    }
     await client.post(
         "/v1/saved-jobs/manual",
         json={"url": "https://example.com/tra/1", "is_remote": True, **job},  # wrong
@@ -284,7 +299,11 @@ async def test_backfill_corrects_false_remote_flag(client: AsyncClient):
     assert r.json()["updated"] is True
     assert "is_remote" in r.json()["fields"]
     saved = (await client.get("/v1/saved-jobs/")).json()
-    jl = next(s["job_listing"] for s in saved if s["job_listing"]["company"] == "Tax Relief Advocates")
+    jl = next(
+        s["job_listing"]
+        for s in saved
+        if s["job_listing"]["company"] == "Tax Relief Advocates"
+    )
     assert jl["is_remote"] is False
 
 
@@ -375,7 +394,11 @@ async def test_mark_applied_company_only_fallback(client: AsyncClient):
     still tracks (newest not-yet-applied job at that company)."""
     await client.post(
         "/v1/saved-jobs/manual",
-        json={"url": "https://example.com/co/1", "title": "Desktop Engineer", "company": "Align Communications"},
+        json={
+            "url": "https://example.com/co/1",
+            "title": "Desktop Engineer",
+            "company": "Align Communications",
+        },
     )
     r = await client.post(
         "/v1/saved-jobs/mark-applied",
@@ -470,7 +493,11 @@ async def test_sync_batch_mixes_update_and_import(client: AsyncClient):
         json={
             "applications": [
                 {"title": "Backend Engineer", "company": "Hooli", "stage": "Interview"},
-                {"title": "Frontend Engineer", "company": "Pied Piper", "stage": "Applied"},
+                {
+                    "title": "Frontend Engineer",
+                    "company": "Pied Piper",
+                    "stage": "Applied",
+                },
             ]
         },
     )

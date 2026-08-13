@@ -29,7 +29,9 @@ async def search_jobs(
     job_type: str | None = Query(None),
     page: int = Query(1, ge=1),
     page_size: int = Query(20, ge=1, le=50),
-    refresh: bool = Query(False, description="Fetch live from sources, not just the cached pool"),
+    refresh: bool = Query(
+        False, description="Fetch live from sources, not just the cached pool"
+    ),
     _user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> JobSearchResponse:

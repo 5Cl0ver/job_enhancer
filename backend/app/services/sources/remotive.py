@@ -75,7 +75,7 @@ class RemotiveSource(JobSource):
                 "location": raw.get("candidate_required_location") or "Remote",
                 "is_remote": True,
                 "description": description[:2000] if description else None,
-                # Remotive salary is free-text (often empty) — skip rather than misparse.
+                # Remotive salary is free-text (often empty) — skip it.
                 "salary_min": None,
                 "salary_max": None,
                 "currency": "USD",

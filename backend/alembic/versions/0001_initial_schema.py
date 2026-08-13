@@ -8,8 +8,9 @@ Create Date: 2026-07-07
 from collections.abc import Sequence
 
 import sqlalchemy as sa
-from alembic import op
 from sqlalchemy.dialects import postgresql
+
+from alembic import op
 
 revision: str = "0001"
 down_revision: str | None = None
@@ -223,7 +224,9 @@ def upgrade() -> None:
             sa.ForeignKey("resumes.id", ondelete="SET NULL"),
             nullable=True,
         ),
-        sa.Column("document_type", sa.String(20), nullable=False),  # resume | cover_letter
+        sa.Column(
+            "document_type", sa.String(20), nullable=False
+        ),  # resume | cover_letter
         sa.Column("content", sa.Text, nullable=False),
         sa.Column("edited_content", sa.Text, nullable=True),
         sa.Column("model_used", sa.String(100), nullable=True),
@@ -235,7 +238,9 @@ def upgrade() -> None:
             server_default=sa.text("now()"),
         ),
     )
-    op.create_index("ix_generated_documents_user_id", "generated_documents", ["user_id"])
+    op.create_index(
+        "ix_generated_documents_user_id", "generated_documents", ["user_id"]
+    )
 
 
 def downgrade() -> None:
