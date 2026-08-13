@@ -5,20 +5,22 @@
 [![CI](https://github.com/5Cl0ver/job_enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/5Cl0ver/job_enhancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Job Enhancer is a job-search assistant that aggregates listings from multiple
-job boards, lets you pull in jobs you found anywhere (LinkedIn, Indeed, a
-company site) with one paste, tracks every application on a Kanban board with
-follow-up reminders, and — in its final phase — tailors your resume and writes
-cover letters with AI, then helps fill application forms via a companion
-browser extension. It never auto-submits anything: the goal is to **amplify**
-the job boards you already use, not replace them.
+![The application tracker with the Job Catcher browser extension open](docs/screenshots/tracker-board.png)
 
-Built as a real, publicly hosted app (running entirely on free tiers) and as a
-portfolio piece demonstrating spec-driven development end to end.
+Job Enhancer helps you find jobs, save them from anywhere, and stay on top of
+every application — all in one place. Search across multiple job boards, capture
+any posting you find (LinkedIn, Indeed, or a company's own careers page) with one
+click, and track every application on a Kanban board with follow-up reminders. A
+companion browser extension fills out application forms for you and uses AI to
+tailor your resume and draft cover letters. It never submits an application on
+your behalf — it just takes the busywork out of applying so you can do more of it.
+
+The idea is simple: less time spent searching, copying job details, re-filling the
+same forms, and remembering who you've contacted — and more time actually applying.
 
 > **Status: actively in development (building in public).** The core product,
-> AI quick-apply, and the browser extension are built and tested; a public
-> deploy with screenshots and a live demo link is coming next. See the
+> AI quick-apply, and the browser extension are built and tested (see
+> [screenshots](#screenshots) below); a hosted live demo is coming next. See the
 > [roadmap](#roadmap) for what's done and what's in progress.
 
 ---
@@ -52,6 +54,21 @@ portfolio piece demonstrating spec-driven development end to end.
   (never submits for you), and **auto-tracking** when you submit on Indeed
 - 🎯 **Filter your jobs** — search plus remote, pay, job-type, location, and
   applied-status filters over everything you've saved
+
+## Screenshots
+
+**Autofill on a live application** — the browser extension fills the form from your
+saved profile and résumé. It never submits; you stay in control.
+
+![Autofill on an Indeed application](docs/screenshots/autofill-indeed.png)
+
+**Saved jobs — list view** with search, filters, salary, and per-source badges.
+
+![Saved jobs, list view](docs/screenshots/saved-jobs-list.png)
+
+**Database schema** — the Postgres data model (rendered from Supabase).
+
+![Database schema](docs/screenshots/database-schema.png)
 
 ## Tech Stack
 
@@ -165,16 +182,11 @@ refreshes are Adzuna-only by design).
 backend/     FastAPI app — models, services, /v1 routers, Alembic migrations, pytest suite
 frontend/    Vite + React SPA — routes, components, TanStack Query hooks, tests
 extension/   Chrome MV3 "Job Catcher" — content scripts, side panel, esbuild bundle, tests
-specs/       Spec-driven development artifacts: spec, plan, tasks, contracts
+specs/       Product specs, plans, and API contracts
 docs/        Architecture notes
 scripts/     setup.sh (one-time local setup)
 render.yaml  Render deploy blueprint
 ```
-
-This project is built spec-first with [Spec Kit](https://github.com/github/spec-kit):
-the [specification](specs/001-job-search-mvp/spec.md) defines *what*, the
-[plan](specs/001-job-search-mvp/plan.md) defines *how*, and
-[tasks.md](specs/001-job-search-mvp/tasks.md) tracks every unit of work.
 
 ## Roadmap
 
