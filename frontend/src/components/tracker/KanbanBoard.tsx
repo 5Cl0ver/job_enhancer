@@ -10,7 +10,8 @@ import {
   useDroppable,
   closestCorners,
 } from "@dnd-kit/core";
-import { Plus, Search } from "lucide-react";
+import { Plus, Search, MailCheck } from "lucide-react";
+import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -118,6 +119,12 @@ function ResearchMiniCard({ savedJob }: { savedJob: SavedJob }) {
         <p className="mt-0.5 truncate text-xs text-muted-foreground">
           {[j.company, j.location].filter(Boolean).join(" · ")}
         </p>
+        {savedJob.emailed_at && (
+          <p className="mt-1 flex items-center gap-1 text-xs text-emerald-600">
+            <MailCheck className="h-3 w-3 shrink-0" />
+            Emailed {format(new Date(savedJob.emailed_at), "MMM d")}
+          </p>
+        )}
       </div>
       <JobDetailDialog savedJob={savedJob} open={open} onOpenChange={setOpen} />
     </>
