@@ -11,7 +11,7 @@
 // directly against saved HTML fixtures under test/fixtures/.
 import { extractFromJsonLd } from "./jsonld.js";
 import { extractIndeedEmbedded, canonicalIndeedUrl } from "./indeed-embedded.js";
-import { extractIndeed } from "./indeed.js";
+import { extractIndeed, extractIndeedApply } from "./indeed.js";
 import { extractLinkedIn } from "./linkedin.js";
 import { extractGeneric } from "./generic.js";
 import { mergeJob } from "./util.js";
@@ -51,6 +51,10 @@ export function extractJob(doc, url) {
   if (hostOf(url).includes("indeed.")) {
     const embedded = extractIndeedEmbedded(doc, url);
     if (embedded) candidates.push({ via: "indeed-embedded", data: embedded });
+    // The Quick-Apply flow has no embedded JSON / viewjob markup — read the
+    // full posting off its apply-card. No-op (null) on normal Indeed pages.
+    const apply = extractIndeedApply(doc, url);
+    if (apply) candidates.push({ via: "indeed-apply", data: apply });
   }
 
   const jsonld = extractFromJsonLd(doc, url);

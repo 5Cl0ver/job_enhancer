@@ -9,6 +9,8 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.saved_job import (
+    ApplicationSyncRequest,
+    ApplicationSyncResult,
     BackfillResult,
     JobSavedCheck,
     JobSavedResult,
@@ -105,6 +107,20 @@ async def mark_applied(
     if matched:
         await db.commit()
     return MarkAppliedResult(matched=matched)
+
+
+@router.post("/sync-applications", response_model=ApplicationSyncResult)
+async def sync_applications(
+    data: ApplicationSyncRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ApplicationSyncResult:
+    """Bulk-reconcile applications the user already made on a job board (read off
+    their 'My jobs' list by the extension): fuzzy-match each to a saved job and
+    move it to the mapped stage, importing the rest as new tracked jobs."""
+    result = await svc.sync_applications(db, user.id, data.applications)
+    await db.commit()
+    return result
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobSchema)

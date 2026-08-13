@@ -125,6 +125,9 @@ async function detectContext() {
   } catch {
     return { kind: "none" };
   }
+  // Indeed "My jobs" board — a whole list of applications to sync.
+  if (/(^|\.)myjobs\.indeed\.com$/i.test(host) || (/indeed\./i.test(host) && /\/myjobs/.test(path)))
+    return { kind: "indeed-myjobs", tabTitle };
   if (/smartapply\.indeed\.com$/i.test(host)) return { kind: "indeed-apply", tabTitle };
   if (/indeed\./i.test(host) && /\bapply\b/i.test(url)) return { kind: "indeed-apply", tabTitle };
   if (/greenhouse\.io$/i.test(host)) return { kind: "ats", ats: "Greenhouse", tabTitle };
@@ -157,6 +160,15 @@ function bestJobMatch(tabTitle) {
 
 function renderContext(ctx) {
   const card = $("context-card");
+  // The Indeed "My jobs" board gets its own dedicated sync section (below the
+  // context card), shown only there.
+  const onMyJobs = !!ctx && ctx.kind === "indeed-myjobs";
+  const syncWrap = $("sync-wrap");
+  if (syncWrap) syncWrap.hidden = !onMyJobs;
+  if (onMyJobs) {
+    card.hidden = true;
+    return;
+  }
   if (!ctx || ctx.kind === "none") {
     card.hidden = true;
     return;
@@ -173,6 +185,14 @@ function renderContext(ctx) {
     : "Tip: save the job first so it can be tracked.";
 
   if (ctx.kind === "indeed-apply") {
+    // A panel trigger that works even when the on-page button doesn't show (e.g.
+    // steps with no form fields). Fills the current step + attaches a staged
+    // tailored résumé to any file field present.
+    const fill = document.createElement("button");
+    fill.className = "mark-applied";
+    fill.textContent = "⚡ Autofill this step";
+    fill.addEventListener("click", () => autofillActiveTab(fill));
+    actions.append(fill);
     // Indeed's quick-apply widget hides the submit from us — one honest click.
     if (match?.applied) {
       const done = document.createElement("span");
@@ -237,6 +257,181 @@ async function autofillActiveTab(btn) {
   setTimeout(() => {
     if (btn) btn.textContent = "⚡ Autofill this page";
   }, 4000);
+}
+
+// ---------------------------------------------------------------------------
+// Indeed "My jobs" → sync applications into the tracker
+// ---------------------------------------------------------------------------
+
+const SYNC_STAGE_OPTIONS = [
+  "Interested",
+  "Referral Sent",
+  "Applied",
+  "Phone Screen",
+  "Take-Home Assignment",
+  "Interview",
+  "Offer",
+  "Rejected",
+];
+
+// Ask the content script in the active tab to read the My-jobs list. This is
+// the reliable path — the request comes from the panel, so Indeed's page can't
+// swallow it the way it swallowed the on-page button.
+async function readMyJobsFromTab() {
+  let tab;
+  try {
+    [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  } catch {
+    return null;
+  }
+  if (!tab?.id) return null;
+  return chrome.tabs.sendMessage(tab.id, { type: "readApplications" }).catch(() => null);
+}
+
+async function readIndeedApplications() {
+  const btn = $("sync-read");
+  const status = $("sync-status");
+  btn.disabled = true;
+  btn.textContent = "Reading the page…";
+  status.textContent = "";
+  status.className = "status";
+  const res = await readMyJobsFromTab();
+  btn.disabled = false;
+  btn.textContent = "🔄 Read my Indeed applications";
+  if (!res) {
+    status.textContent =
+      "Couldn't reach the Indeed tab. Make sure the My-jobs tab is open and active, then refresh it.";
+    return;
+  }
+  if (!res.ok || !res.applications || !res.applications.length) {
+    status.textContent =
+      "No applications found. Open Indeed → My jobs → the Applied tab, then try again.";
+    return;
+  }
+  renderSyncReview(res.applications);
+}
+
+function renderSyncReview(apps) {
+  $("sync-result").hidden = true;
+  $("sync-result").innerHTML = "";
+  $("sync-review").hidden = false;
+  $("sync-count").textContent = `(${apps.length})`;
+  const list = $("sync-list");
+  list.innerHTML = "";
+  for (const app of apps) {
+    const li = document.createElement("li");
+
+    const top = document.createElement("label");
+    top.className = "row-top";
+    const keep = document.createElement("input");
+    keep.type = "checkbox";
+    keep.checked = true;
+    const meta = document.createElement("div");
+    const b = document.createElement("b");
+    b.textContent = app.title;
+    const s = document.createElement("span");
+    s.textContent = [app.company, app.location].filter(Boolean).join(" · ");
+    meta.append(b, s);
+    top.append(keep, meta);
+
+    const badge = document.createElement("span");
+    badge.className = "badge";
+    badge.textContent = app.status || "Applied";
+
+    const sel = document.createElement("select");
+    for (const st of SYNC_STAGE_OPTIONS) {
+      const o = document.createElement("option");
+      o.value = st;
+      o.textContent = st;
+      if (st === app.stage) o.selected = true;
+      sel.append(o);
+    }
+
+    li.append(top, badge, sel);
+    li._app = app;
+    li._keep = keep;
+    li._sel = sel;
+    list.append(li);
+  }
+  const relabel = () => {
+    const n = [...list.children].filter((li) => li._keep.checked).length;
+    $("sync-confirm").textContent = `Sync ${n}`;
+  };
+  list.addEventListener("change", relabel);
+  relabel();
+}
+
+async function doSync() {
+  const list = $("sync-list");
+  const items = [...list.children]
+    .filter((li) => li._keep.checked)
+    .map((li) => ({
+      title: li._app.title,
+      company: li._app.company,
+      location: li._app.location || "Not specified",
+      url: li._app.url || undefined,
+      stage: li._sel.value,
+    }));
+  const status = $("sync-status");
+  status.className = "status";
+  if (!items.length) {
+    status.textContent = "Nothing selected — check at least one.";
+    return;
+  }
+  const btn = $("sync-confirm");
+  btn.disabled = true;
+  btn.textContent = "Syncing…";
+  const res = await send({ type: "syncApplications", applications: items }).catch(() => null);
+  btn.disabled = false;
+  btn.textContent = `Sync ${items.length}`;
+  if (!res || !res.ok) {
+    status.textContent =
+      res?.error === "NOT_SIGNED_IN"
+        ? "Sign in first (top of this panel), then Sync again."
+        : `Couldn't sync: ${res?.error || "unknown error"}`;
+    return;
+  }
+  showSyncResultPanel(res);
+  loadSaved(); // reflect the new/updated jobs in "Your saved jobs"
+}
+
+function showSyncResultPanel(res) {
+  $("sync-review").hidden = true;
+  $("sync-status").textContent = "";
+  const box = $("sync-result");
+  box.hidden = false;
+  box.innerHTML = "";
+
+  const head = document.createElement("p");
+  head.className = "status ok";
+  const skipped = res.skipped ? ` · ${res.skipped} skipped` : "";
+  head.textContent = `✓ ${res.updated || 0} updated · ${res.imported || 0} imported${skipped}`;
+  box.append(head);
+
+  const groups = [
+    ["Updated (already tracked)", "updated"],
+    ["Imported (new to your tracker)", "imported"],
+    ["Skipped", "skipped"],
+  ];
+  const outcomes = Array.isArray(res.outcomes) ? res.outcomes : [];
+  for (const [label, action] of groups) {
+    const items = outcomes.filter((o) => o.action === action);
+    if (!items.length) continue;
+    const g = document.createElement("div");
+    g.className = "rgroup";
+    const h = document.createElement("div");
+    h.className = "rhead";
+    h.textContent = `${label} (${items.length})`;
+    g.append(h);
+    for (const o of items) {
+      const r = document.createElement("div");
+      r.className = "rrow";
+      r.textContent =
+        `${o.title} — ${o.company}` + (action === "skipped" ? "" : ` → ${o.stage}`);
+      g.append(r);
+    }
+    box.append(g);
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -401,6 +596,9 @@ function setEngine(e) {
   $("eng-claude").classList.toggle("on", e === "claude");
   $("cl-generate").textContent = generateLabel();
   clearOutputs();
+  // With "My Claude", the paste box is available IMMEDIATELY — if you already
+  // have Claude's reply you can paste it and Save without clicking Draft first.
+  $("cl-paste-wrap").hidden = e !== "claude";
 }
 
 async function generateDoc() {
@@ -432,10 +630,13 @@ async function generateDoc() {
     if (res.resumeFilename) resumeFilename = res.resumeFilename;
     $("cl-output-wrap").hidden = false;
     status.className = "status ok";
-    status.textContent =
-      docType === "resume"
-        ? "Done — download the PDF to upload to the application."
-        : "Done — copy it into the application.";
+    if (docType === "resume") {
+      await stageResumeForUpload(lastDocId, downloadFilename());
+      await openPdfPreview(lastDocId);
+      status.textContent = "Done ✓ Opened it to preview — it'll auto-upload on your next ⚡ Autofill.";
+    } else {
+      status.textContent = "Done — copy it into the application.";
+    }
   } else if (res?.error === "NOT_SIGNED_IN") {
     show("login");
   } else if (res?.error === "NO_RESUME") {
@@ -480,7 +681,7 @@ async function draftWithClaude() {
   bridgePrompt = res.prompt;
   bridgeResumeId = res.resumeId || null;
   if (res.resumeFilename) resumeFilename = res.resumeFilename;
-  await navigator.clipboard.writeText(bridgePrompt).catch(() => {});
+  await copyText(bridgePrompt);
 
   // Resume: ALWAYS take you to your project page. Cover letter: DON'T switch
   // tabs — you're already in the chat, so just copy. (Only open Claude if none.)
@@ -542,10 +743,13 @@ async function saveBridgeResult() {
   $("cl-paste").value = "";
   $("cl-output-wrap").hidden = false;
   status.className = "status ok";
-  status.textContent =
-    docType === "resume"
-      ? "Saved — download the PDF to upload to the application."
-      : "Saved — copy it into the application.";
+  if (docType === "resume") {
+    await stageResumeForUpload(lastDocId, downloadFilename());
+    await openPdfPreview(lastDocId);
+    status.textContent = "Saved ✓ Opened it to preview — it'll auto-upload on your next ⚡ Autofill.";
+  } else {
+    status.textContent = "Saved — copy it into the application (button below).";
+  }
 }
 
 async function downloadPdf() {
@@ -567,6 +771,64 @@ async function downloadPdf() {
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+}
+
+// Robust clipboard copy: the panel can lose focus (e.g. right after opening a
+// Claude tab), which makes navigator.clipboard silently fail — fall back to a
+// temp textarea + execCommand so Copy always works.
+async function copyText(text) {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    try {
+      const ta = document.createElement("textarea");
+      ta.value = text;
+      ta.style.position = "fixed";
+      ta.style.top = "-1000px";
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      const ok = document.execCommand("copy");
+      ta.remove();
+      return ok;
+    } catch {
+      return false;
+    }
+  }
+}
+
+// Stage a tailored résumé so the NEXT ⚡ Autofill uploads it straight into the
+// application's file field — no download, no picker. Stored independently of the
+// cover-letter flow, so drafting a cover letter never wipes it.
+async function stageResumeForUpload(docId, filename) {
+  if (!docId) return;
+  await chrome.storage.local.set({ je_staged_resume: { docId, filename } });
+  renderStagedResume(filename);
+}
+
+// Open the generated PDF in a tab so the user can eyeball it (instead of
+// downloading it into an ever-growing Downloads folder).
+async function openPdfPreview(docId) {
+  const res = await send({ type: "getDocumentPdf", docId }).catch(() => null);
+  if (!res?.ok || !res.b64) return false;
+  const bytes = Uint8Array.from(atob(res.b64), (c) => c.charCodeAt(0));
+  const url = URL.createObjectURL(new Blob([bytes], { type: "application/pdf" }));
+  chrome.tabs.create({ url }).catch(() => {});
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  return true;
+}
+
+async function clearStagedResume() {
+  await chrome.storage.local.remove("je_staged_resume");
+  renderStagedResume(null);
+}
+
+function renderStagedResume(filename) {
+  const el = $("staged-resume");
+  if (!el) return;
+  el.hidden = !filename;
+  if (filename) $("staged-resume-name").textContent = filename;
 }
 
 // ---------------------------------------------------------------------------
@@ -809,15 +1071,41 @@ async function saveCapturedJob() {
 // Wiring
 // ---------------------------------------------------------------------------
 
+// Keep the Claude Project link in step with the account (the web app reads the
+// same value). If the account has one, use it. If it doesn't but this extension
+// already had a link saved locally (set before sync existed), push that link UP
+// to the account — a one-time migration so the web app finally sees it.
+async function syncClaudeUrl() {
+  const r = await send({ type: "getClaudeProjectUrl" }).catch(() => null);
+  const backendUrl = r?.ok && typeof r.url === "string" ? r.url : "";
+  const { je_claude_url } = await chrome.storage.local.get("je_claude_url");
+  const local = (je_claude_url || "").trim();
+
+  if (backendUrl) {
+    $("claude-url").value = backendUrl;
+    chrome.storage.local.set({ je_claude_url: backendUrl });
+  } else if (local && /^https?:\/\//i.test(local)) {
+    $("claude-url").value = local;
+    send({ type: "saveClaudeProjectUrl", url: local }).catch(() => {});
+  }
+}
+
 async function refreshStatus() {
   const res = await send({ type: "authStatus" }).catch(() => null);
   const signedIn = !!res?.signedIn;
   show(signedIn ? "main" : "login");
-  if (signedIn) loadSaved();
+  if (signedIn) {
+    loadSaved();
+    syncClaudeUrl();
+  }
 }
 
 document.addEventListener("DOMContentLoaded", () => {
   refreshStatus();
+  // Reflect any tailored résumé already staged for upload.
+  chrome.storage.local
+    .get("je_staged_resume")
+    .then(({ je_staged_resume }) => renderStagedResume(je_staged_resume?.filename || null));
 
   $("login-form").addEventListener("submit", async (e) => {
     e.preventDefault();
@@ -866,6 +1154,13 @@ document.addEventListener("DOMContentLoaded", () => {
   $("cl-regen").addEventListener("click", generateDoc);
   $("cl-paste-save").addEventListener("click", saveBridgeResult);
   $("cl-open-claude").addEventListener("click", () => openClaudeForDraft());
+  $("sync-read").addEventListener("click", readIndeedApplications);
+  $("sync-confirm").addEventListener("click", doSync);
+  $("sync-cancel").addEventListener("click", () => {
+    $("sync-review").hidden = true;
+    $("sync-status").textContent = "";
+  });
+
   $("save-page").addEventListener("click", saveThisPage);
   $("cap-save").addEventListener("click", saveCapturedJob);
   $("cap-cancel").addEventListener("click", () => {
@@ -877,23 +1172,33 @@ document.addEventListener("DOMContentLoaded", () => {
   chrome.storage.local.get("je_claude_url").then(({ je_claude_url }) => {
     if (je_claude_url) $("claude-url").value = je_claude_url;
   });
+  let _claudeSaveT;
   $("claude-url").addEventListener("input", (e) => {
-    chrome.storage.local.set({ je_claude_url: e.target.value.trim() });
+    const v = e.target.value.trim();
+    chrome.storage.local.set({ je_claude_url: v }); // fast local cache
+    // Debounced save to the account so the web app sees the same value.
+    clearTimeout(_claudeSaveT);
+    _claudeSaveT = setTimeout(() => {
+      send({ type: "saveClaudeProjectUrl", url: v }).catch(() => {});
+    }, 700);
   });
   $("cl-copy-prompt").addEventListener("click", async () => {
     if (!bridgePrompt) return;
-    await navigator.clipboard.writeText(bridgePrompt).catch(() => {});
     const btn = $("cl-copy-prompt");
-    btn.textContent = "✓ Copied";
-    setTimeout(() => (btn.textContent = "📋 Copy prompt again"), 2000);
+    const ok = await copyText(bridgePrompt);
+    btn.textContent = ok ? "✓ Copied" : "⚠ Select + Ctrl+C";
+    setTimeout(() => (btn.textContent = "📋 Copy prompt again"), 2200);
   });
   $("cl-pdf").addEventListener("click", downloadPdf);
   $("cl-copy").addEventListener("click", async () => {
-    await navigator.clipboard.writeText($("cl-output").value).catch(() => {});
     const btn = $("cl-copy");
-    btn.textContent = "✓ Copied";
-    setTimeout(() => (btn.textContent = "📋 Copy"), 2000);
+    const ok = await copyText($("cl-output").value);
+    // On failure, select the textarea so the user can just hit Ctrl+C.
+    if (!ok) $("cl-output").select();
+    btn.textContent = ok ? "✓ Copied" : "⚠ Ctrl+C to copy";
+    setTimeout(() => (btn.textContent = "📋 Copy"), 2200);
   });
+  $("staged-clear").addEventListener("click", clearStagedResume);
 
   $("open-app").addEventListener("click", () =>
     chrome.tabs.create({ url: `${cfg.APP_URL}/saved` }),

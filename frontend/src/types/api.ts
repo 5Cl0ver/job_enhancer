@@ -47,7 +47,7 @@ export interface PipelineStage {
   id: string;
   name: string;
   color: string | null;
-  position: number;
+  sort_order: number;
   is_default: boolean;
 }
 
@@ -61,6 +61,9 @@ export interface SavedJob {
   applied_at: string | null;
   last_stage_change: string;
   is_archived: boolean;
+  flagged_for_research: boolean;
+  /** ISO timestamp of when an outreach email was sent, or null if not emailed. */
+  emailed_at: string | null;
   created_at: string;
   updated_at: string;
   job_listing: JobListing;

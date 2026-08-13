@@ -13,17 +13,10 @@
 import { extractJob } from "./extract/index.js";
 import { shouldBackfill } from "./backfill.js";
 import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
-import {
-  INDEED_TITLE_SELECTORS,
-  LINKEDIN_TITLE_SELECTORS,
-  findTitleEl as findTitle,
-  headingFor,
-} from "./inject.js";
-
+import { readApplications } from "./extract/indeed-myjobs.js";
 const host = location.hostname;
 const IS_INDEED = /(^|\.)indeed\./i.test(host);
 const IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
-const TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELECTORS;
 
 const BTN_ID = "je-save-btn";
 const LABEL = "＋ Save to Job Enhancer";
@@ -59,6 +52,10 @@ function safeSend(msg) {
 // marks it applied the moment the "submitted" confirmation appears — no manual
 // click, no trip back to the app.
 const ON_INDEED_APPLY = IS_INDEED && isIndeedApplyUrl(location.href);
+// The "My jobs" board (myjobs.indeed.com) — a whole list of applications to sync
+// into the tracker, not a single job to save.
+const ON_INDEED_MYJOBS =
+  IS_INDEED && (host === "myjobs.indeed.com" || /\/myjobs(\b|\/|$)/.test(location.pathname));
 
 if (ON_INDEED_APPLY) {
   let lastJob = null; // {title, company} seen on the apply steps
@@ -76,7 +73,7 @@ if (ON_INDEED_APPLY) {
     if (!badge || !document.contains(badge)) {
       badge = document.createElement("div");
       badge.id = "je-apply-badge";
-      badge.className = "je-btn je-fab";
+      badge.className = "je-btn je-fab je-fab-left";
       document.body.appendChild(badge);
     }
     badge.textContent = text;
@@ -90,10 +87,16 @@ if (ON_INDEED_APPLY) {
   };
 
   async function saveApplyJob() {
-    if (saved || !lastJob?.company || !lastJob?.title) return;
+    if (saved) return;
     if (orphaned()) return;
+    // Capture the FULL posting from the apply flow's JobInfoCard — description,
+    // location, salary — not just the thin title/company off the step header.
+    const job = extractJob(document, location.href);
+    if (!job.title && lastJob?.title) job.title = lastJob.title;
+    if (!job.company && lastJob?.company) job.company = lastJob.company;
+    job.url = location.href;
+    if (!job.title || !job.company) return;
     setSaveState("busy", "Saving…");
-    const job = { title: lastJob.title, company: lastJob.company, url: location.href };
     const res = await safeSend({ type: "saveJob", job }).catch(() => ({ ok: false }));
     if (res?.ok || res?.error === "Already in your tracker") {
       saved = true;
@@ -115,8 +118,8 @@ if (ON_INDEED_APPLY) {
     saveBtn = document.createElement("button");
     saveBtn.id = "je-apply-save";
     saveBtn.type = "button";
-    saveBtn.className = "je-btn je-fab";
-    saveBtn.style.bottom = "66px"; // stack above the badge (bottom: 20px)
+    saveBtn.className = "je-btn je-fab je-fab-left";
+    saveBtn.style.bottom = "66px"; // stack above the badge (bottom: 20px), both left
     saveBtn.addEventListener("click", saveApplyJob);
     document.body.appendChild(saveBtn);
     setSaveState("idle", "＋ Save this job");
@@ -171,9 +174,56 @@ if (ON_INDEED_APPLY) {
   }, 1500);
 }
 
+// The "My jobs" board: one button to sync every application's real status into
+// the tracker, with a review step first.
+if (ON_INDEED_MYJOBS) {
+  try {
+    const v = chrome.runtime?.getManifest?.().version;
+    console.log(
+      `[Job Enhancer] My Jobs sync ready — v${v} — ${readApplications(document).length} applications detected`,
+    );
+  } catch {
+    /* orphaned */
+  }
+  injectStyles();
+  ensureSyncButton();
+  // Capture-phase: runs BEFORE Indeed's own handlers, so a page that stops
+  // event propagation can't swallow the click to our button.
+  document.addEventListener(
+    "click",
+    (e) => {
+      const t = e.target;
+      if (t && t.closest && t.closest("#" + SYNC_BTN_ID)) handleSyncClick();
+    },
+    true,
+  );
+  // The RELIABLE trigger: the side panel (our own page — no Indeed event
+  // interference) asks us to read the applications and drives the whole review
+  // itself. This can't be swallowed by the page the way a page click can.
+  try {
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (msg?.type !== "readApplications") return;
+      try {
+        sendResponse({ ok: true, applications: readApplications(document) });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+      return true;
+    });
+  } catch {
+    /* orphaned */
+  }
+  let _st;
+  new MutationObserver(() => {
+    clearTimeout(_st);
+    _st = setTimeout(ensureSyncButton, 500);
+  }).observe(document.body, { childList: true, subtree: true });
+}
+
 // The normal Save button runs on job/search pages — NOT the apply flow (there's
-// no job card to save there; the badge above takes over).
-if ((IS_INDEED && !ON_INDEED_APPLY) || IS_LINKEDIN) {
+// no job card to save there; the badge above takes over) and NOT the My jobs
+// board (that's a whole list, handled above).
+if ((IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS) || IS_LINKEDIN) {
   injectStyles();
   sync();
   let t;
@@ -203,10 +253,9 @@ function keyFor(job) {
 
 function sync() {
   const job = extractJob(document, location.href);
-  const titleEl = findTitle(document, TITLE_SELECTORS);
 
   ensureButton();
-  placeButton(titleEl);
+  placeButton();
   btn._job = job;
 
   const key = job.title ? keyFor(job) : "";
@@ -269,17 +318,13 @@ function ensureButton() {
   }
 }
 
-function placeButton(titleEl) {
-  if (titleEl) {
-    const heading = headingFor(titleEl);
-    if (btn.previousElementSibling !== heading || btn.classList.contains("je-fab")) {
-      btn.classList.remove("je-fab");
-      heading.insertAdjacentElement("afterend", btn);
-    }
-  } else if (!btn.classList.contains("je-fab") || !document.contains(btn)) {
-    btn.classList.add("je-fab");
-    document.body.appendChild(btn);
-  }
+// The Save button ALWAYS floats at the bottom-right. It used to anchor inline
+// next to the job title when one was found, and float only otherwise — so on a
+// page that re-renders (title appears/disappears) it flip-flopped between the
+// two spots. Pinning it to one fixed corner ends that jumping.
+function placeButton() {
+  if (!btn.classList.contains("je-fab")) btn.classList.add("je-fab");
+  if (btn.parentElement !== document.body) document.body.appendChild(btn);
 }
 
 async function onSave() {
@@ -325,6 +370,302 @@ function setState(el, state, text) {
   el.textContent = text;
 }
 
+// ---- Indeed "My jobs" → sync applications into the tracker ----------------
+
+const SYNC_BTN_ID = "je-sync-btn";
+const SYNC_PANEL_ID = "je-sync-panel";
+// Offered as stage overrides in the review panel (matches the default pipeline).
+const STAGE_OPTIONS = [
+  "Interested",
+  "Referral Sent",
+  "Applied",
+  "Phone Screen",
+  "Take-Home Assignment",
+  "Interview",
+  "Offer",
+  "Rejected",
+];
+
+// The click behaviour in ONE place, wired to the button AND to a document
+// capture-phase listener (below) — so even if Indeed's SPA swallows the bubble
+// click, the sync still fires. Reports the outcome ON the button itself, so we
+// never depend on the console: you'll see the panel, or a "⚠ …" reason.
+let _handlingSyncClick = false;
+function handleSyncClick() {
+  if (_handlingSyncClick) return; // de-dupe button + capture listeners
+  _handlingSyncClick = true;
+  setTimeout(() => (_handlingSyncClick = false), 300);
+  const sb = document.getElementById(SYNC_BTN_ID);
+  try {
+    openSyncReview();
+    if (!document.getElementById(SYNC_PANEL_ID) && sb) {
+      const n = readApplications(document).length;
+      sb.dataset.state = "busy";
+      sb.textContent = `⚠ read ${n}, but panel didn't open`;
+      setTimeout(() => sb && ((sb.dataset.state = ""), ensureSyncButton()), 4000);
+    }
+  } catch (e) {
+    console.error("[Job Enhancer] sync failed:", e);
+    if (sb) {
+      sb.dataset.state = "busy";
+      sb.textContent = "⚠ " + String((e && e.message) || e).slice(0, 42);
+      setTimeout(() => sb && ((sb.dataset.state = ""), ensureSyncButton()), 6000);
+    }
+  }
+}
+
+function ensureSyncButton() {
+  let sb = document.getElementById(SYNC_BTN_ID);
+  const apps = readApplications(document);
+  if (!apps.length) {
+    sb?.remove();
+    return;
+  }
+  if (!sb) {
+    sb = document.createElement("button");
+    sb.id = SYNC_BTN_ID;
+    sb.type = "button";
+    sb.className = "je-btn je-fab je-sync-fab";
+    sb.addEventListener("click", handleSyncClick);
+    document.body.appendChild(sb);
+  }
+  if (sb.dataset.state !== "busy") {
+    let v = "?";
+    try {
+      v = chrome.runtime.getManifest().version;
+    } catch {
+      /* orphaned */
+    }
+    // Version is ON the button so a stale build is obvious without the console:
+    // if this doesn't say the latest version, Chrome is running old code.
+    sb.textContent = `🔄 Sync ${apps.length} Indeed applications · v${v}`;
+  }
+}
+
+function openSyncReview() {
+  document.getElementById(SYNC_PANEL_ID)?.remove();
+  injectStyles();
+  const apps = readApplications(document);
+  if (!apps.length) return;
+
+  const panel = document.createElement("div");
+  panel.id = SYNC_PANEL_ID;
+
+  const head = document.createElement("div");
+  head.className = "je-sp-head";
+  // NB: build with textContent/createElement, NEVER innerHTML — Indeed enforces
+  // a Trusted Types CSP, under which `el.innerHTML = "…"` THROWS and silently
+  // killed the whole click ("nothing happens").
+  const headTitle = document.createElement("b");
+  headTitle.textContent = "Sync your Indeed applications";
+  head.appendChild(headTitle);
+  const close = document.createElement("button");
+  close.className = "je-sp-close";
+  close.type = "button";
+  close.textContent = "✕";
+  close.addEventListener("click", () => panel.remove());
+  head.appendChild(close);
+  panel.appendChild(head);
+
+  const sub = document.createElement("div");
+  sub.className = "je-sp-sub";
+  sub.textContent = `${apps.length} found — matches update their status, the rest import. Uncheck any to skip.`;
+  panel.appendChild(sub);
+
+  const body = document.createElement("div");
+  body.className = "je-sp-body";
+  const rows = apps.map((app) => {
+    const row = document.createElement("div");
+    row.className = "je-sp-row";
+
+    const top = document.createElement("label");
+    top.className = "je-sp-top";
+    const keep = document.createElement("input");
+    keep.type = "checkbox";
+    keep.checked = true;
+    const meta = document.createElement("div");
+    meta.className = "je-sp-meta";
+    const t = document.createElement("div");
+    t.className = "je-sp-title";
+    t.textContent = app.title;
+    const c = document.createElement("div");
+    c.className = "je-sp-co";
+    c.textContent = [app.company, app.location].filter(Boolean).join(" · ");
+    meta.append(t, c);
+    top.append(keep, meta);
+
+    const stageWrap = document.createElement("div");
+    stageWrap.className = "je-sp-stage";
+    const badge = document.createElement("span");
+    badge.className = "je-sp-badge";
+    badge.textContent = app.status || "Applied";
+    const arrow = document.createElement("span");
+    arrow.className = "je-sp-arrow";
+    arrow.textContent = "→";
+    const sel = document.createElement("select");
+    sel.className = "je-sp-sel";
+    for (const s of STAGE_OPTIONS) {
+      const o = document.createElement("option");
+      o.value = s;
+      o.textContent = s;
+      if (s === app.stage) o.selected = true;
+      sel.appendChild(o);
+    }
+    stageWrap.append(badge, arrow, sel);
+
+    row.append(top, stageWrap);
+    row._data = { app, keep, sel };
+    body.appendChild(row);
+    return row;
+  });
+  panel.appendChild(body);
+
+  const foot = document.createElement("div");
+  foot.className = "je-sp-foot";
+  // A persistent status line ABOVE the buttons — the old flash-on-the-button
+  // vanished before you could read it, so failures looked like "nothing happened".
+  const status = document.createElement("div");
+  status.className = "je-sp-status";
+  status.style.display = "none";
+  const setStatus = (text, kind) => {
+    status.textContent = text || "";
+    status.dataset.kind = kind || "info";
+    status.style.display = text ? "block" : "none";
+  };
+  const btnRow = document.createElement("div");
+  btnRow.className = "je-sp-btnrow";
+  const cancel = document.createElement("button");
+  cancel.className = "je-sp-cancel";
+  cancel.type = "button";
+  cancel.textContent = "Cancel";
+  cancel.addEventListener("click", () => panel.remove());
+  const sync = document.createElement("button");
+  sync.className = "je-sp-sync";
+  sync.type = "button";
+  const chosenCount = () => rows.filter((r) => r._data.keep.checked).length;
+  const relabel = () => (sync.textContent = `🔄 Sync ${chosenCount()}`);
+  relabel();
+  body.addEventListener("change", relabel);
+  sync.addEventListener("click", async () => {
+    if (orphaned()) {
+      setStatus("Extension was updated — refresh this page, then Sync.", "error");
+      return;
+    }
+    const chosen = rows
+      .filter((r) => r._data.keep.checked)
+      .map((r) => ({
+        title: r._data.app.title,
+        company: r._data.app.company,
+        location: r._data.app.location || "Not specified",
+        url: r._data.app.url || undefined,
+        stage: r._data.sel.value,
+      }));
+    if (!chosen.length) {
+      setStatus("Nothing selected — check at least one application.", "error");
+      return;
+    }
+    sync.disabled = true;
+    sync.textContent = "Syncing…";
+    setStatus(`Syncing ${chosen.length}…`, "info");
+    console.log("[Job Enhancer] sync →", chosen.length, "applications", chosen);
+    // Never hang on "Syncing…": bail after 30s so the panel stays usable.
+    const res = await Promise.race([
+      safeSend({ type: "syncApplications", applications: chosen }),
+      new Promise((r) => setTimeout(() => r({ ok: false, error: "Timed out — is the app running?" }), 30000)),
+    ]).catch((e) => ({
+      ok: false,
+      error: /context invalidated/i.test(String(e?.message)) ? "STALE" : String(e?.message || e),
+    }));
+    console.log("[Job Enhancer] sync ←", res);
+    if (res?.ok) {
+      showSyncResult(panel, res);
+      return;
+    }
+    sync.disabled = false;
+    relabel();
+    if (res?.error === "STALE") {
+      setStatus("Extension was updated — refresh this page, then Sync.", "error");
+    } else if (res?.error === "NOT_SIGNED_IN") {
+      setStatus("Not signed in — open the Job Enhancer side panel, sign in, then Sync again.", "error");
+    } else {
+      setStatus(`Couldn't sync: ${res?.error || "unknown error"}. Is the app running at localhost:8000?`, "error");
+    }
+  });
+  btnRow.append(cancel, sync);
+  foot.append(status, btnRow);
+  panel.appendChild(foot);
+  document.body.appendChild(panel);
+}
+
+function showSyncResult(panel, res) {
+  panel.querySelector(".je-sp-body")?.remove();
+  panel.querySelector(".je-sp-sub")?.remove();
+  const foot = panel.querySelector(".je-sp-foot");
+
+  const done = document.createElement("div");
+  done.className = "je-sp-done";
+  const big = document.createElement("div");
+  big.className = "je-sp-done-big";
+  big.textContent = "✓ Synced";
+  const line = document.createElement("div");
+  const skipped = res.skipped ? ` · ${res.skipped} skipped` : "";
+  line.textContent = `${res.updated || 0} updated · ${res.imported || 0} imported${skipped}`;
+  done.append(big, line);
+  panel.insertBefore(done, foot);
+
+  // The per-job breakdown so you can cross-reference exactly what happened to
+  // each application: which existing jobs moved stage vs which were newly added.
+  const outcomes = Array.isArray(res.outcomes) ? res.outcomes : [];
+  const results = document.createElement("div");
+  results.className = "je-sp-results";
+  const group = (title, action, cls) => {
+    const items = outcomes.filter((o) => o.action === action);
+    if (!items.length) return;
+    const sec = document.createElement("div");
+    sec.className = "je-sp-rgroup";
+    const h = document.createElement("div");
+    h.className = `je-sp-rhead ${cls}`;
+    h.textContent = `${title} (${items.length})`;
+    sec.appendChild(h);
+    for (const o of items) {
+      const row = document.createElement("div");
+      row.className = "je-sp-rrow";
+      const name = document.createElement("span");
+      name.className = "je-sp-rname";
+      name.textContent = [o.title, o.company].filter(Boolean).join(" — ");
+      const st = document.createElement("span");
+      st.className = "je-sp-rstage";
+      st.textContent = action === "skipped" ? "skipped" : `→ ${o.stage}`;
+      row.append(name, st);
+      sec.appendChild(row);
+    }
+    results.appendChild(sec);
+  };
+  group("Updated (already tracked)", "updated", "updated");
+  group("Imported (new to your tracker)", "imported", "imported");
+  group("Skipped", "skipped", "skipped");
+  if (results.childElementCount) panel.insertBefore(results, foot);
+
+  const note = document.createElement("div");
+  note.className = "je-sp-done-note";
+  note.textContent = "Open Job Enhancer to see your board.";
+  panel.insertBefore(note, foot);
+
+  if (foot) {
+    foot.querySelector(".je-sp-status")?.remove();
+    foot.querySelector(".je-sp-cancel")?.remove();
+    const sync = foot.querySelector(".je-sp-sync");
+    if (sync) {
+      sync.disabled = false;
+      sync.textContent = "Done";
+      sync.onclick = () => panel.remove();
+    }
+  }
+  // Refresh the floating button's count (some may have moved off "Applied").
+  const sb = document.getElementById(SYNC_BTN_ID);
+  if (sb) sb.textContent = "✓ Synced to Job Enhancer";
+}
+
 function injectStyles() {
   if (document.getElementById("je-style")) return;
   const style = document.createElement("style");
@@ -347,6 +688,79 @@ function injectStyles() {
       position: fixed; right: 20px; bottom: 20px;
       box-shadow: 0 6px 20px rgba(0,0,0,.28);
     }
+    /* Apply-flow badge + save go bottom-LEFT so they never overlap the
+       autofill/remember buttons (a different content script) on the right. */
+    .je-fab-left { left: 20px; right: auto; }
+    .je-sync-fab { background: #7c3aed; }  /* purple: the sync action */
+    .je-sync-fab[data-state="busy"] { background: #6b7280; }
+    /* Sync review panel */
+    #${SYNC_PANEL_ID} {
+      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+      width: 380px; max-height: 78vh; overflow: auto;
+      background: #fff; color: #111827; border-radius: 12px;
+      box-shadow: 0 12px 34px rgba(0,0,0,.3);
+      font: 13px/1.45 system-ui, -apple-system, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) { #${SYNC_PANEL_ID} { background: #1f2937; color: #f3f4f6; } }
+    #${SYNC_PANEL_ID} .je-sp-head {
+      position: sticky; top: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 11px 13px; background: inherit;
+      border-bottom: 1px solid rgba(148,163,184,.3); font-size: 14px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
+    #${SYNC_PANEL_ID} .je-sp-sub { padding: 8px 13px; font-size: 12px; color: #6b7280; }
+    #${SYNC_PANEL_ID} .je-sp-body { padding: 2px 13px; }
+    #${SYNC_PANEL_ID} .je-sp-row { padding: 9px 0; border-bottom: 1px solid rgba(148,163,184,.18); }
+    #${SYNC_PANEL_ID} .je-sp-top { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+    #${SYNC_PANEL_ID} .je-sp-top input { margin-top: 3px; }
+    #${SYNC_PANEL_ID} .je-sp-title { font-weight: 600; font-size: 12.5px; }
+    #${SYNC_PANEL_ID} .je-sp-co { font-size: 11.5px; color: #6b7280; margin-top: 1px; }
+    #${SYNC_PANEL_ID} .je-sp-stage {
+      display: flex; align-items: center; gap: 6px; margin: 7px 0 0 26px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-badge {
+      font-size: 11px; padding: 2px 7px; border-radius: 999px;
+      background: rgba(37,99,235,.14); color: #2563eb; white-space: nowrap;
+    }
+    #${SYNC_PANEL_ID} .je-sp-arrow { color: #9ca3af; }
+    #${SYNC_PANEL_ID} .je-sp-sel {
+      flex: 1 1 auto; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px;
+      font: inherit; background: #fff; color: #111827;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${SYNC_PANEL_ID} .je-sp-sel { background: #111827; color: #f3f4f6; border-color: #374151; }
+    }
+    #${SYNC_PANEL_ID} .je-sp-foot {
+      position: sticky; bottom: 0; display: flex; flex-direction: column; gap: 8px;
+      padding: 11px 13px; background: inherit; border-top: 1px solid rgba(148,163,184,.3);
+    }
+    #${SYNC_PANEL_ID} .je-sp-btnrow { display: flex; justify-content: flex-end; gap: 8px; }
+    #${SYNC_PANEL_ID} .je-sp-status {
+      padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+    }
+    #${SYNC_PANEL_ID} .je-sp-status[data-kind="info"] { background: rgba(37,99,235,.12); color: #2563eb; }
+    #${SYNC_PANEL_ID} .je-sp-status[data-kind="error"] { background: rgba(220,38,38,.12); color: #dc2626; }
+    #${SYNC_PANEL_ID} .je-sp-sync { background: #7c3aed; color: #fff; border: 0; border-radius: 8px; padding: 9px 15px; font-weight: 700; cursor: pointer; }
+    #${SYNC_PANEL_ID} .je-sp-sync:disabled { background: #6b7280; cursor: default; }
+    #${SYNC_PANEL_ID} .je-sp-cancel { background: transparent; color: inherit; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 13px; cursor: pointer; }
+    #${SYNC_PANEL_ID} .je-sp-done { padding: 16px 13px 8px; text-align: center; }
+    #${SYNC_PANEL_ID} .je-sp-done-big { font-size: 20px; font-weight: 800; color: #16a34a; margin-bottom: 4px; }
+    #${SYNC_PANEL_ID} .je-sp-done-note { padding: 8px 13px 12px; text-align: center; font-size: 12px; color: #6b7280; }
+    #${SYNC_PANEL_ID} .je-sp-results { padding: 2px 13px; }
+    #${SYNC_PANEL_ID} .je-sp-rgroup { margin-bottom: 8px; }
+    #${SYNC_PANEL_ID} .je-sp-rhead {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; margin: 8px 0 4px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-rhead.updated { color: #2563eb; }
+    #${SYNC_PANEL_ID} .je-sp-rhead.imported { color: #16a34a; }
+    #${SYNC_PANEL_ID} .je-sp-rhead.skipped { color: #9ca3af; }
+    #${SYNC_PANEL_ID} .je-sp-rrow {
+      display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
+      border-bottom: 1px solid rgba(148,163,184,.15); font-size: 12px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #${SYNC_PANEL_ID} .je-sp-rstage { flex: 0 0 auto; color: #6b7280; }
   `;
   document.documentElement.appendChild(style);
 }

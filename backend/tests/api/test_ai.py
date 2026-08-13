@@ -275,3 +275,57 @@ async def test_document_pdf_renders_markdown(client: AsyncClient, db_session, te
     r = await client.get(f"/v1/ai/documents/{doc.id}/pdf")
     assert r.status_code == 200
     assert r.content[:4] == b"%PDF"
+
+
+@pytest.mark.asyncio
+async def test_work_history_no_resume_is_empty(client: AsyncClient):
+    """No active résumé → nothing to parse, empty list (never errors)."""
+    r = await client.post("/v1/ai/work-history", json={})
+    assert r.status_code == 200
+    assert r.json()["entries"] == []
+
+
+@pytest.mark.asyncio
+async def test_work_history_parses_active_resume(client: AsyncClient, db_session, test_user):
+    """With an active résumé, the endpoint returns the parsed (mocked) entries."""
+    import uuid as _uuid
+
+    from app.models.resume import Resume
+
+    db_session.add(
+        Resume(
+            id=_uuid.uuid4(),
+            user_id=test_user.id,
+            filename="r.pdf",
+            mime_type="application/pdf",
+            file_size_bytes=10,
+            extracted_text="IT Support Technician at Logical Position, 2022-2024",
+            is_active=True,
+        )
+    )
+    await db_session.commit()
+
+    entries = [
+        {
+            "title": "IT Support Technician",
+            "company": "Logical Position",
+            "location": "Beaverton, OR",
+            "start_month": 10,
+            "start_year": 2022,
+            "end_month": 9,
+            "end_year": 2024,
+            "current": False,
+            "description": "",
+        }
+    ]
+    with patch(
+        "app.api.v1.ai.ai_service.parse_work_history",
+        new=AsyncMock(return_value=entries),
+    ):
+        r = await client.post("/v1/ai/work-history", json={})
+    assert r.status_code == 200
+    data = r.json()["entries"]
+    assert len(data) == 1
+    assert data[0]["title"] == "IT Support Technician"
+    assert data[0]["start_year"] == 2022
+    assert data[0]["current"] is False

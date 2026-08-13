@@ -14,6 +14,7 @@ class UserProfile(BaseModel):
     image: str | None = None
     role: str
     follow_up_days: int
+    claude_project_url: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -22,6 +23,17 @@ class UserProfile(BaseModel):
 class UserUpdate(BaseModel):
     name: str | None = None
     follow_up_days: int | None = Field(None, ge=1, le=90)
+    claude_project_url: str | None = Field(None, max_length=2048)
+
+    @field_validator("claude_project_url")
+    @classmethod
+    def _http_or_empty(cls, v: str | None) -> str | None:
+        # Empty string clears it; otherwise it must be a real URL.
+        if not v:
+            return None
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("Claude project link must start with http:// or https://")
+        return v
 
 
 class AdminUserUpdate(BaseModel):

@@ -447,6 +447,50 @@
       salary_period: salary.salary_period ?? null
     };
   }
+  function extractIndeedApply(doc, url) {
+    if (!doc?.querySelector) return null;
+    const card = doc.querySelector("[data-testid='JobInfoCard-wrapper']") || doc.querySelector(".ia-JobDescription")?.closest("aside") || null;
+    if (!card) return null;
+    const title = textFrom(card, ["#ia-JobInfoCard-header-title", ".ia-JobHeader-title"]);
+    let company = "";
+    let location2 = "";
+    const sub = clean(card.querySelector(".ia-JobHeader-information span")?.textContent || "");
+    const m = /^(.+?)\s+[-–·•]\s+(.+)$/.exec(sub);
+    if (m) {
+      company = clean(m[1]);
+      location2 = clean(m[2]);
+    } else if (sub) {
+      company = sub;
+    }
+    const descEl = card.querySelector(".ia-JobDescription");
+    const description = descEl ? stripHtml(descEl.innerHTML || "") || clean(descEl.textContent) : "";
+    const head = description.slice(0, 300);
+    let salary = parseSalaryText(head) || {};
+    if (salary.salary_min == null) {
+      const s = /salary\b[^$]*\$\s*([\d,]+(?:\.\d+)?)(?:\s*[-–]\s*\$\s*([\d,]+(?:\.\d+)?))?/i.exec(head);
+      if (s) {
+        const lo = Math.round(parseFloat(s[1].replace(/,/g, "")));
+        const hi = s[2] ? Math.round(parseFloat(s[2].replace(/,/g, ""))) : null;
+        if (Number.isFinite(lo) && lo >= 1e3) {
+          salary = { salary_min: lo, salary_max: hi, salary_period: "yearly" };
+        }
+      }
+    }
+    const job_type = parseJobTypes(head);
+    if (!title && !description) return null;
+    return {
+      title,
+      company,
+      location: location2,
+      description,
+      is_remote: looksRemote(location2, title, head),
+      url,
+      job_type,
+      salary_min: salary.salary_min ?? null,
+      salary_max: salary.salary_max ?? null,
+      salary_period: salary.salary_period ?? null
+    };
+  }
 
   // src/extract/linkedin.js
   function extractLinkedIn(doc, url) {
@@ -519,6 +563,8 @@
     if (hostOf(url).includes("indeed.")) {
       const embedded = extractIndeedEmbedded(doc, url);
       if (embedded) candidates.push({ via: "indeed-embedded", data: embedded });
+      const apply = extractIndeedApply(doc, url);
+      if (apply) candidates.push({ via: "indeed-apply", data: apply });
     }
     const jsonld = extractFromJsonLd(doc, url);
     if (jsonld) candidates.push({ via: "jsonld", data: jsonld });
@@ -560,7 +606,7 @@
   function isSubmitted(doc) {
     return submittedCompany(doc) !== null;
   }
-  var CO_LOC_RE = /^(.{2,80}?)\s+[-–·•]\s+(?:remote|[A-Za-z .'&]+,\s*[A-Z]{2}(?:\s+\d{5})?)/i;
+  var CO_LOC_RE = /^(.{2,80}?)\s+[-–·•]\s+(?:remote|[A-Za-z0-9 .'&,]+,\s*[A-Z]{2}(?:\s+\d{5})?)/i;
   function nearestTitle(el) {
     let node = el;
     for (let hops = 0; hops < 6 && node; hops++) {
@@ -589,35 +635,60 @@
     return null;
   }
 
-  // src/inject.js
-  var INDEED_TITLE_SELECTORS = [
-    "h1.jobsearch-JobInfoHeader-title",
-    "[data-testid='jobsearch-JobInfoHeader-title']",
-    "h2[data-testid='jobsearch-JobInfoHeader-title']",
-    "h1 span[title]"
+  // src/extract/indeed-myjobs.js
+  var STATUS_TO_STAGE = [
+    [/not selected|rejected|no longer|not moving forward/i, "Rejected"],
+    [/interview/i, "Interview"],
+    [/offer/i, "Offer"],
+    [/hired/i, "Offer"],
+    // "Applied", "Application viewed", "Application submitted", "Job closed or
+    // expired" — the user applied; keep them in Applied.
+    [/applied|application|submitted|viewed|closed|expired/i, "Applied"]
   ];
-  var LINKEDIN_TITLE_SELECTORS = [
-    ".top-card-layout__title",
-    ".job-details-jobs-unified-top-card__job-title",
-    ".jobs-unified-top-card__job-title",
-    "h1.topcard__title"
-  ];
-  function findTitleEl(doc, selectors) {
-    for (const sel of selectors) {
-      const el = doc.querySelector(sel);
-      if (el && el.textContent.trim()) return el;
-    }
-    return null;
+  function statusToStage(status) {
+    const s = clean(status);
+    for (const [re, stage] of STATUS_TO_STAGE) if (re.test(s)) return stage;
+    return "Applied";
   }
-  function headingFor(titleEl) {
-    return titleEl.closest("h1, h2") || titleEl;
+  function titleText(anchor) {
+    const direct = [...anchor.childNodes].filter((n) => n.nodeType === 3).map((n) => n.textContent).join(" ");
+    const t = clean(direct);
+    if (t) return t;
+    return clean(anchor.textContent).replace(/job description opens in a new window/i, "").trim();
+  }
+  function readApplications(doc) {
+    if (!doc?.querySelectorAll) return [];
+    const out = [];
+    const seen = /* @__PURE__ */ new Set();
+    for (const card of doc.querySelectorAll(".atw-AppCard")) {
+      const anchor = card.querySelector(".atw-JobInfo-jobTitle");
+      if (!anchor) continue;
+      const title = titleText(anchor);
+      if (!title) continue;
+      const spans = card.querySelectorAll(".atw-JobInfo-companyLocation span");
+      const company = clean(spans[0]?.textContent || "");
+      const location2 = clean(spans[1]?.textContent || "");
+      const status = clean(
+        card.querySelector(".atw-StatusTag-description")?.textContent || card.querySelector(".atw-StatusTag span")?.textContent || ""
+      );
+      let url = anchor.getAttribute("href") || "";
+      try {
+        if (url) url = new URL(url, "https://www.indeed.com").href;
+      } catch {
+      }
+      const jobKey = card.getAttribute("data-jobkey") || card.getAttribute("data-id") || "";
+      const key = jobKey || `${title}|${company}`.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push({ title, company, location: location2, status, stage: statusToStage(status), url, jobKey });
+    }
+    return out;
   }
 
   // src/content.entry.js
   var host = location.hostname;
   var IS_INDEED = /(^|\.)indeed\./i.test(host);
   var IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
-  var TITLE_SELECTORS = IS_INDEED ? INDEED_TITLE_SELECTORS : LINKEDIN_TITLE_SELECTORS;
   var BTN_ID = "je-save-btn";
   var LABEL = "\uFF0B Save to Job Enhancer";
   var STALE_LABEL = "\u21BB Refresh page \u2014 extension updated";
@@ -639,6 +710,7 @@
     }
   }
   var ON_INDEED_APPLY = IS_INDEED && isIndeedApplyUrl(location.href);
+  var ON_INDEED_MYJOBS = IS_INDEED && (host === "myjobs.indeed.com" || /\/myjobs(\b|\/|$)/.test(location.pathname));
   if (ON_INDEED_APPLY) {
     let lastJob = null;
     let fired = false;
@@ -654,7 +726,7 @@
       if (!badge || !document.contains(badge)) {
         badge = document.createElement("div");
         badge.id = "je-apply-badge";
-        badge.className = "je-btn je-fab";
+        badge.className = "je-btn je-fab je-fab-left";
         document.body.appendChild(badge);
       }
       badge.textContent = text;
@@ -666,10 +738,14 @@
       saveBtn.textContent = text;
     };
     async function saveApplyJob() {
-      if (saved || !lastJob?.company || !lastJob?.title) return;
+      if (saved) return;
       if (orphaned()) return;
+      const job = extractJob(document, location.href);
+      if (!job.title && lastJob?.title) job.title = lastJob.title;
+      if (!job.company && lastJob?.company) job.company = lastJob.company;
+      job.url = location.href;
+      if (!job.title || !job.company) return;
       setSaveState("busy", "Saving\u2026");
-      const job = { title: lastJob.title, company: lastJob.company, url: location.href };
       const res = await safeSend({ type: "saveJob", job }).catch(() => ({ ok: false }));
       if (res?.ok || res?.error === "Already in your tracker") {
         saved = true;
@@ -688,7 +764,7 @@
       saveBtn = document.createElement("button");
       saveBtn.id = "je-apply-save";
       saveBtn.type = "button";
-      saveBtn.className = "je-btn je-fab";
+      saveBtn.className = "je-btn je-fab je-fab-left";
       saveBtn.style.bottom = "66px";
       saveBtn.addEventListener("click", saveApplyJob);
       document.body.appendChild(saveBtn);
@@ -735,7 +811,43 @@
       }
     }, 1500);
   }
-  if (IS_INDEED && !ON_INDEED_APPLY || IS_LINKEDIN) {
+  if (ON_INDEED_MYJOBS) {
+    try {
+      const v = chrome.runtime?.getManifest?.().version;
+      console.log(
+        `[Job Enhancer] My Jobs sync ready \u2014 v${v} \u2014 ${readApplications(document).length} applications detected`
+      );
+    } catch {
+    }
+    injectStyles();
+    ensureSyncButton();
+    document.addEventListener(
+      "click",
+      (e) => {
+        const t = e.target;
+        if (t && t.closest && t.closest("#" + SYNC_BTN_ID)) handleSyncClick();
+      },
+      true
+    );
+    try {
+      chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+        if (msg?.type !== "readApplications") return;
+        try {
+          sendResponse({ ok: true, applications: readApplications(document) });
+        } catch (e) {
+          sendResponse({ ok: false, error: String(e && e.message || e) });
+        }
+        return true;
+      });
+    } catch {
+    }
+    let _st;
+    new MutationObserver(() => {
+      clearTimeout(_st);
+      _st = setTimeout(ensureSyncButton, 500);
+    }).observe(document.body, { childList: true, subtree: true });
+  }
+  if (IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS || IS_LINKEDIN) {
     injectStyles();
     sync();
     let t;
@@ -759,9 +871,8 @@
   }
   function sync() {
     const job = extractJob(document, location.href);
-    const titleEl = findTitleEl(document, TITLE_SELECTORS);
     ensureButton();
-    placeButton(titleEl);
+    placeButton();
     btn._job = job;
     const key = job.title ? keyFor(job) : "";
     if (!key) {
@@ -808,17 +919,9 @@
       btn._wired = true;
     }
   }
-  function placeButton(titleEl) {
-    if (titleEl) {
-      const heading = headingFor(titleEl);
-      if (btn.previousElementSibling !== heading || btn.classList.contains("je-fab")) {
-        btn.classList.remove("je-fab");
-        heading.insertAdjacentElement("afterend", btn);
-      }
-    } else if (!btn.classList.contains("je-fab") || !document.contains(btn)) {
-      btn.classList.add("je-fab");
-      document.body.appendChild(btn);
-    }
+  function placeButton() {
+    if (!btn.classList.contains("je-fab")) btn.classList.add("je-fab");
+    if (btn.parentElement !== document.body) document.body.appendChild(btn);
   }
   async function onSave() {
     if (!btn || btn.dataset.state === "busy" || btn.dataset.state === "saved") return;
@@ -859,6 +962,264 @@
     el.dataset.state = state;
     el.textContent = text;
   }
+  var SYNC_BTN_ID = "je-sync-btn";
+  var SYNC_PANEL_ID = "je-sync-panel";
+  var STAGE_OPTIONS = [
+    "Interested",
+    "Referral Sent",
+    "Applied",
+    "Phone Screen",
+    "Take-Home Assignment",
+    "Interview",
+    "Offer",
+    "Rejected"
+  ];
+  var _handlingSyncClick = false;
+  function handleSyncClick() {
+    if (_handlingSyncClick) return;
+    _handlingSyncClick = true;
+    setTimeout(() => _handlingSyncClick = false, 300);
+    const sb = document.getElementById(SYNC_BTN_ID);
+    try {
+      openSyncReview();
+      if (!document.getElementById(SYNC_PANEL_ID) && sb) {
+        const n = readApplications(document).length;
+        sb.dataset.state = "busy";
+        sb.textContent = `\u26A0 read ${n}, but panel didn't open`;
+        setTimeout(() => sb && (sb.dataset.state = "", ensureSyncButton()), 4e3);
+      }
+    } catch (e) {
+      console.error("[Job Enhancer] sync failed:", e);
+      if (sb) {
+        sb.dataset.state = "busy";
+        sb.textContent = "\u26A0 " + String(e && e.message || e).slice(0, 42);
+        setTimeout(() => sb && (sb.dataset.state = "", ensureSyncButton()), 6e3);
+      }
+    }
+  }
+  function ensureSyncButton() {
+    let sb = document.getElementById(SYNC_BTN_ID);
+    const apps = readApplications(document);
+    if (!apps.length) {
+      sb?.remove();
+      return;
+    }
+    if (!sb) {
+      sb = document.createElement("button");
+      sb.id = SYNC_BTN_ID;
+      sb.type = "button";
+      sb.className = "je-btn je-fab je-sync-fab";
+      sb.addEventListener("click", handleSyncClick);
+      document.body.appendChild(sb);
+    }
+    if (sb.dataset.state !== "busy") {
+      let v = "?";
+      try {
+        v = chrome.runtime.getManifest().version;
+      } catch {
+      }
+      sb.textContent = `\u{1F504} Sync ${apps.length} Indeed applications \xB7 v${v}`;
+    }
+  }
+  function openSyncReview() {
+    document.getElementById(SYNC_PANEL_ID)?.remove();
+    injectStyles();
+    const apps = readApplications(document);
+    if (!apps.length) return;
+    const panel = document.createElement("div");
+    panel.id = SYNC_PANEL_ID;
+    const head = document.createElement("div");
+    head.className = "je-sp-head";
+    const headTitle = document.createElement("b");
+    headTitle.textContent = "Sync your Indeed applications";
+    head.appendChild(headTitle);
+    const close = document.createElement("button");
+    close.className = "je-sp-close";
+    close.type = "button";
+    close.textContent = "\u2715";
+    close.addEventListener("click", () => panel.remove());
+    head.appendChild(close);
+    panel.appendChild(head);
+    const sub = document.createElement("div");
+    sub.className = "je-sp-sub";
+    sub.textContent = `${apps.length} found \u2014 matches update their status, the rest import. Uncheck any to skip.`;
+    panel.appendChild(sub);
+    const body = document.createElement("div");
+    body.className = "je-sp-body";
+    const rows = apps.map((app) => {
+      const row = document.createElement("div");
+      row.className = "je-sp-row";
+      const top = document.createElement("label");
+      top.className = "je-sp-top";
+      const keep = document.createElement("input");
+      keep.type = "checkbox";
+      keep.checked = true;
+      const meta = document.createElement("div");
+      meta.className = "je-sp-meta";
+      const t = document.createElement("div");
+      t.className = "je-sp-title";
+      t.textContent = app.title;
+      const c = document.createElement("div");
+      c.className = "je-sp-co";
+      c.textContent = [app.company, app.location].filter(Boolean).join(" \xB7 ");
+      meta.append(t, c);
+      top.append(keep, meta);
+      const stageWrap = document.createElement("div");
+      stageWrap.className = "je-sp-stage";
+      const badge = document.createElement("span");
+      badge.className = "je-sp-badge";
+      badge.textContent = app.status || "Applied";
+      const arrow = document.createElement("span");
+      arrow.className = "je-sp-arrow";
+      arrow.textContent = "\u2192";
+      const sel = document.createElement("select");
+      sel.className = "je-sp-sel";
+      for (const s of STAGE_OPTIONS) {
+        const o = document.createElement("option");
+        o.value = s;
+        o.textContent = s;
+        if (s === app.stage) o.selected = true;
+        sel.appendChild(o);
+      }
+      stageWrap.append(badge, arrow, sel);
+      row.append(top, stageWrap);
+      row._data = { app, keep, sel };
+      body.appendChild(row);
+      return row;
+    });
+    panel.appendChild(body);
+    const foot = document.createElement("div");
+    foot.className = "je-sp-foot";
+    const status = document.createElement("div");
+    status.className = "je-sp-status";
+    status.style.display = "none";
+    const setStatus = (text, kind) => {
+      status.textContent = text || "";
+      status.dataset.kind = kind || "info";
+      status.style.display = text ? "block" : "none";
+    };
+    const btnRow = document.createElement("div");
+    btnRow.className = "je-sp-btnrow";
+    const cancel = document.createElement("button");
+    cancel.className = "je-sp-cancel";
+    cancel.type = "button";
+    cancel.textContent = "Cancel";
+    cancel.addEventListener("click", () => panel.remove());
+    const sync2 = document.createElement("button");
+    sync2.className = "je-sp-sync";
+    sync2.type = "button";
+    const chosenCount = () => rows.filter((r) => r._data.keep.checked).length;
+    const relabel = () => sync2.textContent = `\u{1F504} Sync ${chosenCount()}`;
+    relabel();
+    body.addEventListener("change", relabel);
+    sync2.addEventListener("click", async () => {
+      if (orphaned()) {
+        setStatus("Extension was updated \u2014 refresh this page, then Sync.", "error");
+        return;
+      }
+      const chosen = rows.filter((r) => r._data.keep.checked).map((r) => ({
+        title: r._data.app.title,
+        company: r._data.app.company,
+        location: r._data.app.location || "Not specified",
+        url: r._data.app.url || void 0,
+        stage: r._data.sel.value
+      }));
+      if (!chosen.length) {
+        setStatus("Nothing selected \u2014 check at least one application.", "error");
+        return;
+      }
+      sync2.disabled = true;
+      sync2.textContent = "Syncing\u2026";
+      setStatus(`Syncing ${chosen.length}\u2026`, "info");
+      console.log("[Job Enhancer] sync \u2192", chosen.length, "applications", chosen);
+      const res = await Promise.race([
+        safeSend({ type: "syncApplications", applications: chosen }),
+        new Promise((r) => setTimeout(() => r({ ok: false, error: "Timed out \u2014 is the app running?" }), 3e4))
+      ]).catch((e) => ({
+        ok: false,
+        error: /context invalidated/i.test(String(e?.message)) ? "STALE" : String(e?.message || e)
+      }));
+      console.log("[Job Enhancer] sync \u2190", res);
+      if (res?.ok) {
+        showSyncResult(panel, res);
+        return;
+      }
+      sync2.disabled = false;
+      relabel();
+      if (res?.error === "STALE") {
+        setStatus("Extension was updated \u2014 refresh this page, then Sync.", "error");
+      } else if (res?.error === "NOT_SIGNED_IN") {
+        setStatus("Not signed in \u2014 open the Job Enhancer side panel, sign in, then Sync again.", "error");
+      } else {
+        setStatus(`Couldn't sync: ${res?.error || "unknown error"}. Is the app running at localhost:8000?`, "error");
+      }
+    });
+    btnRow.append(cancel, sync2);
+    foot.append(status, btnRow);
+    panel.appendChild(foot);
+    document.body.appendChild(panel);
+  }
+  function showSyncResult(panel, res) {
+    panel.querySelector(".je-sp-body")?.remove();
+    panel.querySelector(".je-sp-sub")?.remove();
+    const foot = panel.querySelector(".je-sp-foot");
+    const done = document.createElement("div");
+    done.className = "je-sp-done";
+    const big = document.createElement("div");
+    big.className = "je-sp-done-big";
+    big.textContent = "\u2713 Synced";
+    const line = document.createElement("div");
+    const skipped = res.skipped ? ` \xB7 ${res.skipped} skipped` : "";
+    line.textContent = `${res.updated || 0} updated \xB7 ${res.imported || 0} imported${skipped}`;
+    done.append(big, line);
+    panel.insertBefore(done, foot);
+    const outcomes = Array.isArray(res.outcomes) ? res.outcomes : [];
+    const results = document.createElement("div");
+    results.className = "je-sp-results";
+    const group = (title, action, cls) => {
+      const items = outcomes.filter((o) => o.action === action);
+      if (!items.length) return;
+      const sec = document.createElement("div");
+      sec.className = "je-sp-rgroup";
+      const h = document.createElement("div");
+      h.className = `je-sp-rhead ${cls}`;
+      h.textContent = `${title} (${items.length})`;
+      sec.appendChild(h);
+      for (const o of items) {
+        const row = document.createElement("div");
+        row.className = "je-sp-rrow";
+        const name = document.createElement("span");
+        name.className = "je-sp-rname";
+        name.textContent = [o.title, o.company].filter(Boolean).join(" \u2014 ");
+        const st = document.createElement("span");
+        st.className = "je-sp-rstage";
+        st.textContent = action === "skipped" ? "skipped" : `\u2192 ${o.stage}`;
+        row.append(name, st);
+        sec.appendChild(row);
+      }
+      results.appendChild(sec);
+    };
+    group("Updated (already tracked)", "updated", "updated");
+    group("Imported (new to your tracker)", "imported", "imported");
+    group("Skipped", "skipped", "skipped");
+    if (results.childElementCount) panel.insertBefore(results, foot);
+    const note = document.createElement("div");
+    note.className = "je-sp-done-note";
+    note.textContent = "Open Job Enhancer to see your board.";
+    panel.insertBefore(note, foot);
+    if (foot) {
+      foot.querySelector(".je-sp-status")?.remove();
+      foot.querySelector(".je-sp-cancel")?.remove();
+      const sync2 = foot.querySelector(".je-sp-sync");
+      if (sync2) {
+        sync2.disabled = false;
+        sync2.textContent = "Done";
+        sync2.onclick = () => panel.remove();
+      }
+    }
+    const sb = document.getElementById(SYNC_BTN_ID);
+    if (sb) sb.textContent = "\u2713 Synced to Job Enhancer";
+  }
   function injectStyles() {
     if (document.getElementById("je-style")) return;
     const style = document.createElement("style");
@@ -881,6 +1242,79 @@
       position: fixed; right: 20px; bottom: 20px;
       box-shadow: 0 6px 20px rgba(0,0,0,.28);
     }
+    /* Apply-flow badge + save go bottom-LEFT so they never overlap the
+       autofill/remember buttons (a different content script) on the right. */
+    .je-fab-left { left: 20px; right: auto; }
+    .je-sync-fab { background: #7c3aed; }  /* purple: the sync action */
+    .je-sync-fab[data-state="busy"] { background: #6b7280; }
+    /* Sync review panel */
+    #${SYNC_PANEL_ID} {
+      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+      width: 380px; max-height: 78vh; overflow: auto;
+      background: #fff; color: #111827; border-radius: 12px;
+      box-shadow: 0 12px 34px rgba(0,0,0,.3);
+      font: 13px/1.45 system-ui, -apple-system, sans-serif;
+    }
+    @media (prefers-color-scheme: dark) { #${SYNC_PANEL_ID} { background: #1f2937; color: #f3f4f6; } }
+    #${SYNC_PANEL_ID} .je-sp-head {
+      position: sticky; top: 0; display: flex; align-items: center;
+      justify-content: space-between; padding: 11px 13px; background: inherit;
+      border-bottom: 1px solid rgba(148,163,184,.3); font-size: 14px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
+    #${SYNC_PANEL_ID} .je-sp-sub { padding: 8px 13px; font-size: 12px; color: #6b7280; }
+    #${SYNC_PANEL_ID} .je-sp-body { padding: 2px 13px; }
+    #${SYNC_PANEL_ID} .je-sp-row { padding: 9px 0; border-bottom: 1px solid rgba(148,163,184,.18); }
+    #${SYNC_PANEL_ID} .je-sp-top { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
+    #${SYNC_PANEL_ID} .je-sp-top input { margin-top: 3px; }
+    #${SYNC_PANEL_ID} .je-sp-title { font-weight: 600; font-size: 12.5px; }
+    #${SYNC_PANEL_ID} .je-sp-co { font-size: 11.5px; color: #6b7280; margin-top: 1px; }
+    #${SYNC_PANEL_ID} .je-sp-stage {
+      display: flex; align-items: center; gap: 6px; margin: 7px 0 0 26px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-badge {
+      font-size: 11px; padding: 2px 7px; border-radius: 999px;
+      background: rgba(37,99,235,.14); color: #2563eb; white-space: nowrap;
+    }
+    #${SYNC_PANEL_ID} .je-sp-arrow { color: #9ca3af; }
+    #${SYNC_PANEL_ID} .je-sp-sel {
+      flex: 1 1 auto; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px;
+      font: inherit; background: #fff; color: #111827;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${SYNC_PANEL_ID} .je-sp-sel { background: #111827; color: #f3f4f6; border-color: #374151; }
+    }
+    #${SYNC_PANEL_ID} .je-sp-foot {
+      position: sticky; bottom: 0; display: flex; flex-direction: column; gap: 8px;
+      padding: 11px 13px; background: inherit; border-top: 1px solid rgba(148,163,184,.3);
+    }
+    #${SYNC_PANEL_ID} .je-sp-btnrow { display: flex; justify-content: flex-end; gap: 8px; }
+    #${SYNC_PANEL_ID} .je-sp-status {
+      padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4;
+    }
+    #${SYNC_PANEL_ID} .je-sp-status[data-kind="info"] { background: rgba(37,99,235,.12); color: #2563eb; }
+    #${SYNC_PANEL_ID} .je-sp-status[data-kind="error"] { background: rgba(220,38,38,.12); color: #dc2626; }
+    #${SYNC_PANEL_ID} .je-sp-sync { background: #7c3aed; color: #fff; border: 0; border-radius: 8px; padding: 9px 15px; font-weight: 700; cursor: pointer; }
+    #${SYNC_PANEL_ID} .je-sp-sync:disabled { background: #6b7280; cursor: default; }
+    #${SYNC_PANEL_ID} .je-sp-cancel { background: transparent; color: inherit; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 13px; cursor: pointer; }
+    #${SYNC_PANEL_ID} .je-sp-done { padding: 16px 13px 8px; text-align: center; }
+    #${SYNC_PANEL_ID} .je-sp-done-big { font-size: 20px; font-weight: 800; color: #16a34a; margin-bottom: 4px; }
+    #${SYNC_PANEL_ID} .je-sp-done-note { padding: 8px 13px 12px; text-align: center; font-size: 12px; color: #6b7280; }
+    #${SYNC_PANEL_ID} .je-sp-results { padding: 2px 13px; }
+    #${SYNC_PANEL_ID} .je-sp-rgroup { margin-bottom: 8px; }
+    #${SYNC_PANEL_ID} .je-sp-rhead {
+      font-size: 10px; font-weight: 700; text-transform: uppercase;
+      letter-spacing: .05em; margin: 8px 0 4px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-rhead.updated { color: #2563eb; }
+    #${SYNC_PANEL_ID} .je-sp-rhead.imported { color: #16a34a; }
+    #${SYNC_PANEL_ID} .je-sp-rhead.skipped { color: #9ca3af; }
+    #${SYNC_PANEL_ID} .je-sp-rrow {
+      display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
+      border-bottom: 1px solid rgba(148,163,184,.15); font-size: 12px;
+    }
+    #${SYNC_PANEL_ID} .je-sp-rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #${SYNC_PANEL_ID} .je-sp-rstage { flex: 0 0 auto; color: #6b7280; }
   `;
     document.documentElement.appendChild(style);
   }

@@ -39,6 +39,12 @@
       .error { color: #dc2626; font-size: 12px; margin: 8px 0 0; min-height: 14px; }
       .status { font-size: 12px; margin: 8px 0 0; min-height: 14px; }
       .status.ok { color: #16a34a; }
+      .staged {
+        margin-top: 8px; padding: 8px 10px; border-radius: 8px; font-size: 12px;
+        background: rgba(22,163,74,.12); color: inherit;
+        display: flex; align-items: center; justify-content: space-between; gap: 8px;
+      }
+      .staged .link { color: #6b7280; white-space: nowrap; }
 
       /* Context card — what you're doing right now */
       .context {
@@ -98,6 +104,19 @@
       #claude-settings summary { cursor: pointer; font-size: 11px; color: #6b7280; }
       #claude-settings summary:hover { color: #7c3aed; }
 
+      /* Indeed applications sync */
+      #sync-list { list-style: none; margin: 8px 0 0; padding: 0; max-height: 300px; overflow-y: auto; display: flex; flex-direction: column; gap: 6px; }
+      #sync-list li { border: 1px solid #e5e7eb; border-radius: 8px; padding: 7px 9px; }
+      #sync-list .row-top { display: flex; gap: 6px; align-items: flex-start; }
+      #sync-list .row-top input { width: auto; margin-top: 2px; }
+      #sync-list b { display: block; font-size: 12.5px; }
+      #sync-list span { color: #6b7280; font-size: 11.5px; }
+      #sync-list .badge { display: inline-block; margin: 4px 6px 0 0; font-size: 10.5px; padding: 1px 6px; border-radius: 999px; background: rgba(37,99,235,.14); color: #2563eb; }
+      #sync-list select { margin-top: 4px; }
+      #sync-result .rgroup { margin-top: 8px; }
+      #sync-result .rhead { font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; color: #6b7280; margin-bottom: 3px; }
+      #sync-result .rrow { font-size: 12px; padding: 2px 0; border-bottom: 1px solid #f0f0f0; }
+
       footer { margin-top: auto; padding-top: 14px; display: flex; justify-content: space-between; align-items: center; }
       .link { background: none; border: 0; color: #6b7280; font-size: 12px; text-decoration: underline; padding: 0; }
       .version { color: #4b5563; font-size: 11px; }
@@ -135,6 +154,26 @@
         <b id="context-title"></b>
         <span id="context-sub"></span>
         <div id="context-actions" class="ctx-actions"></div>
+      </div>
+
+      <!-- Indeed "My jobs" → sync all your applications into the tracker.
+           Driven from HERE (the panel) so no page button can be swallowed. -->
+      <div class="saved" id="sync-wrap" hidden>
+        <h2>Indeed applications <span id="sync-count" class="count"></span></h2>
+        <p class="sub" style="margin: 0 0 6px">
+          Read your Indeed “My jobs” list and update your tracker — matches move
+          stage, the rest import. You review before anything is saved.
+        </p>
+        <button id="sync-read" class="primary ai" type="button">🔄 Read my Indeed applications</button>
+        <p id="sync-status" class="status"></p>
+        <div id="sync-review" hidden>
+          <ul id="sync-list"></ul>
+          <div class="cl-row">
+            <button id="sync-confirm" class="primary" type="button">Sync</button>
+            <button id="sync-cancel" class="ghost" type="button">Cancel</button>
+          </div>
+        </div>
+        <div id="sync-result" hidden></div>
       </div>
 
       <!-- Universal capture: save the job on ANY page (JSON-LD + heuristics),
@@ -209,6 +248,12 @@
 
         <button id="cl-generate" class="primary ai" type="button">✍️ Write cover letter</button>
         <p id="cl-status" class="status"></p>
+
+        <!-- A tailored résumé is staged to auto-upload on the next Autofill. -->
+        <div id="staged-resume" class="staged" hidden>
+          <span>📎 <b id="staged-resume-name"></b> will upload on your next ⚡ Autofill.</span>
+          <button id="staged-clear" class="link" type="button">use default résumé</button>
+        </div>
 
         <!-- Bridge: paste the prompt into your Claude, paste the answer back. -->
         <div id="cl-paste-wrap" hidden>

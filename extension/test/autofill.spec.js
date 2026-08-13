@@ -364,3 +364,20 @@ describe("select matching", () => {
     expect(setSelectValue(el, "Narnia")).toBe(false);
   });
 });
+
+describe("résumé file-input detection (no visible label)", () => {
+  it("maps a document-accepting hidden file input to resume_file (Indeed)", () => {
+    const w = new Window();
+    w.document.write(
+      '<html><body><input type="file" accept="application/pdf,application/msword" ' +
+        'data-testid="resume-selection-file-resume-radio-card-file-input" style="display:none"></body></html>',
+    );
+    expect(keyFor(w.document.querySelector('input[type="file"]'), w.document)).toBe("resume_file");
+  });
+
+  it("does NOT map a non-document (image) file input", () => {
+    const w = new Window();
+    w.document.write('<html><body><input type="file" accept="image/*"></body></html>');
+    expect(keyFor(w.document.querySelector('input[type="file"]'), w.document)).toBe(null);
+  });
+});

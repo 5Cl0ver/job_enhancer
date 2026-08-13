@@ -26,6 +26,9 @@ dependencies = [
     # Auth — Supabase JWT verification
     "python-jose[cryptography]>=3.3.0",
 
+    # Claude connector (remote MCP server + Supabase OAuth resource server)
+    "fastmcp>=3.4.0",
+
     # AI
     "langchain-nvidia-ai-endpoints>=0.3.0",
     "langchain-core>=0.3.0",

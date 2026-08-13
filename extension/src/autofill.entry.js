@@ -26,6 +26,12 @@ import {
   setRadioValue,
   markFilled,
 } from "./autofill/fill.js";
+import {
+  isWorkdayExperience,
+  fillAllWorkExperience,
+  fillWorkdayDropdowns,
+  inWorkExperience,
+} from "./autofill/workday.js";
 
 const ATS = detectAts(location.href); // still used for submit auto-tracking
 const BTN_ID = "je-autofill-btn";
@@ -157,14 +163,54 @@ async function run(btn) {
 
   const values = buildValues(res.profile, res.email);
   values.today_date = new Date().toISOString().slice(0, 10); // signature "date" fields → today
-  const report = fillFields(collectFields(document), values, resumeFile);
+
+  // Workday "Work Experience" FIRST: fill each block from the résumé's STRUCTURED
+  // history (title+employer+location+dates kept together per job). This section
+  // is off-limits to the generic + AI passes below (see `notWork`) so they can't
+  // mismatch fields or write a lone year — the filler owns it end to end.
+  const onWorkday = isWorkdayExperience(document);
+  const notWork = (el) => !onWorkday || !inWorkExperience(el);
+  let workFilled = [];
+  if (onWorkday) {
+    setState(btn, "busy", "📄 Reading your résumé…");
+    const wh = await safeSend({ type: "getWorkHistory" }).catch(() => null);
+    const entries = wh?.entries || [];
+    if (entries.length) {
+      // Adds a block per job ("Add Another") then fills them all — async.
+      const r = await fillAllWorkExperience(document, entries);
+      workFilled = r.details.map((d) => ({ label: d.label, value: d.value, source: "profile" }));
+    }
+  }
+
+  const report = fillFields(collectFields(document).filter((f) => notWork(f.el)), values, resumeFile);
 
   // Learn-as-you-go: fill custom questions we've learned before, and count the
   // ones we still don't know (the user answers those, then hits Remember).
   const answers = res.customAnswers || [];
-  const custom = fillCustomAnswers(collectUnmapped(document), answers, matchAnswer);
+  const custom = fillCustomAnswers(
+    collectUnmapped(document).filter((u) => notWork(u.el)),
+    answers,
+    matchAnswer,
+  );
   // Yes/no radio questions (work eligibility, "previously applied?", etc.).
-  const radios = fillRadioGroups(collectRadioGroups(document), values, answers, matchAnswer);
+  const radios = fillRadioGroups(
+    collectRadioGroups(document).filter((g) => notWork(g.options[0]?.el)),
+    values,
+    answers,
+    matchAnswer,
+  );
+
+  // Workday questionnaire dropdowns (custom listbox widgets the generic passes
+  // can't see): profile Yes/No + learned answers first, then an AI FALLBACK that
+  // reads the widget's own options and lets the grounded model pick — so new
+  // questions don't need hand-mapping.
+  // ONE batched AI call for ALL unknown dropdowns on the page (not per-dropdown).
+  const aiMap = async (fields) => {
+    const res = await safeSend({ type: "aiMapFields", fields }).catch(() => null);
+    return res?.mappings || {};
+  };
+  const ddFilled = await fillWorkdayDropdowns(document, values, answers, { aiMap });
+  for (const d of ddFilled) workFilled.push({ label: d.label, value: d.value, source: d.source || "profile" });
 
   // AI pass: whatever the deterministic passes couldn't fill goes to a grounded
   // model that maps it from the user's data — this is what makes it work on ANY
@@ -172,21 +218,69 @@ async function run(btn) {
   const aiFilled = await aiPass(btn);
 
   // Recompute what's genuinely left AFTER every pass, so counts are honest.
+  // Work-experience fields are excluded — the résumé filler owns those.
   const toAnswerList = [
     ...collectUnmapped(document)
-      .filter((u) => !(u.el.value || "").trim())
+      .filter((u) => !(u.el.value || "").trim() && notWork(u.el))
       .map((u) => ({ label: u.questionText, el: u.el })),
     ...collectRadioGroups(document)
-      .filter((g) => !g.key && !g.options.some((o) => o.el.checked))
+      .filter((g) => !g.key && !g.options.some((o) => o.el.checked) && notWork(g.options[0]?.el))
       .map((g) => ({ label: g.question, el: g.options[0]?.el })),
   ];
 
-  const val = (k) => ({ label: LABELS[k] || k, value: displayValue(k, values, resumeFile) });
+  // Re-index the live controls so each summary row can carry a reference to its
+  // field — that's what powers the inline "✎ Fix" (re-apply a corrected value)
+  // and jump-to-field. Cheap DOM walks; consistent with the passes above.
+  const fieldByKey = new Map();
+  for (const f of collectFields(document)) if (!fieldByKey.has(f.key)) fieldByKey.set(f.key, f.el);
+  const groupByKey = new Map();
+  const groupByQKey = new Map();
+  for (const g of collectRadioGroups(document)) {
+    if (g.key && !groupByKey.has(g.key)) groupByKey.set(g.key, g);
+    if (g.questionKey && !groupByQKey.has(g.questionKey)) groupByQKey.set(g.questionKey, g);
+  }
+  const unmappedByKey = new Map();
+  for (const u of collectUnmapped(document)) if (!unmappedByKey.has(u.questionKey)) unmappedByKey.set(u.questionKey, u.el);
+
+  const textInfo = (el) =>
+    el.tagName === "SELECT"
+      ? { el, kind: "select", options: [...el.options].map((o) => o.text.trim()).filter(Boolean) }
+      : { el, kind: "text" };
+  const radioInfo = (g) => ({
+    el: g.options.find((o) => o.el.checked)?.el || g.options[0]?.el,
+    kind: "radio",
+    group: g.options,
+    options: g.options.map((o) => o.label),
+  });
+
+  const fieldEntry = (k) => {
+    const base = { label: LABELS[k] || k, value: displayValue(k, values, resumeFile), source: "profile" };
+    if (k === "resume_file") return { ...base, el: fieldByKey.get(k), kind: "file" };
+    const el = fieldByKey.get(k);
+    return el ? { ...base, ...textInfo(el) } : base;
+  };
+  const radioEntry = (k) => {
+    const base = { label: LABELS[k] || k, value: displayValue(k, values, resumeFile), source: "profile" };
+    const g = groupByKey.get(k);
+    return g ? { ...base, ...radioInfo(g) } : base;
+  };
   const learned = [
-    ...custom.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
-    ...radios.learned.map((l) => ({ label: l.questionText, value: String(l.value) })),
+    ...custom.learned.map((l) => {
+      const base = { label: l.questionText, value: String(l.value), source: "learned" };
+      const el = unmappedByKey.get(l.questionKey);
+      return el ? { ...base, ...textInfo(el) } : base;
+    }),
+    ...radios.learned.map((l) => {
+      const base = { label: l.questionText, value: String(l.value), source: "learned" };
+      const g = groupByQKey.get(l.questionKey);
+      return g ? { ...base, ...radioInfo(g) } : base;
+    }),
   ];
-  const filledList = [...report.filled.map(val), ...radios.filled.map(val)];
+  const filledList = [
+    ...report.filled.map(fieldEntry),
+    ...radios.filled.map(radioEntry),
+    ...workFilled,
+  ];
 
   const filled = filledList.length + learned.length + aiFilled.length;
   const toAnswer = toAnswerList.length;
@@ -215,6 +309,7 @@ async function aiPass(btn) {
   const targets = [];
   for (const u of collectUnmapped(document)) {
     if ((u.el.value || "").trim()) continue;
+    if (inWorkExperience(u.el)) continue; // owned by the Workday résumé filler
     const isSelect = u.el.tagName === "SELECT";
     targets.push({
       ref: u.el,
@@ -229,6 +324,7 @@ async function aiPass(btn) {
   }
   for (const g of collectRadioGroups(document)) {
     if (g.key || g.options.some((o) => o.el.checked)) continue;
+    if (inWorkExperience(g.options[0]?.el)) continue; // owned by the Workday filler
     targets.push({
       ref: g.options,
       kind: "radio",
@@ -252,18 +348,22 @@ async function aiPass(btn) {
     const v = mappings[t.id];
     if (v == null || v === "") continue;
     let ok = false;
+    let entry = { label: t.label, value: String(v), source: "ai" };
     if (t.kind === "radio") {
       ok = setRadioValue(t.ref, v);
       if (ok) markFilled(t.ref.find((o) => o.el.checked)?.el, "ai");
+      entry = { ...entry, kind: "radio", el: t.ref.find((o) => o.el.checked)?.el, group: t.ref, options: t.options };
     } else if (t.kind === "select") {
       ok = setSelectValue(t.ref, v);
       if (ok) markFilled(t.ref, "ai");
+      entry = { ...entry, kind: "select", el: t.ref, options: t.options };
     } else {
       setNativeValue(t.ref, String(v));
       markFilled(t.ref, "ai");
       ok = true;
+      entry = { ...entry, kind: "text", el: t.ref };
     }
-    if (ok) done.push({ label: t.label, value: String(v) });
+    if (ok) done.push(entry);
   }
   return done;
 }
@@ -273,13 +373,6 @@ function displayValue(key, values, resumeFile) {
   const v = values[key];
   if (typeof v === "boolean") return v ? "Yes" : "No";
   return String(v ?? "");
-}
-
-function esc(s) {
-  return String(s ?? "").replace(
-    /[&<>"]/g,
-    (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c],
-  );
 }
 
 // A small, dismissible card that shows what autofill detected and did — filled
@@ -297,53 +390,246 @@ function flashField(el) {
   setTimeout(() => el.classList.remove("je-flash"), 1600);
 }
 
+function el(tag, cls) {
+  const node = document.createElement(tag);
+  if (cls) node.className = cls;
+  return node;
+}
+
+function trunc(s, n = 42) {
+  s = String(s ?? "");
+  return s.length > n ? s.slice(0, n - 1) + "…" : s;
+}
+
+// Re-apply a corrected value to the actual page control. Returns whether it
+// took (a select/radio "no match" is reported so the user can pick again).
+function applyCorrection(it, newVal) {
+  if (!it?.el) return false;
+  if (it.kind === "radio") {
+    if (!newVal) return false; // radios can't be un-checked back to "none"
+    const ok = setRadioValue(it.group, newVal);
+    if (ok) markFilled(it.group.find((o) => o.el.checked)?.el, it.source || "profile");
+    return ok;
+  }
+  if (it.kind === "select") {
+    if (newVal === "") {
+      it.el.selectedIndex = 0;
+      it.el.dispatchEvent(new Event("change", { bubbles: true }));
+      it.el.dispatchEvent(new Event("blur", { bubbles: true }));
+      return true;
+    }
+    const ok = setSelectValue(it.el, newVal);
+    if (ok) markFilled(it.el, it.source || "profile");
+    return ok;
+  }
+  setNativeValue(it.el, String(newVal));
+  markFilled(it.el, it.source || "profile");
+  return true;
+}
+
+// One editor drawer under a row: a text input (or a dropdown of the real
+// options for selects/radios) + Apply, and Clear for free-text/selects.
+function buildEditor(it, valSpan, fixBtn) {
+  const box = el("div", "je-editor");
+  let input;
+  if (it.kind === "select" || it.kind === "radio") {
+    input = el("select", "je-ed-input");
+    const blank = document.createElement("option");
+    blank.value = "";
+    blank.textContent = "— choose —";
+    input.appendChild(blank);
+    for (const opt of it.options || []) {
+      const o = document.createElement("option");
+      o.value = opt;
+      o.textContent = opt;
+      if (opt === it.value) o.selected = true;
+      input.appendChild(o);
+    }
+  } else {
+    input = el("input", "je-ed-input");
+    input.type = "text";
+    input.value = it.value || "";
+  }
+  const apply = el("button", "je-ed-apply");
+  apply.type = "button";
+  apply.textContent = "Apply";
+  apply.addEventListener("click", () => {
+    const nv = input.value;
+    if (applyCorrection(it, nv)) {
+      it.value = nv;
+      valSpan.textContent = nv ? trunc(nv, 26) : "—";
+      flashField(it.el);
+      apply.textContent = "✓ Applied";
+      setTimeout(() => (apply.textContent = "Apply"), 1200);
+    } else {
+      apply.textContent = "no match";
+      setTimeout(() => (apply.textContent = "Apply"), 1500);
+    }
+  });
+  box.append(input, apply);
+  if (it.kind === "text" || it.kind === "select") {
+    const clr = el("button", "je-ed-clear");
+    clr.type = "button";
+    clr.textContent = "Clear";
+    clr.addEventListener("click", () => {
+      applyCorrection(it, "");
+      it.value = "";
+      valSpan.textContent = "—";
+      if (it.kind === "text") input.value = "";
+      else input.selectedIndex = 0;
+    });
+    box.append(clr);
+  }
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      apply.click();
+    }
+  });
+  return box;
+}
+
+// A filled row that you can jump to AND correct in place.
+function editableRow(it) {
+  const row = el("div", "je-erow");
+  const main = el("div", "je-erow-main");
+  const lab = el("span", "je-erow-label");
+  lab.textContent = trunc(it.label, 34);
+  const val = el("em", "je-erow-val");
+  val.textContent = it.value ? trunc(it.value, 26) : "—";
+  main.append(lab, val);
+
+  const canEdit = it.el && it.kind && it.kind !== "file";
+  if (it.el) {
+    const acts = el("div", "je-erow-acts");
+    const jump = el("button", "je-mini");
+    jump.type = "button";
+    jump.textContent = "↧";
+    jump.title = "Show this field on the page";
+    jump.addEventListener("click", () => flashField(it.el));
+    acts.appendChild(jump);
+    if (canEdit) {
+      const fix = el("button", "je-mini je-fix");
+      fix.type = "button";
+      fix.textContent = "✎ Fix";
+      let editor = null;
+      fix.addEventListener("click", () => {
+        if (editor) {
+          editor.remove();
+          editor = null;
+          fix.textContent = "✎ Fix";
+          return;
+        }
+        editor = buildEditor(it, val, fix);
+        row.appendChild(editor);
+        fix.textContent = "Close";
+        editor.querySelector(".je-ed-input")?.focus();
+      });
+      acts.appendChild(fix);
+    }
+    main.appendChild(acts);
+    lab.style.cursor = "pointer";
+    lab.title = "Show this field on the page";
+    lab.addEventListener("click", () => flashField(it.el));
+  }
+  row.appendChild(main);
+  return row;
+}
+
+function editableSection(body, title, items, cls) {
+  if (!items.length) return;
+  const sec = el("div", "je-sec");
+  const h = el("div", "je-sec-h " + cls);
+  h.textContent = `${title} (${items.length})`;
+  sec.appendChild(h);
+  for (const it of items) sec.appendChild(editableRow(it));
+  body.appendChild(sec);
+}
+
+function jumpSection(body, title, items, cls) {
+  if (!items.length) return;
+  const sec = el("div", "je-sec");
+  const h = el("div", "je-sec-h " + cls);
+  h.textContent = `${title} (${items.length})`;
+  sec.appendChild(h);
+  for (const i of items) {
+    const row = el("div", "je-row je-jump");
+    const s = el("span");
+    s.textContent = trunc(i.label);
+    const hint = el("em", "je-jump-hint");
+    hint.textContent = "jump →";
+    row.append(s, hint);
+    row.addEventListener("click", () => flashField(i.el));
+    sec.appendChild(row);
+  }
+  body.appendChild(sec);
+}
+
+function plainSection(body, title, items, cls) {
+  if (!items.length) return;
+  const sec = el("div", "je-sec");
+  const h = el("div", "je-sec-h " + cls);
+  h.textContent = `${title} (${items.length})`;
+  sec.appendChild(h);
+  for (const i of items) {
+    const row = el("div", "je-row");
+    const s = el("span");
+    s.textContent = trunc(i.label);
+    row.appendChild(s);
+    sec.appendChild(row);
+  }
+  body.appendChild(sec);
+}
+
 function showAutofillPanel(data) {
   document.getElementById(PANEL_ID)?.remove();
-  const trunc = (s) => (s.length > 42 ? s.slice(0, 41) + "…" : s);
-  const section = (title, items, cls, withValue, clickable) => {
-    if (!items.length) return "";
-    const rows = items
-      .map(
-        (i, idx) =>
-          `<div class="je-row${clickable ? " je-jump" : ""}"${
-            clickable ? ` data-jump="${idx}"` : ""
-          }><span>${esc(trunc(i.label))}</span>${
-            withValue && i.value
-              ? `<em>${esc(trunc(i.value))}</em>`
-              : clickable
-                ? `<em class="je-jump-hint">jump →</em>`
-                : ""
-          }</div>`,
-      )
-      .join("");
-    return `<div class="je-sec"><div class="je-sec-h ${cls}">${title} (${items.length})</div>${rows}</div>`;
-  };
+  injectStyles();
   const totalFilled = data.filled.length + data.ai.length + data.learned.length;
-  const nudge =
-    data.missing.length && totalFilled <= 2
-      ? `<div class="je-p-nudge">Most fields were skipped because your profile is nearly empty. Fill <b>Settings → Application Profile</b> once and far more will auto-fill next time.</div>`
-      : "";
-  const panel = document.createElement("div");
+
+  const panel = el("div");
   panel.id = PANEL_ID;
-  panel.innerHTML =
-    `<div class="je-p-head"><b>Autofill summary</b><button class="je-p-close" type="button" aria-label="Close">✕</button></div>` +
-    `<div class="je-p-count"><span class="je-c-ok">✓ ${totalFilled} filled</span>${
-      data.toAnswer.length ? `<span class="je-c-warn">${data.toAnswer.length} need you</span>` : ""
-    }</div>` +
-    `<div class="je-p-legend">🟢 profile · 🟣 AI · 🔵 remembered · 🟠 only you</div>` +
-    `<div class="je-p-body">` +
-    nudge +
-    section("Filled from your profile", data.filled, "ok", true) +
-    section("AI-mapped", data.ai, "ai", true) +
-    section("Remembered from before", data.learned, "learn", true) +
-    section("Only you can answer these ↓ tap to jump", data.toAnswer, "warn", false, true) +
-    section("No data saved for these", data.missing, "muted", false) +
-    `</div>`;
+
+  const head = el("div", "je-p-head");
+  head.innerHTML = "<b>Autofill summary</b>";
+  const close = el("button", "je-p-close");
+  close.type = "button";
+  close.setAttribute("aria-label", "Close");
+  close.textContent = "✕";
+  close.addEventListener("click", () => panel.remove());
+  head.appendChild(close);
+  panel.appendChild(head);
+
+  const count = el("div", "je-p-count");
+  count.innerHTML =
+    `<span class="je-c-ok">✓ ${totalFilled} filled</span>` +
+    (data.toAnswer.length ? `<span class="je-c-warn">${data.toAnswer.length} need you</span>` : "");
+  panel.appendChild(count);
+
+  const legend = el("div", "je-p-legend");
+  legend.textContent = "🟢 profile · 🟣 AI · 🔵 remembered · 🟠 only you";
+  panel.appendChild(legend);
+
+  const tip = el("div", "je-p-tip");
+  tip.innerHTML = "Something wrong? Tap <b>✎ Fix</b> on any row to correct it — the page updates instantly.";
+  panel.appendChild(tip);
+
+  const body = el("div", "je-p-body");
+  panel.appendChild(body);
+
+  if (data.missing.length && totalFilled <= 2) {
+    const n = el("div", "je-p-nudge");
+    n.innerHTML =
+      "Most fields were skipped because your profile is nearly empty. Fill <b>Settings → Application Profile</b> once and far more will auto-fill next time.";
+    body.appendChild(n);
+  }
+
+  editableSection(body, "Filled from your profile", data.filled, "ok");
+  editableSection(body, "AI-mapped — double-check these", data.ai, "ai");
+  editableSection(body, "Remembered from before", data.learned, "learn");
+  jumpSection(body, "Only you can answer these ↓ tap to jump", data.toAnswer, "warn");
+  plainSection(body, "No data saved for these", data.missing, "muted");
+
   document.body.appendChild(panel);
-  panel.querySelector(".je-p-close").addEventListener("click", () => panel.remove());
-  panel.querySelectorAll(".je-jump[data-jump]").forEach((row) => {
-    row.addEventListener("click", () => flashField(data.toAnswer[+row.dataset.jump]?.el));
-  });
 }
 
 // A second button: capture the user's answers to unmapped questions so they
@@ -582,7 +868,7 @@ function injectStyles() {
     #${REVIEW_ID} .je-rv-cancel { background: transparent; color: inherit; border: 1px solid #d1d5db; border-radius: 8px; padding: 8px 12px; cursor: pointer; }
     #${PANEL_ID} {
       position: fixed; right: 20px; bottom: 112px; z-index: 2147483647;
-      width: 300px; max-height: 46vh; overflow: auto;
+      width: 320px; max-height: 62vh; overflow: auto;
       background: #fff; color: #111827; border-radius: 12px;
       box-shadow: 0 12px 34px rgba(0,0,0,.28);
       font: 13px/1.45 system-ui, -apple-system, sans-serif;
@@ -611,10 +897,45 @@ function injectStyles() {
       margin: 8px 0; padding: 8px 10px; border-radius: 8px; font-size: 12px;
       background: rgba(124,58,237,.1); color: inherit;
     }
+    #${PANEL_ID} .je-p-tip {
+      margin: 6px 12px 2px; padding: 6px 9px; border-radius: 8px; font-size: 11.5px;
+      background: rgba(37,99,235,.1); color: inherit;
+    }
     #${PANEL_ID} .je-p-body { padding: 6px 12px 12px; }
     #${PANEL_ID} .je-sec-h {
       font-size: 10px; font-weight: 700; text-transform: uppercase;
       letter-spacing: .05em; margin: 10px 0 4px;
+    }
+    /* Editable filled rows */
+    #${PANEL_ID} .je-erow { padding: 4px 0; border-bottom: 1px solid rgba(148,163,184,.15); }
+    #${PANEL_ID} .je-erow-main { display: flex; align-items: center; gap: 8px; }
+    #${PANEL_ID} .je-erow-label { flex: 0 0 auto; max-width: 42%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    #${PANEL_ID} .je-erow-val {
+      flex: 1 1 auto; color: #6b7280; font-style: normal; text-align: right;
+      overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0;
+    }
+    #${PANEL_ID} .je-erow-acts { flex: 0 0 auto; display: flex; gap: 4px; }
+    #${PANEL_ID} .je-mini {
+      border: 1px solid rgba(148,163,184,.4); background: transparent; color: inherit;
+      border-radius: 6px; padding: 2px 6px; font-size: 11px; cursor: pointer; line-height: 1.4;
+    }
+    #${PANEL_ID} .je-mini:hover { background: rgba(148,163,184,.18); }
+    #${PANEL_ID} .je-fix { color: #2563eb; border-color: rgba(37,99,235,.4); font-weight: 600; }
+    #${PANEL_ID} .je-editor { display: flex; gap: 6px; margin: 6px 0 4px; flex-wrap: wrap; }
+    #${PANEL_ID} .je-ed-input {
+      flex: 1 1 140px; min-width: 120px; padding: 6px 8px; border: 1px solid #d1d5db;
+      border-radius: 7px; font: inherit; background: #fff; color: #111827;
+    }
+    @media (prefers-color-scheme: dark) {
+      #${PANEL_ID} .je-ed-input { background: #111827; color: #f3f4f6; border-color: #374151; }
+    }
+    #${PANEL_ID} .je-ed-apply {
+      background: #16a34a; color: #fff; border: 0; border-radius: 7px;
+      padding: 6px 12px; font-weight: 700; cursor: pointer;
+    }
+    #${PANEL_ID} .je-ed-clear {
+      background: transparent; color: inherit; border: 1px solid #d1d5db;
+      border-radius: 7px; padding: 6px 10px; cursor: pointer;
     }
     #${PANEL_ID} .je-sec-h.ok { color: #16a34a; }
     #${PANEL_ID} .je-sec-h.ai { color: #7c3aed; }

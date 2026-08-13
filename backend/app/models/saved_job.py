@@ -55,6 +55,14 @@ class SavedJob(Base):
     )
     follow_up_sent_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     is_archived: Mapped[bool] = mapped_column(Boolean, nullable=False, default=False)
+    # "Contact Further" research shortlist — a flag that lives ALONGSIDE the
+    # pipeline stage (a job can be Applied AND flagged for company research).
+    flagged_for_research: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # When the user sent an outreach email for this job (NULL = not emailed yet).
+    # Doubles as both the "have I contacted them?" flag and the date shown in the UI.
+    emailed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

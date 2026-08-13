@@ -386,3 +386,96 @@ async def test_mark_applied_company_only_fallback(client: AsyncClient):
     saved = (await client.get("/v1/saved-jobs/")).json()
     sj = next(s for s in saved if s["job_listing"]["company"] == "Align Communications")
     assert sj["applied_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_imports_unknown_application(client: AsyncClient):
+    """A job the user applied to on Indeed but never saved gets imported into
+    the tracker, marked applied."""
+    resp = await client.post(
+        "/v1/saved-jobs/sync-applications",
+        json={
+            "applications": [
+                {
+                    "title": "IT Manager/Front End Lead",
+                    "company": "Veriheal",
+                    "location": "Portland, OR",
+                    "stage": "Applied",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["imported"] == 1
+    assert body["updated"] == 0
+    assert body["outcomes"][0]["action"] == "imported"
+
+    jobs = (await client.get("/v1/saved-jobs/")).json()
+    imported = next(j for j in jobs if j["job_listing"]["company"] == "Veriheal")
+    assert imported["job_listing"]["title"] == "IT Manager/Front End Lead"
+    assert imported["applied_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_updates_existing_saved_job_stage(client: AsyncClient):
+    """A synced status ('Not selected' → Rejected) moves an already-saved job to
+    the mapped stage instead of duplicating it."""
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://www.indeed.com/viewjob?jk=abc",
+            "title": "Data Analyst",
+            "company": "Initech",
+            "location": "Remote",
+        },
+    )
+    resp = await client.post(
+        "/v1/saved-jobs/sync-applications",
+        json={
+            "applications": [
+                {
+                    "title": "Data Analyst",
+                    "company": "Initech",
+                    "location": "Remote",
+                    "stage": "Rejected",
+                }
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["updated"] == 1
+    assert body["imported"] == 0
+
+    stages = (await client.get("/v1/pipeline-stages/")).json()
+    rejected = next(s for s in stages if s["name"] == "Rejected")
+    jobs = (await client.get("/v1/saved-jobs/")).json()
+    # Only one Data Analyst — no duplicate created.
+    analysts = [j for j in jobs if j["job_listing"]["title"] == "Data Analyst"]
+    assert len(analysts) == 1
+    assert analysts[0]["pipeline_stage_id"] == rejected["id"]
+    assert analysts[0]["applied_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_sync_batch_mixes_update_and_import(client: AsyncClient):
+    """A batch reconciles: known jobs update, unknown jobs import — one pass."""
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={"url": "https://x.co/1", "title": "Backend Engineer", "company": "Hooli"},
+    )
+    resp = await client.post(
+        "/v1/saved-jobs/sync-applications",
+        json={
+            "applications": [
+                {"title": "Backend Engineer", "company": "Hooli", "stage": "Interview"},
+                {"title": "Frontend Engineer", "company": "Pied Piper", "stage": "Applied"},
+            ]
+        },
+    )
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["updated"] == 1
+    assert body["imported"] == 1
+    assert len(body["outcomes"]) == 2

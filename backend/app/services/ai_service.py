@@ -221,6 +221,86 @@ async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
     return out
 
 
+_WORK_HISTORY_SYSTEM = """You extract EVERY job from a person's resume into structured JSON.
+
+Rules (follow EXACTLY):
+- Use ONLY what is written in the RESUME. NEVER invent jobs, employers, or dates.
+- Include EVERY distinct job/role you find — do not skip any. Order MOST RECENT first.
+- Return a JSON ARRAY. Each element has these keys:
+  "title"       job title exactly as written,
+  "company"     employer name,
+  "location"    the job's "City, State" if the resume gives one for that job or in
+                the contact header, else "",
+  "start_month" 1-12 or null,   "start_year" 4-digit or null,
+  "end_month"   1-12 or null,   "end_year"   4-digit or null,
+  "current"     true if the role is ongoing / says "Present" or "Current", else false,
+  "description" the role's own bullet points / responsibilities copied VERBATIM
+                from the resume (keep the wording; join bullets with newlines).
+                Do NOT paraphrase or embellish. "" only if the resume lists none.
+- Parse dates like "Oct 2022 - Sep 2024" or "10/2022–Present". If only a year is
+  given, fill the year and leave the month null. If a role is current, set
+  "current": true and leave end_month/end_year null.
+- Respond with ONLY the JSON array. No prose, no markdown, no explanation."""
+
+
+def _clamp_int(v: object, lo: int, hi: int) -> int | None:
+    try:
+        n = int(v)  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+    return n if lo <= n <= hi else None
+
+
+async def parse_work_history(resume_text: str) -> list[dict]:
+    """Parse a résumé's text into a structured, ordered work-experience list
+    (most recent first) so autofill can populate 'Work Experience' sections
+    (Workday et al.). Grounded — only what's written; any failure returns []."""
+    if not resume_text or not resume_text.strip():
+        return []
+    user = (
+        f"RESUME:\n{resume_text.strip()[:8000]}\n\n"
+        "Return ONLY the JSON array of work experience, most recent first."
+    )
+    try:
+        content, _ = await _invoke(_WORK_HISTORY_SYSTEM, user)
+    except Exception as exc:  # never let this break autofill
+        logger.warning("parse_work_history failed: %s", exc)
+        return []
+
+    match = re.search(r"\[.*\]", content, re.DOTALL)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+
+    out: list[dict] = []
+    for item in data[:12]:
+        if not isinstance(item, dict):
+            continue
+        title = str(item.get("title") or "").strip()[:200]
+        company = str(item.get("company") or "").strip()[:200]
+        if not title and not company:
+            continue
+        out.append(
+            {
+                "title": title,
+                "company": company,
+                "location": str(item.get("location") or "").strip()[:200],
+                "start_month": _clamp_int(item.get("start_month"), 1, 12),
+                "start_year": _clamp_int(item.get("start_year"), 1900, 2100),
+                "end_month": _clamp_int(item.get("end_month"), 1, 12),
+                "end_year": _clamp_int(item.get("end_year"), 1900, 2100),
+                "current": bool(item.get("current")),
+                "description": str(item.get("description") or "").strip()[:2000],
+            }
+        )
+    return out
+
+
 async def generate_tailored_resume(
     resume_text: str,
     job_description: str,

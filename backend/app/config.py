@@ -33,6 +33,12 @@ class Settings(BaseSettings):
     adzuna_app_key: str
     jsearch_api_key: str
 
+    # MCP connector (Claude custom connector). The PUBLIC ORIGIN of the backend,
+    # WITHOUT a path — e.g. "https://job-enhancer.onrender.com". FastMCP appends
+    # the "/mcp" endpoint path itself, so the URL the user pastes into Claude is
+    # this value + "/mcp". Empty disables the connector (skips mounting it).
+    mcp_public_url: str = ""
+
     # Server
     debug: bool = False
     # Comma-separated origins in .env (e.g. "http://localhost:5173,http://x.com").

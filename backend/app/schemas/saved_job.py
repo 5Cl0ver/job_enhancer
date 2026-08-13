@@ -85,12 +85,52 @@ class MarkAppliedResult(BaseModel):
     matched: bool
 
 
+class ApplicationSyncItem(BaseModel):
+    """One application read off a job board's 'My jobs' / applied list. The
+    extension has already mapped the board's status badge to a target pipeline
+    stage NAME (e.g. Indeed 'Not selected by employer' → 'Rejected')."""
+
+    title: str = Field(min_length=1, max_length=500)
+    company: str = Field(default="", max_length=255)
+    location: str = Field(default="Not specified", max_length=255)
+    # The job's link if the board exposed one; used as the listing URL on import.
+    url: str | None = Field(default=None, max_length=2000)
+    stage: str = Field(default="Applied", max_length=100)
+    applied_at: datetime | None = None
+
+
+class ApplicationSyncRequest(BaseModel):
+    """Bulk sync of applications the user already made on a job board."""
+
+    applications: list[ApplicationSyncItem] = Field(default_factory=list, max_length=500)
+
+
+class ApplicationSyncOutcome(BaseModel):
+    title: str
+    company: str
+    stage: str
+    # updated = matched an existing saved job; imported = created a new one;
+    # skipped = unusable row or an unexpected duplicate collision.
+    action: Literal["updated", "imported", "skipped"]
+
+
+class ApplicationSyncResult(BaseModel):
+    updated: int = 0
+    imported: int = 0
+    skipped: int = 0
+    outcomes: list[ApplicationSyncOutcome] = Field(default_factory=list)
+
+
 class SavedJobUpdate(BaseModel):
     collection_id: uuid.UUID | None = None
     pipeline_stage_id: uuid.UUID | None = None
     notes: str | None = None
     applied_at: datetime | None = None
     is_archived: bool | None = None
+    flagged_for_research: bool | None = None
+    # Outreach email tracking. Send an ISO timestamp to mark "emailed", or null
+    # to clear it. The route accepts both since the field is Optional.
+    emailed_at: datetime | None = None
 
 
 class SavedJobSchema(BaseModel):
@@ -103,6 +143,8 @@ class SavedJobSchema(BaseModel):
     applied_at: datetime | None
     last_stage_change: datetime
     is_archived: bool
+    flagged_for_research: bool = False
+    emailed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
     job_listing: JobListingSchema

@@ -61,6 +61,24 @@ class AutofillMapResponse(BaseModel):
     mappings: dict[str, str] = Field(default_factory=dict)
 
 
+class WorkExperienceEntry(BaseModel):
+    """One job parsed from the résumé, for filling 'Work Experience' sections."""
+
+    title: str = ""
+    company: str = ""
+    location: str = ""
+    start_month: int | None = None
+    start_year: int | None = None
+    end_month: int | None = None
+    end_year: int | None = None
+    current: bool = False
+    description: str = ""
+
+
+class WorkHistoryResponse(BaseModel):
+    entries: list[WorkExperienceEntry] = Field(default_factory=list)
+
+
 class GeneratedDocumentUpdate(BaseModel):
     edited_content: str = Field(..., min_length=1)
 

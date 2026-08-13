@@ -19,6 +19,15 @@ chrome.runtime.onInstalled.addListener(() => {
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
+function bytesToB64(arrayBuffer) {
+  const bytes = new Uint8Array(arrayBuffer);
+  let binary = "";
+  for (let i = 0; i < bytes.length; i += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  }
+  return btoa(binary);
+}
+
 async function storeSession(d, email) {
   const patch = {
     je_token: d.access_token,
@@ -160,20 +169,34 @@ async function getAutofillData() {
   }
 
   let resume = null;
-  const fileRes = await fetch(`${cfg.API_BASE}/v1/ai/resumes/active/file`, {
-    headers,
-  });
-  if (fileRes.ok) {
-    const bytes = new Uint8Array(await fileRes.arrayBuffer());
-    let binary = "";
-    for (let i = 0; i < bytes.length; i += 0x8000) {
-      binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
+  // Prefer a STAGED tailored résumé — the one the user just generated for this
+  // job in the panel — so autofill uploads THAT straight into the file field
+  // (no download, no file-picker hunt). Falls back to the active résumé.
+  const { je_staged_resume } = await chrome.storage.local.get("je_staged_resume");
+  if (je_staged_resume?.docId) {
+    const p = await fetch(
+      `${cfg.API_BASE}/v1/ai/documents/${je_staged_resume.docId}/pdf`,
+      { headers },
+    );
+    if (p.ok) {
+      resume = {
+        b64: bytesToB64(await p.arrayBuffer()),
+        filename: je_staged_resume.filename || "resume.pdf",
+        mime: "application/pdf",
+      };
     }
-    resume = {
-      b64: btoa(binary),
-      filename: fileRes.headers.get("X-Resume-Filename") || "resume.pdf",
-      mime: fileRes.headers.get("Content-Type") || "application/pdf",
-    };
+  }
+  if (!resume) {
+    const fileRes = await fetch(`${cfg.API_BASE}/v1/ai/resumes/active/file`, {
+      headers,
+    });
+    if (fileRes.ok) {
+      resume = {
+        b64: bytesToB64(await fileRes.arrayBuffer()),
+        filename: fileRes.headers.get("X-Resume-Filename") || "resume.pdf",
+        mime: fileRes.headers.get("Content-Type") || "application/pdf",
+      };
+    }
   }
 
   // Learn-as-you-go memory: answers to questions the profile can't map.
@@ -196,6 +219,44 @@ async function aiMapFields(fields) {
   });
   if (!res.ok) return { mappings: {} };
   return res.json().catch(() => ({ mappings: {} }));
+}
+
+// The résumé parsed into structured work history — the extension fills Workday
+// "Work Experience" sections from it. Returns { entries: [...] } (never throws).
+async function getWorkHistory() {
+  const token = await getValidToken();
+  if (!token) return { entries: [] };
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/work-history`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: "{}",
+  });
+  if (!res.ok) return { entries: [] };
+  return res.json().catch(() => ({ entries: [] }));
+}
+
+// The user's Claude Project link — one source of truth on the account, shared
+// with the web app (edit in either, both update).
+async function getClaudeProjectUrl() {
+  const token = await getValidToken();
+  if (!token) return { ok: false, url: "" };
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) return { ok: false, url: "" };
+  const me = await res.json().catch(() => ({}));
+  return { ok: true, url: me.claude_project_url || "" };
+}
+
+async function saveClaudeProjectUrl(url) {
+  const token = await getValidToken();
+  if (!token) return { ok: false };
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me`, {
+    method: "PATCH",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ claude_project_url: url || "" }),
+  });
+  return { ok: res.ok };
 }
 
 // Save answers the user just taught us (learn-as-you-go). Returns { saved }.
@@ -340,6 +401,29 @@ async function markApplied(job) {
   return res.json();
 }
 
+// Bulk sync: applications the extension read off the user's Indeed "My jobs"
+// page → the backend matches each to a saved job (or imports it) at the mapped
+// stage. Returns { updated, imported, skipped, outcomes } or { error }.
+async function syncApplications(applications) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/sync-applications`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ applications }),
+  });
+  if (res.status === 401) {
+    await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
+    return { error: "NOT_SIGNED_IN" };
+  }
+  if (!res.ok) {
+    const text = await res.text().catch(() => "");
+    console.warn("JE sync failed", res.status, text);
+    return { error: friendlyApiError(res.status, text) || "Sync failed" };
+  }
+  return res.json();
+}
+
 // The user's saved jobs (for the "Your saved jobs" list in the panel).
 async function listSaved() {
   const token = await getValidToken();
@@ -388,6 +472,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await getAutofillData()) });
       } else if (msg.type === "aiMapFields") {
         sendResponse({ ok: true, ...(await aiMapFields(msg.fields || [])) });
+      } else if (msg.type === "getWorkHistory") {
+        sendResponse({ ok: true, ...(await getWorkHistory()) });
+      } else if (msg.type === "getClaudeProjectUrl") {
+        sendResponse(await getClaudeProjectUrl());
+      } else if (msg.type === "saveClaudeProjectUrl") {
+        sendResponse(await saveClaudeProjectUrl(msg.url || ""));
       } else if (msg.type === "saveCustomAnswers") {
         const out = await saveCustomAnswers(msg.answers || []);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
@@ -409,6 +499,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "getDocumentPdf") {
         const out = await getDocumentPdf(msg.docId);
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
+      } else if (msg.type === "syncApplications") {
+        const out = await syncApplications(msg.applications || []);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "listSaved") {
         sendResponse({ ok: true, ...(await listSaved()) });

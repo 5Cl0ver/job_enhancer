@@ -3,8 +3,10 @@
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
+from urllib.parse import quote_plus
 
 from fastapi import HTTPException
+from rapidfuzz import fuzz
 from sqlalchemy import select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,8 +15,20 @@ from sqlalchemy.orm import selectinload
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
-from app.schemas.saved_job import ManualJobCreate, SavedJobCreate, SavedJobUpdate
+from app.schemas.saved_job import (
+    ApplicationSyncItem,
+    ApplicationSyncOutcome,
+    ApplicationSyncResult,
+    ManualJobCreate,
+    SavedJobCreate,
+    SavedJobUpdate,
+)
 from app.services.dedup import job_content_hash, normalize
+
+# Same thresholds the dedup service uses, so "is this the job I saved?" is judged
+# the same way across the app (title ≥88, company ≥85 token_sort_ratio).
+_SYNC_TITLE_THRESHOLD = 88
+_SYNC_COMPANY_THRESHOLD = 85
 
 
 async def list_saved_jobs(
@@ -274,6 +288,144 @@ async def mark_applied(
         sj.last_stage_change = now
     await db.flush()
     return True
+
+
+def _best_saved_match(
+    title_norm: str,
+    company_norm: str,
+    candidates: list[tuple[SavedJob, str, str]],
+) -> SavedJob | None:
+    """The user's saved job that best matches an incoming application by fuzzy
+    title+company, or None. Same scoring as dedup so it agrees with the rest of
+    the app."""
+    best: SavedJob | None = None
+    best_title = 0
+    for sj, cand_title, cand_company in candidates:
+        if fuzz.token_sort_ratio(company_norm, cand_company) < _SYNC_COMPANY_THRESHOLD:
+            continue
+        title_score = fuzz.token_sort_ratio(title_norm, cand_title)
+        if title_score >= _SYNC_TITLE_THRESHOLD and title_score > best_title:
+            best = sj
+            best_title = title_score
+    return best
+
+
+def _fallback_url(title: str, company: str) -> str:
+    """A valid listing URL for an imported application when the board didn't
+    give a per-job link — a search that lands the user on the posting."""
+    q = quote_plus(f"{title} {company}".strip()) or "jobs"
+    return f"https://www.indeed.com/jobs?q={q}"
+
+
+async def sync_applications(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    items: list[ApplicationSyncItem],
+) -> ApplicationSyncResult:
+    """Reconcile a batch of applications the user already made on a job board
+    (read off their 'My jobs' list by the extension) with their tracker:
+
+      • fuzzy-match each to a saved job → move it to the target stage, and
+      • import the rest as new tracked jobs at that stage.
+
+    The extension supplies the target stage NAME (already mapped from the board's
+    status badge); we resolve it to the user's PipelineStage and never invent a
+    stage the user doesn't have (falling back to 'Applied')."""
+    stages = {
+        s.name.lower(): s
+        for s in (
+            await db.execute(
+                select(PipelineStage).where(PipelineStage.user_id == user_id)
+            )
+        ).scalars()
+    }
+    saved = (
+        await db.execute(
+            select(SavedJob)
+            .options(selectinload(SavedJob.job_listing))
+            .where(SavedJob.user_id == user_id)
+        )
+    ).scalars().all()
+    candidates: list[tuple[SavedJob, str, str]] = [
+        (
+            sj,
+            sj.job_listing.title_normalized or normalize(sj.job_listing.title or ""),
+            sj.job_listing.company_normalized or normalize(sj.job_listing.company or ""),
+        )
+        for sj in saved
+        if sj.job_listing is not None
+    ]
+
+    result = ApplicationSyncResult()
+    now = datetime.now(UTC)
+
+    for item in items:
+        title_norm = normalize(item.title)
+        company_norm = normalize(item.company)
+        stage = stages.get(item.stage.lower()) or stages.get("applied")
+        applied_ts = item.applied_at or now
+
+        if not title_norm:
+            result.skipped += 1
+            result.outcomes.append(
+                ApplicationSyncOutcome(
+                    title=item.title, company=item.company, stage=item.stage, action="skipped"
+                )
+            )
+            continue
+
+        match = _best_saved_match(title_norm, company_norm, candidates)
+        if match is not None:
+            if stage and match.pipeline_stage_id != stage.id:
+                match.pipeline_stage_id = stage.id
+                match.last_stage_change = now
+            if match.applied_at is None:
+                match.applied_at = applied_ts
+            result.updated += 1
+            result.outcomes.append(
+                ApplicationSyncOutcome(
+                    title=item.title, company=item.company, stage=item.stage, action="updated"
+                )
+            )
+            continue
+
+        # No match — import it as a new tracked job at the target stage.
+        try:
+            sj = await save_manual_job(
+                db,
+                user_id,
+                ManualJobCreate(
+                    url=item.url or _fallback_url(item.title, item.company),
+                    title=item.title,
+                    company=item.company,
+                    location=item.location or "Not specified",
+                ),
+            )
+        except HTTPException:
+            # An unexpected exact-duplicate collision — treat as already tracked.
+            result.skipped += 1
+            result.outcomes.append(
+                ApplicationSyncOutcome(
+                    title=item.title, company=item.company, stage=item.stage, action="skipped"
+                )
+            )
+            continue
+
+        if stage:
+            sj.pipeline_stage_id = stage.id
+            sj.last_stage_change = now
+        sj.applied_at = applied_ts
+        # Make it matchable for later items in the same batch (dedupes the list).
+        candidates.append((sj, title_norm, company_norm))
+        result.imported += 1
+        result.outcomes.append(
+            ApplicationSyncOutcome(
+                title=item.title, company=item.company, stage=item.stage, action="imported"
+            )
+        )
+
+    await db.flush()
+    return result
 
 
 async def update_saved_job(

@@ -41,8 +41,10 @@ export function isSubmitted(doc) {
   return submittedCompany(doc) !== null;
 }
 
-// A "Company - Location" line: "Align Communications - Los Angeles, CA 90640".
-const CO_LOC_RE = /^(.{2,80}?)\s+[-–·•]\s+(?:remote|[A-Za-z .'&]+,\s*[A-Z]{2}(?:\s+\d{5})?)/i;
+// A "Company - Location" line. Handles both plain "Align Communications - Los
+// Angeles, CA 90640" AND a full street address "CTC Global Corporation - 2026
+// Mcgaw Avenue, Irvine, CA 92614" (digits/commas allowed before the ", ST").
+const CO_LOC_RE = /^(.{2,80}?)\s+[-–·•]\s+(?:remote|[A-Za-z0-9 .'&,]+,\s*[A-Z]{2}(?:\s+\d{5})?)/i;
 
 /** Nearest short heading/bold text before `el` — the job title. */
 function nearestTitle(el) {

@@ -34,6 +34,8 @@ from app.schemas.resume import (
     ManualDocumentCreate,
     PromptResponse,
     ResumeSchema,
+    WorkExperienceEntry,
+    WorkHistoryResponse,
 )
 from app.services import ai_service, resume_parser
 from app.utils.rate_limit import rate_limit_key
@@ -194,7 +196,11 @@ async def build_document_prompt(
     return PromptResponse(prompt=prompt, job_title=job_title, company=company)
 
 
-def _user_data_text(profile: ApplicationProfile | None, answers: list[CustomAnswer]) -> str:
+def _user_data_text(
+    profile: ApplicationProfile | None,
+    answers: list[CustomAnswer],
+    resume_text: str | None = None,
+) -> str:
     """Compact, grounded 'here is everything we know about the user' block."""
     p = profile
     tri = lambda v: "Yes" if v is True else "No" if v is False else None  # noqa: E731
@@ -221,6 +227,17 @@ def _user_data_text(profile: ApplicationProfile | None, answers: list[CustomAnsw
     if answers:
         lines.append("Previously answered questions:")
         lines += [f'- "{a.question_text}" -> {a.answer}' for a in answers]
+    # The résumé is the source of truth for work history: job titles, employers,
+    # locations, and employment dates. Include it so the mapper can fill an
+    # application's "Work Experience" section (Workday et al.) from real data —
+    # still grounded (it must only use what's actually written here).
+    if resume_text and resume_text.strip():
+        lines.append("")
+        lines.append(
+            "Résumé (source of truth for work history — job titles, employers, "
+            "locations, employment dates, education, skills):"
+        )
+        lines.append(resume_text.strip()[:6000])
     return "\n".join(lines) or "(no saved data)"
 
 
@@ -243,10 +260,38 @@ async def autofill_map(
     answers = list(
         await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
     )
-    user_data = _user_data_text(profile, answers)
+    # The active résumé's text — lets the mapper fill work-experience sections
+    # (job title / employer / location / dates) from the user's real history.
+    resume_text = await db.scalar(
+        select(Resume.extracted_text).where(
+            Resume.user_id == user.id, Resume.is_active.is_(True)
+        )
+    )
+    user_data = _user_data_text(profile, answers, resume_text)
     fields = [f.model_dump() for f in data.fields]
     mappings = await ai_service.map_fields(user_data, fields)
     return AutofillMapResponse(mappings=mappings)
+
+
+@router.post("/work-history", response_model=WorkHistoryResponse)
+@_limiter.limit("10/minute")
+async def work_history(
+    request: Request,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> WorkHistoryResponse:
+    """Parse the user's active résumé into a structured, ordered work-experience
+    list — the extension uses it to fill 'Work Experience' sections (Workday et
+    al.). Grounded: only what's actually in the résumé."""
+    resume_text = await db.scalar(
+        select(Resume.extracted_text).where(
+            Resume.user_id == user.id, Resume.is_active.is_(True)
+        )
+    )
+    if not resume_text:
+        return WorkHistoryResponse(entries=[])
+    entries = await ai_service.parse_work_history(resume_text)
+    return WorkHistoryResponse(entries=[WorkExperienceEntry(**e) for e in entries])
 
 
 @router.post("/documents/manual", response_model=GeneratedDocumentSchema, status_code=201)

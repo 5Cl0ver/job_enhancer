@@ -1,0 +1,63 @@
+<!doctype html>
+<!--
+  Sanitized reconstruction of Indeed's Quick-Apply flow (smartapply.indeed.com),
+  captured from a real page then STRIPPED of all applicant PII (name, email, zip,
+  address form). Only the public JobInfoCard — the posting itself — is kept, so
+  we can lock extractIndeedApply()'s selectors against Indeed's real markup.
+-->
+<html>
+  <head><title>Apply - IT Manager/Front End Lead</title></head>
+  <body>
+    <div id="ia-container" class="ia-container" aria-hidden="true">
+      <!-- The apply-step header (a duplicate title, no description). -->
+      <aside class="ia-JobHeader" aria-labelledby="ia-JobHeader-title">
+        <div class="ia-JobHeader-headerContainer">
+          <div class="ia-JobHeader-flexContainer">
+            <div class="ia-JobHeader-information">
+              <h1 id="ia-JobHeader-title" class="ia-JobHeader-title">IT Manager/Front End Lead </h1>
+              <button class="ia-JobHeader-JobDescriptionToggleIcon" aria-label="See more details"><span>See more details</span></button>
+            </div>
+          </div>
+        </div>
+      </aside>
+
+      <!-- The side card that holds the WHOLE posting. -->
+      <aside data-testid="JobInfoCard-wrapper" aria-labelledby="ia-JobInfoCard-header-title">
+        <aside class="ia-JobHeader" aria-labelledby="ia-JobInfoCard-header-title">
+          <div class="ia-JobHeader-headerContainer">
+            <div class="ia-JobHeader-flexContainer">
+              <div class="ia-JobHeader-information">
+                <h1 id="ia-JobInfoCard-header-title" class="ia-JobHeader-title">IT Manager/Front End Lead </h1>
+                <span>Veriheal - Portland, OR</span>
+              </div>
+            </div>
+          </div>
+        </aside>
+        <hr />
+        <div class="ia-JobDescription ia-JobDescription--collapsed" tabindex="0">IT Manager / Frontend Web Lead
+<br /><br />
+Veriheal • Full-Time • Remote/Hybrid
+<br /><br />
+<b>Salary:</b> $80,000.00 - $93,000.00
+<br /><br />
+<b>Benefits:</b> Robust PTO, Health/Dental/Vision, 401k w/matching, Wellness Stipend, Learning &amp; Development Stipend
+<br /><br />
+About the Role
+<br /><br />
+Veriheal is looking for a technically versatile IT Manager to own our internal infrastructure, developer operations, and frontend web presence. This is a hybrid role that blends traditional IT administration with hands-on development.
+<br /><br />
+What You'll Do
+<br /><ul>
+<li>Run developer standups three times per week, keeping teams aligned and unblocked</li>
+<li>Own sprint planning end-to-end using ClickUp</li>
+<li>Perform hands-on frontend development (HTML, CSS, JavaScript)</li>
+</ul>
+What We're Looking For
+<br /><ul>
+<li>3+ years in an IT management or senior IT role</li>
+<li>Hands-on experience with AWS (EC2, Route 53, IAM fundamentals)</li>
+</ul></div>
+      </aside>
+    </div>
+  </body>
+</html>

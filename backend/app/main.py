@@ -2,7 +2,7 @@
 
 import logging
 from collections.abc import AsyncGenerator
-from contextlib import asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, status
@@ -14,14 +14,18 @@ from slowapi.errors import RateLimitExceeded
 from app.api.v1.router import api_router
 from app.config import settings
 from app.database import AsyncSessionLocal
+from app.mcp_server import build_mcp_app
 from app.utils.rate_limit import rate_limit_key
 
 logger = logging.getLogger(__name__)
 
+# The Claude custom-connector MCP app (None when MCP_PUBLIC_URL is unset).
+mcp_app = build_mcp_app()
+
 
 @asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan — startup and shutdown events."""
+async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """Start/stop the background job scheduler."""
     from app.services.notifications import send_follow_up_reminders
     from app.services.users import purge_deleted_users
 
@@ -71,10 +75,23 @@ async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         replace_existing=True,
     )
     scheduler.start()
+    try:
+        yield
+    finally:
+        scheduler.shutdown(wait=False)
 
-    yield
 
-    scheduler.shutdown(wait=False)
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
+    """App lifespan. Forwards the MCP session-manager lifespan (required for the
+    connector to work) and runs the scheduler."""
+    async with AsyncExitStack() as stack:
+        if mcp_app is not None:
+            # MUST enter the MCP app's lifespan or its session manager never
+            # initializes and every connector request errors.
+            await stack.enter_async_context(mcp_app.lifespan(app))
+        await stack.enter_async_context(_scheduler_lifespan(app))
+        yield
 
 
 # Rate limiter — 60 requests/minute per authenticated user (IP fallback)
@@ -130,3 +147,11 @@ async def health() -> dict:
 
 # Mount all v1 routes
 app.include_router(api_router)
+
+# Mount the Claude connector (MCP) at ROOT when configured — registered LAST so
+# the REST routes above match first; only the MCP endpoint (/mcp) and its OAuth
+# metadata (/.well-known/oauth-protected-resource/mcp) fall through to it, at the
+# origin root where Claude expects them. FastMCP owns auth on those paths
+# (Supabase OAuth), independent of the REST Bearer-token dependency.
+if mcp_app is not None:
+    app.mount("/", mcp_app)

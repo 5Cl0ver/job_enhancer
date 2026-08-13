@@ -80,7 +80,7 @@ const RULES = [
   { key: "postal_code", re: /postal|zip/i },
   { key: "country", re: /country/i },
   { key: "state", re: /\bstate\b|province|region/i },
-  { key: "authorized_to_work", re: /authorized[\s\S]*work|work[\s_-]*authorization|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ|begin)/i },
+  { key: "authorized_to_work", re: /authorized[\s\S]*(work|employ)|work[\s_-]*authorization|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ|begin)/i },
   { key: "requires_sponsorship", re: /sponsor/i },
   { key: "willing_to_relocate", re: /relocat/i },
   { key: "desired_salary", re: /salary|compensation[\s_-]*expect/i },
@@ -110,7 +110,14 @@ export function keyFor(el, doc) {
 
   const text = labelTextFor(el, doc);
   if (type === "file") {
-    return /resume|cv\b/i.test(text) ? "resume_file" : null;
+    // A résumé upload isn't always labelled "resume" — Indeed's file input has
+    // NO label; its identity is in `accept` (pdf/word/rtf) and data-testid. Any
+    // document-accepting file input on an application IS the résumé upload.
+    const accept = (el.getAttribute?.("accept") || "").toLowerCase();
+    const testid = (el.getAttribute?.("data-testid") || el.id || el.name || "").toLowerCase();
+    const docLike = /pdf|msword|officedocument|rtf|\.doc/.test(accept);
+    if (/resume|cv\b/i.test(text) || /resume|cv/.test(testid) || docLike) return "resume_file";
+    return null;
   }
   // 2) label / placeholder / name regex.
   return keyForText(text);

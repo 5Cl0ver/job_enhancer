@@ -67,6 +67,31 @@ describe("extractJob — per-site selector fallback (no JSON-LD)", () => {
   });
 });
 
+describe("extractJob — Indeed Quick-Apply flow (smartapply)", () => {
+  it("reads the full posting off the apply-card, not just title/company", () => {
+    const job = extractJob(
+      docFrom("indeed-apply.html"),
+      "https://smartapply.indeed.com/beta/indeedapply/form/profile-location",
+    );
+    expect(job.title).toBe("IT Manager/Front End Lead");
+    expect(job.company).toBe("Veriheal");
+    expect(job.location).toBe("Portland, OR");
+    expect(job.is_remote).toBe(true);
+    expect(job._via).toBe("indeed-apply");
+    // The whole description is captured — headings, body, and the bullets.
+    expect(job.description).toContain("About the Role");
+    expect(job.description).toContain("Frontend Web Lead");
+    expect(job.description).toContain("Run developer standups");
+    // Salary in the label form ("Salary: $80,000 - $93,000", no period) is mined.
+    expect(job.salary_min).toBe(80000);
+    expect(job.salary_max).toBe(93000);
+    expect(job.salary_period).toBe("yearly");
+    expect(job.job_type).toMatch(/Full-time/i);
+    // The applicant's own address form must NOT leak into the description.
+    expect(job.description).not.toMatch(/zip code|97005|street address/i);
+  });
+});
+
 describe("extractJob — generic fallback", () => {
   it("captures a title from og:title on an unknown site", () => {
     const job = extractJob(docFrom("generic-og.html"), "https://jobs.umbrella.com/123");

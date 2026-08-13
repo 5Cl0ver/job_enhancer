@@ -22,6 +22,9 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(20), nullable=False, default="user")
     email_verified: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     follow_up_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    # The user's Claude Project link — shared source of truth so the extension
+    # and the web app both open drafts/research in the same place (edit either).
+    claude_project_url: Mapped[str | None] = mapped_column(String(2048))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

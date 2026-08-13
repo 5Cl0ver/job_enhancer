@@ -2,6 +2,7 @@ import { createBrowserRouter, Navigate } from "react-router-dom";
 import { DashboardLayout } from "@/routes/DashboardLayout";
 import { Login } from "@/routes/Login";
 import { AuthCallback } from "@/routes/AuthCallback";
+import OAuthConsent from "@/routes/OAuthConsent";
 import { SearchPage } from "@/routes/SearchPage";
 import MyJobsPage from "@/routes/MyJobsPage";
 import { JobDetailPage } from "@/routes/JobDetailPage";
@@ -19,6 +20,8 @@ export const router = createBrowserRouter([
   { path: "/login", element: <Login /> },
   // Supabase OAuth (e.g. GitHub) redirects back here.
   { path: "/auth/callback", element: <AuthCallback /> },
+  // Claude connector consent screen (Supabase OAuth server redirects here).
+  { path: "/oauth/consent", element: <OAuthConsent /> },
 
   // Protected app — DashboardLayout renders the sidebar + <Outlet/> for children
   {

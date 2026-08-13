@@ -1,8 +1,8 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Download, Trash2, Loader2 } from "lucide-react";
+import { Download, Trash2, Loader2, Check } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
-import { useProfile } from "@/hooks/useProfile";
+import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
 import {
@@ -32,10 +32,71 @@ export default function SettingsPage() {
       </div>
 
       <ApplicationProfileCard />
+      <ClaudeProjectCard />
       <SavedAnswersCard />
       <DataExportCard />
       <DeleteAccountCard email={userEmail} />
     </div>
+  );
+}
+
+function ClaudeProjectCard() {
+  const { data: profile } = useProfile();
+  const update = useUpdateProfile();
+  const [url, setUrl] = useState("");
+  const [saved, setSaved] = useState(false);
+
+  // Seed the field from the account once it loads.
+  useEffect(() => {
+    setUrl(profile?.claude_project_url ?? "");
+  }, [profile?.claude_project_url]);
+
+  const dirty = (profile?.claude_project_url ?? "") !== url.trim();
+
+  const handleSave = () => {
+    update.mutate(
+      { claude_project_url: url.trim() },
+      {
+        onSuccess: () => {
+          setSaved(true);
+          setTimeout(() => setSaved(false), 2000);
+        },
+      },
+    );
+  };
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Claude Project</CardTitle>
+        <CardDescription>
+          Paste your Claude Project link. Drafts and company research open here — in
+          the app <strong>and</strong> the browser extension (this is shared, so
+          editing it in either place updates both). Leave blank to use a normal
+          Claude chat.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-2">
+        <Label htmlFor="claude-url">Project link</Label>
+        <div className="flex gap-2">
+          <Input
+            id="claude-url"
+            value={url}
+            onChange={(e) => setUrl(e.target.value)}
+            placeholder="https://claude.ai/project/…"
+            spellCheck={false}
+          />
+          <Button onClick={handleSave} disabled={!dirty || update.isPending} className="gap-1.5">
+            {update.isPending ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : saved ? (
+              <Check className="h-4 w-4" />
+            ) : null}
+            {saved ? "Saved" : "Save"}
+          </Button>
+        </div>
+      </CardContent>
+    </Card>
   );
 }
 
