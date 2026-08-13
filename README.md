@@ -2,6 +2,9 @@
 
 **Every job in one place. Track everything. Apply faster.**
 
+[![CI](https://github.com/5Cl0ver/job_enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/5Cl0ver/job_enhancer/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+
 Job Enhancer is a job-search assistant that aggregates listings from multiple
 job boards, lets you pull in jobs you found anywhere (LinkedIn, Indeed, a
 company site) with one paste, tracks every application on a Kanban board with
