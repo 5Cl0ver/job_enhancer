@@ -81,7 +81,7 @@ saved profile and résumé. It never submits; you stay in control.
 | Job data | Adzuna API + JSearch (RapidAPI) | Free tiers; results cached in Postgres to stretch quotas |
 | AI | NVIDIA NIM (Llama 3.1) via LangChain — or bring your own Claude | Free hosted inference by default; use your own model for top quality |
 | Extension | Chrome MV3 (esbuild) + Vitest + Playwright | Capture jobs, apply copilot, ATS auto-fill — all client-side |
-| Testing | pytest (74 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
+| Testing | pytest (82 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
 | Hosting | Vercel + Render + Supabase — **$0/month** | Free tiers, kept awake by a scheduled ping |
 
 ## Architecture
@@ -108,6 +108,25 @@ flowchart LR
   refresh, daily listing-expiry marking, daily purge of deleted accounts.
 
 More detail in [docs/architecture.md](docs/architecture.md).
+
+## Security & Privacy
+
+- **Authentication** — sign-in is handled by Supabase Auth; the backend verifies each
+  request's JWT against the project's public keys (JWKS, ES256). No shared secret
+  lives in the app, and no password is ever stored.
+- **Row-Level Security** — every application table has Postgres RLS enabled, so the
+  browser's public key can't read data directly; all data is served through the API.
+- **Least-privilege data flow** — the frontend uses the public key only for login;
+  jobs, profiles, and documents are served by the FastAPI backend using its own
+  database credentials, authorized per request.
+- **No secrets in the repo** — all credentials come from environment variables
+  (git-ignored `.env`); tests use sanitized fixtures, never real personal data.
+- **Validated input, safe DB access** — payloads are validated with Pydantic v2, and
+  all queries go through SQLAlchemy (parameterized — no hand-built SQL).
+- **Rate limiting & CORS** — basic per-user/per-IP rate limits (tighter on the AI
+  endpoints), an allow-list CORS policy, and generic error responses.
+- **Your data, your control** — export everything as JSON, or delete your account
+  (soft-delete then scheduled purge) at any time.
 
 ## Local Setup
 
@@ -152,10 +171,10 @@ dashboard (Authentication → Providers); email/password works immediately.
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest        # 74 API + service tests (in-memory DB)
+cd backend && .venv/bin/python -m pytest        # 82 API + service tests (in-memory DB)
 cd frontend && npm run test                     # Vitest component tests
 cd frontend && npx playwright test              # E2E against your running local stack
-cd extension && npm test                        # 47 extension unit tests (Vitest)
+cd extension && npm test                        # 74 extension unit tests (Vitest)
 ```
 
 CI (GitHub Actions) runs Ruff, pytest, ESLint, `tsc`, Vitest, and the
