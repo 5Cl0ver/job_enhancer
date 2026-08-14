@@ -81,7 +81,7 @@ saved profile and résumé. It never submits; you stay in control.
 | Job data | Adzuna API + JSearch (RapidAPI) | Free tiers; results cached in Postgres to stretch quotas |
 | AI | NVIDIA NIM (Llama 3.1) via LangChain — or bring your own Claude | Free hosted inference by default; use your own model for top quality |
 | Extension | Chrome MV3 (esbuild) + Vitest + Playwright | Capture jobs, apply copilot, ATS auto-fill — all client-side |
-| Testing | pytest (82 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
+| Testing | pytest (83 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
 | Hosting | Vercel + Render + Supabase — **$0/month** | Free tiers, kept awake by a scheduled ping |
 
 ## Architecture
@@ -171,7 +171,7 @@ dashboard (Authentication → Providers); email/password works immediately.
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest        # 82 API + service tests (in-memory DB)
+cd backend && .venv/bin/python -m pytest        # 83 API + service tests (in-memory DB)
 cd frontend && npm run test                     # Vitest component tests
 cd frontend && npx playwright test              # E2E against your running local stack
 cd extension && npm test                        # 74 extension unit tests (Vitest)

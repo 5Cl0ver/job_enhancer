@@ -78,7 +78,8 @@ async def test_manual_add_job(client: AsyncClient):
     assert saved["job_listing"]["source"] == "manual"
     assert saved["job_listing"]["apply_url"] == "https://www.linkedin.com/jobs/view/999"
 
-    # Saving the same manual job again is a duplicate
+    # Re-saving from the capture card is idempotent — it updates the listing's
+    # details (see test below) rather than erroring with a duplicate.
     again = await client.post(
         "/v1/saved-jobs/manual",
         json={
@@ -88,7 +89,32 @@ async def test_manual_add_job(client: AsyncClient):
             "location": "Remote",
         },
     )
-    assert again.status_code == 409
+    assert again.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_manual_resave_updates_edited_description(client: AsyncClient):
+    """Editing the description in the capture card and re-saving must stick,
+    even though the job is already in the tracker (title/company/location are
+    unchanged, so it resolves to the same listing)."""
+    base = {
+        "url": "https://example.com/edit/1",
+        "title": "Support Engineer",
+        "company": "EditCo",
+        "location": "Remote",
+        "is_remote": True,
+    }
+    first = await client.post(
+        "/v1/saved-jobs/manual", json={**base, "description": "Auto-extracted blurb."}
+    )
+    assert first.status_code == 201
+    assert first.json()["job_listing"]["description"] == "Auto-extracted blurb."
+
+    edited = await client.post(
+        "/v1/saved-jobs/manual", json={**base, "description": "My corrected description."}
+    )
+    assert edited.status_code == 201
+    assert edited.json()["job_listing"]["description"] == "My corrected description."
 
 
 @pytest.mark.asyncio
