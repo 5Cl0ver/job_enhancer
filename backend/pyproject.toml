@@ -26,6 +26,9 @@ dependencies = [
     # Auth — Supabase JWT verification
     "python-jose[cryptography]>=3.3.0",
 
+    # Encrypting mailbox app-passwords at rest (Fernet)
+    "cryptography>=42.0.0",
+
     # Claude connector (remote MCP server + Supabase OAuth resource server)
     "fastmcp>=3.4.0",
 
