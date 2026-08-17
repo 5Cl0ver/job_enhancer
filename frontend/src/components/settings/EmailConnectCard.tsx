@@ -8,7 +8,16 @@
  * approving it first.
  */
 import { useState } from "react";
-import { Check, Loader2, Mail, RefreshCw, Undo2, X } from "lucide-react";
+import {
+  Check,
+  ChevronDown,
+  ExternalLink,
+  Loader2,
+  Mail,
+  RefreshCw,
+  Undo2,
+  X,
+} from "lucide-react";
 import { ApiError } from "@/lib/api";
 import {
   useConnectEmail,
@@ -17,8 +26,10 @@ import {
   useEmailAccount,
   useReviewEvent,
   useScanInbox,
+  type Considered,
   type DetectedEvent,
   type EmailAccount,
+  type ScanResult,
 } from "@/hooks/useEmailAccount";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
@@ -321,14 +332,14 @@ function ConnectedView({
 }) {
   const scan = useScanInbox();
   const disconnect = useDisconnectEmail();
-  const [scanned, setScanned] = useState<number | null>(null);
+  const [result, setResult] = useState<ScanResult | null>(null);
 
   const lastScan = account.last_scan_at
     ? new Date(account.last_scan_at).toLocaleString()
     : "never";
 
   const handleScan = () => {
-    scan.mutate(undefined, { onSuccess: (r) => setScanned(r.detected) });
+    scan.mutate(undefined, { onSuccess: (r) => setResult(r) });
   };
 
   return (
@@ -384,15 +395,19 @@ function ConnectedView({
             : "Scan failed."}
         </p>
       )}
-      {scanned !== null && !scan.isPending && (
+      {result && !scan.isPending && (
         <p className="text-xs text-muted-foreground">
-          {scanned === 0
+          {result.detected === 0
             ? "No new updates found."
-            : `Found ${scanned} update${scanned === 1 ? "" : "s"} to review below.`}
+            : `Found ${result.detected} update${result.detected === 1 ? "" : "s"} to review below.`}
         </p>
       )}
 
       <DetectedEventsList />
+
+      {result && result.considered.length > 0 && (
+        <ConsideredList items={result.considered} />
+      )}
 
       <div className="flex justify-end border-t pt-3">
         <Button
@@ -506,6 +521,78 @@ function DetectedEventsList() {
           </Button>
         </div>
       ))}
+    </div>
+  );
+}
+
+const REASON_LABELS: Record<Considered["reason"], string> = {
+  filtered_contact: "Filtered out (not surfaced)",
+  no_confident_match: "Signal seen, no confident job match",
+};
+
+/**
+ * "What else I looked at" — a collapsible audit trail of the near-misses the
+ * scan decided NOT to surface. This is where the user can verify the filtering
+ * (e.g. spam that matched a saved company) and spot any real email we missed.
+ * Pure spam (no job signal) is deliberately excluded — only decisions worth
+ * reviewing appear here.
+ */
+function ConsideredList({ items }: { items: Considered[] }) {
+  const [open, setOpen] = useState(false);
+
+  return (
+    <div className="rounded-md border">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground"
+      >
+        <span>What else I looked at ({items.length})</span>
+        <ChevronDown
+          className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
+        />
+      </button>
+      {open && (
+        <div className="space-y-2 border-t p-2">
+          <p className="px-1 text-[11px] text-muted-foreground">
+            These weren’t added to your board — either they matched a saved job
+            but we don’t auto-surface them, or they looked like an update but
+            couldn’t be confidently matched. Spam is hidden.
+          </p>
+          {items.map((c, i) => (
+            <div key={i} className="rounded-md bg-muted/40 p-2.5 text-xs">
+              <div className="mb-0.5 flex items-center gap-2">
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium">
+                  {REASON_LABELS[c.reason]}
+                </span>
+                <span className="text-[11px] text-muted-foreground">
+                  {EVENT_LABELS[c.event_type]}
+                </span>
+              </div>
+              <p className="truncate font-medium">{c.subject}</p>
+              <p className="truncate text-[11px] text-muted-foreground">
+                {c.from_addr}
+                {c.date ? ` · ${new Date(c.date).toLocaleDateString()}` : ""}
+              </p>
+              {c.matched_company && (
+                <p className="text-[11px] text-muted-foreground">
+                  Matched: {c.matched_company}
+                  {c.matched_title ? ` — ${c.matched_title}` : ""}
+                </p>
+              )}
+              {c.mail_link && (
+                <a
+                  href={c.mail_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="mt-1 inline-flex items-center gap-1 font-medium text-primary underline"
+                >
+                  Open email <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

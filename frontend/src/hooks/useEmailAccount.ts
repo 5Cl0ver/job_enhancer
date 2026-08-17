@@ -39,9 +39,21 @@ export interface DetectedEvent {
   created_at: string;
 }
 
+export interface Considered {
+  from_addr: string;
+  subject: string;
+  event_type: DetectedEvent["event_type"];
+  reason: "no_confident_match" | "filtered_contact";
+  matched_company: string | null;
+  matched_title: string | null;
+  mail_link: string | null;
+  date: string | null;
+}
+
 export interface ScanResult {
   detected: number;
   events: DetectedEvent[];
+  considered: Considered[];
 }
 
 /** The user's connected inbox, or null when none is connected. */

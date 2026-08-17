@@ -15,6 +15,7 @@ from app.middleware.auth import get_current_user
 from app.models.email_account import STATUS_CONNECTED, STATUS_ERROR
 from app.models.user import User
 from app.schemas.email_account import (
+    ConsideredOut,
     DetectedEventOut,
     EmailAccountOut,
     EmailConnectRequest,
@@ -100,14 +101,15 @@ async def scan_inbox(
         await db.commit()
         raise HTTPException(status_code=502, detail=account.last_error) from None
 
-    events = await detect_events(db, account, messages)
+    result = await detect_events(db, account, messages)
     account.last_scan_at = datetime.now(tz=UTC)
     account.status = STATUS_CONNECTED
     account.last_error = None
     await db.commit()
     return ScanResult(
-        detected=len(events),
-        events=[DetectedEventOut.model_validate(e) for e in events],
+        detected=len(result.created),
+        events=[DetectedEventOut.model_validate(e) for e in result.created],
+        considered=[ConsideredOut.model_validate(c) for c in result.considered],
     )
 
 

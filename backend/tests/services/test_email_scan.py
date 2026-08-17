@@ -83,10 +83,10 @@ class TestDetectEvents:
                 "candidates.",
             )
         ]
-        created = await detect_events(db_session, acct, msgs)
+        result = await detect_events(db_session, acct, msgs)
 
-        assert len(created) == 1
-        ev = created[0]
+        assert len(result.created) == 1
+        ev = result.created[0]
         assert ev.event_type == "rejected"
         assert ev.target_stage == "Rejected"
         assert ev.saved_job_id == job.id
@@ -105,7 +105,8 @@ class TestDetectEvents:
                 body="Here are 10 new roles near you.",
             )
         ]
-        assert await detect_events(db_session, acct, msgs) == []
+        result = await detect_events(db_session, acct, msgs)
+        assert result.created == [] and result.considered == []
 
     async def test_recruiter_contact_does_not_create_event(self, db_session, test_user):
         # A human recruiter email classifies as RECRUITER (no target stage). We
@@ -122,7 +123,12 @@ class TestDetectEvents:
                 "this position.",
             )
         ]
-        assert await detect_events(db_session, acct, msgs) == []
+        result = await detect_events(db_session, acct, msgs)
+        # Not surfaced (no card move) — but shown in the transparency list.
+        assert result.created == []
+        assert len(result.considered) == 1
+        assert result.considered[0].reason == "filtered_contact"
+        assert result.considered[0].matched_company == "Acme Corp"
 
     async def test_no_confident_job_match_is_skipped(self, db_session, test_user):
         await _make_saved_job(db_session, test_user, "Acme Corp", "Backend Engineer")
@@ -136,7 +142,12 @@ class TestDetectEvents:
                 body="Unfortunately we won't be moving forward.",
             )
         ]
-        assert await detect_events(db_session, acct, msgs) == []
+        result = await detect_events(db_session, acct, msgs)
+        # No card moved — but reported as a near-miss so the user can spot a
+        # rejection we couldn't confidently tie to a saved job.
+        assert result.created == []
+        assert len(result.considered) == 1
+        assert result.considered[0].reason == "no_confident_match"
 
     async def test_rescan_does_not_duplicate(self, db_session, test_user):
         await _make_saved_job(db_session, test_user, "Globex", "Frontend Developer")
@@ -150,10 +161,10 @@ class TestDetectEvents:
             )
         ]
         first = await detect_events(db_session, acct, msgs)
-        assert len(first) == 1
+        assert len(first.created) == 1
         # Same message again → no new event (deduped by UID).
         second = await detect_events(db_session, acct, msgs)
-        assert second == []
+        assert second.created == []
         total = (
             await db_session.scalars(
                 select(DetectedEvent).where(DetectedEvent.email_account_id == acct.id)

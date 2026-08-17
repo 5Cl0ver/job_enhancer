@@ -18,6 +18,7 @@ import imaplib
 from datetime import UTC, datetime, timedelta
 from email.header import decode_header, make_header
 from email.message import Message
+from email.utils import parsedate_to_datetime
 
 from app.services.email_scan import EmailMessage
 
@@ -63,11 +64,16 @@ def _body_text(msg: Message) -> str:
 def _parse_message(uid: str, raw: bytes) -> EmailMessage:
     """Turn a raw RFC822 message into the normalized shape the classifier wants."""
     msg = email.message_from_bytes(raw)
+    date = None
+    with contextlib.suppress(Exception):
+        date = parsedate_to_datetime(msg.get("Date", ""))
     return EmailMessage(
         uid=uid,
         from_addr=_decode(msg.get("From", "")),
         subject=_decode(msg.get("Subject", "")),
         body=_body_text(msg),
+        date=date,
+        message_id=(msg.get("Message-ID") or "").strip(),
     )
 
 

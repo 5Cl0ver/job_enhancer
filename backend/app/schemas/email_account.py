@@ -65,8 +65,24 @@ class DetectedEventOut(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ConsideredOut(BaseModel):
+    """A near-miss the scan looked at but did not surface (transparency view)."""
+
+    from_addr: str
+    subject: str
+    event_type: str
+    reason: str  # "no_confident_match" | "filtered_contact"
+    matched_company: str | None = None
+    matched_title: str | None = None
+    mail_link: str | None = None
+    date: datetime | None = None
+
+    model_config = {"from_attributes": True}
+
+
 class ScanResult(BaseModel):
-    """Outcome of a scan: how many new updates were detected."""
+    """Outcome of a scan: new updates plus the near-misses we didn't surface."""
 
     detected: int
     events: list[DetectedEventOut]
+    considered: list[ConsideredOut] = []

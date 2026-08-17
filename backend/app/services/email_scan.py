@@ -12,8 +12,9 @@ from __future__ import annotations
 
 import logging
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
+from urllib.parse import quote
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -42,6 +43,53 @@ class EmailMessage:
     subject: str
     body: str
     date: datetime | None = None
+    message_id: str = ""  # RFC822 Message-ID header, for deep-linking (Gmail)
+
+
+@dataclass
+class Considered:
+    """A near-miss the scan looked at but did NOT surface — for transparency.
+
+    Either a card-moving signal we couldn't confidently match to a saved job, or
+    a matched recruiter contact we deliberately don't surface. Spam (UNKNOWN with
+    no match) is excluded — it's noise, not a decision worth showing.
+    """
+
+    from_addr: str
+    subject: str
+    event_type: str
+    reason: str  # "no_confident_match" | "filtered_contact"
+    matched_company: str | None = None
+    matched_title: str | None = None
+    mail_link: str | None = None
+    date: datetime | None = None
+
+
+@dataclass
+class DetectResult:
+    """Outcome of a scan: surfaced updates plus the near-misses we skipped."""
+
+    created: list[DetectedEvent] = field(default_factory=list)
+    considered: list[Considered] = field(default_factory=list)
+
+
+# Cap the transparency list so a huge inbox can't return an unbounded payload.
+_MAX_CONSIDERED = 40
+
+
+def mail_link(provider: str, message_id: str) -> str | None:
+    """A deep link that opens this exact message in the user's webmail.
+
+    Only Gmail exposes a stable per-message URL (search by RFC822 Message-ID).
+    Yahoo/others have no reliable public link, so we return None and the UI shows
+    sender/subject/date instead.
+    """
+    mid = (message_id or "").strip().strip("<>")
+    if not mid:
+        return None
+    if provider in ("gmail",):
+        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid)}"
+    return None
 
 
 async def _candidate_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
@@ -76,12 +124,13 @@ async def detect_events(
     db: AsyncSession,
     account: EmailAccount,
     messages: list[EmailMessage],
-) -> list[DetectedEvent]:
-    """Classify + match each message, recording new pending DetectedEvents.
+) -> DetectResult:
+    """Classify + match each message; record new pending DetectedEvents.
 
-    Skips messages we've already seen (by IMAP UID), messages the classifier
-    can't read (``UNKNOWN``), and messages we can't confidently tie to a saved
-    job. Returns only the events created this call.
+    Returns a :class:`DetectResult` with the surfaced ``created`` events plus the
+    ``considered`` near-misses (for the "what else I looked at" transparency
+    view). Messages already seen (by UID) and pure spam (``UNKNOWN`` with no
+    match) are skipped silently.
     """
     seen_uids = set(
         await db.scalars(
@@ -91,51 +140,68 @@ async def detect_events(
         )
     )
     jobs = await _candidate_jobs(db, account.user_id)
-    created: list[DetectedEvent] = []
+    result = DetectResult()
 
     for msg in messages:
         if not msg.uid or msg.uid in seen_uids:
             continue
         event_type = classify_email(msg.subject, msg.body, msg.from_addr)
-        # Only surface detections that actually move a card (applied / interview
-        # / rejected). RECRUITER "just log a contact" has no target stage and, on
-        # real spam-heavy inboxes, is almost all false positives — so we skip it
-        # until there's a dedicated place to show contacts. UNKNOWN is skipped too.
-        target_stage = stage_for_event(event_type)
-        if event_type == UNKNOWN or target_stage is None:
-            continue
+        if event_type == UNKNOWN:
+            continue  # spam / no job signal — pure noise, not worth reporting
+        seen_uids.add(msg.uid)
+
         job = match_email_to_job(
             jobs,
             company_hint=company_from_sender(msg.from_addr),
             subject=msg.subject,
         )
-        if not job:
-            continue
-        event = DetectedEvent(
-            id=uuid.uuid4(),
-            user_id=account.user_id,
-            email_account_id=account.id,
-            saved_job_id=job["id"],
-            event_type=event_type,
-            target_stage=target_stage,
-            from_addr=(msg.from_addr or "")[:255],
-            subject=(msg.subject or "")[:500],
-            message_uid=msg.uid,
-            previous_stage_id=job.get("pipeline_stage_id"),
-            status=STATUS_PENDING,
-        )
-        db.add(event)
-        created.append(event)
-        seen_uids.add(msg.uid)
+        target_stage = stage_for_event(event_type)
+
+        # Only a card-moving signal WITH a confident match becomes a surfaced,
+        # reviewable update. Everything else that got a job signal is a near-miss
+        # we record for transparency (capped) but never act on.
+        if target_stage is not None and job:
+            event = DetectedEvent(
+                id=uuid.uuid4(),
+                user_id=account.user_id,
+                email_account_id=account.id,
+                saved_job_id=job["id"],
+                event_type=event_type,
+                target_stage=target_stage,
+                from_addr=(msg.from_addr or "")[:255],
+                subject=(msg.subject or "")[:500],
+                message_uid=msg.uid,
+                previous_stage_id=job.get("pipeline_stage_id"),
+                status=STATUS_PENDING,
+            )
+            db.add(event)
+            result.created.append(event)
+        elif len(result.considered) < _MAX_CONSIDERED:
+            # A matched contact we don't surface, or a signal with no confident
+            # match — the two "false positive / near miss" buckets to show.
+            reason = "filtered_contact" if job else "no_confident_match"
+            result.considered.append(
+                Considered(
+                    from_addr=(msg.from_addr or "")[:255],
+                    subject=(msg.subject or "")[:500],
+                    event_type=event_type,
+                    reason=reason,
+                    matched_company=job["company"] if job else None,
+                    matched_title=job["title"] if job else None,
+                    mail_link=mail_link(account.provider, msg.message_id),
+                    date=msg.date,
+                )
+            )
 
     await db.flush()
     logger.info(
-        "email scan: %d messages, %d candidate jobs → %d new events",
+        "email scan: %d messages, %d candidate jobs → %d new, %d considered",
         len(messages),
         len(jobs),
-        len(created),
+        len(result.created),
+        len(result.considered),
     )
-    for ev in created:
+    for ev in result.created:
         logger.info(
             "  detected %s → %s (job=%s) subj=%r",
             ev.event_type,
@@ -143,4 +209,4 @@ async def detect_events(
             ev.saved_job_id,
             ev.subject[:60],
         )
-    return created
+    return result
