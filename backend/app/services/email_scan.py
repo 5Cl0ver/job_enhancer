@@ -10,6 +10,7 @@ by design: unknown emails and low-confidence matches are dropped, never guessed.
 
 from __future__ import annotations
 
+import logging
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -28,6 +29,8 @@ from app.services.email_classify import (
     match_email_to_job,
     stage_for_event,
 )
+
+logger = logging.getLogger("app.email_scan")
 
 
 @dataclass
@@ -121,4 +124,18 @@ async def detect_events(
         seen_uids.add(msg.uid)
 
     await db.flush()
+    logger.info(
+        "email scan: %d messages, %d candidate jobs → %d new events",
+        len(messages),
+        len(jobs),
+        len(created),
+    )
+    for ev in created:
+        logger.info(
+            "  detected %s → %s (job=%s) subj=%r",
+            ev.event_type,
+            ev.target_stage,
+            ev.saved_job_id,
+            ev.subject[:60],
+        )
     return created
