@@ -873,6 +873,7 @@ function extractJobFromPage() {
     return (div.innerText || div.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
   };
   const meta = (sel) => document.querySelector(sel)?.getAttribute("content") || "";
+  const isLinkedIn = /(^|\.)linkedin\.com$/i.test(location.hostname);
   const out = {
     url: location.href,
     title: "",
@@ -934,9 +935,11 @@ function extractJobFromPage() {
     if (!out.title) out.title = clean(ogTitle.slice(idx + 3));
   }
 
-  // 2.5) LinkedIn: no JSON-LD, no og-tags, and randomized CSS classes — the
-  // <title> ("Job Title | Company | LinkedIn") is the only stable anchor.
-  if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
+  // 2.5) LinkedIn: no JSON-LD, no og-tags, and randomized CSS classes. Anchor on
+  // the things that DON'T change: the <title>, a lone "City, ST" span, and the
+  // "About the job" heading. (The generic body-dump below would grab nav + the
+  // Premium upsell instead, so we skip it for LinkedIn.)
+  if (isLinkedIn) {
     const parts = clean(document.title)
       .split("|")
       .map((p) => clean(p).replace(/^\(\d+\)\s*/, "")) // drop "(3) " unread badge
@@ -944,6 +947,32 @@ function extractJobFromPage() {
     if (parts.length >= 2) {
       if (!out.title) out.title = parts[0];
       if (!out.company || out.company === "linkedin") out.company = parts[1];
+    }
+    // Location: the top card shows it as a standalone "City, ST" span.
+    const CITY_ST = /^[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2},\s*[A-Z]{2}$/;
+    for (const el of document.querySelectorAll("span")) {
+      const t = clean(el.textContent);
+      if (CITY_ST.test(t)) {
+        out.location = t;
+        break;
+      }
+    }
+    // Description: the real posting sits under an "About the job" heading, whose
+    // paragraphs are SIBLINGS following the heading's wrapper (closest("section")
+    // is too broad — it swallows the top card). Collect siblings until the next
+    // section heading.
+    const h = [...document.querySelectorAll("h2, h3")].find((e) =>
+      /^about the job/i.test(clean(e.textContent)),
+    );
+    if (h) {
+      const chunks = [];
+      let n = (h.parentElement || h).nextElementSibling;
+      for (let i = 0; n && i < 30; n = n.nextElementSibling, i++) {
+        if (/^H[1-3]$/.test(n.tagName || "")) break; // hit the next section
+        const t = stripHtml(n.innerHTML);
+        if (t) chunks.push(t);
+      }
+      out.description = chunks.join("\n\n").slice(0, 12000);
     }
   }
 
@@ -965,19 +994,22 @@ function extractJobFromPage() {
       clean(hn.replace(/^www\./, "").split(".")[0]);
   }
 
-  // 4) Description fallback — the main content region.
-  if (!out.description) {
+  // 4) Description fallback — the main content region. Skipped on LinkedIn,
+  // where "main" is the whole feed (nav + Premium upsell), not the posting.
+  if (!out.description && !isLinkedIn) {
     const main = document.querySelector(
       "[data-qa='job-description'], .posting-page, main, article, [class*='description' i], [class*='job' i]",
     );
     out.description = stripHtml(main?.innerHTML || document.body?.innerHTML || "").slice(0, 12000);
   }
 
-  // 5) Remote + salary from visible text if still unknown.
+  // 5) Remote + salary from visible text if still unknown. The salary scan is
+  // skipped on LinkedIn — its noisy full-page text produced false hits (a stray
+  // "$100"); better to leave pay blank than wrong.
   const bodyText = document.body?.innerText || "";
   if (/\bremote\b/i.test(out.title + " " + out.location + " " + bodyText.slice(0, 1500)))
     out.is_remote = true;
-  if (!out.salary_min) {
+  if (!out.salary_min && !isLinkedIn) {
     const m = bodyText.match(
       /\$\s?([\d,]{3,})(?:\s?(?:-|–|—|to)\s?\$?\s?([\d,]{3,}))?\s*(per hour|an hour|\/\s?hr|hourly|per year|a year|annually)?/i,
     );
