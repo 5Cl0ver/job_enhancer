@@ -15,14 +15,18 @@ import asyncio
 import contextlib
 import email
 import imaplib
+from datetime import UTC, datetime, timedelta
 from email.header import decode_header, make_header
 from email.message import Message
 
 from app.services.email_scan import EmailMessage
 
-# Only look at this many most-recent messages per scan. Job replies land in the
-# recent window; older mail is already reflected on the board.
-DEFAULT_LIMIT = 40
+# Scan a TIME WINDOW, not a flat count — a spam-heavy inbox can bury a real
+# application reply far past the newest N messages. We ask the server (via IMAP
+# SEARCH SINCE) for everything in the last `DEFAULT_SINCE_DAYS`, capped at
+# `DEFAULT_LIMIT` newest so a huge window can't fetch thousands of bodies.
+DEFAULT_SINCE_DAYS = 45
+DEFAULT_LIMIT = 250
 
 
 class ImapAuthError(Exception):
@@ -68,7 +72,7 @@ def _parse_message(uid: str, raw: bytes) -> EmailMessage:
 
 
 def _fetch_sync(
-    host: str, port: int, address: str, password: str, limit: int
+    host: str, port: int, address: str, password: str, limit: int, since_days: int
 ) -> list[EmailMessage]:
     conn = imaplib.IMAP4_SSL(host, port)
     try:
@@ -78,8 +82,16 @@ def _fetch_sync(
             raise ImapAuthError(str(exc)) from exc
         # readonly=True — a strict guarantee we never modify the mailbox.
         conn.select("INBOX", readonly=True)
-        _, data = conn.uid("search", None, "ALL")
-        uids = data[0].split()[-limit:]
+        if since_days:
+            # Server-side date filter so a spam-heavy inbox can't bury a real
+            # reply past a flat count. IMAP wants "DD-Mon-YYYY" (e.g. 05-Aug-2026).
+            since = (datetime.now(UTC) - timedelta(days=since_days)).strftime(
+                "%d-%b-%Y"
+            )
+            _, data = conn.uid("search", None, "SINCE", since)
+        else:
+            _, data = conn.uid("search", None, "ALL")
+        uids = data[0].split()[-limit:]  # cap to newest `limit` in the window
         out: list[EmailMessage] = []
         for uid in reversed(uids):  # newest first
             _, msg_data = conn.uid("fetch", uid, "(RFC822)")
@@ -99,11 +111,15 @@ async def fetch_recent(
     password: str,
     *,
     limit: int = DEFAULT_LIMIT,
+    since_days: int = DEFAULT_SINCE_DAYS,
 ) -> list[EmailMessage]:
-    """Fetch recent inbox messages without blocking the event loop.
+    """Fetch inbox messages from the last ``since_days`` (capped at ``limit``).
 
-    ``imaplib`` is synchronous, so we run it in a worker thread. Raises
-    :class:`ImapAuthError` on bad credentials; other failures (DNS, TLS, timeout)
-    surface as the underlying exception for the caller to translate.
+    ``imaplib`` is synchronous, so we run it in a worker thread. Pass
+    ``since_days=0`` to scan the whole mailbox. Raises :class:`ImapAuthError` on
+    bad credentials; other failures (DNS, TLS, timeout) surface as the underlying
+    exception for the caller to translate.
     """
-    return await asyncio.to_thread(_fetch_sync, host, port, address, password, limit)
+    return await asyncio.to_thread(
+        _fetch_sync, host, port, address, password, limit, since_days
+    )

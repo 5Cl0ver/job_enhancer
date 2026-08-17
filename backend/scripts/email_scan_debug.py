@@ -97,7 +97,7 @@ def _demo_messages(jobs: list[dict]) -> list[EmailMessage]:
     return demos
 
 
-async def main(user_email: str | None, limit: int, demo: bool) -> None:
+async def main(user_email: str | None, limit: int, demo: bool, days: int) -> None:
     async with AsyncSessionLocal() as db:
         # 1. Find the connected inbox.
         stmt = select(EmailAccount)
@@ -133,7 +133,7 @@ async def main(user_email: str | None, limit: int, demo: bool) -> None:
             print(f"  • {j['company']}  —  {j['title']}")
 
         # 3. Fetch the inbox (read-only), exactly like a real scan.
-        print(_c(f"\n=== FETCHING last {limit} messages… ===", BOLD))
+        print(_c(f"\n=== FETCHING last {days} days (up to {limit})… ===", BOLD))
         password = crypto.decrypt(account.secret_encrypted)
         try:
             messages = await email_imap.fetch_recent(
@@ -142,6 +142,7 @@ async def main(user_email: str | None, limit: int, demo: bool) -> None:
                 account.email_address,
                 password,
                 limit=limit,
+                since_days=days,
             )
         except email_imap.ImapAuthError as exc:
             print(_c(f"  LOGIN FAILED: {exc}", RED))
@@ -217,11 +218,14 @@ async def main(user_email: str | None, limit: int, demo: bool) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Dry-run the email scanner.")
     parser.add_argument("--user", help="Filter to this user's email", default=None)
-    parser.add_argument("--limit", type=int, default=40, help="Messages to fetch")
+    parser.add_argument("--limit", type=int, default=250, help="Max messages")
+    parser.add_argument(
+        "--days", type=int, default=45, help="Scan mail from the last N days (0 = all)"
+    )
     parser.add_argument(
         "--demo",
         action="store_true",
         help="Inject synthetic application emails from your saved jobs",
     )
     args = parser.parse_args()
-    asyncio.run(main(args.user, args.limit, args.demo))
+    asyncio.run(main(args.user, args.limit, args.demo, args.days))
