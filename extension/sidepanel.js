@@ -24,6 +24,32 @@ function show(view) {
 let savedJobs = []; // [{id, job_listing_id, title, company, location, url, applied}]
 
 // ---------------------------------------------------------------------------
+// Local duplicate detection — warn before saving a job you already have.
+// The backend also dedupes, but this catches near-identical saves up front so
+// the user isn't surprised by a silent "already saved". Heuristic: same company
+// AND same-or-contained title (normalized).
+// ---------------------------------------------------------------------------
+function normJob(s) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function findDuplicate(job) {
+  const t = normJob(job.title);
+  const c = normJob(job.company);
+  if (!t || !c) return null;
+  return (
+    savedJobs.find((j) => {
+      if (normJob(j.company) !== c) return false; // must be the same company
+      const jt = normJob(j.title);
+      return jt === t || jt.includes(t) || t.includes(jt); // same/contained title
+    }) || null
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Saved jobs list
 // ---------------------------------------------------------------------------
 
@@ -1013,10 +1039,15 @@ async function saveThisPage() {
   $("cap-desc").value = job.description || "";
   $("capture-edit").hidden = false;
   status.className = "status";
-  status.textContent =
-    job.title && job.company
-      ? "Review the details below, fix anything, then Save."
-      : "Couldn't auto-read much — fill in the details below and Save.";
+  const dup = findDuplicate({ title: job.title, company: job.company });
+  if (dup) {
+    status.textContent = `⚠ You already saved "${dup.title} — ${dup.company}". You can still save a duplicate below.`;
+  } else {
+    status.textContent =
+      job.title && job.company
+        ? "Review the details below, fix anything, then Save."
+        : "Couldn't auto-read much — fill in the details below and Save.";
+  }
 }
 
 async function saveCapturedJob() {
@@ -1043,6 +1074,21 @@ async function saveCapturedJob() {
     salary_max: num("cap-max"),
     salary_period: $("cap-period").value || null,
   };
+
+  // Warn before saving a job that's already in the list (same company +
+  // same/contained title). The user can still choose to save a duplicate.
+  const dup = findDuplicate(job);
+  if (dup) {
+    const ok = window.confirm(
+      `You already saved "${dup.title} — ${dup.company}".\n\n` +
+        `Save it again as a duplicate?`,
+    );
+    if (!ok) {
+      status.className = "status";
+      status.textContent = "Okay — kept the one you already have.";
+      return;
+    }
+  }
 
   const btn = $("cap-save");
   btn.disabled = true;
