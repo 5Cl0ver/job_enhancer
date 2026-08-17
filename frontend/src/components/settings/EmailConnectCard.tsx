@@ -8,7 +8,9 @@
  * approving it first.
  */
 import { useState } from "react";
+import { Link } from "react-router-dom";
 import {
+  ArrowUpRight,
   Check,
   ChevronDown,
   ExternalLink,
@@ -493,6 +495,26 @@ function DetectedEventsList() {
             <p className="truncate text-[11px] text-muted-foreground">
               {ev.from_addr}
             </p>
+            <div className="flex flex-wrap gap-3 pt-0.5">
+              {ev.job_listing_id && (
+                <Link
+                  to={`/jobs/${ev.job_listing_id}`}
+                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary underline"
+                >
+                  View job <ArrowUpRight className="h-3 w-3" />
+                </Link>
+              )}
+              {ev.mail_link && (
+                <a
+                  href={ev.mail_link}
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary underline"
+                >
+                  Find email <ExternalLink className="h-3 w-3" />
+                </a>
+              )}
+            </div>
           </div>
           <div className="flex shrink-0 gap-1.5">
             <Button
@@ -595,16 +617,26 @@ function ConsideredList({ items }: { items: Considered[] }) {
                   {c.matched_title ? ` — ${c.matched_title}` : ""}
                 </p>
               )}
-              {c.mail_link && (
-                <a
-                  href={c.mail_link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="mt-1 inline-flex items-center gap-1 font-medium text-primary underline"
-                >
-                  Open email <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
+              <div className="mt-1 flex flex-wrap gap-3">
+                {c.matched_job_listing_id && (
+                  <Link
+                    to={`/jobs/${c.matched_job_listing_id}`}
+                    className="inline-flex items-center gap-0.5 font-medium text-primary underline"
+                  >
+                    View job <ArrowUpRight className="h-3 w-3" />
+                  </Link>
+                )}
+                {c.mail_link && (
+                  <a
+                    href={c.mail_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-0.5 font-medium text-primary underline"
+                  >
+                    Find email <ExternalLink className="h-3 w-3" />
+                  </a>
+                )}
+              </div>
             </div>
           ))}
         </div>

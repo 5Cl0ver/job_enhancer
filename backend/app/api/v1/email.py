@@ -8,11 +8,14 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
+from app.models.detected_event import DetectedEvent
 from app.models.email_account import STATUS_CONNECTED, STATUS_ERROR
+from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.schemas.email_account import (
     ConsideredOut,
@@ -25,10 +28,33 @@ from app.schemas.email_account import (
 from app.services import email_accounts as svc
 from app.services import email_imap, email_review
 from app.services.email_providers import detect_provider
-from app.services.email_scan import detect_events
+from app.services.email_scan import detect_events, mail_link
 from app.utils import crypto
 
 router = APIRouter()
+
+
+async def _events_out(
+    db: AsyncSession, provider: str, events: list[DetectedEvent]
+) -> list[DetectedEventOut]:
+    """Enrich stored events with a link to the job in the app (job_listing_id)
+    and a link to the email in webmail (built from provider + subject)."""
+    if not events:
+        return []
+    ids = [e.saved_job_id for e in events]
+    rows = (
+        await db.execute(
+            select(SavedJob.id, SavedJob.job_listing_id).where(SavedJob.id.in_(ids))
+        )
+    ).all()
+    listing_of = {r.id: r.job_listing_id for r in rows}
+    out: list[DetectedEventOut] = []
+    for e in events:
+        d = DetectedEventOut.model_validate(e)
+        d.job_listing_id = listing_of.get(e.saved_job_id)
+        d.mail_link = mail_link(provider, subject=e.subject)
+        out.append(d)
+    return out
 
 
 @router.get("/provider", response_model=ProviderInfoOut)
@@ -108,7 +134,7 @@ async def scan_inbox(
     await db.commit()
     return ScanResult(
         detected=len(result.created),
-        events=[DetectedEventOut.model_validate(e) for e in result.created],
+        events=await _events_out(db, account.provider, result.created),
         considered=[ConsideredOut.model_validate(c) for c in result.considered],
         scanned=result.scanned,
         candidates=result.candidates,
@@ -123,7 +149,8 @@ async def list_events(
 ) -> list[DetectedEventOut]:
     """Detected updates awaiting review, newest first."""
     rows = await email_review.list_pending(db, user.id)
-    return [DetectedEventOut.model_validate(e) for e in rows]
+    account = await svc.get_account(db, user.id)
+    return await _events_out(db, account.provider if account else "", rows)
 
 
 @router.post("/events/{event_id}/apply", response_model=DetectedEventOut)

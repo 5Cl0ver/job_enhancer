@@ -61,6 +61,7 @@ class Considered:
     reason: str  # "no_confident_match" | "filtered_contact"
     matched_company: str | None = None
     matched_title: str | None = None
+    matched_job_listing_id: uuid.UUID | None = None  # link target in the app
     mail_link: str | None = None
     date: datetime | None = None
 
@@ -79,18 +80,24 @@ class DetectResult:
 _MAX_CONSIDERED = 40
 
 
-def mail_link(provider: str, message_id: str) -> str | None:
-    """A deep link that opens this exact message in the user's webmail.
+def mail_link(provider: str, message_id: str = "", subject: str = "") -> str | None:
+    """A link that takes the user to this email in their webmail.
 
-    Only Gmail exposes a stable per-message URL (search by RFC822 Message-ID).
-    Yahoo/others have no reliable public link, so we return None and the UI shows
-    sender/subject/date instead.
+    Gmail can open the *exact* message (search by RFC822 Message-ID); otherwise
+    we fall back to a subject search, which lands the user on the right message
+    in Gmail or Yahoo. Providers without a usable web search URL return None and
+    the UI just shows sender/subject/date.
     """
     mid = (message_id or "").strip().strip("<>")
-    if not mid:
-        return None
-    if provider in ("gmail",):
-        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid)}"
+    subj = (subject or "").strip()
+    if provider == "gmail":
+        if mid:
+            return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid)}"
+        if subj:
+            return f"https://mail.google.com/mail/u/0/#search/{quote(subj)}"
+    elif provider in ("yahoo", "aol"):
+        if subj:
+            return f"https://mail.yahoo.com/d/search/keyword={quote(subj)}"
     return None
 
 
@@ -100,6 +107,7 @@ async def _candidate_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
         await db.execute(
             select(
                 SavedJob.id,
+                SavedJob.job_listing_id,
                 SavedJob.pipeline_stage_id,
                 JobListing.company,
                 JobListing.title,
@@ -114,6 +122,7 @@ async def _candidate_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
     return [
         {
             "id": r.id,
+            "job_listing_id": r.job_listing_id,
             "pipeline_stage_id": r.pipeline_stage_id,
             "company": r.company,
             "title": r.title,
@@ -190,7 +199,8 @@ async def detect_events(
                     reason=reason,
                     matched_company=job["company"] if job else None,
                     matched_title=job["title"] if job else None,
-                    mail_link=mail_link(account.provider, msg.message_id),
+                    matched_job_listing_id=job["job_listing_id"] if job else None,
+                    mail_link=mail_link(account.provider, msg.message_id, msg.subject),
                     date=msg.date,
                 )
             )

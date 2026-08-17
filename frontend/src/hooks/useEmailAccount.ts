@@ -31,11 +31,13 @@ export interface EmailAccount {
 export interface DetectedEvent {
   id: string;
   saved_job_id: string;
+  job_listing_id: string | null;
   event_type: "applied" | "interview" | "rejected" | "recruiter";
   target_stage: string | null;
   from_addr: string;
   subject: string;
   status: string;
+  mail_link: string | null;
   created_at: string;
 }
 
@@ -46,6 +48,7 @@ export interface Considered {
   reason: "no_confident_match" | "filtered_contact";
   matched_company: string | null;
   matched_title: string | null;
+  matched_job_listing_id: string | null;
   mail_link: string | null;
   date: string | null;
 }

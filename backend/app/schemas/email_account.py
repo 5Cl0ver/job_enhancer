@@ -55,11 +55,13 @@ class DetectedEventOut(BaseModel):
 
     id: uuid.UUID
     saved_job_id: uuid.UUID
+    job_listing_id: uuid.UUID | None = None  # link target: /jobs/:id in the app
     event_type: str
     target_stage: str | None = None
     from_addr: str
     subject: str
     status: str
+    mail_link: str | None = None  # open/search the email in the user's webmail
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -74,6 +76,7 @@ class ConsideredOut(BaseModel):
     reason: str  # "no_confident_match" | "filtered_contact"
     matched_company: str | None = None
     matched_title: str | None = None
+    matched_job_listing_id: uuid.UUID | None = None
     mail_link: str | None = None
     date: datetime | None = None
 
