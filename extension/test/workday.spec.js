@@ -195,3 +195,40 @@ describe("Workday questionnaire dropdowns", () => {
     expect(filled).toHaveLength(3);
   });
 });
+
+describe("Workday self-ID guard", () => {
+  function docFromHtml(html) {
+    const window = new Window();
+    window.document.write(html);
+    return window.document;
+  }
+  const field = (q) =>
+    `<div data-automation-id="formField-x"><fieldset><legend>` +
+    `<span data-automation-id="richText">${q}</span></legend>` +
+    `<button aria-haspopup="listbox">Select One</button></fieldset></div>`;
+
+  it("excludes protected self-ID dropdowns (ethnicity/gender/veteran/disability)", () => {
+    const doc = docFromHtml(
+      field("Gender") +
+        field("Ethnicity") +
+        field("Veteran Status") +
+        field("Disability status") +
+        field("Are you legally authorized to work in the US?"),
+    );
+    const questions = collectWorkdayDropdowns(doc).map((d) => d.question);
+    expect(questions).toEqual(["Are you legally authorized to work in the US?"]);
+  });
+
+  it("never AI-guesses self-ID even with an aiMap available", async () => {
+    const doc = docFromHtml(field("What is your gender?"));
+    let called = false;
+    await fillWorkdayDropdowns(doc, {}, [], {
+      wait: () => Promise.resolve(),
+      aiMap: async () => {
+        called = true;
+        return {};
+      },
+    });
+    expect(called).toBe(false); // self-ID never reaches the AI
+  });
+});

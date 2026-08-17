@@ -310,19 +310,21 @@ describe("radio groups — yes/no questions (e.g. Amazon Work Eligibility)", () 
   });
 
   it("finds the question when it sits OUTSIDE the radio group (Amazon structure)", () => {
+    // NB: uses a non-protected question on purpose — self-ID (veteran/gender/…)
+    // is now excluded from collection, so it can't be the example here.
     const w = new Window();
     w.document.write(`
       <div class="q-block">
-        <label aria-hidden="true">Are you a veteran?</label>
+        <label aria-hidden="true">Have you previously worked at Acme?</label>
         <div role="radiogroup">
-          <label><input type="radio" name="vet" value="Yes" />Yes</label>
-          <label><input type="radio" name="vet" value="No" />No</label>
-          <label><input type="radio" name="vet" value="X" />I choose not to self-identify</label>
+          <label><input type="radio" name="prev" value="Yes" />Yes</label>
+          <label><input type="radio" name="prev" value="No" />No</label>
+          <label><input type="radio" name="prev" value="X" />Prefer not to say</label>
         </div>
       </div>`);
     const groups = collectRadioGroups(w.document);
     expect(groups).toHaveLength(1);
-    expect(groups[0].questionKey).toContain("are you a veteran");
+    expect(groups[0].questionKey).toContain("have you previously worked at acme");
     expect(groups[0].options.map((o) => o.label)).toContain("Yes");
   });
 
