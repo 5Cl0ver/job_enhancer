@@ -957,22 +957,23 @@ function extractJobFromPage() {
         break;
       }
     }
-    // Description: the real posting sits under an "About the job" heading, whose
-    // paragraphs are SIBLINGS following the heading's wrapper (closest("section")
-    // is too broad — it swallows the top card). Collect siblings until the next
-    // section heading.
-    const h = [...document.querySelectorAll("h2, h3")].find((e) =>
-      /^about the job/i.test(clean(e.textContent)),
+    // Description: the real posting is under an "About the job" heading. Rather
+    // than walk siblings (fragile — a job may nest an "Overview" sub-heading that
+    // ends the walk early), take the surrounding section's text and SLICE from
+    // "About the job" onward — that drops the top-card prefix while keeping every
+    // sub-section — then trim any trailing LinkedIn sidebar noise.
+    const h = [...document.querySelectorAll("h1, h2, h3")].find((e) =>
+      /about the job/i.test(clean(e.textContent)),
     );
     if (h) {
-      const chunks = [];
-      let n = (h.parentElement || h).nextElementSibling;
-      for (let i = 0; n && i < 30; n = n.nextElementSibling, i++) {
-        if (/^H[1-3]$/.test(n.tagName || "")) break; // hit the next section
-        const t = stripHtml(n.innerHTML);
-        if (t) chunks.push(t);
-      }
-      out.description = chunks.join("\n\n").slice(0, 12000);
+      const scope = h.closest("section") || h.parentElement?.parentElement || document.body;
+      const full = stripHtml(scope.innerHTML);
+      const idx = full.search(/about the job/i);
+      let desc = (idx >= 0 ? full.slice(idx) : full).replace(/^about the job\s*/i, "");
+      desc = desc.split(
+        /Set alert for similar jobs|People you can reach out to|Meet the hiring team|Unlock hiring insights|Similar jobs/i,
+      )[0].trim();
+      out.description = desc.slice(0, 12000);
     }
   }
 
