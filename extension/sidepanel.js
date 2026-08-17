@@ -934,6 +934,19 @@ function extractJobFromPage() {
     if (!out.title) out.title = clean(ogTitle.slice(idx + 3));
   }
 
+  // 2.5) LinkedIn: no JSON-LD, no og-tags, and randomized CSS classes — the
+  // <title> ("Job Title | Company | LinkedIn") is the only stable anchor.
+  if (/(^|\.)linkedin\.com$/i.test(location.hostname)) {
+    const parts = clean(document.title)
+      .split("|")
+      .map((p) => clean(p).replace(/^\(\d+\)\s*/, "")) // drop "(3) " unread badge
+      .filter((p) => p && !/^linkedin$/i.test(p));
+    if (parts.length >= 2) {
+      if (!out.title) out.title = parts[0];
+      if (!out.company || out.company === "linkedin") out.company = parts[1];
+    }
+  }
+
   // 3) Headings / site name fallbacks.
   if (!out.title)
     out.title =
