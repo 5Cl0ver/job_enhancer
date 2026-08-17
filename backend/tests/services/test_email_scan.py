@@ -107,6 +107,23 @@ class TestDetectEvents:
         ]
         assert await detect_events(db_session, acct, msgs) == []
 
+    async def test_recruiter_contact_does_not_create_event(self, db_session, test_user):
+        # A human recruiter email classifies as RECRUITER (no target stage). We
+        # deliberately do NOT surface these — only card-moving updates — so no
+        # event is created even though it matches a saved job.
+        await _make_saved_job(db_session, test_user, "Acme Corp", "Backend Engineer")
+        acct = await _make_account(db_session, test_user)
+        msgs = [
+            EmailMessage(
+                uid="7",
+                from_addr="jane.doe@acme.com",
+                subject="Re: Backend role at Acme",
+                body="Hi! I saw your resume and think you'd be a great fit for "
+                "this position.",
+            )
+        ]
+        assert await detect_events(db_session, acct, msgs) == []
+
     async def test_no_confident_job_match_is_skipped(self, db_session, test_user):
         await _make_saved_job(db_session, test_user, "Acme Corp", "Backend Engineer")
         acct = await _make_account(db_session, test_user)

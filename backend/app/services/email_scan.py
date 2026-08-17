@@ -97,7 +97,12 @@ async def detect_events(
         if not msg.uid or msg.uid in seen_uids:
             continue
         event_type = classify_email(msg.subject, msg.body, msg.from_addr)
-        if event_type == UNKNOWN:
+        # Only surface detections that actually move a card (applied / interview
+        # / rejected). RECRUITER "just log a contact" has no target stage and, on
+        # real spam-heavy inboxes, is almost all false positives — so we skip it
+        # until there's a dedicated place to show contacts. UNKNOWN is skipped too.
+        target_stage = stage_for_event(event_type)
+        if event_type == UNKNOWN or target_stage is None:
             continue
         job = match_email_to_job(
             jobs,
@@ -112,7 +117,7 @@ async def detect_events(
             email_account_id=account.id,
             saved_job_id=job["id"],
             event_type=event_type,
-            target_stage=stage_for_event(event_type),
+            target_stage=target_stage,
             from_addr=(msg.from_addr or "")[:255],
             subject=(msg.subject or "")[:500],
             message_uid=msg.uid,

@@ -196,6 +196,16 @@ async def main(user_email: str | None, limit: int, demo: bool, days: int) -> Non
                     f"     match     : {_c('NONE', YELLOW)} "
                     "— no saved job cleared the confidence bar, skipped"
                 )
+            elif stage_for_event(event) is None:
+                # Matched, but it's a RECRUITER contact — we don't surface these
+                # (no card move), so a real scan creates nothing.
+                print(
+                    f"     classify  : {_c(event.upper(), DIM)} "
+                    "— contact only, not surfaced (no card move)"
+                )
+                print(
+                    f"     match     : {_c(match['company'] + ' / ' + match['title'], DIM)}"
+                )
             else:
                 would_create += 1
                 print(
