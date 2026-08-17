@@ -71,6 +71,8 @@ class DetectResult:
 
     created: list[DetectedEvent] = field(default_factory=list)
     considered: list[Considered] = field(default_factory=list)
+    scanned: int = 0  # total messages read this scan
+    candidates: int = 0  # saved jobs we matched against
 
 
 # Cap the transparency list so a huge inbox can't return an unbounded payload.
@@ -140,7 +142,7 @@ async def detect_events(
         )
     )
     jobs = await _candidate_jobs(db, account.user_id)
-    result = DetectResult()
+    result = DetectResult(scanned=len(messages), candidates=len(jobs))
 
     for msg in messages:
         if not msg.uid or msg.uid in seen_uids:

@@ -86,3 +86,6 @@ class ScanResult(BaseModel):
     detected: int
     events: list[DetectedEventOut]
     considered: list[ConsideredOut] = []
+    scanned: int = 0  # total emails read this scan
+    candidates: int = 0  # saved jobs matched against
+    window_days: int = 0  # how far back we looked

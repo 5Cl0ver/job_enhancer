@@ -110,6 +110,9 @@ async def scan_inbox(
         detected=len(result.created),
         events=[DetectedEventOut.model_validate(e) for e in result.created],
         considered=[ConsideredOut.model_validate(c) for c in result.considered],
+        scanned=result.scanned,
+        candidates=result.candidates,
+        window_days=email_imap.DEFAULT_SINCE_DAYS,
     )
 
 

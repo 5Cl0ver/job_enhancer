@@ -388,19 +388,35 @@ function ConnectedView({
         </Alert>
       )}
 
-      {scan.isError && (
-        <p className="text-xs text-destructive">
-          {scan.error instanceof ApiError
-            ? scan.error.message
-            : "Scan failed."}
+      {scan.isPending && (
+        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" />
+          Reading your inbox… (a big inbox can take a moment)
         </p>
       )}
-      {result && !scan.isPending && (
-        <p className="text-xs text-muted-foreground">
-          {result.detected === 0
-            ? "No new updates found."
-            : `Found ${result.detected} update${result.detected === 1 ? "" : "s"} to review below.`}
+
+      {scan.isError && (
+        <p className="text-xs text-destructive">
+          {scan.error instanceof ApiError ? scan.error.message : "Scan failed."}
         </p>
+      )}
+
+      {result && !scan.isPending && (
+        <div className="space-y-1 rounded-md border bg-muted/30 p-2.5 text-xs">
+          <div className="font-medium">
+            {result.detected === 0
+              ? "No new updates to review."
+              : `${result.detected} update${result.detected === 1 ? "" : "s"} to review below.`}
+          </div>
+          <div className="text-muted-foreground">
+            Read <strong>{result.scanned}</strong> email
+            {result.scanned === 1 ? "" : "s"} from the last {result.window_days}{" "}
+            days · checked against <strong>{result.candidates}</strong> saved job
+            {result.candidates === 1 ? "" : "s"} ·{" "}
+            <strong>{result.considered.length}</strong> other
+            {result.considered.length === 1 ? "" : "s"} considered
+          </div>
+        </div>
       )}
 
       <DetectedEventsList />

@@ -54,6 +54,9 @@ export interface ScanResult {
   detected: number;
   events: DetectedEvent[];
   considered: Considered[];
+  scanned: number;
+  candidates: number;
+  window_days: number;
 }
 
 /** The user's connected inbox, or null when none is connected. */
