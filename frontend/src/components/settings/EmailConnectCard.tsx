@@ -15,7 +15,6 @@ import {
   useDetectedEvents,
   useDisconnectEmail,
   useEmailAccount,
-  useProviderInfo,
   useReviewEvent,
   useScanInbox,
   type DetectedEvent,
@@ -34,47 +33,91 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 
-// Per-provider setup guidance shown once we detect the address.
-const GUIDES: Record<string, { steps: string; link?: string; linkText?: string }> = {
-  yahoo: {
+// Per-provider setup guidance. Detection runs in the browser (by email domain)
+// so the right steps appear instantly as you type — no backend round-trip.
+interface Guide {
+  key: string;
+  label: string;
+  domains: string[];
+  steps: string;
+  link?: string;
+  linkText?: string;
+  needsHost?: boolean; // show IMAP host/port fields (Proton / unknown hosts)
+}
+
+const PROVIDERS: Guide[] = [
+  {
+    key: "yahoo",
+    label: "Yahoo Mail",
+    domains: ["yahoo.com", "ymail.com", "rocketmail.com"],
     steps:
       "Yahoo → Account Security → Generate app password (2-step verification must be on). Name it “Job Enhancer” and paste the 16-character code below.",
     link: "https://login.yahoo.com/account/security",
     linkText: "Open Yahoo Account Security",
   },
-  aol: {
+  {
+    key: "gmail",
+    label: "Gmail",
+    domains: ["gmail.com", "googlemail.com"],
     steps:
-      "AOL → Account Security → Generate app password, then paste the code below.",
-    link: "https://login.aol.com/account/security",
-    linkText: "Open AOL Account Security",
+      "One-click Google sign-in is coming soon. For now: turn on 2-Step Verification, then create an App Password (pick “Mail”) and paste the 16-character code below.",
+    link: "https://myaccount.google.com/apppasswords",
+    linkText: "Create a Google App Password",
   },
-  icloud: {
+  {
+    key: "outlook",
+    label: "Outlook / Hotmail",
+    domains: ["outlook.com", "hotmail.com", "live.com", "msn.com"],
+    steps:
+      "One-click Microsoft sign-in is coming soon. For now: turn on two-step verification, create an app password in your Microsoft account security settings, and paste it below.",
+    link: "https://account.live.com/proofs/AppPassword",
+    linkText: "Create a Microsoft App Password",
+  },
+  {
+    key: "icloud",
+    label: "iCloud Mail",
+    domains: ["icloud.com", "me.com", "mac.com"],
     steps:
       "Apple ID → Sign-In and Security → App-Specific Passwords → generate one, then paste it below.",
     link: "https://appleid.apple.com",
     linkText: "Open Apple ID",
   },
-  gmail: {
+  {
+    key: "aol",
+    label: "AOL Mail",
+    domains: ["aol.com"],
     steps:
-      "One-click Google sign-in is coming soon. For now, turn on 2-Step Verification, create an App Password, and paste it below.",
-    link: "https://myaccount.google.com/apppasswords",
-    linkText: "Create a Google App Password",
+      "AOL → Account Security → Generate app password, then paste the code below.",
+    link: "https://login.aol.com/account/security",
+    linkText: "Open AOL Account Security",
   },
-  outlook: {
+  {
+    key: "proton",
+    label: "Proton Mail",
+    domains: ["proton.me", "protonmail.com", "pm.me"],
     steps:
-      "One-click Microsoft sign-in is coming soon. For now, create an app password in your Microsoft account security settings and paste it below.",
-    link: "https://account.live.com/proofs/AppPassword",
-    linkText: "Create a Microsoft App Password",
+      "Proton has no direct IMAP access. Auto-forward job emails to an inbox we can read, or run Proton Bridge and enter its IMAP host below.",
+    needsHost: true,
   },
-  proton: {
-    steps:
-      "Proton has no direct IMAP access. Set up a filter to auto-forward job emails to an inbox we can read, or enter a custom IMAP host below (Proton Bridge).",
-  },
-  generic: {
-    steps:
-      "Create an app password in your email provider’s security settings, then enter your IMAP host and the password below.",
-  },
+];
+
+const GENERIC: Guide = {
+  key: "generic",
+  label: "Other (IMAP)",
+  domains: [],
+  steps:
+    "Create an app password in your email provider’s security settings, then enter your IMAP host, port, and the password below.",
+  needsHost: true,
 };
+
+/** Detect the provider guide from an email address, entirely client-side. */
+function detectGuide(email: string): Guide | null {
+  const at = email.indexOf("@");
+  if (at < 0) return null;
+  const domain = email.slice(at + 1).trim().toLowerCase();
+  if (!domain.includes(".")) return null;
+  return PROVIDERS.find((p) => p.domains.includes(domain)) ?? GENERIC;
+}
 
 const EVENT_LABELS: Record<DetectedEvent["event_type"], string> = {
   applied: "Application received",
@@ -139,11 +182,10 @@ function ConnectForm({
   const [password, setPassword] = useState("");
   const [host, setHost] = useState("");
   const [port, setPort] = useState("");
-  const { data: provider } = useProviderInfo(email);
   const connect = useConnectEmail();
 
-  const guide = provider ? GUIDES[provider.guide] : undefined;
-  const needsHost = provider?.imap_host === "";
+  const guide = detectGuide(email);
+  const needsHost = guide?.needsHost ?? false;
 
   const handleConnect = () => {
     connect.mutate(
@@ -178,13 +220,13 @@ function ConnectForm({
         />
       </div>
 
-      {provider && (
+      {guide ? (
         <Alert>
           <AlertDescription className="space-y-1.5 text-xs">
             <div>
-              <strong>{provider.label}</strong> — {guide?.steps}
+              <strong>{guide.label}</strong> — {guide.steps}
             </div>
-            {guide?.link && (
+            {guide.link && (
               <a
                 href={guide.link}
                 target="_blank"
@@ -196,6 +238,13 @@ function ConnectForm({
             )}
           </AlertDescription>
         </Alert>
+      ) : (
+        <p className="text-xs text-muted-foreground">
+          Works with <strong>Yahoo</strong>, <strong>Gmail</strong>,{" "}
+          <strong>Outlook/Hotmail</strong>, <strong>iCloud</strong>,{" "}
+          <strong>AOL</strong> — or any IMAP host. Type your email above and the
+          exact setup steps for your provider appear here.
+        </p>
       )}
 
       {needsHost && (
