@@ -31,5 +31,11 @@ services:
         sync: false
       - key: ALLOWED_ORIGINS
         sync: false # e.g. https://job-enhancer.vercel.app
+      - key: MCP_PUBLIC_URL
+        sync: false # bare origin of THIS service (no /mcp). Set AFTER first deploy
+        # to enable the Claude connector; leave blank on the first deploy.
+      - key: MAIL_ENC_KEY
+        sync: false # Fernet key for email auto-status. Generate with:
+        # python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
       - key: DEBUG
         value: "false"
