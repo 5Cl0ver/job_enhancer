@@ -77,3 +77,8 @@ htmlcov/
 
 # ── Uploads (local dev only) ─────────────────────────────────────────────────
 backend/uploads/
+
+# ── Raw page captures for autofill debugging (contain real PII — NEVER commit) ─
+# Sanitized fixtures for tests go in extension/test/fixtures/ instead.
+_samples/
+workday-samples/

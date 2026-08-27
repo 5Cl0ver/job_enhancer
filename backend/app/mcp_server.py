@@ -34,6 +34,7 @@ from app.models.generated_document import GeneratedDocument
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
+from app.schemas.saved_job import ManualJobCreate
 from app.services import saved_jobs as sj_svc
 from app.services import tracker as tracker_svc
 
@@ -172,11 +173,13 @@ async def _master_profile_text(db, user: User) -> str:
 mcp = FastMCP(
     name="Job Enhancer",
     instructions=(
-        "Tools to help the user apply to jobs. When drafting résumés, cover "
-        "letters, or outreach emails, ALWAYS call get_master_profile first and "
-        "ground everything strictly in it — never invent experience, employers, "
-        "dates, or skills the user doesn't have. Never mark a job applied or "
-        "emailed unless the user says they did it."
+        "Tools to help the user find, save, and apply to jobs. When the user "
+        "asks you to save/add/track a job you found on the web, call save_job "
+        "with the posting's real title, company, and apply_url. When drafting "
+        "résumés, cover letters, or outreach emails, ALWAYS call "
+        "get_master_profile first and ground everything strictly in it — never "
+        "invent experience, employers, dates, or skills the user doesn't have. "
+        "Never mark a job applied or emailed unless the user says they did it."
     ),
     auth=_build_auth(),
 )
@@ -198,6 +201,48 @@ async def list_jobs(status: str | None = None, limit: int = 25) -> list[dict]:
             if len(out) >= max(1, min(limit, 100)):
                 break
         return out
+
+
+@mcp.tool
+async def save_job(
+    title: str,
+    company: str,
+    apply_url: str,
+    location: str = "Not specified",
+    description: str | None = None,
+    is_remote: bool = False,
+    salary_min: int | None = None,
+    salary_max: int | None = None,
+    salary_period: str | None = None,
+    notes: str | None = None,
+) -> dict:
+    """Save a job you found (from its posting URL) into the user's tracker, so it
+    shows up in the app ready to apply. Use this when the user asks you to save,
+    add, or track a job you located on the web.
+
+    ``apply_url`` must be the http(s) link to the posting. ``salary_period`` is
+    'yearly' or 'hourly' when a salary is given. If the same title+company+
+    location is already saved, this returns the existing job instead of a
+    duplicate. Returns the saved job's summary (including its job_id, which other
+    tools like get_job / save_draft / set_status take)."""
+    period = salary_period if salary_period in ("yearly", "hourly") else None
+    async with _session_user() as (db, user):
+        data = ManualJobCreate(
+            url=apply_url,
+            title=title,
+            company=company,
+            location=location or "Not specified",
+            is_remote=is_remote,
+            description=description,
+            salary_min=salary_min,
+            salary_max=salary_max,
+            salary_period=period,
+            notes=notes,
+        )
+        sj = await sj_svc.save_manual_job(db, user.id, data)
+        await db.commit()
+        stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
+        return _job_summary(sj, stages.get(sj.pipeline_stage_id))
 
 
 @mcp.tool

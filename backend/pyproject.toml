@@ -26,6 +26,9 @@ dependencies = [
     # Auth — Supabase JWT verification
     "python-jose[cryptography]>=3.3.0",
 
+    # Encrypting mailbox app-passwords at rest (Fernet)
+    "cryptography>=42.0.0",
+
     # Claude connector (remote MCP server + Supabase OAuth resource server)
     "fastmcp>=3.4.0",
 
@@ -61,7 +64,7 @@ dev = [
     "httpx>=0.27.0",
     "anyio>=4.4.0",
     "aiosqlite>=0.20.0",
-    "ruff>=0.6.0",
+    "ruff==0.16.4", # pinned exactly so local == CI (unpinned caused format drift)
 ]
 
 [tool.hatch.build.targets.wheel]

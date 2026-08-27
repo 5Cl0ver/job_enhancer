@@ -5,7 +5,7 @@
 // make a block per job, and filling title / company / location / role / dates.
 // PURE-ish (DOM only) so it's unit-tested with happy-dom.
 import { setNativeValue, markFilled } from "./fill.js";
-import { keyForText, normalizeQuestion, matchAnswer } from "./mapper.js";
+import { keyForText, normalizeQuestion, matchAnswer, SELF_ID } from "./mapper.js";
 
 /** Is this a Workday application with a Work Experience section? */
 export function isWorkdayExperience(doc) {
@@ -184,6 +184,9 @@ export function collectWorkdayDropdowns(doc) {
       .replace(/\*/g, "")
       .trim();
     if (!question) continue;
+    // Protected self-ID (ethnicity/gender/veteran/disability) is the user's to
+    // answer — never surface it for known-answer, learned, or AI filling.
+    if (SELF_ID.test(question)) continue;
     out.push({ button, field, question, current: (button.textContent || "").trim() });
   }
   return out;

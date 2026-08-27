@@ -24,6 +24,32 @@ function show(view) {
 let savedJobs = []; // [{id, job_listing_id, title, company, location, url, applied}]
 
 // ---------------------------------------------------------------------------
+// Local duplicate detection — warn before saving a job you already have.
+// The backend also dedupes, but this catches near-identical saves up front so
+// the user isn't surprised by a silent "already saved". Heuristic: same company
+// AND same-or-contained title (normalized).
+// ---------------------------------------------------------------------------
+function normJob(s) {
+  return (s || "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim();
+}
+
+function findDuplicate(job) {
+  const t = normJob(job.title);
+  const c = normJob(job.company);
+  if (!t || !c) return null;
+  return (
+    savedJobs.find((j) => {
+      if (normJob(j.company) !== c) return false; // must be the same company
+      const jt = normJob(j.title);
+      return jt === t || jt.includes(t) || t.includes(jt); // same/contained title
+    }) || null
+  );
+}
+
+// ---------------------------------------------------------------------------
 // Saved jobs list
 // ---------------------------------------------------------------------------
 
@@ -836,6 +862,11 @@ function renderStagedResume(filename) {
 // fully self-contained — no references to anything outside the function. It
 // reads JSON-LD JobPosting first (Glassdoor, most company sites, many boards),
 // then falls back to og-tags + headings + visible text (Lever, plain sites).
+//
+// The LinkedIn branch below MIRRORS src/extract/linkedin.js (which the content
+// script uses and which is unit-tested). They can't share code — this one is
+// injected and must be self-contained — so keep the two in sync when LinkedIn
+// changes.
 // ---------------------------------------------------------------------------
 
 function extractJobFromPage() {
@@ -847,6 +878,7 @@ function extractJobFromPage() {
     return (div.innerText || div.textContent || "").replace(/\n{3,}/g, "\n\n").trim();
   };
   const meta = (sel) => document.querySelector(sel)?.getAttribute("content") || "";
+  const isLinkedIn = /(^|\.)linkedin\.com$/i.test(location.hostname);
   const out = {
     url: location.href,
     title: "",
@@ -908,6 +940,48 @@ function extractJobFromPage() {
     if (!out.title) out.title = clean(ogTitle.slice(idx + 3));
   }
 
+  // 2.5) LinkedIn: no JSON-LD, no og-tags, and randomized CSS classes. Anchor on
+  // the things that DON'T change: the <title>, a lone "City, ST" span, and the
+  // "About the job" heading. (The generic body-dump below would grab nav + the
+  // Premium upsell instead, so we skip it for LinkedIn.)
+  if (isLinkedIn) {
+    const parts = clean(document.title)
+      .split("|")
+      .map((p) => clean(p).replace(/^\(\d+\)\s*/, "")) // drop "(3) " unread badge
+      .filter((p) => p && !/^linkedin$/i.test(p));
+    if (parts.length >= 2) {
+      if (!out.title) out.title = parts[0];
+      if (!out.company || out.company === "linkedin") out.company = parts[1];
+    }
+    // Location: the top card shows it as a standalone "City, ST" span.
+    const CITY_ST = /^[A-Z][A-Za-z.'-]+(?: [A-Z][A-Za-z.'-]+){0,2},\s*[A-Z]{2}$/;
+    for (const el of document.querySelectorAll("span")) {
+      const t = clean(el.textContent);
+      if (CITY_ST.test(t)) {
+        out.location = t;
+        break;
+      }
+    }
+    // Description: the real posting is under an "About the job" heading. Rather
+    // than walk siblings (fragile — a job may nest an "Overview" sub-heading that
+    // ends the walk early), take the surrounding section's text and SLICE from
+    // "About the job" onward — that drops the top-card prefix while keeping every
+    // sub-section — then trim any trailing LinkedIn sidebar noise.
+    const h = [...document.querySelectorAll("h1, h2, h3")].find((e) =>
+      /about the job/i.test(clean(e.textContent)),
+    );
+    if (h) {
+      const scope = h.closest("section") || h.parentElement?.parentElement || document.body;
+      const full = stripHtml(scope.innerHTML);
+      const idx = full.search(/about the job/i);
+      let desc = (idx >= 0 ? full.slice(idx) : full).replace(/^about the job\s*/i, "");
+      desc = desc.split(
+        /Set alert for similar jobs|People you can reach out to|Meet the hiring team|Unlock hiring insights|Similar jobs/i,
+      )[0].trim();
+      out.description = desc.slice(0, 12000);
+    }
+  }
+
   // 3) Headings / site name fallbacks.
   if (!out.title)
     out.title =
@@ -926,19 +1000,22 @@ function extractJobFromPage() {
       clean(hn.replace(/^www\./, "").split(".")[0]);
   }
 
-  // 4) Description fallback — the main content region.
-  if (!out.description) {
+  // 4) Description fallback — the main content region. Skipped on LinkedIn,
+  // where "main" is the whole feed (nav + Premium upsell), not the posting.
+  if (!out.description && !isLinkedIn) {
     const main = document.querySelector(
       "[data-qa='job-description'], .posting-page, main, article, [class*='description' i], [class*='job' i]",
     );
     out.description = stripHtml(main?.innerHTML || document.body?.innerHTML || "").slice(0, 12000);
   }
 
-  // 5) Remote + salary from visible text if still unknown.
+  // 5) Remote + salary from visible text if still unknown. The salary scan is
+  // skipped on LinkedIn — its noisy full-page text produced false hits (a stray
+  // "$100"); better to leave pay blank than wrong.
   const bodyText = document.body?.innerText || "";
   if (/\bremote\b/i.test(out.title + " " + out.location + " " + bodyText.slice(0, 1500)))
     out.is_remote = true;
-  if (!out.salary_min) {
+  if (!out.salary_min && !isLinkedIn) {
     const m = bodyText.match(
       /\$\s?([\d,]{3,})(?:\s?(?:-|–|—|to)\s?\$?\s?([\d,]{3,}))?\s*(per hour|an hour|\/\s?hr|hourly|per year|a year|annually)?/i,
     );
@@ -1013,10 +1090,15 @@ async function saveThisPage() {
   $("cap-desc").value = job.description || "";
   $("capture-edit").hidden = false;
   status.className = "status";
-  status.textContent =
-    job.title && job.company
-      ? "Review the details below, fix anything, then Save."
-      : "Couldn't auto-read much — fill in the details below and Save.";
+  const dup = findDuplicate({ title: job.title, company: job.company });
+  if (dup) {
+    status.textContent = `⚠ You already saved "${dup.title} — ${dup.company}". You can still save a duplicate below.`;
+  } else {
+    status.textContent =
+      job.title && job.company
+        ? "Review the details below, fix anything, then Save."
+        : "Couldn't auto-read much — fill in the details below and Save.";
+  }
 }
 
 async function saveCapturedJob() {
@@ -1043,6 +1125,21 @@ async function saveCapturedJob() {
     salary_max: num("cap-max"),
     salary_period: $("cap-period").value || null,
   };
+
+  // Warn before saving a job that's already in the list (same company +
+  // same/contained title). The user can still choose to save a duplicate.
+  const dup = findDuplicate(job);
+  if (dup) {
+    const ok = window.confirm(
+      `You already saved "${dup.title} — ${dup.company}".\n\n` +
+        `Save it again as a duplicate?`,
+    );
+    if (!ok) {
+      status.className = "status";
+      status.textContent = "Okay — kept the one you already have.";
+      return;
+    }
+  }
 
   const btn = $("cap-save");
   btn.disabled = true;
