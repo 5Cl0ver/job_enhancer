@@ -95,6 +95,13 @@ const SKIP = /cover[\s_-]*letter|why[\s\S]*(join|work|interested)|additional[\s_
 // (e.g. Amazon's "Choose your AI preference" personalization/consent banner).
 const NOISE = /preference|personaliz|cookie|consent|newsletter|subscrib|marketing|notification/i;
 
+// Protected self-identification (EEO / voluntary disclosure). We NEVER auto-fill,
+// learn, or let the AI guess these — ethnicity, race, gender, veteran, and
+// disability status are the user's to answer, always. Matching by the visible
+// question text, so it works on any ATS (Workday, Greenhouse, …).
+export const SELF_ID =
+  /ethnic|\brace\b|racial|gender|hispanic|latin[ox]|veteran|disab(?:led|ilit)|sexual orientation|lgbtq?|\bpronoun/i;
+
 /** Map one control to a vault key (or null when we honestly don't know). */
 export function keyFor(el, doc) {
   const type = (el.getAttribute?.("type") || el.tagName || "").toLowerCase();
@@ -204,6 +211,7 @@ export function collectUnmapped(doc) {
     if (keyFor(el, doc)) continue; // handled by the profile mapper
     const questionText = visibleLabelFor(el, doc);
     if (!questionText || NOISE.test(questionText)) continue; // skip consent/marketing widgets
+    if (SELF_ID.test(questionText)) continue; // never learn/fill protected self-ID
     const questionKey = normalizeQuestion(questionText);
     if (questionKey.length < 3) continue;
     if (seen.has(questionKey)) continue;
@@ -270,6 +278,7 @@ export function collectRadioGroups(doc) {
     const options = els.map((el) => ({ el, label: visibleLabelFor(el, doc) || el.value || "" }));
     const question = groupQuestion(els, options, doc);
     if (NOISE.test(question)) continue; // skip consent/marketing widgets (not app questions)
+    if (SELF_ID.test(question)) continue; // never auto-answer protected self-ID
     const questionKey = normalizeQuestion(question);
     if (questionKey.length < 3) continue;
     const k = keyForText(question);

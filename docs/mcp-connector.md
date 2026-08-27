@@ -70,7 +70,7 @@ You didn't have to implement any of these — the point of the design is that
 
 | File | What it does |
 | --- | --- |
-| `backend/app/mcp_server.py` | The MCP server: 8 tools + Supabase auth + identity resolution |
+| `backend/app/mcp_server.py` | The MCP server: 9 tools + Supabase auth + identity resolution |
 | `backend/app/main.py` | Mounts the MCP app at root, forwards its lifespan |
 | `backend/app/config.py` | `MCP_PUBLIC_URL` setting (empty = connector disabled) |
 | `backend/pyproject.toml` | Adds the `fastmcp` dependency |
@@ -80,7 +80,7 @@ You didn't have to implement any of these — the point of the design is that
 ### The tools Claude gets
 
 **Read:** `list_jobs`, `get_job`, `get_master_profile`, `get_pipeline`
-**Write:** `save_draft`, `set_status`, `mark_emailed`, `flag_for_research`
+**Write:** `save_job` (add a job Claude found on the web), `save_draft`, `set_status`, `mark_emailed`, `flag_for_research`
 
 Every tool resolves *which account* from the token's `email` claim — the exact
 same key `app/middleware/auth.py` uses — so the connector always acts as the

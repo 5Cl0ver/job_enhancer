@@ -7,6 +7,7 @@ from app.api.v1 import (
     ai,
     analytics,
     collections,
+    email,
     jobs,
     saved_jobs,
     saved_searches,
@@ -29,3 +30,4 @@ api_router.include_router(ai.router, prefix="/ai", tags=["AI"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
+api_router.include_router(email.router, prefix="/email", tags=["Email"])

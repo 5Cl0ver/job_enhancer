@@ -33,6 +33,14 @@ class Settings(BaseSettings):
     adzuna_app_key: str
     jsearch_api_key: str
 
+    # Email auto-status. Fernet key (url-safe base64, 32 bytes) used to encrypt
+    # a user's mailbox app-password at rest before it's stored in the database.
+    # Generate one with `python -c "from cryptography.fernet import Fernet;
+    # print(Fernet.generate_key().decode())"` and keep it OUT of the repo. Empty
+    # disables the whole email-connect feature (we refuse to store a plaintext
+    # secret), so connecting an inbox is off until this is configured.
+    mail_enc_key: str = ""
+
     # MCP connector (Claude custom connector). The PUBLIC ORIGIN of the backend,
     # WITHOUT a path — e.g. "https://job-enhancer.onrender.com". FastMCP appends
     # the "/mcp" endpoint path itself, so the URL the user pastes into Claude is

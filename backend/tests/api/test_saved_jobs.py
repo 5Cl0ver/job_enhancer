@@ -78,7 +78,8 @@ async def test_manual_add_job(client: AsyncClient):
     assert saved["job_listing"]["source"] == "manual"
     assert saved["job_listing"]["apply_url"] == "https://www.linkedin.com/jobs/view/999"
 
-    # Saving the same manual job again is a duplicate
+    # Re-saving from the capture card is idempotent — it updates the listing's
+    # details (see test below) rather than erroring with a duplicate.
     again = await client.post(
         "/v1/saved-jobs/manual",
         json={
@@ -88,7 +89,33 @@ async def test_manual_add_job(client: AsyncClient):
             "location": "Remote",
         },
     )
-    assert again.status_code == 409
+    assert again.status_code == 201
+
+
+@pytest.mark.asyncio
+async def test_manual_resave_updates_edited_description(client: AsyncClient):
+    """Editing the description in the capture card and re-saving must stick,
+    even though the job is already in the tracker (title/company/location are
+    unchanged, so it resolves to the same listing)."""
+    base = {
+        "url": "https://example.com/edit/1",
+        "title": "Support Engineer",
+        "company": "EditCo",
+        "location": "Remote",
+        "is_remote": True,
+    }
+    first = await client.post(
+        "/v1/saved-jobs/manual", json={**base, "description": "Auto-extracted blurb."}
+    )
+    assert first.status_code == 201
+    assert first.json()["job_listing"]["description"] == "Auto-extracted blurb."
+
+    edited = await client.post(
+        "/v1/saved-jobs/manual",
+        json={**base, "description": "My corrected description."},
+    )
+    assert edited.status_code == 201
+    assert edited.json()["job_listing"]["description"] == "My corrected description."
 
 
 @pytest.mark.asyncio
@@ -506,3 +533,35 @@ async def test_sync_batch_mixes_update_and_import(client: AsyncClient):
     assert body["updated"] == 1
     assert body["imported"] == 1
     assert len(body["outcomes"]) == 2
+
+
+@pytest.mark.asyncio
+async def test_manual_resave_does_not_mutate_a_listing_another_user_saved(
+    db_session: AsyncSession, test_user
+):
+    """job_listings is a SHARED pool: one user re-saving a manual job must never
+    overwrite a listing another user also saved (isolation)."""
+    from app.schemas.saved_job import ManualJobCreate
+    from app.services import saved_jobs as svc
+    from app.services.users import create_user
+
+    payload = dict(
+        url="https://example.com/j",
+        title="Data Engineer",
+        company="Globex",
+        location="Remote",
+    )
+    a = await svc.save_manual_job(
+        db_session, test_user.id, ManualJobCreate(**payload, description="Original")
+    )
+    user_b = await create_user(db_session, email="b_isolation@test.dev", name="B")
+    b = await svc.save_manual_job(
+        db_session,
+        user_b.id,
+        ManualJobCreate(**payload, description="B tries to overwrite"),
+    )
+    await db_session.flush()
+
+    assert a.job_listing_id == b.job_listing_id  # same shared listing
+    await db_session.refresh(a.job_listing)
+    assert a.job_listing.description == "Original"  # B could not clobber it
