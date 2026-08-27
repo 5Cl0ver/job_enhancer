@@ -111,7 +111,8 @@ async def test_manual_resave_updates_edited_description(client: AsyncClient):
     assert first.json()["job_listing"]["description"] == "Auto-extracted blurb."
 
     edited = await client.post(
-        "/v1/saved-jobs/manual", json={**base, "description": "My corrected description."}
+        "/v1/saved-jobs/manual",
+        json={**base, "description": "My corrected description."},
     )
     assert edited.status_code == 201
     assert edited.json()["job_listing"]["description"] == "My corrected description."

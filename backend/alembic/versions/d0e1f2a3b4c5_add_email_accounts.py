@@ -41,9 +41,7 @@ def upgrade() -> None:
         sa.Column("imap_host", sa.String(255), nullable=False),
         sa.Column("imap_port", sa.Integer(), nullable=False, server_default="993"),
         sa.Column("secret_encrypted", sa.Text(), nullable=False),
-        sa.Column(
-            "status", sa.String(20), nullable=False, server_default="connected"
-        ),
+        sa.Column("status", sa.String(20), nullable=False, server_default="connected"),
         sa.Column("last_error", sa.Text(), nullable=True),
         sa.Column("last_scan_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
