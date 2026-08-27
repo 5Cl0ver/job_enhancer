@@ -28,6 +28,10 @@ from app.services.email_scan import EmailMessage
 # `DEFAULT_LIMIT` newest so a huge window can't fetch thousands of bodies.
 DEFAULT_SINCE_DAYS = 45
 DEFAULT_LIMIT = 250
+# Socket timeout (seconds). Without it a hung/slow mail server would block the
+# worker thread — and the scan request — indefinitely. A timeout turns that into
+# a clean error the endpoint already reports as status="error".
+IMAP_TIMEOUT = 20
 
 
 class ImapAuthError(Exception):
@@ -80,7 +84,7 @@ def _parse_message(uid: str, raw: bytes) -> EmailMessage:
 def _fetch_sync(
     host: str, port: int, address: str, password: str, limit: int, since_days: int
 ) -> list[EmailMessage]:
-    conn = imaplib.IMAP4_SSL(host, port)
+    conn = imaplib.IMAP4_SSL(host, port, timeout=IMAP_TIMEOUT)
     try:
         try:
             conn.login(address, password)

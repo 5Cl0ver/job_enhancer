@@ -59,6 +59,12 @@ def upgrade() -> None:
             server_default=sa.func.now(),
         ),
     )
+    # Enable Row-Level Security so the table is deny-all to the public/anon role
+    # (no policies = no access); the backend connects with a bypassing role. On
+    # Supabase this is auto-enabled too, but doing it here makes the security
+    # posture reproducible on any Postgres. Skipped on SQLite (tests).
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("ALTER TABLE email_accounts ENABLE ROW LEVEL SECURITY")
 
 
 def downgrade() -> None:

@@ -862,6 +862,11 @@ function renderStagedResume(filename) {
 // fully self-contained — no references to anything outside the function. It
 // reads JSON-LD JobPosting first (Glassdoor, most company sites, many boards),
 // then falls back to og-tags + headings + visible text (Lever, plain sites).
+//
+// The LinkedIn branch below MIRRORS src/extract/linkedin.js (which the content
+// script uses and which is unit-tested). They can't share code — this one is
+// injected and must be self-contained — so keep the two in sync when LinkedIn
+// changes.
 // ---------------------------------------------------------------------------
 
 function extractJobFromPage() {

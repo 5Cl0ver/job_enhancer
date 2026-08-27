@@ -70,6 +70,10 @@ def upgrade() -> None:
         "detected_events",
         ["user_id", "status"],
     )
+    # Deny-all to the public/anon role (no policies); backend bypasses via its
+    # role. Reproducible RLS on any Postgres; skipped on SQLite (tests).
+    if op.get_bind().dialect.name == "postgresql":
+        op.execute("ALTER TABLE detected_events ENABLE ROW LEVEL SECURITY")
 
 
 def downgrade() -> None:

@@ -9,11 +9,14 @@ manual-save service the tool calls).
 
 import pytest
 from sqlalchemy import select
+from sqlalchemy.ext.asyncio import async_sessionmaker
 
+import app.mcp_server as mcp_mod
 from app.mcp_server import mcp
 from app.models.saved_job import SavedJob
 from app.schemas.saved_job import ManualJobCreate
 from app.services import saved_jobs as sj_svc
+from app.services.users import create_user
 
 EXPECTED_TOOLS = {
     "list_jobs",
@@ -72,3 +75,36 @@ async def test_claude_discovered_job_lands_in_tracker(db_session, test_user):
     assert sj.job_listing.title == "Backend Engineer"
     assert sj.job_listing.company == "Acme"
     assert sj.job_listing.is_remote is True
+
+
+@pytest.mark.asyncio
+async def test_save_job_tool_end_to_end(engine, monkeypatch):
+    """Drive the actual save_job tool through its real code path: identity from
+    the token's email claim, its own DB session, commit — the way Claude calls
+    it. We point the tool's session factory + token resolver at the test DB."""
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False, autoflush=False)
+    async with maker() as s:
+        await create_user(s, email="claude@test.dev", name="Claude User")
+        await s.commit()
+
+    monkeypatch.setattr(mcp_mod, "AsyncSessionLocal", maker)
+    monkeypatch.setattr(
+        mcp_mod,
+        "get_access_token",
+        lambda: type("Tok", (), {"claims": {"email": "claude@test.dev"}})(),
+    )
+
+    out = await mcp_mod.save_job(
+        title="Platform Engineer",
+        company="Umbrella",
+        apply_url="https://boards.greenhouse.io/umbrella/jobs/9",
+        location="Seattle, WA",
+        salary_min=140000,
+        salary_period="yearly",
+    )
+    assert out["title"] == "Platform Engineer"
+    assert out["company"] == "Umbrella"
+
+    async with maker() as s:
+        rows = (await s.scalars(select(SavedJob))).all()
+        assert any(str(r.id) == out["job_id"] for r in rows)

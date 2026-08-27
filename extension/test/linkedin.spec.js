@@ -6,7 +6,11 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { Window } from "happy-dom";
-import { extractLinkedIn, titleFromDocTitle } from "../src/extract/linkedin.js";
+import {
+  descriptionFrom,
+  extractLinkedIn,
+  titleFromDocTitle,
+} from "../src/extract/linkedin.js";
 import { extractJob } from "../src/extract/index.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
@@ -46,5 +50,14 @@ describe("extractLinkedIn — stable against randomized classes", () => {
     const job = extractJob(docFrom("linkedin-jobview.html"), URL);
     expect(job.title).toBe("Senior Platform Engineer");
     expect(job.company).toBe("Initech, Inc.");
+  });
+
+  it("extracts the description from 'About the job', keeping sub-sections", () => {
+    const desc = descriptionFrom(docFrom("linkedin-jobview.html"));
+    expect(desc).toContain("Employment Type: Full-Time");
+    expect(desc).toContain("Requirements"); // survives the sub-heading
+    expect(desc).toContain("Kubernetes");
+    expect(desc).not.toMatch(/about the job/i); // label stripped
+    expect(desc).not.toContain("Set alert for similar jobs"); // sidebar dropped
   });
 });

@@ -100,7 +100,7 @@ const NOISE = /preference|personaliz|cookie|consent|newsletter|subscrib|marketin
 // disability status are the user's to answer, always. Matching by the visible
 // question text, so it works on any ATS (Workday, Greenhouse, …).
 export const SELF_ID =
-  /ethnic|\brace\b|racial|gender|hispanic|latin[ox]|veteran|disab|sexual orientation|lgbtq?|\bpronoun/i;
+  /ethnic|\brace\b|racial|gender|hispanic|latin[ox]|veteran|disab(?:led|ilit)|sexual orientation|lgbtq?|\bpronoun/i;
 
 /** Map one control to a vault key (or null when we honestly don't know). */
 export function keyFor(el, doc) {

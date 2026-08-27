@@ -7,7 +7,7 @@ from urllib.parse import quote_plus
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
@@ -216,20 +216,30 @@ async def save_manual_job(
         await db.flush()
     else:
         # An explicit, user-reviewed save from the capture card: honor the
-        # details the user typed/fixed. Overwrite the stored listing when they
-        # provided a value (but never wipe a field back to empty). This is what
-        # makes editing the description in the review card actually stick.
-        if data.description:
-            listing.description = data.description
-        if data.salary_min:
-            listing.salary_min = data.salary_min
-        if data.salary_max:
-            listing.salary_max = data.salary_max
-        if data.salary_period and (data.salary_min or data.salary_max):
-            listing.salary_period = data.salary_period
-        if data.job_type:
-            listing.job_type = data.job_type
-        listing.is_remote = data.is_remote
+        # details the user typed/fixed. BUT job_listings is a SHARED pool, so we
+        # only edit the row when it's a manual entry that no one else has saved —
+        # never mutate a listing another user relies on. Overwrite only fields
+        # the user provided (never wipe a value back to empty).
+        others = await db.scalar(
+            select(func.count())
+            .select_from(SavedJob)
+            .where(
+                SavedJob.job_listing_id == listing.id,
+                SavedJob.user_id != user_id,
+            )
+        )
+        if listing.source == "manual" and not others:
+            if data.description:
+                listing.description = data.description
+            if data.salary_min:
+                listing.salary_min = data.salary_min
+            if data.salary_max:
+                listing.salary_max = data.salary_max
+            if data.salary_period and (data.salary_min or data.salary_max):
+                listing.salary_period = data.salary_period
+            if data.job_type:
+                listing.job_type = data.job_type
+            listing.is_remote = data.is_remote
         await db.flush()
 
     # Already in the user's tracker? Then the edits above are the whole point of
