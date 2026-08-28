@@ -35,6 +35,7 @@ from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.schemas.saved_job import ManualJobCreate
+from app.services import collections as col_svc
 from app.services import saved_jobs as sj_svc
 from app.services import tracker as tracker_svc
 
@@ -93,7 +94,33 @@ def _iso(dt: datetime | None) -> str | None:
     return dt.isoformat() if dt else None
 
 
-def _job_summary(sj: SavedJob, stage_name: str | None) -> dict[str, Any]:
+async def _labels(db, user: User) -> tuple[dict[Any, str], dict[Any, str]]:
+    """The two id -> name maps every job summary needs: pipeline stages and
+    collections. Loaded as maps (not relationships) so the async session never
+    lazy-loads mid-serialization."""
+    stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
+    cols = {c.id: c.name for c in await col_svc.list_collections(db, user.id)}
+    return stages, cols
+
+
+async def _resolve_collection(db, user: User, name: str):
+    """Find one of the user's collections BY NAME (case-insensitive). Mirrors how
+    set_status resolves a stage: we never create folders on Claude's say-so, and
+    an unknown name errors with the real list so Claude can correct itself."""
+    cols = await col_svc.list_collections(db, user.id)
+    match = next((c for c in cols if c.name.lower() == name.strip().lower()), None)
+    if match is None:
+        names = ", ".join(c.name for c in cols) or "(none yet)"
+        raise ValueError(
+            f"No collection named '{name}'. Your collections: {names}. "
+            "Create it in the app first."
+        )
+    return match
+
+
+def _job_summary(
+    sj: SavedJob, stage_name: str | None, collection_name: str | None
+) -> dict[str, Any]:
     j = sj.job_listing
     return {
         "job_id": str(sj.id),
@@ -101,16 +128,19 @@ def _job_summary(sj: SavedJob, stage_name: str | None) -> dict[str, Any]:
         "company": j.company,
         "location": j.location,
         "stage": stage_name,
+        "collection": collection_name,
         "applied_at": _iso(sj.applied_at),
         "emailed_at": _iso(sj.emailed_at),
         "flagged_for_research": sj.flagged_for_research,
     }
 
 
-def _job_detail(sj: SavedJob, stage_name: str | None) -> dict[str, Any]:
+def _job_detail(
+    sj: SavedJob, stage_name: str | None, collection_name: str | None
+) -> dict[str, Any]:
     j = sj.job_listing
     return {
-        **_job_summary(sj, stage_name),
+        **_job_summary(sj, stage_name, collection_name),
         "description": j.description,
         "salary_min": j.salary_min,
         "salary_max": j.salary_max,
@@ -179,28 +209,58 @@ mcp = FastMCP(
         "résumés, cover letters, or outreach emails, ALWAYS call "
         "get_master_profile first and ground everything strictly in it — never "
         "invent experience, employers, dates, or skills the user doesn't have. "
-        "Never mark a job applied or emailed unless the user says they did it."
+        "Never mark a job applied or emailed unless the user says they did it. "
+        "Collections are the user's folders: call list_collections to see them, "
+        "pass `collection` to save_job to file a new job straight into one, and "
+        "use move_to_collection for a job that's already saved."
     ),
     auth=_build_auth(),
 )
 
 
 @mcp.tool
-async def list_jobs(status: str | None = None, limit: int = 25) -> list[dict]:
+async def list_jobs(
+    status: str | None = None, collection: str | None = None, limit: int = 25
+) -> list[dict]:
     """List the user's saved jobs. Optionally filter by pipeline stage NAME
-    (e.g. "Applied", "Interview"). Returns title, company, stage and key dates."""
+    (e.g. "Applied", "Interview") and/or by collection NAME — the user's folders
+    (e.g. "Claude"). Returns title, company, stage, collection and key dates."""
     async with _session_user() as (db, user):
-        stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
-        jobs = await sj_svc.list_saved_jobs(db, user.id)
+        stages, cols = await _labels(db, user)
+        col_id = (
+            (await _resolve_collection(db, user, collection)).id if collection else None
+        )
+        jobs = await sj_svc.list_saved_jobs(db, user.id, collection_id=col_id)
         out: list[dict] = []
         for sj in jobs:
             stage_name = stages.get(sj.pipeline_stage_id)
             if status and (stage_name or "").lower() != status.strip().lower():
                 continue
-            out.append(_job_summary(sj, stage_name))
+            out.append(_job_summary(sj, stage_name, cols.get(sj.collection_id)))
             if len(out) >= max(1, min(limit, 100)):
                 break
         return out
+
+
+@mcp.tool
+async def list_collections() -> list[dict]:
+    """The user's collections (their folders for organizing saved jobs), each
+    with how many jobs are filed in it. Call this before save_job or
+    move_to_collection so you use a name that actually exists."""
+    async with _session_user() as (db, user):
+        cols = await col_svc.list_collections(db, user.id)
+        jobs = await sj_svc.list_saved_jobs(db, user.id)
+        counts: dict[Any, int] = {}
+        for sj in jobs:
+            counts[sj.collection_id] = counts.get(sj.collection_id, 0) + 1
+        return [
+            {
+                "collection": c.name,
+                "jobs": counts.get(c.id, 0),
+                "is_default": c.is_default,
+            }
+            for c in cols
+        ]
 
 
 @mcp.tool
@@ -214,6 +274,7 @@ async def save_job(
     salary_min: int | None = None,
     salary_max: int | None = None,
     salary_period: str | None = None,
+    collection: str | None = None,
     notes: str | None = None,
 ) -> dict:
     """Save a job you found (from its posting URL) into the user's tracker, so it
@@ -221,12 +282,15 @@ async def save_job(
     add, or track a job you located on the web.
 
     ``apply_url`` must be the http(s) link to the posting. ``salary_period`` is
-    'yearly' or 'hourly' when a salary is given. If the same title+company+
-    location is already saved, this returns the existing job instead of a
-    duplicate. Returns the saved job's summary (including its job_id, which other
-    tools like get_job / save_draft / set_status take)."""
+    'yearly' or 'hourly' when a salary is given. ``collection`` files the job into
+    one of the user's folders BY NAME (see list_collections); omit it and the job
+    lands in their default collection. If the same title+company+location is
+    already saved, this returns the existing job instead of a duplicate. Returns
+    the saved job's summary (including its job_id, which other tools like
+    get_job / save_draft / set_status take)."""
     period = salary_period if salary_period in ("yearly", "hourly") else None
     async with _session_user() as (db, user):
+        col = await _resolve_collection(db, user, collection) if collection else None
         data = ManualJobCreate(
             url=apply_url,
             title=title,
@@ -237,12 +301,15 @@ async def save_job(
             salary_min=salary_min,
             salary_max=salary_max,
             salary_period=period,
+            collection_id=col.id if col else None,
             notes=notes,
         )
         sj = await sj_svc.save_manual_job(db, user.id, data)
         await db.commit()
-        stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
-        return _job_summary(sj, stages.get(sj.pipeline_stage_id))
+        stages, cols = await _labels(db, user)
+        return _job_summary(
+            sj, stages.get(sj.pipeline_stage_id), cols.get(sj.collection_id)
+        )
 
 
 @mcp.tool
@@ -251,8 +318,10 @@ async def get_job(job_id: str) -> dict:
     stage and dates. Use this to tailor a résumé/email to a specific role."""
     async with _session_user() as (db, user):
         sj = await sj_svc.get_saved_job(db, _uuid(job_id), user.id)
-        stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
-        return _job_detail(sj, stages.get(sj.pipeline_stage_id))
+        stages, cols = await _labels(db, user)
+        return _job_detail(
+            sj, stages.get(sj.pipeline_stage_id), cols.get(sj.collection_id)
+        )
 
 
 @mcp.tool
@@ -316,7 +385,22 @@ async def set_status(job_id: str, stage: str) -> dict:
             raise ValueError(f"No stage named '{stage}'. Your stages: {names}")
         sj = await tracker_svc.move_job_to_stage(db, _uuid(job_id), match.id, user.id)
         await db.commit()
-        return _job_summary(sj, match.name)
+        _, cols = await _labels(db, user)
+        return _job_summary(sj, match.name, cols.get(sj.collection_id))
+
+
+@mcp.tool
+async def move_to_collection(job_id: str, collection: str) -> dict:
+    """File an already-saved job into one of the user's collections BY NAME —
+    their folders in the app (see list_collections). Use this when the user asks
+    to move, file, or organize a job they've already saved."""
+    async with _session_user() as (db, user):
+        col = await _resolve_collection(db, user, collection)
+        sj = await sj_svc.get_saved_job(db, _uuid(job_id), user.id)
+        sj.collection_id = col.id
+        await db.commit()
+        stages, _ = await _labels(db, user)
+        return _job_summary(sj, stages.get(sj.pipeline_stage_id), col.name)
 
 
 @mcp.tool
@@ -327,8 +411,10 @@ async def mark_emailed(job_id: str) -> dict:
         sj = await sj_svc.get_saved_job(db, _uuid(job_id), user.id)
         sj.emailed_at = datetime.now(tz=UTC)
         await db.commit()
-        stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
-        return _job_summary(sj, stages.get(sj.pipeline_stage_id))
+        stages, cols = await _labels(db, user)
+        return _job_summary(
+            sj, stages.get(sj.pipeline_stage_id), cols.get(sj.collection_id)
+        )
 
 
 @mcp.tool
@@ -338,8 +424,10 @@ async def flag_for_research(job_id: str, flagged: bool = True) -> dict:
         sj = await sj_svc.get_saved_job(db, _uuid(job_id), user.id)
         sj.flagged_for_research = flagged
         await db.commit()
-        stages = {s.id: s.name for s in await tracker_svc.list_stages(db, user.id)}
-        return _job_summary(sj, stages.get(sj.pipeline_stage_id))
+        stages, cols = await _labels(db, user)
+        return _job_summary(
+            sj, stages.get(sj.pipeline_stage_id), cols.get(sj.collection_id)
+        )
 
 
 def build_mcp_app():
