@@ -85,8 +85,12 @@ You didn't have to implement any of these — the point of the design is that
 Collections are the user's folders. `save_job` takes an optional `collection`
 name and `list_jobs` filters by one; both resolve the name case-insensitively
 against the user's real collections and error with the actual list on a miss.
-Claude can file jobs but never *creates* folders — that stays a deliberate act
-in the app.
+Because the table's uniqueness constraint *is* case-sensitive, a name that hits
+two collections errors too rather than filing into whichever sorted first.
+Omitting `collection` leaves the job unfiled, exactly as saving from the app
+does — and naming one on a job that's already saved re-files it instead of
+dropping the instruction. Claude can file jobs but never *creates* folders —
+that stays a deliberate act in the app.
 
 Every tool resolves *which account* from the token's `email` claim — the exact
 same key `app/middleware/auth.py` uses — so the connector always acts as the
