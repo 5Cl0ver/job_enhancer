@@ -273,3 +273,26 @@ async def test_a_name_matching_two_collections_asks_instead_of_guessing(
             apply_url="https://boards.greenhouse.io/acme/jobs/4",
             collection="REMOTE",
         )
+
+
+@pytest.mark.asyncio
+async def test_the_posting_description_is_stored_verbatim(engine, monkeypatch):
+    """The user tailors applications from the description they read in the app, so
+    whatever the connector sends must come back byte-for-byte — no truncation, no
+    normalization. (Whether Claude *sends* the real text is a matter of the tool
+    instructions; this locks the storage half of that promise.)"""
+    await _connected_user(engine, monkeypatch, email="verbatim@test.dev")
+    posting = (
+        "About the role\n\n"
+        + "We are looking for a senior backend engineer. " * 200
+        + '\n\nRequirements:\n- 5+ years Python\n- Postgres\n\t- Tabs & "quotes" — em-dash\n'
+    )
+    saved = await mcp_mod.save_job(
+        title="Senior Backend Engineer",
+        company="Verbatim Corp",
+        apply_url="https://boards.greenhouse.io/verbatim/jobs/1",
+        description=posting,
+    )
+    detail = await mcp_mod.get_job(saved["job_id"])
+    assert detail["description"] == posting
+    assert len(detail["description"]) > 2000  # nothing clipped it to a preview
