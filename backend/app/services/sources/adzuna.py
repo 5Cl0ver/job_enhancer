@@ -29,6 +29,9 @@ class AdzunaSource(JobSource):
         page: int,
         page_size: int,
     ) -> list[dict[str, Any]]:
+        # No keys configured → source disabled; skip the guaranteed-to-fail call.
+        if not settings.adzuna_app_id or not settings.adzuna_app_key:
+            return []
         url = f"{_BASE}/{_COUNTRY}/search/{page}"
         params: dict[str, Any] = {
             "app_id": settings.adzuna_app_id,
