@@ -226,7 +226,10 @@ mcp = FastMCP(
     instructions=(
         "Tools to help the user find, save, and apply to jobs. When the user "
         "asks you to save/add/track a job you found on the web, call save_job "
-        "with the posting's real title, company, and apply_url. When drafting "
+        "with the posting's real title, company, and apply_url, and pass the "
+        "posting's own description text VERBATIM — the user reads it in the app "
+        "and tailors applications from it, so never summarize, shorten, or "
+        "rewrite it. When drafting "
         "résumés, cover letters, or outreach emails, ALWAYS call "
         "get_master_profile first and ground everything strictly in it — never "
         "invent experience, employers, dates, or skills the user doesn't have. "
@@ -301,7 +304,13 @@ async def save_job(
     shows up in the app ready to apply. Use this when the user asks you to save,
     add, or track a job you located on the web.
 
-    ``apply_url`` must be the http(s) link to the posting. ``salary_period`` is
+    ``apply_url`` must be the http(s) link to the posting. ``description`` must be
+    the posting's OWN text, copied verbatim — responsibilities, requirements and
+    all. Do NOT summarize, condense, or paraphrase it: the user reads this in the
+    app and tailors their résumé and cover letters from it, so a summary silently
+    loses the requirements they need. Send the full text when you can see it, and
+    leave it empty rather than substituting a description of your own.
+    ``salary_period`` is
     'yearly' or 'hourly' when a salary is given. ``collection`` files the job into
     one of the user's folders BY NAME (see list_collections); omit it and the job
     is saved without a folder, exactly as saving from the app does. If the same
