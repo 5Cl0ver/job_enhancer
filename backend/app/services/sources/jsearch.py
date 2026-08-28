@@ -31,6 +31,9 @@ class JSearchSource(JobSource):
         page: int,
         page_size: int,
     ) -> list[dict[str, Any]]:
+        # No key configured → source disabled; skip the guaranteed-to-fail call.
+        if not settings.jsearch_api_key:
+            return []
         params: dict[str, Any] = {
             "query": f"{q} {location or ''}".strip(),
             "page": str(page),

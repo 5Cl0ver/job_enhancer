@@ -28,10 +28,12 @@ class Settings(BaseSettings):
     # when the free tier has capacity (e.g. meta/llama-3.3-70b-instruct).
     nvidia_model: str = "meta/llama-3.1-8b-instruct"
 
-    # Job APIs
-    adzuna_app_id: str
-    adzuna_app_key: str
-    jsearch_api_key: str
+    # Job APIs — OPTIONAL. Adzuna + JSearch need keys; without them those two
+    # sources just return nothing (the app still aggregates from the keyless
+    # sources: Remotive, RemoteOK, Jobicy, The Muse). Empty = source disabled.
+    adzuna_app_id: str = ""
+    adzuna_app_key: str = ""
+    jsearch_api_key: str = ""
 
     # Email auto-status. Fernet key (url-safe base64, 32 bytes) used to encrypt
     # a user's mailbox app-password at rest before it's stored in the database.
