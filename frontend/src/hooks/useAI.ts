@@ -63,7 +63,9 @@ export function useGenerateDocument() {
  */
 export function useJobDocuments(jobListingId: string | null | undefined) {
   return useQuery<GeneratedDocument[]>({
-    queryKey: ["job-documents", jobListingId],
+    // Nested under ["documents"] on purpose: TanStack matches invalidations by
+    // key prefix, so useGenerateDocument's invalidate reaches this list too.
+    queryKey: ["documents", "by-job", jobListingId],
     queryFn: () =>
       api.get<GeneratedDocument[]>(
         `/v1/ai/documents?job_listing_id=${encodeURIComponent(jobListingId!)}`,
@@ -87,6 +89,10 @@ export function useUpdateDocument() {
   return useMutation({
     mutationFn: ({ id, edited_content }: { id: string; edited_content: string }) =>
       api.patch<GeneratedDocument>(`/v1/ai/documents/${id}`, { edited_content }),
-    onSuccess: (doc) => qc.setQueryData(["documents", doc.id], doc),
+    onSuccess: (doc) => {
+      qc.setQueryData(["documents", doc.id], doc);
+      // Edited text is shown by the per-job list too, so refresh those.
+      qc.invalidateQueries({ queryKey: ["documents", "by-job"] });
+    },
   });
 }

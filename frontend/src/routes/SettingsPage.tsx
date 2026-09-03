@@ -1,7 +1,9 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { Download, Trash2, Loader2, Check, LogOut } from "lucide-react";
+import { Link } from "react-router-dom";
 import { createClient } from "@/lib/supabase/client";
+import { MOBILE_OVERFLOW_NAV } from "@/routes/DashboardLayout";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -37,6 +39,7 @@ export default function SettingsPage() {
       <EmailConnectCard />
       <SavedAnswersCard />
       <DataExportCard />
+      <MoreNavCard />
       <SignOutCard />
       <DeleteAccountCard email={userEmail} />
     </div>
@@ -142,6 +145,32 @@ function DataExportCard() {
           {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           Export Data
         </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * The bottom tab bar can only hold five destinations, so the routes it leaves
+ * out get a home here — otherwise the desktop-only sidebar would be the sole
+ * way to reach them and they'd be stranded on a phone.
+ */
+function MoreNavCard() {
+  return (
+    <Card className="md:hidden">
+      <CardHeader>
+        <CardTitle className="text-base">More</CardTitle>
+        <CardDescription>Pages that don't fit in the bottom bar.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-2">
+        {MOBILE_OVERFLOW_NAV.map((item) => (
+          <Button key={item.to} asChild variant="outline" className="w-full justify-start gap-2">
+            <Link to={item.to}>
+              <item.icon className="h-4 w-4" aria-hidden />
+              {item.label}
+            </Link>
+          </Button>
+        ))}
       </CardContent>
     </Card>
   );

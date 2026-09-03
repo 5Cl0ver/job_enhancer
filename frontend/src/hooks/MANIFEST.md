@@ -12,7 +12,7 @@ optimistic updates where useful.
 | `useSavedSearches.ts` | `useSavedSearches`, `useCreateSavedSearch`, `useDeleteSavedSearch`, `useNewMatches`, `useMarkMatchesSeen` | `/v1/saved-searches` |
 | `useAnalytics.ts` | `useAnalyticsSummary` | `GET /v1/analytics/summary` |
 | `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers` | `/v1/admin/*` |
-| `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
+| `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useJobDocuments`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every

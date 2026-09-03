@@ -3,7 +3,7 @@ import { FileText, Copy, Check, Download, Loader2, ChevronDown, Sparkles } from 
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { api } from "@/lib/api";
+import { downloadDocumentPdf } from "@/lib/downloadDocumentPdf";
 import { useJobDocuments } from "@/hooks/useAI";
 import { cn } from "@/lib/utils";
 import type { GeneratedDocument } from "@/types/api";
@@ -39,21 +39,11 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
     }
   };
 
-  // The PDF route is behind auth, so `<a download>` can't fetch it directly —
-  // pull it as a blob with the Bearer header, then hand the browser a blob URL.
   const downloadPdf = async () => {
     setDownloading(true);
     setDownloadError(false);
     try {
-      const blob = await api.getBlob(`/v1/ai/documents/${doc.id}/pdf`);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${doc.document_type}-${doc.id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadDocumentPdf(doc.id, `${doc.document_type}-${doc.id}.pdf`);
     } catch {
       setDownloadError(true);
     } finally {
@@ -137,7 +127,17 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
  * `save_draft`: without it a draft Claude writes is stored but invisible.
  */
 export function JobDocuments({ jobListingId }: { jobListingId: string | null | undefined }) {
-  const { data: docs = [], isLoading } = useJobDocuments(jobListingId);
+  const { data: docs = [], isLoading, isError } = useJobDocuments(jobListingId);
+
+  // A failed fetch must not look like "Claude never saved anything" — say so,
+  // otherwise a broken request is indistinguishable from an empty list.
+  if (isError) {
+    return (
+      <p className="text-xs text-muted-foreground">
+        Couldn't load saved documents for this job.
+      </p>
+    );
+  }
 
   if (isLoading || docs.length === 0) return null;
 

@@ -3,7 +3,7 @@ import { Download, Copy, RefreshCw, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { api } from "@/lib/api";
+import { downloadDocumentPdf } from "@/lib/downloadDocumentPdf";
 import type { GeneratedDocument } from "@/types/api";
 
 interface DocumentControlsProps {
@@ -25,21 +25,11 @@ export function DocumentControls({ doc, onRegenerate, isRegenerating }: Document
     setTimeout(() => setCopied(false), 2000);
   };
 
-  // The PDF endpoint requires the Supabase Bearer token, which window.open can't
-  // send. Fetch it as an authenticated blob, then hand the browser an object URL.
   const handleDownload = async () => {
     setDownloadError(false);
     setDownloading(true);
     try {
-      const blob = await api.getBlob(`/v1/ai/documents/${doc.id}/pdf`);
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement("a");
-      a.href = url;
-      a.download = `${doc.document_type}-${doc.id}.pdf`;
-      document.body.appendChild(a);
-      a.click();
-      a.remove();
-      URL.revokeObjectURL(url);
+      await downloadDocumentPdf(doc.id, `${doc.document_type}-${doc.id}.pdf`);
     } catch {
       setDownloadError(true);
     } finally {

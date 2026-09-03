@@ -31,9 +31,12 @@ const NAV: NavItem[] = [
   { to: "/admin", label: "Admin", icon: Shield },
 ];
 
-// Five tabs is the most that stays tappable on a narrow phone; the rest stay
-// reachable from Settings and by URL.
+// Five tabs is the most that stays tappable on a narrow phone. Everything the
+// bar can't hold gets a row at the top of Settings — the sidebar used to be the
+// only way to reach those routes, so dropping them from the bar without a
+// replacement would strand them on mobile.
 const MOBILE_NAV = NAV.filter((item) => item.primary);
+export const MOBILE_OVERFLOW_NAV = NAV.filter((item) => !item.primary);
 
 export function DashboardLayout() {
   // Live-sync saved jobs across the app, the extension, and other tabs.
