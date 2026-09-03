@@ -3,6 +3,7 @@ import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { MatchScore } from "@/components/jobs/MatchScore";
+import { JobDocuments } from "@/components/ai/JobDocuments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
@@ -120,6 +121,10 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
 
       {/* How well the resume covers this job's named skills */}
       <MatchScore jobId={job.id} />
+
+      {/* Résumés and cover letters saved for this job — app-generated or written
+          by Claude through the MCP connector. */}
+      <JobDocuments jobListingId={job.id} />
 
       {/* Description */}
       {job.description ? (
