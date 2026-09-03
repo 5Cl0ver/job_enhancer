@@ -368,6 +368,23 @@ async def generate_document(
     return GeneratedDocumentSchema.model_validate(doc)
 
 
+@router.get("/documents", response_model=list[GeneratedDocumentSchema])
+async def list_documents(
+    job_listing_id: uuid.UUID | None = None,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[GeneratedDocumentSchema]:
+    """Every document the user has for a job — including drafts Claude wrote via
+    the MCP connector (`save_draft`), which otherwise had no way into the UI.
+    Without `job_listing_id`, returns the user's most recent documents."""
+    stmt = select(GeneratedDocument).where(GeneratedDocument.user_id == user.id)
+    if job_listing_id is not None:
+        stmt = stmt.where(GeneratedDocument.job_listing_id == job_listing_id)
+    stmt = stmt.order_by(GeneratedDocument.created_at.desc()).limit(50)
+    rows = (await db.scalars(stmt)).all()
+    return [GeneratedDocumentSchema.model_validate(d) for d in rows]
+
+
 @router.get("/documents/{doc_id}", response_model=GeneratedDocumentSchema)
 async def get_document(
     doc_id: uuid.UUID,
