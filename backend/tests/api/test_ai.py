@@ -333,3 +333,61 @@ async def test_work_history_parses_active_resume(
     assert data[0]["title"] == "IT Support Technician"
     assert data[0]["start_year"] == 2022
     assert data[0]["current"] is False
+
+
+@pytest.mark.asyncio
+async def test_list_documents_by_job(client: AsyncClient, db_session, test_user):
+    """A draft Claude saved through the MCP connector must be findable by job —
+    otherwise `save_draft` writes into a void the UI can never read."""
+    import uuid as _uuid
+
+    from app.models.generated_document import GeneratedDocument
+    from app.models.job_listing import JobListing
+    from app.services.dedup import job_content_hash, normalize
+
+    tn, cn, ln = normalize("Data Engineer"), normalize("Globex"), normalize("Remote")
+    listing = JobListing(
+        id=_uuid.uuid4(),
+        external_id="manual:doc-list-test",
+        source="manual",
+        title="Data Engineer",
+        company="Globex",
+        location="Remote",
+        is_remote=True,
+        apply_url="https://example.com/job",
+        content_hash=job_content_hash(tn, cn, ln),
+        title_normalized=tn,
+        company_normalized=cn,
+    )
+    db_session.add(listing)
+    await db_session.flush()
+
+    mine = GeneratedDocument(
+        id=_uuid.uuid4(),
+        user_id=test_user.id,
+        job_listing_id=listing.id,
+        document_type="resume",
+        content="Tailored for Globex.",
+        model_used="claude-connector",
+    )
+    # A document for a different job must not leak into this job's list.
+    other = GeneratedDocument(
+        id=_uuid.uuid4(),
+        user_id=test_user.id,
+        document_type="cover_letter",
+        content="Unrelated.",
+    )
+    db_session.add_all([mine, other])
+    await db_session.commit()
+
+    r = await client.get(f"/v1/ai/documents?job_listing_id={listing.id}")
+    assert r.status_code == 200
+    body = r.json()
+    assert [d["id"] for d in body] == [str(mine.id)]
+    assert body[0]["model_used"] == "claude-connector"
+    assert body[0]["content"] == "Tailored for Globex."
+
+    # No filter → the user's documents, both of them.
+    r_all = await client.get("/v1/ai/documents")
+    assert r_all.status_code == 200
+    assert {d["id"] for d in r_all.json()} >= {str(mine.id), str(other.id)}

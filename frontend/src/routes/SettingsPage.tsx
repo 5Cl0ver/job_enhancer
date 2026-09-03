@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Download, Trash2, Loader2, Check } from "lucide-react";
+import { Download, Trash2, Loader2, Check, LogOut } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
@@ -37,6 +37,7 @@ export default function SettingsPage() {
       <EmailConnectCard />
       <SavedAnswersCard />
       <DataExportCard />
+      <SignOutCard />
       <DeleteAccountCard email={userEmail} />
     </div>
   );
@@ -140,6 +141,34 @@ function DataExportCard() {
         <Button variant="outline" onClick={handleExport} disabled={downloading} className="gap-2">
           {downloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Download className="h-4 w-4" />}
           Export Data
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/**
+ * Sign out lives in the desktop sidebar, which is hidden on phones — so the
+ * mobile tab bar's Settings tab carries it instead.
+ */
+function SignOutCard() {
+  return (
+    <Card className="md:hidden">
+      <CardHeader>
+        <CardTitle className="text-base">Session</CardTitle>
+        <CardDescription>Sign out of Job Enhancer on this device.</CardDescription>
+      </CardHeader>
+      <CardContent>
+        <Button
+          variant="outline"
+          className="w-full gap-2"
+          onClick={async () => {
+            await createClient().auth.signOut();
+            window.location.href = "/login";
+          }}
+        >
+          <LogOut className="h-4 w-4" />
+          Sign out
         </Button>
       </CardContent>
     </Card>

@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToggleResearchFlag, useToggleEmailed } from "@/hooks/useTracker";
 import { useProfile } from "@/hooks/useProfile";
+import { JobDocuments } from "@/components/ai/JobDocuments";
 import type { JobListing, SavedJob } from "@/types/api";
 
 function money(n: number) {
@@ -195,6 +196,8 @@ export function JobDetailDialog({
               )}
             </div>
           </div>
+
+          <JobDocuments jobListingId={savedJob.job_listing_id} />
 
           {savedJob.notes && (
             <div className="rounded-md border bg-muted/40 p-2.5">

@@ -56,6 +56,23 @@ export function useGenerateDocument() {
   });
 }
 
+/**
+ * Every document saved for a job — including résumés and cover letters Claude
+ * wrote through the MCP connector (`save_draft`). Those land in the database
+ * tagged with the job; this is how they reach the UI.
+ */
+export function useJobDocuments(jobListingId: string | null | undefined) {
+  return useQuery<GeneratedDocument[]>({
+    queryKey: ["job-documents", jobListingId],
+    queryFn: () =>
+      api.get<GeneratedDocument[]>(
+        `/v1/ai/documents?job_listing_id=${encodeURIComponent(jobListingId!)}`,
+      ),
+    enabled: !!jobListingId,
+    staleTime: 30_000,
+  });
+}
+
 export function useGeneratedDocument(docId: string | null) {
   return useQuery<GeneratedDocument>({
     queryKey: ["documents", docId],
