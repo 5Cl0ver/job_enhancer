@@ -56,6 +56,25 @@ export function useGenerateDocument() {
   });
 }
 
+/**
+ * Every document saved for a job — including résumés and cover letters Claude
+ * wrote through the MCP connector (`save_draft`). Those land in the database
+ * tagged with the job; this is how they reach the UI.
+ */
+export function useJobDocuments(jobListingId: string | null | undefined) {
+  return useQuery<GeneratedDocument[]>({
+    // Nested under ["documents"] on purpose: TanStack matches invalidations by
+    // key prefix, so useGenerateDocument's invalidate reaches this list too.
+    queryKey: ["documents", "by-job", jobListingId],
+    queryFn: () =>
+      api.get<GeneratedDocument[]>(
+        `/v1/ai/documents?job_listing_id=${encodeURIComponent(jobListingId!)}`,
+      ),
+    enabled: !!jobListingId,
+    staleTime: 30_000,
+  });
+}
+
 export function useGeneratedDocument(docId: string | null) {
   return useQuery<GeneratedDocument>({
     queryKey: ["documents", docId],
@@ -70,6 +89,10 @@ export function useUpdateDocument() {
   return useMutation({
     mutationFn: ({ id, edited_content }: { id: string; edited_content: string }) =>
       api.patch<GeneratedDocument>(`/v1/ai/documents/${id}`, { edited_content }),
-    onSuccess: (doc) => qc.setQueryData(["documents", doc.id], doc),
+    onSuccess: (doc) => {
+      qc.setQueryData(["documents", doc.id], doc);
+      // Edited text is shown by the per-job list too, so refresh those.
+      qc.invalidateQueries({ queryKey: ["documents", "by-job"] });
+    },
   });
 }

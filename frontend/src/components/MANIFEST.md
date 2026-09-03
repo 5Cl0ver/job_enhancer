@@ -47,6 +47,7 @@ separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
 | `ResumeUpload.tsx` | Drag-drop PDF/DOCX upload (≤10 MB) |
 | `GeneratedDocViewer.tsx` | Tabbed resume/cover editor + AI-transparency footer |
 | `DocumentControls.tsx` | Regenerate / copy / download-PDF |
+| `JobDocuments.tsx` | Per-job résumés/cover letters (incl. Claude connector drafts): read, copy, PDF |
 
 ## `analytics/`
 | `StatCard.tsx` | icon + value + trend arrow · | `ActivityChart.tsx` | recharts bar chart |
