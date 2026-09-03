@@ -14,7 +14,7 @@ self-managed model as the rest of their data.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, String, Text, func
+from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -39,6 +39,12 @@ class CustomAnswer(Base):
         nullable=False,
         server_default=func.now(),
         onupdate=func.now(),
+    )
+    # Usage insights (Answer Library): how many times autofill reused this answer
+    # and when it was last used. Powers the "used 4× · last used 3d ago" display.
+    use_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default="0")
+    last_used_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True), nullable=True
     )
 
     def __repr__(self) -> str:

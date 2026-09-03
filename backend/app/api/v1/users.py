@@ -6,7 +6,7 @@ from datetime import datetime
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
 from slowapi import Limiter
-from sqlalchemy import delete, select
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -24,6 +24,7 @@ from app.schemas.user import (
     ApplicationProfileSchema,
     CustomAnswerSchema,
     CustomAnswersUpsert,
+    CustomAnswersUsed,
     ProfileFillResult,
     UserProfile,
     UserUpdate,
@@ -172,6 +173,34 @@ async def upsert_custom_answers(
     return [CustomAnswerSchema.model_validate(r) for r in rows]
 
 
+@router.post("/me/custom-answers/used", status_code=204)
+@_limiter.limit("60/minute")
+async def mark_answers_used(
+    request: Request,
+    data: CustomAnswersUsed,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Autofill just reused these learned answers — bump use_count + last_used_at
+    for the Answer Library insights. Best-effort; unknown keys are ignored.
+    updated_at is preserved (it means 'last edited', not 'last used')."""
+    if not data.question_keys:
+        return
+    await db.execute(
+        update(CustomAnswer)
+        .where(
+            CustomAnswer.user_id == user.id,
+            CustomAnswer.question_key.in_(data.question_keys),
+        )
+        .values(
+            use_count=CustomAnswer.use_count + 1,
+            last_used_at=func.now(),
+            updated_at=CustomAnswer.updated_at,  # don't let onupdate touch it
+        )
+    )
+    await db.commit()
+
+
 @router.delete("/me/custom-answers/{question_key:path}", status_code=204)
 async def delete_custom_answer(
     question_key: str,
@@ -242,6 +271,12 @@ async def export_data(
         select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
     )
 
+    custom_answers = (
+        (await db.execute(select(CustomAnswer).where(CustomAnswer.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+
     def _dt(v: datetime | None) -> str | None:
         return v.isoformat() if v else None
 
@@ -299,6 +334,17 @@ async def export_data(
             if app_profile
             else None
         ),
+        "custom_answers": [
+            {
+                "question_key": a.question_key,
+                "question_text": a.question_text,
+                "answer": a.answer,
+                "use_count": a.use_count,
+                "updated_at": _dt(a.updated_at),
+                "last_used_at": _dt(a.last_used_at),
+            }
+            for a in custom_answers
+        ],
     }
 
     json_bytes = json.dumps(export, indent=2).encode()

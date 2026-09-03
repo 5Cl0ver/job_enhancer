@@ -22,11 +22,13 @@ class Settings(BaseSettings):
 
     # AI
     nvidia_api_key: str
-    # NVIDIA NIM model id. Defaults to the fast 8B model: on the free tier the
-    # 70B models are frequently queued and can take >60s (or time out), which
-    # hangs document generation. Override with NVIDIA_MODEL to use a larger model
-    # when the free tier has capacity (e.g. meta/llama-3.3-70b-instruct).
-    nvidia_model: str = "meta/llama-3.1-8b-instruct"
+    # NVIDIA NIM model id. NOTE: NVIDIA retires models on an EOL schedule — the
+    # old llama-3.1-8b / llama-3.3-70b instruct ids are now [410] Gone, which
+    # silently breaks autofill (résumé parsing + field mapping). This 11B model
+    # is available on the free tier, returns clean (non-reasoning) output, and is
+    # fast enough for interactive autofill. Override with NVIDIA_MODEL if needed;
+    # verify a candidate first: GET https://integrate.api.nvidia.com/v1/models.
+    nvidia_model: str = "meta/llama-3.2-11b-vision-instruct"
 
     # Job APIs — OPTIONAL. Adzuna + JSearch need keys; without them those two
     # sources just return nothing (the app still aggregates from the keyless

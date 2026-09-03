@@ -6,8 +6,12 @@ use them live in `src/routes/` (see its MANIFEST); the **data hooks** live in
 
 ```
 ui/  base shadcn primitives   layout/  legacy shell bits
-jobs/ tracker/ ai/ analytics/ admin/   feature UI
+jobs/ tracker/ ai/ analytics/ admin/ settings/   feature UI
 ```
+
+`theme-provider.tsx` — app theme context (light/dark/system) + `useTheme`; puts
+the `dark` class on `<html>`. Initial class is set pre-paint by an inline script
+in `index.html`; wired in `src/providers.tsx`.
 
 ## `ui/` — shadcn/ui primitives
 alert, badge, button, card, dialog, dropdown-menu, input, label, select,
@@ -48,6 +52,14 @@ separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
 | `GeneratedDocViewer.tsx` | Tabbed resume/cover editor + AI-transparency footer |
 | `DocumentControls.tsx` | Regenerate / copy / download-PDF |
 | `JobDocuments.tsx` | Per-job résumés/cover letters (incl. Claude connector drafts): read, copy, PDF |
+
+## `settings/`
+| File | Purpose |
+|---|---|
+| `AppearanceCard.tsx` | Theme picker (Light / Dark / System) via `useTheme` |
+| `ApplicationProfileCard.tsx` | Reusable autofill answers (name, links, etc.) |
+| `SavedAnswersCard.tsx` | Answer Library & insights: learned answers grouped by topic, searchable, with usage stats; edit/delete |
+| `EmailConnectCard.tsx` | Connect inbox for auto-status detection |
 
 ## `analytics/`
 | `StatCard.tsx` | icon + value + trend arrow · | `ActivityChart.tsx` | recharts bar chart |

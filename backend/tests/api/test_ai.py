@@ -132,6 +132,33 @@ async def test_autofill_map_empty_is_noop(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_map_fields_drops_low_confidence():
+    """Phase 4: low-confidence AI guesses are dropped (left for the user); high/
+    medium are kept, and a bare value stays valid for back-compat."""
+    import json
+
+    from app.services import ai_service
+
+    reply = json.dumps(
+        {
+            "f0": {"value": "Bachelor's", "confidence": "high"},
+            "f1": {"value": "Yes", "confidence": "medium"},
+            "f2": {"value": "No", "confidence": "low"},  # a guess → dropped
+            "f3": "3 years",  # bare value → kept (back-compat)
+        }
+    )
+    with patch(
+        "app.services.ai_service._invoke",
+        new=AsyncMock(return_value=(reply, None)),
+    ):
+        out = await ai_service.map_fields(
+            "USER DATA",
+            [{"id": "f0"}, {"id": "f1"}, {"id": "f2"}, {"id": "f3"}],
+        )
+    assert out == {"f0": "Bachelor's", "f1": "Yes", "f3": "3 years"}
+
+
+@pytest.mark.asyncio
 async def test_build_prompt_bridge(client: AsyncClient):
     """/prompt returns a self-contained prompt (no LLM call) for the user's own
     Claude — it must include the resume text and the doc-type instructions."""

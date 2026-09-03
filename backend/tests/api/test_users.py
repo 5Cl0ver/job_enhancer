@@ -168,6 +168,41 @@ async def test_custom_answers_learn_and_reuse(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_custom_answers_usage_tracking(client: AsyncClient):
+    """Autofill reuse bumps use_count + last_used_at (Answer Library insights),
+    without touching the answer text; unknown keys are ignored."""
+    await client.put(
+        "/v1/users/me/custom-answers",
+        json={
+            "answers": [
+                {
+                    "question_key": "years of react experience",
+                    "question_text": "Years of React experience?",
+                    "answer": "3",
+                }
+            ]
+        },
+    )
+    # Fresh answer starts unused.
+    before = (await client.get("/v1/users/me/custom-answers")).json()[0]
+    assert before["use_count"] == 0
+    assert before["last_used_at"] is None
+
+    # Reuse it twice (unknown key is silently ignored).
+    for _ in range(2):
+        r = await client.post(
+            "/v1/users/me/custom-answers/used",
+            json={"question_keys": ["years of react experience", "nonexistent key"]},
+        )
+        assert r.status_code == 204
+
+    after = (await client.get("/v1/users/me/custom-answers")).json()[0]
+    assert after["use_count"] == 2
+    assert after["last_used_at"] is not None
+    assert after["answer"] == "3"  # usage never alters the answer
+
+
+@pytest.mark.asyncio
 async def test_export_includes_application_profile(client: AsyncClient):
     await client.put("/v1/users/me/application-profile", json={"first_name": "Fabian"})
     data = (await client.get("/v1/users/me/export")).json()
