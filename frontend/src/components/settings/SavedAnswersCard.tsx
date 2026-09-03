@@ -88,11 +88,6 @@ const CATEGORIES: {
   { id: "other", label: "Other", icon: HelpCircle },
 ];
 
-const CAT_BY_ID = Object.fromEntries(CATEGORIES.map((c) => [c.id, c])) as Record<
-  CategoryId,
-  (typeof CATEGORIES)[number]
->;
-
 function categorize(text: string): CategoryId {
   for (const c of CATEGORIES) if (c.re && c.re.test(text)) return c.id;
   return "other";

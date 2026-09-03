@@ -243,7 +243,10 @@ async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
             continue
         if isinstance(v, dict):
             # Confidence-tagged format {"value": ..., "confidence": ...}.
-            if str(v.get("confidence", "medium")).lower() not in _AUTOFILL_KEEP_CONFIDENCE:
+            if (
+                str(v.get("confidence", "medium")).lower()
+                not in _AUTOFILL_KEEP_CONFIDENCE
+            ):
                 continue  # low-confidence guess — leave it for the user
             value = v.get("value")
         else:
