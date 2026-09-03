@@ -11,7 +11,7 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/tracker.py` | `/pipeline-stages` | stage CRUD + `POST /move` (Kanban) |
 | `v1/saved_searches.py` | `/saved-searches` | save/list/delete searches, new-matches feed, mark-seen (FR-024) |
 | `v1/analytics.py` | `/analytics` | `GET /analytics/summary` (totals + 8-week activity) |
-| `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
+| `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET /ai/documents` (list, optional `?job_listing_id=`), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
 | `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export`, `DELETE /users/me` |
 | `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}` — requires `role=admin` |
 | `v1/auth.py` | — | auth helpers/routes (see file) |
