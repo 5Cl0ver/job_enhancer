@@ -174,7 +174,9 @@ async def upsert_custom_answers(
 
 
 @router.post("/me/custom-answers/used", status_code=204)
+@_limiter.limit("60/minute")
 async def mark_answers_used(
+    request: Request,
     data: CustomAnswersUsed,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
