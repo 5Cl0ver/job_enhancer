@@ -293,9 +293,12 @@ export function collectRadioGroups(doc) {
 // must not reuse an answer across them (e.g. authorized in the US vs in Canada,
 // 3 vs 5 years, "are you authorized" vs "are you NOT authorized").
 const NEG_WORDS = new Set(["not", "never", "cannot", "without", "non", "no"]);
+// NOTE: deliberately excludes bare "us"/"eu" — they collide with the pronoun
+// "us" and the prefix "eu", which would flag false conflicts (e.g. "tell us
+// about your experience"). "usa"/"united states" still cover the country.
 const COUNTRY_WORDS = new Set([
-  "us", "usa", "united", "states", "america", "american",
-  "canada", "canadian", "uk", "britain", "british", "england", "eu",
+  "usa", "united", "states", "america", "american",
+  "canada", "canadian", "uk", "britain", "british", "england",
   "europe", "european", "india", "indian", "australia", "australian",
   "germany", "german", "france", "french", "mexico", "mexican",
   "ireland", "irish", "china", "chinese", "japan", "japanese", "singapore",
