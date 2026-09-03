@@ -78,17 +78,17 @@ export function SavedJobsBody() {
   };
 
   return (
-    <div className="flex gap-6">
+    <div className="flex flex-col gap-4 md:flex-row md:gap-6">
       <CollectionSidebar selectedId={selectedCollection} onSelect={setSelectedCollection} />
 
-      <main className="flex-1 min-w-0">
+      <main className="min-w-0 flex-1">
         {/* Filter bar */}
         <div className="mb-4 flex flex-wrap items-center gap-2">
-          <div className="flex items-center gap-1.5 text-sm text-muted-foreground">
+          <div className="hidden items-center gap-1.5 text-sm text-muted-foreground sm:flex">
             <SlidersHorizontal className="h-4 w-4" />
           </div>
           <input
-            className={`${inputCls} min-w-[160px] flex-1`}
+            className={`${inputCls} w-full min-w-[160px] sm:w-auto sm:flex-1`}
             placeholder="Search title or company…"
             value={q}
             onChange={(e) => setQ(e.target.value)}

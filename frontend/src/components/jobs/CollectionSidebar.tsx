@@ -34,7 +34,11 @@ function NewCollectionDialog() {
   return (
     <Dialog open={open} onOpenChange={setOpen}>
       <DialogTrigger asChild>
-        <Button variant="ghost" size="sm" className="h-7 w-full justify-start gap-1.5 text-xs">
+        <Button
+          variant="ghost"
+          size="sm"
+          className="h-9 shrink-0 justify-start gap-1.5 whitespace-nowrap rounded-md border px-3 text-xs md:h-7 md:w-full md:border-0 md:px-2"
+        >
           <Plus className="h-3.5 w-3.5" />
           New collection
         </Button>
@@ -78,7 +82,7 @@ function CollectionItem({ collection, isSelected, onSelect }: CollectionItemProp
   return (
     <div
       className={cn(
-        "group flex cursor-pointer items-center justify-between rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted",
+        "group flex shrink-0 cursor-pointer items-center gap-2 whitespace-nowrap rounded-md border px-3 py-1.5 text-sm transition-colors hover:bg-muted md:w-full md:justify-between md:border-0 md:px-2",
         isSelected && "bg-muted font-medium",
       )}
       onClick={onSelect}
@@ -96,7 +100,7 @@ function CollectionItem({ collection, isSelected, onSelect }: CollectionItemProp
             e.stopPropagation();
             deleteCollection.mutate(collection.id);
           }}
-          className="invisible shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive group-hover:visible"
+          className="hidden shrink-0 rounded p-0.5 text-muted-foreground hover:text-destructive md:inline-flex md:invisible md:group-hover:visible"
           aria-label={`Delete ${collection.name}`}
         >
           <Trash2 className="h-3 w-3" />
@@ -110,36 +114,41 @@ export function CollectionSidebar({ selectedId, onSelect }: CollectionSidebarPro
   const { data: collections = [], isLoading } = useCollections();
 
   return (
-    <aside className="w-52 shrink-0 space-y-1">
-      <p className="px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground">
+    // Desktop: a fixed-width vertical sidebar. Mobile: a full-width horizontal
+    // scroll of chips so it never steals width from the job cards.
+    <aside className="w-full shrink-0 md:w-52">
+      <p className="hidden px-2 pb-1 text-xs font-semibold uppercase tracking-wider text-muted-foreground md:block">
         Collections
       </p>
 
-      <div
-        className={cn(
-          "cursor-pointer rounded-md px-2 py-1.5 text-sm transition-colors hover:bg-muted",
-          selectedId === null && "bg-muted font-medium",
+      <div className="-mx-1 flex gap-2 overflow-x-auto px-1 pb-1 md:mx-0 md:flex-col md:gap-1 md:overflow-visible md:px-0 md:pb-0">
+        <button
+          type="button"
+          onClick={() => onSelect(null)}
+          className={cn(
+            "shrink-0 cursor-pointer whitespace-nowrap rounded-md border px-3 py-1.5 text-sm transition-colors hover:bg-muted md:w-full md:border-0 md:px-2 md:text-left",
+            selectedId === null && "bg-muted font-medium",
+          )}
+        >
+          All saved jobs
+        </button>
+
+        {isLoading ? (
+          <div className="py-2 text-center text-xs text-muted-foreground">Loading…</div>
+        ) : (
+          collections.map((col) => (
+            <CollectionItem
+              key={col.id}
+              collection={col}
+              isSelected={selectedId === col.id}
+              onSelect={() => onSelect(col.id)}
+            />
+          ))
         )}
-        onClick={() => onSelect(null)}
-      >
-        All saved jobs
-      </div>
 
-      {isLoading ? (
-        <div className="py-4 text-center text-xs text-muted-foreground">Loading…</div>
-      ) : (
-        collections.map((col) => (
-          <CollectionItem
-            key={col.id}
-            collection={col}
-            isSelected={selectedId === col.id}
-            onSelect={() => onSelect(col.id)}
-          />
-        ))
-      )}
-
-      <div className="pt-1">
-        <NewCollectionDialog />
+        <div className="shrink-0 md:pt-1">
+          <NewCollectionDialog />
+        </div>
       </div>
     </aside>
   );
