@@ -273,6 +273,21 @@ async function saveCustomAnswers(answers) {
   return { saved: Array.isArray(saved) ? saved.length : 0 };
 }
 
+// Bump usage insights for remembered answers autofill just reused. Best-effort —
+// never blocks or errors the fill flow (returns { ok } quietly).
+async function markAnswersUsed(questionKeys) {
+  const keys = Array.isArray(questionKeys) ? questionKeys : [];
+  if (!keys.length) return { ok: true };
+  const token = await getValidToken();
+  if (!token) return { ok: false };
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me/custom-answers/used`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ question_keys: keys }),
+  }).catch(() => null);
+  return { ok: !!res?.ok };
+}
+
 // AI document for the job being applied to, written from the active resume +
 // the job's stored description. docType is "cover_letter" or "resume".
 // Returns { content, docId } or { error }.
@@ -481,6 +496,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "saveCustomAnswers") {
         const out = await saveCustomAnswers(msg.answers || []);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
+      } else if (msg.type === "markAnswersUsed") {
+        sendResponse(await markAnswersUsed(msg.question_keys || []));
       } else if (msg.type === "markApplied") {
         sendResponse({ ok: true, ...(await markApplied(msg.job)) });
       } else if (msg.type === "generateDocument") {

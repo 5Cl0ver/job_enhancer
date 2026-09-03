@@ -1,6 +1,7 @@
 """AI service — LangChain NVIDIA NIM integration for document generation.
 
-Model: meta/llama-3.3-70b-instruct via integrate.api.nvidia.com
+Model: configured via settings.nvidia_model (see app/config.py — NVIDIA retires
+model ids on an EOL schedule, so this is intentionally not hard-coded here).
 Free tier: 40 RPM. On 429, raise HTTPException(429) with Retry-After header.
 Constitution Principle III requires logging model_used and generation_ms.
 """
@@ -187,12 +188,23 @@ async def _invoke(system: str, user_content: str) -> tuple[str, int]:
 _AUTOFILL_SYSTEM = """You map a job application form's fields to a user's saved data.
 
 Rules (follow EXACTLY):
-- Use ONLY the USER DATA provided. NEVER invent facts. If the data doesn't
-  clearly answer a field, OMIT that field entirely.
-- For a field with OPTIONS, return the EXACT option text that best fits.
-- For a plain text field, return the value as a short string.
-- Respond with ONLY a JSON object mapping each field "id" to its value.
-  No prose, no markdown, no explanation. Example: {"f0":"Bachelor's","r1":"No"}"""
+- Use ONLY the USER DATA provided. NEVER invent facts.
+- For every field you answer, output an object with a "value" AND a "confidence":
+    "high"   = the USER DATA states this directly.
+    "medium" = the USER DATA strongly implies it.
+    "low"    = you are guessing beyond the USER DATA.
+  Prefer "low" (or omit) over inventing an answer for legal, eligibility, or
+  attestation questions the data doesn't cover — a wrong answer is worse than none.
+- If the USER DATA does not address a field at all, OMIT that field entirely.
+- For a field with OPTIONS, "value" MUST be the EXACT option text that best fits.
+- For a plain text field, "value" is a short string.
+- Respond with ONLY a JSON object mapping each field "id" to that object.
+  No prose, no markdown, no explanation. Example:
+  {"f0":{"value":"Bachelor's","confidence":"high"},"r1":{"value":"No","confidence":"medium"}}"""
+
+# We DROP "low"-confidence answers: the AI guessed beyond the user's data, and a
+# silent wrong answer (esp. legal/eligibility) is worse than leaving it for the user.
+_AUTOFILL_KEEP_CONFIDENCE = {"high", "medium"}
 
 
 async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
@@ -222,12 +234,22 @@ async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
         return {}
     if not isinstance(data, dict):
         return {}
-    # Keep only string-ish values, capped, keyed by known field ids.
+    # Keep only string-ish values, capped, keyed by known field ids — and only
+    # when the model was confident (see _AUTOFILL_KEEP_CONFIDENCE).
     ids = {f.get("id") for f in fields}
     out: dict[str, str] = {}
     for k, v in data.items():
-        if k in ids and isinstance(v, (str, int, float, bool)) and str(v).strip():
-            out[k] = str(v).strip()[:500]
+        if k not in ids:
+            continue
+        if isinstance(v, dict):
+            # Confidence-tagged format {"value": ..., "confidence": ...}.
+            if str(v.get("confidence", "medium")).lower() not in _AUTOFILL_KEEP_CONFIDENCE:
+                continue  # low-confidence guess — leave it for the user
+            value = v.get("value")
+        else:
+            value = v  # back-compat: a bare value counts as confident
+        if isinstance(value, (str, int, float, bool)) and str(value).strip():
+            out[k] = str(value).strip()[:500]
     return out
 
 

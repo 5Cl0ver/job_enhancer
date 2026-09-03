@@ -5,7 +5,7 @@
 // make a block per job, and filling title / company / location / role / dates.
 // PURE-ish (DOM only) so it's unit-tested with happy-dom.
 import { setNativeValue, markFilled } from "./fill.js";
-import { keyForText, normalizeQuestion, matchAnswer, SELF_ID } from "./mapper.js";
+import { keyForText, normalizeQuestion, matchAnswer, SELF_ID, BOOL_KEYS } from "./mapper.js";
 
 /** Is this a Workday application with a Work Experience section? */
 export function isWorkdayExperience(doc) {
@@ -194,12 +194,39 @@ export function collectWorkdayDropdowns(doc) {
 
 // The answer for a questionnaire dropdown, or null: a profile Yes/No (work
 // authorization, sponsorship, relocation…) or a previously-learned answer.
+// Returns {answer, source} so the summary can label it correctly (green profile
+// vs blue remembered) and so a "Fix" on a remembered one re-saves properly.
 // Legal attestations we have no data for return null → left for the user.
 function dropdownAnswer(question, values, answers) {
   const key = keyForText(question);
-  if (key && typeof values[key] === "boolean") return values[key] ? "Yes" : "No";
+  if (key && typeof values[key] === "boolean") {
+    return { answer: values[key] ? "Yes" : "No", source: "profile" };
+  }
   const m = matchAnswer(normalizeQuestion(question), answers);
-  return m ? m.answer : null;
+  return m ? { answer: m.answer, source: "learned" } : null;
+}
+
+/**
+ * Capture the user's CURRENT questionnaire selections so we can remember them —
+ * this is how Workday answers accumulate into the learn-as-you-go memory (they
+ * live in custom <button> listboxes the generic capture can't see). Skips the
+ * placeholder, protected self-ID (already filtered by collect), and questions
+ * the profile owns (Yes/No work-auth etc.), which don't belong in that memory.
+ * @returns {Array<{question_key, question_text, answer}>}
+ */
+export function captureWorkdayDropdowns(doc) {
+  const out = [];
+  for (const dd of collectWorkdayDropdowns(doc)) {
+    const answer = (dd.current || "").trim();
+    if (!answer || isPlaceholder(answer)) continue;
+    if (BOOL_KEYS.has(keyForText(dd.question))) continue; // profile-owned
+    out.push({
+      question_key: normalizeQuestion(dd.question),
+      question_text: dd.question.slice(0, 500),
+      answer,
+    });
+  }
+  return out;
 }
 
 const optionLabel = (o) =>
@@ -259,13 +286,19 @@ export async function fillWorkdayDropdowns(doc, values, answers, opts = {}) {
   // Pass 1: apply known answers; collect options for the unknowns.
   for (const dd of dds) {
     const known = dropdownAnswer(dd.question, values, answers || []);
-    if (known && dd.current.toLowerCase() === known.toLowerCase()) continue; // already set
+    if (known && dd.current.toLowerCase() === known.answer.toLowerCase()) continue; // already set
     const optsEls = await openOptions(dd, doc, wait);
     if (!optsEls.length) continue;
     if (known) {
-      if (clickOption(optsEls, known)) {
-        markFilled(dd.button, "profile");
-        filled.push({ label: dd.question.slice(0, 70), value: known, source: "profile" });
+      if (clickOption(optsEls, known.answer)) {
+        markFilled(dd.button, known.source);
+        filled.push({
+          label: dd.question.slice(0, 70),
+          value: known.answer,
+          source: known.source,
+          question: dd.question,
+          questionKey: normalizeQuestion(dd.question),
+        });
       } else {
         closeDropdown(dd, doc);
       }
@@ -293,7 +326,13 @@ export async function fillWorkdayDropdowns(doc, values, answers, opts = {}) {
       const optsEls = await openOptions(dd, doc, wait);
       if (clickOption(optsEls, choice)) {
         markFilled(dd.button, "ai");
-        filled.push({ label: dd.question.slice(0, 70), value: choice, source: "ai" });
+        filled.push({
+          label: dd.question.slice(0, 70),
+          value: choice,
+          source: "ai",
+          question: dd.question,
+          questionKey: normalizeQuestion(dd.question),
+        });
       } else {
         closeDropdown(dd, doc);
       }

@@ -59,7 +59,7 @@ describe("detectAts", () => {
     expect(detectAts("https://boards.greenhouse.io/acme/jobs/123")).toBe("greenhouse");
     expect(detectAts("https://job-boards.greenhouse.io/acme/jobs/123")).toBe("greenhouse");
     expect(detectAts("https://jobs.lever.co/acme/uuid/apply")).toBe("lever");
-    expect(detectAts("https://company.wd5.myworkdayjobs.com/careers")).toBeNull();
+    expect(detectAts("https://company.wd5.myworkdayjobs.com/careers")).toBe("workday");
     expect(detectAts("https://www.indeed.com/viewjob?jk=x")).toBeNull();
   });
 });
@@ -228,9 +228,31 @@ describe("learn-as-you-go — custom question memory", () => {
   it("matches by exact key, then fuzzy token overlap", () => {
     const mem = [{ question_key: "years of react experience", answer: "3" }];
     expect(matchAnswer("years of react experience", mem)?.answer).toBe("3");
-    // Reworded/extended question still matches (Jaccard ≥ 0.6).
+    // Reworded/extended question still matches (Jaccard ≥ 0.72).
     expect(matchAnswer("years of react experience at acme", mem)?.answer).toBe("3");
     expect(matchAnswer("favorite programming language", mem)).toBeNull();
+  });
+
+  it("does NOT reuse an answer across a country pivot (US vs Canada)", () => {
+    const mem = [
+      { question_key: "are you authorized to work in the united states", answer: "Yes" },
+    ];
+    // Same words, different country → must NOT match.
+    expect(matchAnswer("are you authorized to work in canada", mem)).toBeNull();
+    // Exact same country → still matches.
+    expect(
+      matchAnswer("are you authorized to work in the united states", mem)?.answer,
+    ).toBe("Yes");
+  });
+
+  it("does NOT reuse an answer across a number pivot (3 vs 5 years)", () => {
+    const mem = [{ question_key: "do you have 5 years of experience", answer: "Yes" }];
+    expect(matchAnswer("do you have 3 years of experience", mem)).toBeNull();
+  });
+
+  it("does NOT reuse an answer across a negation pivot (authorized vs NOT authorized)", () => {
+    const mem = [{ question_key: "are you authorized to work here", answer: "Yes" }];
+    expect(matchAnswer("are you not authorized to work here", mem)).toBeNull();
   });
 
   it("fills learned answers and reports what still needs answering", () => {
