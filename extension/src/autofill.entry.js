@@ -1,4 +1,5 @@
-// Content script for ATS application pages (Greenhouse / Lever).
+// Content script for ATS application pages (Greenhouse / Lever / Workday; the
+// universal passes also run on any other site with a form).
 //
 // Shows one floating "⚡ Autofill" button. Click → background fetches the
 // profile vault + resume file → the tested fill engine writes them into the
@@ -13,6 +14,7 @@ import {
   collectUnmapped,
   collectRadioGroups,
   matchAnswer,
+  normalizeQuestion,
 } from "./autofill/mapper.js";
 import {
   fillFields,
@@ -30,6 +32,7 @@ import {
   isWorkdayExperience,
   fillAllWorkExperience,
   fillWorkdayDropdowns,
+  captureWorkdayDropdowns,
   inWorkExperience,
 } from "./autofill/workday.js";
 
@@ -210,7 +213,27 @@ async function run(btn) {
     return res?.mappings || {};
   };
   const ddFilled = await fillWorkdayDropdowns(document, values, answers, { aiMap });
-  for (const d of ddFilled) workFilled.push({ label: d.label, value: d.value, source: d.source || "profile" });
+  for (const d of ddFilled) {
+    const entry = { label: d.label, value: d.value, source: d.source || "profile" };
+    // AI/remembered dropdown answers are learnable (profile Yes/No ones aren't) —
+    // carry the key/text so the correction can be saved from the summary.
+    if (d.source !== "profile" && d.questionKey) {
+      entry.learnKey = d.questionKey;
+      entry.learnText = d.question || d.label;
+    }
+    workFilled.push(entry);
+  }
+
+  // Usage insights: tell the backend which REMEMBERED answers we just reused, so
+  // the Answer Library can show "used 4× · last used 3d ago". Fire-and-forget.
+  const usedKeys = [
+    ...custom.learned.map((l) => l.questionKey),
+    ...radios.learned.map((l) => l.questionKey),
+    ...ddFilled.filter((d) => d.source === "learned" && d.questionKey).map((d) => d.questionKey),
+  ].filter(Boolean);
+  if (usedKeys.length) {
+    safeSend({ type: "markAnswersUsed", question_keys: usedKeys }).catch(() => {});
+  }
 
   // AI pass: whatever the deterministic passes couldn't fill goes to a grounded
   // model that maps it from the user's data — this is what makes it work on ANY
@@ -266,12 +289,24 @@ async function run(btn) {
   };
   const learned = [
     ...custom.learned.map((l) => {
-      const base = { label: l.questionText, value: String(l.value), source: "learned" };
+      const base = {
+        label: l.questionText,
+        value: String(l.value),
+        source: "learned",
+        learnKey: l.questionKey,
+        learnText: l.questionText,
+      };
       const el = unmappedByKey.get(l.questionKey);
       return el ? { ...base, ...textInfo(el) } : base;
     }),
     ...radios.learned.map((l) => {
-      const base = { label: l.questionText, value: String(l.value), source: "learned" };
+      const base = {
+        label: l.questionText,
+        value: String(l.value),
+        source: "learned",
+        learnKey: l.questionKey,
+        learnText: l.questionText,
+      };
       const g = groupByQKey.get(l.questionKey);
       return g ? { ...base, ...radioInfo(g) } : base;
     }),
@@ -291,7 +326,9 @@ async function run(btn) {
       ? `✓ Filled ${filled} · ${toAnswer} to answer`
       : `✓ Filled ${filled} — review & submit`,
   );
-  ensureRememberButton(toAnswer > 0 || learned.length > 0 || aiFilled.length > 0);
+  ensureRememberButton(
+    toAnswer > 0 || learned.length > 0 || aiFilled.length > 0 || ddFilled.length > 0,
+  );
 
   showAutofillPanel({
     filled: filledList,
@@ -348,7 +385,15 @@ async function aiPass(btn) {
     const v = mappings[t.id];
     if (v == null || v === "") continue;
     let ok = false;
-    let entry = { label: t.label, value: String(v), source: "ai" };
+    // Every AI target came from an UNMAPPED (custom) question, so it's learnable:
+    // carry the question key/text so a "✎ Fix" can remember the correction.
+    let entry = {
+      label: t.label,
+      value: String(v),
+      source: "ai",
+      learnKey: normalizeQuestion(t.label),
+      learnText: t.label,
+    };
     if (t.kind === "radio") {
       ok = setRadioValue(t.ref, v);
       if (ok) markFilled(t.ref.find((o) => o.el.checked)?.el, "ai");
@@ -455,15 +500,34 @@ function buildEditor(it, valSpan, fixBtn) {
   apply.textContent = "Apply";
   apply.addEventListener("click", () => {
     const nv = input.value;
-    if (applyCorrection(it, nv)) {
-      it.value = nv;
-      valSpan.textContent = nv ? trunc(nv, 26) : "—";
-      flashField(it.el);
-      apply.textContent = "✓ Applied";
-      setTimeout(() => (apply.textContent = "Apply"), 1200);
-    } else {
+    if (!applyCorrection(it, nv)) {
       apply.textContent = "no match";
       setTimeout(() => (apply.textContent = "Apply"), 1500);
+      return;
+    }
+    it.value = nv;
+    valSpan.textContent = nv ? trunc(nv, 26) : "—";
+    flashField(it.el);
+    // Phase 1 — close the learn loop: when the corrected field is a custom
+    // question (AI-mapped or previously remembered), persist the fix so we
+    // never get it wrong again. Profile fields have no learnKey → DOM-only.
+    if (it.learnKey && nv.trim()) {
+      apply.textContent = "Saving…";
+      safeSend({
+        type: "saveCustomAnswers",
+        answers: [{ question_key: it.learnKey, question_text: it.learnText || it.label, answer: nv.trim() }],
+      })
+        .then(() => {
+          it.source = "learned"; // it's now a remembered answer
+          apply.textContent = "✓ Remembered";
+        })
+        .catch(() => {
+          apply.textContent = "✓ Applied"; // fill worked; save didn't
+        })
+        .finally(() => setTimeout(() => (apply.textContent = "Apply"), 1600));
+    } else {
+      apply.textContent = "✓ Applied";
+      setTimeout(() => (apply.textContent = "Apply"), 1200);
     }
   });
   box.append(input, apply);
@@ -650,9 +714,15 @@ function ensureRememberButton(show) {
 }
 
 function rememberAnswers(rb) {
+  // On Workday, the Work-Experience block is résumé data, not Q&A memory — keep
+  // it out of the learned answers (its "Job Title"/"Company" inputs would
+  // otherwise be captured as if they were application questions).
+  const onWorkday = isWorkdayExperience(document);
+  const notWork = (el) => !onWorkday || !inWorkExperience(el);
   const answers = [
-    ...captureAnswers(collectUnmapped(document)),
-    ...captureRadioAnswers(collectRadioGroups(document)),
+    ...captureAnswers(collectUnmapped(document).filter((u) => notWork(u.el))),
+    ...captureRadioAnswers(collectRadioGroups(document).filter((g) => notWork(g.options[0]?.el))),
+    ...captureWorkdayDropdowns(document), // Workday questionnaire selections
   ];
   if (!answers.length) {
     rb.dataset.state = "";
@@ -759,6 +829,20 @@ function setState(el, state, text) {
 // ---- auto-track: user submitted → move the saved job to Applied ----
 
 function jobInfo() {
+  if (ATS === "workday") {
+    // Workday: title from the posting header if present, else the tab title;
+    // company from the tenant subdomain (acme.wd5.myworkdayjobs.com → "acme").
+    const header =
+      document.querySelector('[data-automation-id="jobPostingHeader"], h1')?.textContent?.trim() ||
+      "";
+    const sub = (location.hostname.split(".")[0] || "").trim();
+    const company = sub && sub !== "www" ? sub.replace(/[-_]+/g, " ") : "";
+    const title =
+      header ||
+      (document.title || "").split(/[|–-]/).map((s) => s.trim()).filter(Boolean).pop() ||
+      "";
+    return { title, company };
+  }
   if (ATS === "greenhouse") {
     // "Job Application for <title> at <company>" in the tab title.
     const m = /job application for (.+) at (.+)/i.exec(document.title);
@@ -788,19 +872,30 @@ function jobInfo() {
 
 function watchForSubmit() {
   let sent = false;
-  document.addEventListener(
-    "submit",
-    () => {
-      if (sent) return;
-      sent = true;
-      const job = jobInfo();
-      if (!job.title) return;
-      safeSend({ type: "markApplied", job }).catch(() => {});
-      const btn = document.getElementById(BTN_ID);
-      if (btn) setState(btn, "done", "✓ Tracked in Job Enhancer");
-    },
-    true, // capture — before the page's own handler navigates away
-  );
+  const fire = () => {
+    if (sent) return;
+    const job = jobInfo();
+    if (!job.title) return; // can't identify the job yet — try again next event
+    sent = true;
+    safeSend({ type: "markApplied", job }).catch(() => {});
+    const btn = document.getElementById(BTN_ID);
+    if (btn) setState(btn, "done", "✓ Tracked in Job Enhancer");
+  };
+  // Classic <form> submit (Greenhouse / Lever) — capture, before navigation.
+  document.addEventListener("submit", fire, true);
+  // Workday is an SPA: the final step is a "Submit" BUTTON click, not a form
+  // submit. Match only the exact final button so "Save"/"Next" don't false-fire.
+  if (ATS === "workday") {
+    document.addEventListener(
+      "click",
+      (e) => {
+        const b = e.target?.closest?.('button, [role="button"]');
+        const label = (b?.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+        if (label === "submit") fire();
+      },
+      true,
+    );
+  }
 }
 
 function injectStyles() {
