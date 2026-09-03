@@ -19,6 +19,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, getAccessToken, API_BASE } from "@/lib/api";
+import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { ApplicationProfileCard } from "@/components/settings/ApplicationProfileCard";
 import { SavedAnswersCard } from "@/components/settings/SavedAnswersCard";
 import { EmailConnectCard } from "@/components/settings/EmailConnectCard";
@@ -34,6 +35,7 @@ export default function SettingsPage() {
         <p className="text-sm text-muted-foreground">Manage your account and data.</p>
       </div>
 
+      <AppearanceCard />
       <ApplicationProfileCard />
       <ClaudeProjectCard />
       <EmailConnectCard />

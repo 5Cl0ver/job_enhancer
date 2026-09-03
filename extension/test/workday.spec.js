@@ -12,7 +12,9 @@ import {
   fillAllWorkExperience,
   collectWorkdayDropdowns,
   fillWorkdayDropdowns,
+  captureWorkdayDropdowns,
 } from "../src/autofill/workday.js";
+import { normalizeQuestion } from "../src/autofill/mapper.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const NOW = { wait: () => Promise.resolve() }; // drive async filling synchronously
@@ -193,6 +195,50 @@ describe("Workday questionnaire dropdowns", () => {
     expect(btns[2].textContent).toBe("No"); // AI-picked legal question
     expect(filled.every((f) => f.source === "ai")).toBe(true);
     expect(filled).toHaveLength(3);
+  });
+});
+
+describe("Workday dropdown learning (Phase 2)", () => {
+  function docFromHtml(html) {
+    const window = new Window();
+    window.document.write(html);
+    return window.document;
+  }
+  const field = (q, current = "Select One") =>
+    `<div data-automation-id="formField-x"><fieldset><legend>` +
+    `<span data-automation-id="richText">${q}</span></legend>` +
+    `<button aria-haspopup="listbox">${current}</button></fieldset></div>`;
+
+  it("captures answered custom dropdowns; skips placeholder, self-ID, and profile Yes/No", () => {
+    const doc = docFromHtml(
+      field("How did you hear about us?", "LinkedIn") + // custom → captured
+        field("Preferred start date?", "Select One") + // placeholder → skipped
+        field("What is your gender?", "Male") + // self-ID → skipped
+        field("Are you legally authorized to work in the US?", "Yes"), // profile → skipped
+    );
+    const caught = captureWorkdayDropdowns(doc);
+    expect(caught).toHaveLength(1);
+    expect(caught[0].question_text).toMatch(/hear about us/i);
+    expect(caught[0].answer).toBe("LinkedIn");
+    expect(caught[0].question_key).toBe(normalizeQuestion("How did you hear about us?"));
+  });
+
+  it("fills a REMEMBERED dropdown answer and labels its source 'learned' (not profile)", async () => {
+    const doc = docFromHtml(field("How many years of Python experience?"));
+    wireListbox(doc, ["Select One", "1-2", "3-5"]);
+    const q = "How many years of Python experience?";
+    const filled = await fillWorkdayDropdowns(
+      doc,
+      {},
+      [{ question_key: normalizeQuestion(q), question_text: q, answer: "3-5" }],
+      NOW,
+    );
+    expect(filled).toHaveLength(1);
+    expect(filled[0].source).toBe("learned");
+    expect(filled[0].value).toBe("3-5");
+    // Carries the key/text so a "✎ Fix" in the summary can re-save the correction.
+    expect(filled[0].questionKey).toBe(normalizeQuestion(q));
+    expect(filled[0].question).toBe(q);
   });
 });
 

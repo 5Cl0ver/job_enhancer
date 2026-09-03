@@ -18,6 +18,7 @@ export function detectAts(url) {
   if (/(^|\.)greenhouse\.io$/i.test(host)) return "greenhouse";
   if (/(^|\.)lever\.co$/i.test(host) && /\/(apply|application)/i.test(path)) return "lever";
   if (/(^|\.)lever\.co$/i.test(host)) return "lever"; // posting page w/ inline form
+  if (/\.myworkdayjobs\.com$/i.test(host)) return "workday"; // e.g. acme.wd5.myworkdayjobs.com
   return null;
 }
 
@@ -140,7 +141,7 @@ export function keyForText(text) {
 }
 
 // Profile keys that are yes/no — the ones a radio group can answer.
-const BOOL_KEYS = new Set([
+export const BOOL_KEYS = new Set([
   "authorized_to_work",
   "requires_sponsorship",
   "willing_to_relocate",
@@ -287,18 +288,55 @@ export function collectRadioGroups(doc) {
   return out;
 }
 
-/** Find a learned answer for a question: exact key, else fuzzy token overlap. */
+// "Pivot" tokens that FLIP a question's meaning: two questions that overlap on
+// every other word but disagree on one of these are DIFFERENT questions, so we
+// must not reuse an answer across them (e.g. authorized in the US vs in Canada,
+// 3 vs 5 years, "are you authorized" vs "are you NOT authorized").
+const NEG_WORDS = new Set(["not", "never", "cannot", "without", "non", "no"]);
+// NOTE: deliberately excludes bare "us"/"eu" — they collide with the pronoun
+// "us" and the prefix "eu", which would flag false conflicts (e.g. "tell us
+// about your experience"). "usa"/"united states" still cover the country.
+const COUNTRY_WORDS = new Set([
+  "usa", "united", "states", "america", "american",
+  "canada", "canadian", "uk", "britain", "british", "england",
+  "europe", "european", "india", "indian", "australia", "australian",
+  "germany", "german", "france", "french", "mexico", "mexican",
+  "ireland", "irish", "china", "chinese", "japan", "japanese", "singapore",
+]);
+
+const _subset = (words, set) => new Set(words.filter((t) => set.has(t)));
+const _nums = (words) => new Set(words.filter((t) => /^\d+$/.test(t)));
+const _differ = (a, b) => a.size !== b.size || [...a].some((x) => !b.has(x));
+
+/** True when two questions disagree on a meaning-flipping token. */
+function pivotConflict(qWords, aWords) {
+  if (_differ(_nums(qWords), _nums(aWords))) return true; // 3 vs 5 years, etc.
+  if (_differ(_subset(qWords, COUNTRY_WORDS), _subset(aWords, COUNTRY_WORDS))) return true;
+  const qNeg = qWords.some((t) => NEG_WORDS.has(t));
+  const aNeg = aWords.some((t) => NEG_WORDS.has(t));
+  return qNeg !== aNeg; // one asks "authorized", the other "NOT authorized"
+}
+
+/**
+ * Find a learned answer for a question: exact key wins outright; otherwise a
+ * fuzzy token-overlap match, but ONLY when the two questions don't disagree on a
+ * pivot token (country / number / negation) and clear a conservative threshold.
+ * Raising the bar + pivot guard is what stops "gets questions wrong".
+ */
 export function matchAnswer(questionKey, answers) {
   if (!answers?.length) return null;
   const exact = answers.find((a) => a.question_key === questionKey);
   if (exact) return exact;
-  const qTokens = new Set(questionKey.split(" ").filter((t) => t.length > 2));
+  const qWords = questionKey.split(" ").filter(Boolean);
+  const qTokens = new Set(qWords.filter((t) => t.length > 2));
   if (qTokens.size < 2) return null;
   let best = null;
   let bestScore = 0;
   for (const a of answers) {
-    const aTokens = new Set((a.question_key || "").split(" ").filter((t) => t.length > 2));
+    const aWords = (a.question_key || "").split(" ").filter(Boolean);
+    const aTokens = new Set(aWords.filter((t) => t.length > 2));
     if (!aTokens.size) continue;
+    if (pivotConflict(qWords, aWords)) continue; // different question in disguise
     let shared = 0;
     for (const t of qTokens) if (aTokens.has(t)) shared++;
     const score = shared / new Set([...qTokens, ...aTokens]).size; // Jaccard
@@ -307,5 +345,5 @@ export function matchAnswer(questionKey, answers) {
       best = a;
     }
   }
-  return bestScore >= 0.6 ? best : null;
+  return bestScore >= 0.72 ? best : null;
 }

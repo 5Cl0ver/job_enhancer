@@ -11,6 +11,9 @@ export interface CustomAnswer {
   question_text: string;
   answer: string;
   updated_at?: string | null;
+  /** Usage insights (Answer Library): how often autofill reused this answer. */
+  use_count?: number;
+  last_used_at?: string | null;
 }
 
 export function useCustomAnswers() {

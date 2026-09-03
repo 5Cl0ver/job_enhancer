@@ -95,11 +95,19 @@ class CustomAnswerSchema(BaseModel):
     question_key: str = Field(min_length=1, max_length=255)
     question_text: str = Field(min_length=1, max_length=500)
     answer: str = Field(min_length=1)
-    # Optional so the extension's upserts (which omit it) still validate; the
-    # GET populates it from the row for the Settings dashboard.
+    # Optional so the extension's upserts (which omit these) still validate; the
+    # GET populates them from the row for the Answer Library / insights view.
     updated_at: datetime | None = None
+    use_count: int = 0
+    last_used_at: datetime | None = None
 
     model_config = {"from_attributes": True}
+
+
+class CustomAnswersUsed(BaseModel):
+    """Question keys autofill just reused — bump their usage insights."""
+
+    question_keys: list[str] = Field(default_factory=list, max_length=200)
 
 
 class CustomAnswersUpsert(BaseModel):
