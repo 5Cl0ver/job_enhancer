@@ -66,7 +66,13 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
 
   const startEditing = () => {
     setDraft(text);
+    updateDoc.reset(); // don't greet the user with the previous attempt's error
     setEditing(true);
+  };
+
+  const cancelEditing = () => {
+    updateDoc.reset();
+    setEditing(false);
   };
 
   const save = () => {
@@ -120,7 +126,11 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
                 aria-label={`Edit ${LABEL[doc.document_type] ?? doc.document_type}`}
               />
               <div className="flex flex-wrap gap-2">
-                <Button size="sm" onClick={save} disabled={updateDoc.isPending}>
+                <Button
+                  size="sm"
+                  onClick={save}
+                  disabled={updateDoc.isPending || !draft.trim()}
+                >
                   {updateDoc.isPending && (
                     <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />
                   )}
@@ -129,12 +139,17 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
                 <Button
                   variant="ghost"
                   size="sm"
-                  onClick={() => setEditing(false)}
+                  onClick={cancelEditing}
                   disabled={updateDoc.isPending}
                 >
                   Cancel
                 </Button>
               </div>
+              {!draft.trim() && (
+                <p className="text-xs text-muted-foreground">
+                  A document can't be saved empty.
+                </p>
+              )}
               {updateDoc.isError && (
                 <p className="text-xs text-destructive">Couldn't save. Try again.</p>
               )}
@@ -204,6 +219,15 @@ export function JobDocuments({
 }) {
   const { data: docs = [], isLoading, isError } = useJobDocuments(jobListingId);
 
+  // No job to ask about — the query never ran, so claiming "nothing saved yet"
+  // would be asserting something we never checked.
+  if (!jobListingId) return null;
+
+  // Only surface the error state when there's nothing cached to show. A failed
+  // background refetch must not blow away the list — that would unmount the rows
+  // and throw away an edit in progress along with its unsaved draft.
+  const showError = isError && docs.length === 0;
+
   return (
     <div className="space-y-2">
       <h2
@@ -216,17 +240,16 @@ export function JobDocuments({
 
       {isLoading ? (
         <p className={cn(compact ? "text-xs" : "text-sm", "text-muted-foreground")}>Loading…</p>
-      ) : isError ? (
+      ) : showError ? (
         // A failed fetch must not look like "nothing saved yet" — say what happened.
         <p className={cn(compact ? "text-xs" : "text-sm", "text-destructive")}>
           Couldn't load saved documents for this job.
         </p>
       ) : docs.length === 0 ? (
         <p className={cn(compact ? "text-xs" : "text-sm", "text-muted-foreground")}>
-          No résumé or cover letter saved for this job yet. Use{" "}
-          <span className="font-medium">Generate Documents</span> above, or ask Claude to
-          tailor one through the connector — either way it appears here to read, edit, or
-          download.
+          No résumé or cover letter saved for this job yet. Generate one from this job,
+          or ask Claude to tailor one through the connector — either way it appears here
+          to read, edit, or download.
         </p>
       ) : (
         <div className="space-y-2">
