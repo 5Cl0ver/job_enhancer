@@ -197,7 +197,7 @@ export function JobDetailDialog({
             </div>
           </div>
 
-          <JobDocuments jobListingId={savedJob.job_listing_id} />
+          <JobDocuments jobListingId={savedJob.job_listing_id} compact />
 
           {savedJob.notes && (
             <div className="rounded-md border bg-muted/40 p-2.5">
