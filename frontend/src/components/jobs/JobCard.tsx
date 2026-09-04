@@ -1,11 +1,13 @@
 import { Link } from "react-router-dom";
-import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2 } from "lucide-react";
+import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2, Check, Undo2 } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
 import { formatDistanceToNow } from "date-fns";
 import { formatSalary } from "@/lib/utils";
+import { useToggleApplied } from "@/hooks/useSavedJobs";
+import { usePipelineStages } from "@/hooks/useTracker";
 import type { JobListing } from "@/types/api";
 
 interface JobCardProps {
@@ -14,9 +16,19 @@ interface JobCardProps {
   isSaved?: boolean;
   /** Show an "Applied" badge (the saved job has an applied_at). */
   applied?: boolean;
+  /** The saved-job row id — enables the "Applied / Undo" toggle. */
+  savedJobId?: string;
 }
 
-export function JobCard({ job, onSave, isSaved = false, applied = false }: JobCardProps) {
+export function JobCard({
+  job,
+  onSave,
+  isSaved = false,
+  applied = false,
+  savedJobId,
+}: JobCardProps) {
+  const toggleApplied = useToggleApplied();
+  const { data: stages } = usePipelineStages();
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
@@ -95,7 +107,43 @@ export function JobCard({ job, onSave, isSaved = false, applied = false }: JobCa
             {postedAgo}
           </span>
         )}
-        <div className="ml-auto flex gap-2">
+        <div className="ml-auto flex flex-wrap justify-end gap-2">
+          {/* Applied toggle — mark it yourself, or undo a mis-tap. Also moves
+              the pipeline stage so the board agrees with the list. */}
+          {savedJobId && (
+            <Button
+              variant={applied ? "ghost" : "outline"}
+              size="sm"
+              disabled={toggleApplied.isPending}
+              title={applied ? "Undo — I haven't applied" : "I've applied to this"}
+              onClick={() =>
+                toggleApplied.mutate({
+                  id: savedJobId,
+                  applied: !applied,
+                  stageId: applied
+                    ? null
+                    : (stages?.find((s) => s.name === "Applied")?.id ?? undefined),
+                })
+              }
+              className={
+                applied
+                  ? "h-7 text-xs text-muted-foreground"
+                  : "h-7 text-xs text-green-700 dark:text-green-400"
+              }
+            >
+              {applied ? (
+                <>
+                  <Undo2 className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Undo
+                </>
+              ) : (
+                <>
+                  <Check className="mr-1 h-3.5 w-3.5" aria-hidden />
+                  Applied
+                </>
+              )}
+            </Button>
+          )}
           {onSave && (
             <Button
               variant="outline"

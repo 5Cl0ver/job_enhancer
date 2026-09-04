@@ -92,9 +92,57 @@ export function useUpdateSavedJob() {
       collection_id?: string | null;
       pipeline_stage_id?: string | null;
       notes?: string | null;
+      applied_at?: string | null;
       is_archived?: boolean;
     }) => api.patch<SavedJob>(`/v1/saved-jobs/${id}`, data),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+      qc.invalidateQueries({ queryKey: ["tracker"] });
+    },
+  });
+}
+
+/**
+ * Toggle a saved job's "Applied" status — and undo it if you tapped it by
+ * mistake. Sending `applied_at: null` clears it (the API's exclude_unset means
+ * an explicit null really does reset the column).
+ *
+ * `stageId` optionally moves the pipeline stage in the same breath, so the
+ * board and the list never disagree about whether you applied.
+ */
+export function useToggleApplied() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      applied,
+      stageId,
+    }: {
+      id: string;
+      applied: boolean;
+      stageId?: string | null;
+    }) =>
+      api.patch<SavedJob>(`/v1/saved-jobs/${id}`, {
+        applied_at: applied ? new Date().toISOString() : null,
+        ...(stageId !== undefined ? { pipeline_stage_id: stageId } : {}),
+      }),
+    // Optimistic: flip the badge instantly, roll back if the server disagrees.
+    onMutate: async ({ id, applied }) => {
+      await qc.cancelQueries({ queryKey: ["saved-jobs"] });
+      const prev = qc.getQueriesData<SavedJob[]>({ queryKey: ["saved-jobs"] });
+      qc.setQueriesData<SavedJob[]>({ queryKey: ["saved-jobs"] }, (old) =>
+        old?.map((sj) =>
+          sj.id === id
+            ? { ...sj, applied_at: applied ? new Date().toISOString() : null }
+            : sj,
+        ),
+      );
+      return { prev };
+    },
+    onError: (_err, _vars, ctx) => {
+      ctx?.prev?.forEach(([key, data]) => qc.setQueryData(key, data));
+    },
+    onSettled: () => {
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
       qc.invalidateQueries({ queryKey: ["tracker"] });
     },
