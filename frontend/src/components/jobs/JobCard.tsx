@@ -29,6 +29,9 @@ export function JobCard({
 }: JobCardProps) {
   const toggleApplied = useToggleApplied();
   const { data: stages } = usePipelineStages();
+  const appliedStage = stages?.find((s) => s.name === "Applied");
+  // Stages arrive sorted by sort_order, so [0] is the pipeline's entry point.
+  const firstStage = stages?.[0];
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
@@ -109,7 +112,9 @@ export function JobCard({
         )}
         <div className="ml-auto flex flex-wrap justify-end gap-2">
           {/* Applied toggle — mark it yourself, or undo a mis-tap. Also moves
-              the pipeline stage so the board agrees with the list. */}
+              the pipeline stage so the board agrees with the list. Undo returns
+              the job to the FIRST stage (never null: the board groups strictly
+              by stage id, so a stageless job would vanish from every column). */}
           {savedJobId && (
             <Button
               variant={applied ? "ghost" : "outline"}
@@ -121,8 +126,8 @@ export function JobCard({
                   id: savedJobId,
                   applied: !applied,
                   stageId: applied
-                    ? null
-                    : (stages?.find((s) => s.name === "Applied")?.id ?? undefined),
+                    ? (firstStage?.id ?? undefined)
+                    : (appliedStage?.id ?? undefined),
                 })
               }
               className={
