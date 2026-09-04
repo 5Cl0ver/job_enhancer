@@ -397,6 +397,40 @@ async def test_mark_applied_moves_job_to_applied(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_applied_can_be_set_and_undone(client: AsyncClient):
+    """The Applied toggle: an explicit null CLEARS applied_at (undo a mis-tap),
+    while omitting the field leaves it untouched."""
+    created = (
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": "https://example.com/toggle/1",
+                "title": "Platform Engineer",
+                "company": "Toggle Co",
+            },
+        )
+    ).json()
+    sj_id = created["id"]
+    assert created["applied_at"] is None
+
+    # Mark applied.
+    r = await client.patch(
+        f"/v1/saved-jobs/{sj_id}", json={"applied_at": "2026-09-03T12:00:00Z"}
+    )
+    assert r.status_code == 200
+    assert r.json()["applied_at"] is not None
+
+    # An unrelated update must NOT clear it (field omitted → untouched).
+    r = await client.patch(f"/v1/saved-jobs/{sj_id}", json={"notes": "still applied"})
+    assert r.json()["applied_at"] is not None
+
+    # Undo: explicit null clears it.
+    r = await client.patch(f"/v1/saved-jobs/{sj_id}", json={"applied_at": None})
+    assert r.status_code == 200
+    assert r.json()["applied_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_manual_add_drops_negative_salary_sentinel(client: AsyncClient):
     """Indeed sends -1 for 'no max'; it must be dropped, not stored/shown."""
     r = await client.post(

@@ -187,6 +187,7 @@ export function SavedJobsBody() {
                   job={sj.job_listing}
                   isSaved
                   applied={!!sj.applied_at}
+                  savedJobId={sj.id}
                   onSave={() => unsaveJob.mutate(sj.id)}
                 />
               ))}
