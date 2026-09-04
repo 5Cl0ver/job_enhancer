@@ -15,14 +15,14 @@ interface PipelineColumnProps {
 }
 
 const STAGE_COLORS: Record<string, string> = {
-  Interested: "bg-slate-50 border-slate-200",
-  "Referral Sent": "bg-purple-50 border-purple-200",
-  Applied: "bg-blue-50 border-blue-200",
-  "Phone Screen": "bg-cyan-50 border-cyan-200",
-  "Take-Home Assignment": "bg-yellow-50 border-yellow-200",
-  Interview: "bg-orange-50 border-orange-200",
-  Offer: "bg-green-50 border-green-200",
-  Rejected: "bg-red-50 border-red-200",
+  Interested: "bg-slate-50 border-slate-200 dark:bg-slate-900/40 dark:border-slate-800",
+  "Referral Sent": "bg-purple-50 border-purple-200 dark:bg-purple-950/30 dark:border-purple-900",
+  Applied: "bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-900",
+  "Phone Screen": "bg-cyan-50 border-cyan-200 dark:bg-cyan-950/30 dark:border-cyan-900",
+  "Take-Home Assignment": "bg-yellow-50 border-yellow-200 dark:bg-yellow-950/30 dark:border-yellow-900",
+  Interview: "bg-orange-50 border-orange-200 dark:bg-orange-950/30 dark:border-orange-900",
+  Offer: "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-900",
+  Rejected: "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900",
 };
 
 export function PipelineColumn({

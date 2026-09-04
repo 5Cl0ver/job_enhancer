@@ -40,7 +40,7 @@ export function ResumeUpload() {
   return (
     <div className="space-y-3">
       {activeResume && (
-        <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700">
+        <div className="flex items-center gap-2 rounded-lg bg-green-50 px-3 py-2 text-sm text-green-700 dark:bg-green-950/30 dark:text-green-300">
           <CheckCircle className="h-4 w-4 shrink-0" />
           <span className="truncate font-medium">{activeResume.filename}</span>
           <span className="text-green-500 text-xs">(active)</span>

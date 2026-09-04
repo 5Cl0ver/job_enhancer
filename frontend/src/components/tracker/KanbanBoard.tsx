@@ -136,9 +136,9 @@ function ResearchColumn({ jobs }: { jobs: SavedJob[] }) {
   const { setNodeRef, isOver } = useDroppable({ id: RESEARCH_DROP_ID });
   return (
     <div className="flex w-64 shrink-0 flex-col gap-2">
-      <div className="rounded-t-lg border border-amber-200 bg-amber-50 px-3 py-2">
+      <div className="rounded-t-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
         <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1 text-sm font-semibold text-amber-800">
+          <span className="flex items-center gap-1 text-sm font-semibold text-amber-800 dark:text-amber-300">
             <Search className="h-3.5 w-3.5" /> Contact Further
           </span>
           <span className="rounded-full bg-background px-1.5 py-0.5 text-xs font-medium">
@@ -149,15 +149,15 @@ function ResearchColumn({ jobs }: { jobs: SavedJob[] }) {
       <div
         ref={setNodeRef}
         className={cn(
-          "flex min-h-[120px] flex-col gap-2 rounded-b-lg border border-t-0 border-amber-200 bg-amber-50/40 p-2 transition-colors",
-          isOver && "bg-amber-100/70",
+          "flex min-h-[120px] flex-col gap-2 rounded-b-lg border border-t-0 border-amber-200 bg-amber-50/40 p-2 transition-colors dark:border-amber-900 dark:bg-amber-950/20",
+          isOver && "bg-amber-100/70 dark:bg-amber-900/30",
         )}
       >
         {jobs.map((sj) => (
           <ResearchMiniCard key={sj.id} savedJob={sj} />
         ))}
         {jobs.length === 0 && (
-          <p className="py-4 text-center text-xs text-amber-700/70">
+          <p className="py-4 text-center text-xs text-amber-700/70 dark:text-amber-500/70">
             Drop a job here to research the company
           </p>
         )}
