@@ -52,8 +52,8 @@ export function parseSalaryText(text) {
   const t = clean(text);
   if (!t) return null;
   let period = null;
-  if (/\b(a|an|per)\s+year\b|\byearly\b|\bannual/i.test(t)) period = "yearly";
-  else if (/\b(a|an|per)\s+hour\b|\bhourly\b|\/\s*hr\b/i.test(t)) period = "hourly";
+  if (/\b(a|an|per)\s+year\b|\byearly\b|\bannual|\/\s*(year|yr)\b/i.test(t)) period = "yearly";
+  else if (/\b(a|an|per)\s+hour\b|\bhourly\b|\/\s*(hour|hr)\b/i.test(t)) period = "hourly";
   if (!period) return null;
   const nums = [...t.matchAll(/\$\s*([\d,]+(?:\.\d+)?)/g)]
     .map((m) => Math.round(parseFloat(m[1].replace(/,/g, ""))))

@@ -1101,19 +1101,28 @@ async function saveThisPage() {
     return;
   }
 
-  let results;
-  try {
-    results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: extractJobFromPage,
-    });
-  } catch {
-    btn.disabled = false;
-    status.textContent = "Can't read this page — open the job posting as a normal https page.";
-    return;
-  }
+  // On sites with our content script (Indeed / LinkedIn / ZipRecruiter), use its
+  // tested extractJob(). Anywhere else — or if that tab's script is orphaned —
+  // fall back to the self-contained inline reader below.
+  const viaContent = await chrome.tabs
+    .sendMessage(tab.id, { type: "extractJob" })
+    .catch(() => null);
+  let job = viaContent?.ok && viaContent.job?.title ? viaContent.job : null;
 
-  const job = results?.[0]?.result;
+  if (!job) {
+    let results;
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: extractJobFromPage,
+      });
+    } catch {
+      btn.disabled = false;
+      status.textContent = "Can't read this page — open the job posting as a normal https page.";
+      return;
+    }
+    job = results?.[0]?.result;
+  }
   btn.disabled = false;
   if (!job) {
     status.textContent = "Couldn't read this page.";
