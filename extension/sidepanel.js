@@ -53,6 +53,34 @@ function findDuplicate(job) {
 // Saved jobs list
 // ---------------------------------------------------------------------------
 
+// Shown while the (possibly cold) backend is answering.
+function renderSavedLoading() {
+  $("saved-all-count").textContent = "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.textContent = "Loading your jobs…";
+  list.append(li);
+}
+
+// Shown when the load genuinely failed — a retry, NOT a fake "no jobs" state.
+function renderSavedError() {
+  $("saved-all-count").textContent = "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.append("Couldn't reach the server. ");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "mark-applied";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => loadSaved());
+  li.append(retry);
+  list.append(li);
+}
+
 function renderSavedAll() {
   $("saved-all-count").textContent = savedJobs.length ? `(${savedJobs.length})` : "";
   const list = $("saved-all-list");
@@ -117,13 +145,27 @@ function makeMarkAppliedButton(job, label) {
 }
 
 async function loadSaved() {
+  // Only show "Loading…" on the FIRST load. This runs on a 15s poll and on
+  // focus, so blanking a populated list every time makes it flash constantly.
+  const hadJobs = savedJobs.length > 0;
+  if (!hadJobs) renderSavedLoading();
   const res = await send({ type: "listSaved" }).catch(() => null);
   // Session expired/wedged — bounce to sign-in instead of showing empty.
   if (res && res.signedIn === false) {
     show("login");
     return;
   }
-  savedJobs = res?.jobs || [];
+  // A failed load must NOT look like "no saved jobs" — show a retry instead.
+  // (Most common cause: the free-tier backend was asleep and is still waking.)
+  // But a transient failure during a background refresh shouldn't wipe a list
+  // we already have — keep the jobs and try again on the next poll.
+  if (!res || res.error) {
+    if (!hadJobs) renderSavedError();
+    populateJobSelect();
+    renderContext(await detectContext());
+    return;
+  }
+  savedJobs = res.jobs || [];
   renderSavedAll();
   populateJobSelect();
   renderContext(await detectContext());
