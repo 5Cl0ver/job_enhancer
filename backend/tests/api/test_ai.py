@@ -306,6 +306,53 @@ async def test_document_pdf_renders_markdown(
     assert r.content[:4] == b"%PDF"
 
 
+def test_resume_pdf_never_strands_a_job_header():
+    """A job header ("**Company** | *Title* | dates") must never sit alone at the
+    bottom of a page or be split from its date — it moves to the next page with
+    its first bullet. The summary grows a line at a time so a header lands on
+    every spot near the bottom of the page."""
+    import io
+
+    import pdfplumber
+    from fpdf import FPDF
+
+    from app.api.v1.ai import _render_markdown
+
+    roles = [
+        ("Acme", "2022 – Present"),
+        ("Globex", "2019 – 2021"),
+        ("Initech", "2017 – 2019"),
+        ("Umbrella", "2015 – 2017"),
+    ]
+    bullet = "- Built and shipped a service that handled **millions** of requests a day"
+    for pad in range(30):
+        md = ["# Jane Dev", "jane@example.com", "", "## SUMMARY"]
+        md += ["Backend engineer."] * (1 + pad) + ["", "## EXPERIENCE"]
+        for company, dates in roles:
+            md += [f"**{company}** | *Engineer* | {dates}", bullet, bullet, bullet, ""]
+
+        pdf = FPDF(format="letter")
+        pdf.set_auto_page_break(auto=True, margin=15)
+        pdf.add_page()
+        pdf.set_margins(16, 14, 16)
+        _render_markdown(pdf, "\n".join(md))
+        with pdfplumber.open(io.BytesIO(bytes(pdf.output()))) as doc:
+            pages = [
+                [ln for ln in (p.extract_text() or "").splitlines() if ln.strip()]
+                for p in doc.pages
+            ]
+
+        for n, lines in enumerate(pages, 1):
+            for company, dates in roles:
+                header = [ln for ln in lines if ln.startswith(company)]
+                assert not header or dates in header[0], (
+                    f"pad={pad}: {company} split from its date on page {n}"
+                )
+                assert not lines[-1].startswith(company), (
+                    f"pad={pad}: page {n} ends on the {company} header"
+                )
+
+
 @pytest.mark.asyncio
 async def test_work_history_no_resume_is_empty(client: AsyncClient):
     """No active résumé → nothing to parse, empty list (never errors)."""
