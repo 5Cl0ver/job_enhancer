@@ -611,7 +611,9 @@ def _render_markdown(pdf, text: str) -> None:
                 2 + text_h(_strip_md(stripped[3:]).upper(), 5.5, "B", 11.5) + 1.8
             )
             j = next_content(i)
-            if j is not None and not lines[j].strip().startswith("#"):
+            # A "###" sub-heading is the section's first entry; only another
+            # "#"/"##" heading means the section is empty.
+            if j is not None and not lines[j].strip().startswith(("# ", "## ")):
                 heading_h += 2 * (j - i - 1) + with_first_line(j)
             keep_together(heading_h)
             pdf.ln(2)
