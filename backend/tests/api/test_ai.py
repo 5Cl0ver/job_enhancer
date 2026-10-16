@@ -306,11 +306,8 @@ async def test_document_pdf_renders_markdown(
     assert r.content[:4] == b"%PDF"
 
 
-def test_resume_pdf_never_strands_a_job_header():
-    """A job header ("**Company** | *Title* | dates") must never sit alone at the
-    bottom of a page or be split from its date — it moves to the next page with
-    its first bullet. The summary grows a line at a time so a header lands on
-    every spot near the bottom of the page."""
+def _pdf_page_lines(markdown: str) -> list[list[str]]:
+    """Render Markdown the way the /pdf endpoint does; return each page's lines."""
     import io
 
     import pdfplumber
@@ -318,6 +315,23 @@ def test_resume_pdf_never_strands_a_job_header():
 
     from app.api.v1.ai import _render_markdown
 
+    pdf = FPDF(format="letter")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(16, 14, 16)
+    _render_markdown(pdf, markdown)
+    with pdfplumber.open(io.BytesIO(bytes(pdf.output()))) as doc:
+        return [
+            [ln for ln in (p.extract_text() or "").splitlines() if ln.strip()]
+            for p in doc.pages
+        ]
+
+
+def test_resume_pdf_never_strands_a_job_header():
+    """A job header ("**Company** | *Title* | dates") must never sit alone at the
+    bottom of a page or be split from its date — it moves to the next page with
+    its first bullet. The summary grows a line at a time so a header lands on
+    every spot near the bottom of the page."""
     roles = [
         ("Acme", "2022 – Present"),
         ("Globex", "2019 – 2021"),
@@ -331,18 +345,7 @@ def test_resume_pdf_never_strands_a_job_header():
         for company, dates in roles:
             md += [f"**{company}** | *Engineer* | {dates}", bullet, bullet, bullet, ""]
 
-        pdf = FPDF(format="letter")
-        pdf.set_auto_page_break(auto=True, margin=15)
-        pdf.add_page()
-        pdf.set_margins(16, 14, 16)
-        _render_markdown(pdf, "\n".join(md))
-        with pdfplumber.open(io.BytesIO(bytes(pdf.output()))) as doc:
-            pages = [
-                [ln for ln in (p.extract_text() or "").splitlines() if ln.strip()]
-                for p in doc.pages
-            ]
-
-        for n, lines in enumerate(pages, 1):
+        for n, lines in enumerate(_pdf_page_lines("\n".join(md)), 1):
             for company, dates in roles:
                 header = [ln for ln in lines if ln.startswith(company)]
                 assert not header or dates in header[0], (
@@ -351,6 +354,19 @@ def test_resume_pdf_never_strands_a_job_header():
                 assert not lines[-1].startswith(company), (
                     f"pad={pad}: page {n} ends on the {company} header"
                 )
+
+
+def test_resume_pdf_never_strands_a_section_heading():
+    """A "## SECTION" heading followed by "### Sub-heading" entries must move to
+    the next page with its first entry, not sit alone at the bottom of a page."""
+    for pad in range(30, 50):
+        md = ["# Jane Dev", "jane@example.com", "", "## SUMMARY"]
+        md += ["Backend engineer."] * pad + ["", "## PROJECTS"]
+        for n in range(4):
+            md += [f"### Project {n}", "- Built it", "- Shipped it", ""]
+
+        for n, lines in enumerate(_pdf_page_lines("\n".join(md)), 1):
+            assert lines[-1] != "PROJECTS", f"pad={pad}: page {n} ends on PROJECTS"
 
 
 @pytest.mark.asyncio
