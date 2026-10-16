@@ -461,11 +461,17 @@ def _render_markdown(pdf, text: str) -> None:
     """Render an LLM's Markdown into a resume/letter that mirrors a real template:
     Carlito (Calibri) throughout, a centered name + contact header, black section
     headings with a full-width rule, bold skill labels, job headers with
-    right-aligned dates, and round bullet points."""
-    from fpdf.enums import XPos, YPos
+    right-aligned dates, and round bullet points.
+
+    fpdf2 has no CSS, so page-break rules are applied by measuring blocks first:
+    a section heading or job/project/education header is never left alone at the
+    bottom of a page (it moves down with its first bullet or line), and a bullet
+    is never split across pages."""
+    from fpdf.enums import MethodReturnValue, XPos, YPos
 
     FONT = _register_fonts(pdf)
     BODY = 10.5
+    lines = text.split("\n")
 
     def para(
         txt: str, h: float, align: str = "L", style: str = "", size: float = BODY
@@ -488,6 +494,62 @@ def _render_markdown(pdf, text: str) -> None:
             return seg[1:-1], "I"
         return seg, ""
 
+    def is_job_header(s: str) -> bool:
+        return s.startswith("**") and bool(_DATE_RE.search(s))
+
+    def text_h(
+        txt: str, h: float, style: str = "", size: float = BODY, indent: float = 0
+    ) -> float:
+        # Height a multi_cell would take, measured without drawing anything.
+        pdf.set_font(FONT, style, size)
+        rows = pdf.multi_cell(
+            pdf.epw - indent,
+            h,
+            txt,
+            markdown=True,
+            dry_run=True,
+            output=MethodReturnValue.LINES,
+        )
+        pdf.set_font(FONT, "", BODY)
+        return h * len(rows)
+
+    def block_h(s: str) -> float:
+        if s.startswith(("- ", "* ")):
+            return text_h("•  " + _md_inline(s[2:]), 5, indent=3)
+        if s.startswith("### "):
+            return text_h(_md_inline(s[4:]), 5.5, style="B", size=11)
+        if is_job_header(s):
+            return 1.5 + 5
+        # Plain paragraph: two lines are enough to not strand what's above it.
+        return min(text_h(_md_inline(s), 5), 2 * 5)
+
+    def next_content(i: int) -> int | None:
+        for j in range(i + 1, len(lines)):
+            if lines[j].strip():
+                return j
+        return None
+
+    def with_first_line(i: int) -> float:
+        # Height of block i plus the gap and first block that must follow it
+        # (a header keeps at least its first bullet).
+        h = block_h(lines[i].strip())
+        j = next_content(i)
+        if j is None:
+            return h
+        nxt = lines[j].strip()
+        if nxt.startswith("#") or is_job_header(nxt):
+            return h
+        return h + 2 * (j - i - 1) + block_h(nxt)
+
+    def keep_together(h: float) -> None:
+        # break-inside/break-after: avoid — start a new page now if the next
+        # `h` mm won't fit, unless we're already at the top of a page.
+        if (
+            pdf.get_y() + h > pdf.page_break_trigger
+            and pdf.get_y() > pdf.t_margin + 0.01
+        ):
+            pdf.add_page()
+
     def job_header(line: str) -> None:
         # "**Company** | *Title* | Sep 2024 – Present" — left parts inline (with
         # their styles), the date range right-aligned on the same line.
@@ -497,7 +559,7 @@ def _render_markdown(pdf, text: str) -> None:
             date = parts[-1].strip()
             parts = parts[:-1]
         pdf.ln(1.5)
-        y = pdf.get_y()
+        y, page = pdf.get_y(), pdf.page
         pdf.set_x(pdf.l_margin)
         for i, seg in enumerate(parts):
             if i > 0:
@@ -508,6 +570,10 @@ def _render_markdown(pdf, text: str) -> None:
             pdf.write(5, txt)
         if date:
             pdf.set_font(FONT, "", BODY)
+            if pdf.page != page:
+                # The title wrapped onto a new page: keep the date on its line
+                # there, not at the old page's y (which strands it a page later).
+                y = pdf.get_y()
             pdf.set_xy(pdf.l_margin, y)
             pdf.cell(0, 5, date, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
         else:
@@ -518,7 +584,7 @@ def _render_markdown(pdf, text: str) -> None:
     in_header = False
     pdf.set_font(FONT, "", BODY)
 
-    for raw in text.split("\n"):
+    for i, raw in enumerate(lines):
         stripped = raw.strip()
 
         if stripped.startswith("# ") and not stripped.startswith("## "):
@@ -539,6 +605,17 @@ def _render_markdown(pdf, text: str) -> None:
         if stripped.startswith("## "):
             # Section heading — bold caps with a full-width rule under it.
             in_header = False
+            # Keep the heading with its first entry (and that entry's first
+            # bullet) so it never sits alone at the bottom of a page.
+            heading_h = (
+                2 + text_h(_strip_md(stripped[3:]).upper(), 5.5, "B", 11.5) + 1.8
+            )
+            j = next_content(i)
+            # A "###" sub-heading is the section's first entry; only another
+            # "#"/"##" heading means the section is empty.
+            if j is not None and not lines[j].strip().startswith(("# ", "## ")):
+                heading_h += 2 * (j - i - 1) + with_first_line(j)
+            keep_together(heading_h)
             pdf.ln(2)
             pdf.set_font(FONT, "B", 11.5)
             pdf.multi_cell(
@@ -579,10 +656,12 @@ def _render_markdown(pdf, text: str) -> None:
             continue
 
         if stripped.startswith("### "):
+            keep_together(with_first_line(i))
             para(stripped[4:], 5.5, style="B", size=11)
             continue
 
         if stripped.startswith(("- ", "* ")):
+            keep_together(block_h(stripped))  # a bullet never splits
             pdf.set_x(pdf.l_margin + 3)
             pdf.set_font(FONT, "", BODY)
             pdf.multi_cell(
@@ -596,7 +675,8 @@ def _render_markdown(pdf, text: str) -> None:
             continue
 
         # A job-header line: starts bold and ends with a date range.
-        if stripped.startswith("**") and _DATE_RE.search(stripped):
+        if is_job_header(stripped):
+            keep_together(with_first_line(i))
             job_header(stripped)
             continue
 
