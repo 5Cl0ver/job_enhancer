@@ -471,6 +471,11 @@ def _render_markdown(pdf, text: str) -> None:
 
     FONT = _register_fonts(pdf)
     BODY = 10.5
+    # Bullet dot indent, and the dot's cell width — sized to the old "•  "
+    # prefix so the first line of every bullet starts exactly where it did.
+    BULLET_X = 3
+    pdf.set_font(FONT, "", BODY)
+    BULLET_W = pdf.get_string_width("•  ")
     lines = text.split("\n")
 
     def para(
@@ -515,7 +520,7 @@ def _render_markdown(pdf, text: str) -> None:
 
     def block_h(s: str) -> float:
         if s.startswith(("- ", "* ")):
-            return text_h("•  " + _md_inline(s[2:]), 5, indent=3)
+            return text_h(_md_inline(s[2:]), 5, indent=BULLET_X + BULLET_W)
         if s.startswith("### "):
             return text_h(_md_inline(s[4:]), 5.5, style="B", size=11)
         if is_job_header(s):
@@ -662,12 +667,17 @@ def _render_markdown(pdf, text: str) -> None:
 
         if stripped.startswith(("- ", "* ")):
             keep_together(block_h(stripped))  # a bullet never splits
-            pdf.set_x(pdf.l_margin + 3)
+            # Hanging indent: the dot sits in its own cell and the text wraps
+            # under itself, not under the dot. Left-aligned (ragged right), not
+            # justified, so word spacing stays even.
             pdf.set_font(FONT, "", BODY)
+            pdf.set_x(pdf.l_margin + BULLET_X)
+            pdf.cell(BULLET_W, 5, "•")
             pdf.multi_cell(
                 0,
                 5,
-                "•  " + _md_inline(stripped[2:]),
+                _md_inline(stripped[2:]),
+                align="L",
                 markdown=True,
                 new_x=XPos.LMARGIN,
                 new_y=YPos.NEXT,
