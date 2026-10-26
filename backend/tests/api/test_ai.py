@@ -306,6 +306,100 @@ async def test_document_pdf_renders_markdown(
     assert r.content[:4] == b"%PDF"
 
 
+def _render_pdf(markdown: str) -> bytes:
+    """Render Markdown the way the /pdf endpoint does."""
+    from fpdf import FPDF
+
+    from app.api.v1.ai import _render_markdown
+
+    pdf = FPDF(format="letter")
+    pdf.set_auto_page_break(auto=True, margin=15)
+    pdf.add_page()
+    pdf.set_margins(16, 14, 16)
+    _render_markdown(pdf, markdown)
+    return bytes(pdf.output())
+
+
+def _pdf_page_lines(markdown: str) -> list[list[str]]:
+    """Render Markdown the way the /pdf endpoint does; return each page's lines."""
+    import io
+
+    import pdfplumber
+
+    with pdfplumber.open(io.BytesIO(_render_pdf(markdown))) as doc:
+        return [
+            [ln for ln in (p.extract_text() or "").splitlines() if ln.strip()]
+            for p in doc.pages
+        ]
+
+
+def test_resume_pdf_never_strands_a_job_header():
+    """A job header ("**Company** | *Title* | dates") must never sit alone at the
+    bottom of a page or be split from its date — it moves to the next page with
+    its first bullet. The summary grows a line at a time so a header lands on
+    every spot near the bottom of the page."""
+    roles = [
+        ("Acme", "2022 – Present"),
+        ("Globex", "2019 – 2021"),
+        ("Initech", "2017 – 2019"),
+        ("Umbrella", "2015 – 2017"),
+    ]
+    bullet = "- Built and shipped a service that handled **millions** of requests a day"
+    for pad in range(30):
+        md = ["# Jane Dev", "jane@example.com", "", "## SUMMARY"]
+        md += ["Backend engineer."] * (1 + pad) + ["", "## EXPERIENCE"]
+        for company, dates in roles:
+            md += [f"**{company}** | *Engineer* | {dates}", bullet, bullet, bullet, ""]
+
+        for n, lines in enumerate(_pdf_page_lines("\n".join(md)), 1):
+            for company, dates in roles:
+                header = [ln for ln in lines if ln.startswith(company)]
+                assert not header or dates in header[0], (
+                    f"pad={pad}: {company} split from its date on page {n}"
+                )
+                assert not lines[-1].startswith(company), (
+                    f"pad={pad}: page {n} ends on the {company} header"
+                )
+
+
+def test_resume_pdf_never_strands_a_section_heading():
+    """A "## SECTION" heading followed by "### Sub-heading" entries must move to
+    the next page with its first entry, not sit alone at the bottom of a page."""
+    for pad in range(30, 50):
+        md = ["# Jane Dev", "jane@example.com", "", "## SUMMARY"]
+        md += ["Backend engineer."] * pad + ["", "## PROJECTS"]
+        for n in range(4):
+            md += [f"### Project {n}", "- Built it", "- Shipped it", ""]
+
+        for n, lines in enumerate(_pdf_page_lines("\n".join(md)), 1):
+            assert lines[-1] != "PROJECTS", f"pad={pad}: page {n} ends on PROJECTS"
+
+
+def test_resume_pdf_bullets_hang_and_are_left_aligned():
+    """A wrapped bullet's second line lines up with its text, not under the dot,
+    and bullets are left-aligned: justifying the short first line here (cut
+    short by the long word) would stretch its word gaps far past a space."""
+    import io
+    from itertools import pairwise
+
+    import pdfplumber
+
+    md = (
+        "# Jane Dev\n\n## EXPERIENCE\n"
+        "- Built and shipped the onboarding automation for every new hire using "
+        "Microsoft-Graph-Entra-ID-Exchange-Online-provisioning-pipelines daily"
+    )
+    with pdfplumber.open(io.BytesIO(_render_pdf(md))) as doc:
+        words = doc.pages[0].extract_words()
+    bullet = next(w for w in words if w["text"] == "•")
+    first = [w for w in words if abs(w["top"] - bullet["top"]) < 1 and w is not bullet]
+    second = [w for w in words if w["top"] > bullet["top"] + 5]
+
+    assert abs(second[0]["x0"] - first[0]["x0"]) < 0.5  # hanging indent
+    gaps = [b["x0"] - a["x1"] for a, b in pairwise(first)]
+    assert max(gaps) < 4  # a Carlito 10.5pt space is ~2.4pt; justified is wider
+
+
 @pytest.mark.asyncio
 async def test_work_history_no_resume_is_empty(client: AsyncClient):
     """No active résumé → nothing to parse, empty list (never errors)."""
