@@ -306,11 +306,8 @@ async def test_document_pdf_renders_markdown(
     assert r.content[:4] == b"%PDF"
 
 
-def _pdf_page_lines(markdown: str) -> list[list[str]]:
-    """Render Markdown the way the /pdf endpoint does; return each page's lines."""
-    import io
-
-    import pdfplumber
+def _render_pdf(markdown: str) -> bytes:
+    """Render Markdown the way the /pdf endpoint does."""
     from fpdf import FPDF
 
     from app.api.v1.ai import _render_markdown
@@ -320,7 +317,16 @@ def _pdf_page_lines(markdown: str) -> list[list[str]]:
     pdf.add_page()
     pdf.set_margins(16, 14, 16)
     _render_markdown(pdf, markdown)
-    with pdfplumber.open(io.BytesIO(bytes(pdf.output()))) as doc:
+    return bytes(pdf.output())
+
+
+def _pdf_page_lines(markdown: str) -> list[list[str]]:
+    """Render Markdown the way the /pdf endpoint does; return each page's lines."""
+    import io
+
+    import pdfplumber
+
+    with pdfplumber.open(io.BytesIO(_render_pdf(markdown))) as doc:
         return [
             [ln for ln in (p.extract_text() or "").splitlines() if ln.strip()]
             for p in doc.pages
@@ -367,6 +373,31 @@ def test_resume_pdf_never_strands_a_section_heading():
 
         for n, lines in enumerate(_pdf_page_lines("\n".join(md)), 1):
             assert lines[-1] != "PROJECTS", f"pad={pad}: page {n} ends on PROJECTS"
+
+
+def test_resume_pdf_bullets_hang_and_are_left_aligned():
+    """A wrapped bullet's second line lines up with its text, not under the dot,
+    and bullets are left-aligned: justifying the short first line here (cut
+    short by the long word) would stretch its word gaps far past a space."""
+    import io
+    from itertools import pairwise
+
+    import pdfplumber
+
+    md = (
+        "# Jane Dev\n\n## EXPERIENCE\n"
+        "- Built and shipped the onboarding automation for every new hire using "
+        "Microsoft-Graph-Entra-ID-Exchange-Online-provisioning-pipelines daily"
+    )
+    with pdfplumber.open(io.BytesIO(_render_pdf(md))) as doc:
+        words = doc.pages[0].extract_words()
+    bullet = next(w for w in words if w["text"] == "•")
+    first = [w for w in words if abs(w["top"] - bullet["top"]) < 1 and w is not bullet]
+    second = [w for w in words if w["top"] > bullet["top"] + 5]
+
+    assert abs(second[0]["x0"] - first[0]["x0"]) < 0.5  # hanging indent
+    gaps = [b["x0"] - a["x1"] for a, b in pairwise(first)]
+    assert max(gaps) < 4  # a Carlito 10.5pt space is ~2.4pt; justified is wider
 
 
 @pytest.mark.asyncio
