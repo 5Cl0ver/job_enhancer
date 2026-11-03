@@ -8,7 +8,7 @@ from fastapi.responses import StreamingResponse
 from slowapi import Limiter
 from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
@@ -16,6 +16,7 @@ from app.models.application_profile import ApplicationProfile
 from app.models.collection import Collection
 from app.models.custom_answer import CustomAnswer
 from app.models.generated_document import GeneratedDocument
+from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
@@ -227,7 +228,12 @@ async def export_data(
         (
             await db.execute(
                 select(SavedJob)
-                .options(selectinload(SavedJob.job_listing))
+                # The export lists title/company/location/URL, not descriptions.
+                .options(
+                    selectinload(SavedJob.job_listing).options(
+                        defer(JobListing.description)
+                    )
+                )
                 .where(SavedJob.user_id == user.id)
             )
         )

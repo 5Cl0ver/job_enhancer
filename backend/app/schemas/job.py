@@ -6,7 +6,9 @@ from datetime import datetime
 from pydantic import BaseModel
 
 
-class JobListingSchema(BaseModel):
+class JobListingBase(BaseModel):
+    """Every listing field except the (often large) description."""
+
     id: uuid.UUID
     external_id: str
     source: str
@@ -14,7 +16,6 @@ class JobListingSchema(BaseModel):
     company: str
     location: str
     is_remote: bool
-    description: str | None
     salary_min: int | None
     salary_max: int | None
     salary_period: str | None = None  # "yearly" (also when null) or "hourly"
@@ -26,6 +27,20 @@ class JobListingSchema(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class JobListingSchema(JobListingBase):
+    """A listing with its full description (detail views, search, exports)."""
+
+    description: str | None
+
+
+class JobListingSummarySchema(JobListingBase):
+    """A listing for list views: a short preview instead of the description.
+    The full text is loaded only by the job detail view (``GET /jobs/{id}``)."""
+
+    description_preview: str | None = None
+    has_description: bool = False
 
 
 class PaginatedMeta(BaseModel):

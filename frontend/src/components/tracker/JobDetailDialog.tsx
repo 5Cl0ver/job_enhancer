@@ -11,6 +11,7 @@ import {
 } from "@/components/ui/dialog";
 import { useToggleResearchFlag, useToggleEmailed } from "@/hooks/useTracker";
 import { useProfile } from "@/hooks/useProfile";
+import { useJob } from "@/hooks/useJobs";
 import { JobDocuments } from "@/components/ai/JobDocuments";
 import type { JobListing, SavedJob } from "@/types/api";
 
@@ -77,7 +78,12 @@ export function JobDetailDialog({
   open: boolean;
   onOpenChange: (open: boolean) => void;
 }) {
-  const j = savedJob.job_listing;
+  // The board's list data has no full description (bandwidth); load the full
+  // listing only while this dialog is open. Cached per job by `useJob`.
+  const { data: fullListing, isLoading: loadingDescription } = useJob(
+    open ? savedJob.job_listing_id : null,
+  );
+  const j: JobListing = fullListing ?? savedJob.job_listing;
   const pay = salaryText(j);
   const toggleFlag = useToggleResearchFlag();
   const toggleEmailed = useToggleEmailed();
@@ -153,7 +159,12 @@ export function JobDetailDialog({
               <Search className="mr-1 h-4 w-4" />
               {savedJob.flagged_for_research ? "In Contact Further" : "Add to Contact Further"}
             </Button>
-            <Button variant="secondary" size="sm" onClick={researchWithClaude}>
+            <Button
+              variant="secondary"
+              size="sm"
+              onClick={researchWithClaude}
+              disabled={!fullListing && loadingDescription}
+            >
               {copied ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
               {copied ? "Copied — paste in Claude" : "🔍 Research + draft email (Claude)"}
             </Button>
@@ -206,7 +217,9 @@ export function JobDetailDialog({
             </div>
           )}
 
-          {j.description ? (
+          {!fullListing && loadingDescription ? (
+            <p className="text-muted-foreground">Loading description…</p>
+          ) : j.description ? (
             <div>
               <p className="mb-1 text-xs font-semibold text-muted-foreground">Description</p>
               <p className="whitespace-pre-wrap leading-relaxed text-foreground/90">

@@ -11,7 +11,13 @@ export interface JobListing {
   company: string;
   location: string;
   is_remote: boolean;
-  description: string | null;
+  /** Full text. Present on search results and the job detail view
+   *  (`GET /jobs/{id}`); left out of saved-job lists to save bandwidth. */
+  description?: string | null;
+  /** List views only: the first ~300 characters of the description. */
+  description_preview?: string | null;
+  /** List views only: whether a full description exists. */
+  has_description?: boolean;
   salary_min: number | null;
   salary_max: number | null;
   /** "yearly" (also the meaning of null) or "hourly". */
