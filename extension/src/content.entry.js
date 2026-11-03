@@ -1,4 +1,4 @@
-// Content script for Indeed / LinkedIn job pages.
+// Content script for Indeed / LinkedIn / ZipRecruiter job pages.
 //
 // One Save button that stays in sync with the OPEN job:
 //   • Anchored in the job header when we can find the title; otherwise a small
@@ -17,6 +17,7 @@ import { readApplications } from "./extract/indeed-myjobs.js";
 const host = location.hostname;
 const IS_INDEED = /(^|\.)indeed\./i.test(host);
 const IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
+const IS_ZIPRECRUITER = /(^|\.)ziprecruiter\./i.test(host);
 
 const BTN_ID = "je-save-btn";
 const LABEL = "＋ Save to Job Enhancer";
@@ -223,9 +224,27 @@ if (ON_INDEED_MYJOBS) {
 // The normal Save button runs on job/search pages — NOT the apply flow (there's
 // no job card to save there; the badge above takes over) and NOT the My jobs
 // board (that's a whole list, handled above).
-if ((IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS) || IS_LINKEDIN) {
+if ((IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS) || IS_LINKEDIN || IS_ZIPRECRUITER) {
   injectStyles();
   sync();
+  // The side panel's "Save this page" asks us first, so on these sites it gets
+  // the same tested extractJob() as the Save button — not its inline fallback.
+  try {
+    chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
+      if (msg?.type !== "extractJob") return;
+      try {
+        const job = extractJob(document, location.href);
+        // Same escape hatch as the panel's inline reader: highlighted text wins.
+        const sel = (window.getSelection?.().toString() || "").trim();
+        if (sel.length > 40) job.description = sel;
+        sendResponse({ ok: true, job });
+      } catch (e) {
+        sendResponse({ ok: false, error: String((e && e.message) || e) });
+      }
+    });
+  } catch {
+    /* orphaned */
+  }
   let t;
   const observer = new MutationObserver(() => {
     clearTimeout(t);

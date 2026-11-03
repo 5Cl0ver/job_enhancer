@@ -2,7 +2,7 @@
 
 Save jobs from any site to your Job Enhancer tracker — **two ways**:
 
-- **On Indeed / LinkedIn:** a **Save to Job Enhancer** button appears right in the
+- **On Indeed / LinkedIn / ZipRecruiter:** a **Save to Job Enhancer** button appears right in the
   job's header (next to Apply/Save). One click reads the title, company, and
   location and saves it. It shows **blue "✓ Already saved"** for jobs already in
   your tracker — *before* you click — and green for new ones.
@@ -19,7 +19,7 @@ Extraction is a **pure function** — `extractJob(document, url)` in
 
 1. **schema.org `JobPosting` JSON-LD** — a standardized block most boards embed
    (Indeed, LinkedIn, Glassdoor, Greenhouse, Lever, Workday…). Stable, not brittle.
-2. **Per-site selectors** — Indeed / LinkedIn detail-page headers, used only when
+2. **Per-site selectors** — Indeed / LinkedIn detail-page headers, the ZipRecruiter job pane, used only when
    JSON-LD is missing.
 3. **Generic `og:title` / `h1`** — a conservative title for any other site.
 
@@ -44,7 +44,7 @@ select this `extension/` folder → pin the icon. Make sure the backend is runni
 ## Use
 
 1. Click the toolbar icon → **side panel** → **sign in once**.
-2. **On Indeed / LinkedIn:** click the green **Save to Job Enhancer** button on a job.
+2. **On Indeed / LinkedIn / ZipRecruiter:** click the green **Save to Job Enhancer** button on a job.
 3. **Anywhere else:** in the panel, **Capture this page** (or **Pick manually**) →
    review the pre-filled form → **Save to tracker**.
 4. Open your tracker from the panel footer anytime.

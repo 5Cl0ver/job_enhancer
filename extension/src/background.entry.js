@@ -45,11 +45,16 @@ async function storeSession(d, email) {
 let _refreshInFlight = null;
 
 async function refreshToken(je_refresh) {
-  const res = await fetch(`${cfg.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
-    method: "POST",
-    headers: { apikey: cfg.SUPABASE_ANON_KEY, "Content-Type": "application/json" },
-    body: JSON.stringify({ refresh_token: je_refresh }),
-  });
+  let res;
+  try {
+    res = await fetchWithTimeout(`${cfg.SUPABASE_URL}/auth/v1/token?grant_type=refresh_token`, {
+      method: "POST",
+      headers: { apikey: cfg.SUPABASE_ANON_KEY, "Content-Type": "application/json" },
+      body: JSON.stringify({ refresh_token: je_refresh }),
+    });
+  } catch {
+    return null; // network/timeout — treat as "couldn't refresh" instead of hanging
+  }
   if (!res.ok) return null;
   const d = await res.json();
   await storeSession(d);
@@ -439,22 +444,71 @@ async function syncApplications(applications) {
   return res.json();
 }
 
+// Our backend runs on a free tier that SLEEPS after ~15 min idle and takes
+// 30-75s to wake. A single fetch during that window fails (network error) or
+// returns a 502/503/504 while the dyno boots. wakeFetch retries those transient
+// failures with backoff (~50s of waits total) so a cold backend still loads
+// instead of looking broken. Supabase auth never sleeps, so only API_BASE calls
+// need this.
+const _sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const _WAKE_BACKOFF_MS = [2000, 3000, 5000]; // retries after the first attempt
+
+// fetch with a HARD timeout. Without this, a stalled connection (which is what a
+// cold/half-awake backend can do) leaves the promise pending forever and the
+// panel is stuck on "Loading…". AbortController turns that into a clean failure
+// we can retry, so the UI always resolves to jobs or a Retry button.
+async function fetchWithTimeout(url, options = {}, timeoutMs = 30000) {
+  const ctl = new AbortController();
+  const timer = setTimeout(() => ctl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...options, signal: ctl.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+async function wakeFetch(url, options) {
+  let lastErr;
+  for (let attempt = 0; attempt <= _WAKE_BACKOFF_MS.length; attempt++) {
+    try {
+      const res = await fetchWithTimeout(url, options);
+      // 502/503/504 = still waking; anything else (200/401/404/4xx) is a real
+      // answer, so return it and stop retrying.
+      if (res.status !== 502 && res.status !== 503 && res.status !== 504) return res;
+      lastErr = new Error(`upstream ${res.status}`);
+    } catch (e) {
+      lastErr = e; // network error, timeout/abort — backend unreachable or cold
+    }
+    if (attempt < _WAKE_BACKOFF_MS.length) await _sleep(_WAKE_BACKOFF_MS[attempt]);
+  }
+  throw lastErr;
+}
+
 // The user's saved jobs (for the "Your saved jobs" list in the panel).
 async function listSaved() {
   const token = await getValidToken();
   if (!token) return { signedIn: false, jobs: [] };
-  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  let res;
+  try {
+    res = await wakeFetch(`${cfg.API_BASE}/v1/saved-jobs/`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    // Unreachable even after waiting out a cold start. Report the failure —
+    // NEVER return an empty list here, or the panel shows "no saved jobs" when
+    // the real problem is the server didn't answer.
+    return { signedIn: true, error: true, jobs: [] };
+  }
   // A dead session: clear it so the panel prompts a fresh sign-in instead of
   // silently showing "No saved jobs".
   if (res.status === 401) {
     await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
     return { signedIn: false, jobs: [] };
   }
-  if (!res.ok) return { signedIn: true, jobs: [] };
-  const data = await res.json().catch(() => []);
-  const jobs = (Array.isArray(data) ? data : []).map((sj) => ({
+  if (!res.ok) return { signedIn: true, error: true, jobs: [] };
+  const data = await res.json().catch(() => null);
+  if (!Array.isArray(data)) return { signedIn: true, error: true, jobs: [] };
+  const jobs = data.map((sj) => ({
     id: sj.id,
     job_listing_id: sj.job_listing_id,
     title: sj.job_listing?.title || "Untitled",
