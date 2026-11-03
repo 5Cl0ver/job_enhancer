@@ -253,7 +253,9 @@ async def list_jobs(
         stage_rows, col_rows = await _rows(db, user)
         stages, cols = _maps(stage_rows, col_rows)
         col_id = _match_collection(col_rows, collection).id if collection else None
-        jobs = await sj_svc.list_saved_jobs(db, user.id, collection_id=col_id)
+        jobs = await sj_svc.list_saved_jobs(
+            db, user.id, collection_id=col_id, with_description=False
+        )
         out: list[dict] = []
         for sj in jobs:
             stage_name = stages.get(sj.pipeline_stage_id)
@@ -272,7 +274,7 @@ async def list_collections() -> list[dict]:
     move_to_collection so you use a name that actually exists."""
     async with _session_user() as (db, user):
         cols = await col_svc.list_collections(db, user.id)
-        jobs = await sj_svc.list_saved_jobs(db, user.id)
+        jobs = await sj_svc.list_saved_jobs(db, user.id, with_description=False)
         counts: dict[Any, int] = {}
         for sj in jobs:
             counts[sj.collection_id] = counts.get(sj.collection_id, 0) + 1

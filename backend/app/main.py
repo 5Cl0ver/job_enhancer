@@ -69,7 +69,7 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
     scheduler.add_job(
         ingest_curated_jobs,
         trigger="interval",
-        hours=6,
+        hours=24,
         args=[AsyncSessionLocal],
         id="ingest_curated_jobs",
         replace_existing=True,

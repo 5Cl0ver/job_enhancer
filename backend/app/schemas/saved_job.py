@@ -6,7 +6,7 @@ from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
-from app.schemas.job import JobListingSchema
+from app.schemas.job import JobListingSchema, JobListingSummarySchema
 
 
 class SavedJobCreate(BaseModel):
@@ -135,7 +135,7 @@ class SavedJobUpdate(BaseModel):
     emailed_at: datetime | None = None
 
 
-class SavedJobSchema(BaseModel):
+class SavedJobBase(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
     job_listing_id: uuid.UUID
@@ -149,6 +149,17 @@ class SavedJobSchema(BaseModel):
     emailed_at: datetime | None = None
     created_at: datetime
     updated_at: datetime
-    job_listing: JobListingSchema
 
     model_config = {"from_attributes": True}
+
+
+class SavedJobSchema(SavedJobBase):
+    """A saved job with its listing's full description."""
+
+    job_listing: JobListingSchema
+
+
+class SavedJobListItem(SavedJobBase):
+    """A saved job for lists and the board: listing preview, no description."""
+
+    job_listing: JobListingSummarySchema

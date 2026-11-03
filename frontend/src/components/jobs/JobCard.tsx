@@ -96,9 +96,9 @@ export function JobCard({
           )}
         </div>
 
-        {job.description && (
+        {(job.description ?? job.description_preview) && (
           <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">
-            {job.description}
+            {job.description ?? job.description_preview}
           </p>
         )}
       </CardContent>
