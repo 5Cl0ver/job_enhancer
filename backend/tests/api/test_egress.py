@@ -184,3 +184,73 @@ def test_curated_ingest_runs_daily():
     src = inspect.getsource(main)
     block = src[src.index("ingest_curated_jobs,\n") :][:200]
     assert "hours=24" in block
+
+
+@pytest.mark.asyncio
+class TestSummaryChangeCheck:
+    """The extension's change check: unchanged → one aggregate, no list."""
+
+    async def test_first_call_returns_slim_list(self, client, db_session, test_user):
+        sj, _ = await _saved(db_session, test_user)
+        r = await client.get("/v1/saved-jobs/summary")
+        assert r.status_code == 200
+        body = r.json()
+        assert body["changed"] is True and body["version"]
+        (job,) = body["jobs"]
+        assert set(job) == {
+            "id",
+            "job_listing_id",
+            "title",
+            "company",
+            "location",
+            "url",
+            "applied_at",
+        }
+        assert job["id"] == str(sj.id) and job["url"] == "https://jobs.example/1"
+        assert len(r.content) < 600  # a few hundred bytes per job, no description
+
+    async def test_unchanged_check_does_not_read_the_list(
+        self, client, db_session, test_user, sql_log
+    ):
+        await _saved(db_session, test_user)
+        version = (await client.get("/v1/saved-jobs/summary")).json()["version"]
+        sql_log.clear()
+        r = await client.get("/v1/saved-jobs/summary", params={"version": version})
+        body = r.json()
+        assert body == {"version": version, "changed": False, "jobs": None}
+        selects = [s for s in sql_log if s.lstrip().upper().startswith("SELECT")]
+        # Only the auth user lookup (dependency override here: none) and the
+        # aggregate version query run — never a row read of either table.
+        assert selects and all("count(" in s.lower() for s in selects)
+        assert not any("job_listings" in s for s in sql_log)
+        assert len(r.content) < 100
+
+    async def test_version_changes_on_every_visible_change(
+        self, client, db_session, test_user
+    ):
+        sj, listing = await _saved(db_session, test_user)
+
+        async def version():
+            return (await client.get("/v1/saved-jobs/summary")).json()["version"]
+
+        seen = {await version()}
+        await client.patch(
+            f"/v1/saved-jobs/{sj.id}", json={"applied_at": "2026-11-01T10:00:00Z"}
+        )
+        seen.add(await version())
+        _, other = await _saved(db_session, test_user)  # a new save
+        seen.add(await version())
+        await client.patch(f"/v1/saved-jobs/{sj.id}", json={"is_archived": True})
+        seen.add(await version())
+        assert len(seen) == 4
+        after_archive = await version()
+        jobs = (await client.get("/v1/saved-jobs/summary")).json()["jobs"]
+        assert [j["job_listing_id"] for j in jobs] == [str(other.id)]
+        assert after_archive == await version()  # stable when nothing changes
+
+    async def test_wrong_or_stale_version_returns_the_list(
+        self, client, db_session, test_user
+    ):
+        await _saved(db_session, test_user)
+        r = await client.get("/v1/saved-jobs/summary", params={"version": "stale"})
+        assert r.json()["changed"] is True and len(r.json()["jobs"]) == 1

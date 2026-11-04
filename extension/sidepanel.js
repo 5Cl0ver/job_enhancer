@@ -116,17 +116,40 @@ function makeMarkAppliedButton(job, label) {
   return btn;
 }
 
-async function loadSaved() {
-  const res = await send({ type: "listSaved" }).catch(() => null);
+// Saved jobs come from a change check (dist/sidepanel-sync.js, tested in
+// test/savedSync.spec.js): the list is only downloaded when it changed, and
+// scheduled/focus checks run at most once a minute while the panel is
+// visible and focused. Saves force a check (shared if one is in flight).
+function setSavedError(message) {
+  $("saved-sync-error").hidden = !message;
+  $("saved-sync-error-text").textContent = message
+    ? `${message} Showing the last loaded list.`
+    : "";
+}
+
+const savedSync = self.JobEnhancerSavedSync.createSavedSync({
+  fetchSummary: async (version) => {
+    const res = await send({ type: "listSaved", version });
+    if (!res) return { signedIn: true, error: "The extension background didn't answer." };
+    if (res.ok === false && res.error) return { signedIn: true, error: res.error };
+    return res;
+  },
+  onJobs: async (jobs) => {
+    savedJobs = jobs;
+    renderSavedAll();
+    populateJobSelect();
+    renderContext(await detectContext());
+  },
+  onError: setSavedError,
   // Session expired/wedged — bounce to sign-in instead of showing empty.
-  if (res && res.signedIn === false) {
-    show("login");
-    return;
-  }
-  savedJobs = res?.jobs || [];
-  renderSavedAll();
-  populateJobSelect();
-  renderContext(await detectContext());
+  onSignedOut: () => show("login"),
+  isActive: () => document.visibilityState === "visible" && document.hasFocus(),
+});
+
+// A forced check: after a save, sign-in, sync, or Retry. Downloads the slim
+// list only if something changed.
+function loadSaved() {
+  return savedSync.check({ force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -1219,19 +1242,18 @@ document.addEventListener("DOMContentLoaded", () => {
     else $("login-error").textContent = res?.error || "Sign-in failed";
   });
 
-  // Keep the list and the context card honest: refresh when the panel regains
-  // focus, when the active tab changes, and on a gentle poll. Throttled.
-  let lastRefresh = 0;
-  const maybeRefresh = () => {
-    if (document.hidden || $("main-view").hidden) return;
-    const now = Date.now();
-    if (now - lastRefresh < 4000) return;
-    lastRefresh = now;
-    loadSaved();
+  // Keep the list honest with a cheap change check — never a full-list poll.
+  // Focus, visibility and the minute tick all go through the same check,
+  // which skips unless the panel is visible AND focused and a minute has
+  // passed; an unchanged answer downloads nothing.
+  const maybeCheck = () => {
+    if ($("main-view").hidden) return;
+    savedSync.check();
   };
-  document.addEventListener("visibilitychange", maybeRefresh);
-  window.addEventListener("focus", maybeRefresh);
-  setInterval(maybeRefresh, 15000);
+  document.addEventListener("visibilitychange", maybeCheck);
+  window.addEventListener("focus", maybeCheck);
+  setInterval(maybeCheck, self.JobEnhancerSavedSync.MIN_INTERVAL_MS);
+  $("saved-sync-retry").addEventListener("click", () => loadSaved());
   // The context card should track tab switches quickly (it's cheap — no API).
   try {
     chrome.tabs.onActivated.addListener(refreshContext);

@@ -1,5 +1,6 @@
 """CRUD service for SavedJobs."""
 
+import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -7,7 +8,7 @@ from urllib.parse import quote_plus
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload, with_expression
@@ -76,6 +77,50 @@ async def list_saved_jobs(
         stmt = stmt.where(SavedJob.pipeline_stage_id == pipeline_stage_id)
     stmt = stmt.order_by(SavedJob.created_at.desc())
     return (await db.execute(stmt)).scalars().all()
+
+
+async def saved_jobs_version(db: AsyncSession, user_id: uuid.UUID) -> str:
+    """A short token that changes whenever the user's active saved-job list
+    does: one aggregate row, never the list.
+
+    It covers what the slim list shows — which jobs are in it and whether each
+    is applied — so it changes on a save, delete, archive or applied toggle
+    even when timestamps tie (SQLite stores whole seconds): job count, applied
+    count, lowest/highest id, and the latest created/updated times. Listing
+    backfills only touch fields the slim list doesn't show."""
+    row = (
+        await db.execute(
+            select(
+                func.count(SavedJob.id),
+                func.count(SavedJob.applied_at),
+                func.min(cast(SavedJob.id, String)),
+                func.max(cast(SavedJob.id, String)),
+                func.max(SavedJob.updated_at),
+                func.max(SavedJob.created_at),
+            ).where(SavedJob.user_id == user_id, SavedJob.is_archived.is_(False))
+        )
+    ).one()
+    raw = "|".join(str(v) for v in row)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list:
+    """Title, company, location, URL and applied date — only those columns."""
+    rows = await db.execute(
+        select(
+            SavedJob.id,
+            SavedJob.job_listing_id,
+            SavedJob.applied_at,
+            JobListing.title,
+            JobListing.company,
+            JobListing.location,
+            JobListing.apply_url,
+        )
+        .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+        .where(SavedJob.user_id == user_id, SavedJob.is_archived.is_(False))
+        .order_by(SavedJob.created_at.desc())
+    )
+    return rows.all()
 
 
 async def get_saved_job(
