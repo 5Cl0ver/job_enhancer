@@ -5,14 +5,18 @@
 import { textFrom, looksRemote, clean } from "./util.js";
 
 // Titles that are page chrome, never a real job — never auto-fill these.
-const CHROME = /^(jobs?|careers?|search|sign in|log ?in|home|welcome|indeed|linkedin|glassdoor)\b/i;
+const CHROME = /^(jobs?|careers?|search|sign in|log ?in|home|welcome|indeed|linkedin|glassdoor|ziprecruiter)\b/i;
+// Search-results headings ("63 It Jobs (NOW HIRING) in Beaverton, OR") — a
+// count followed by "jobs" is a list of jobs, never one job's title.
+const SEARCH_HEADING = /^\d[\d,]*\+?\s.*\bjobs\b/i;
+const notAJob = (t) => CHROME.test(t) || SEARCH_HEADING.test(t);
 
 export function extractGeneric(doc, url) {
   let title = textFrom(doc, ['meta[property="og:title"]', 'meta[name="twitter:title"]']);
-  if (!title || CHROME.test(title)) {
+  if (!title || notAJob(title)) {
     title = textFrom(doc, ["h1"]);
   }
-  if (CHROME.test(title)) title = "";
+  if (notAJob(title)) title = "";
   return {
     title: clean(title),
     company: "",
