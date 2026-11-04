@@ -2,9 +2,20 @@
 // `document` / `element` passed in, so these run identically in the browser
 // (content script) and under vitest (happy-dom).
 
+// Coerce any value to a safe string before string ops. Sites' embedded JSON
+// (esp. Indeed's) sometimes hands a field a number or an object where we expect
+// text — calling .replace on that throws and crashes the whole content script.
+// Primitives coerce; null/undefined/objects/arrays become "" (a malformed text
+// field is skipped, letting a cleaner source win in mergeJob).
+function asText(s) {
+  if (typeof s === "string") return s;
+  if (typeof s === "number" || typeof s === "boolean") return String(s);
+  return "";
+}
+
 /** Collapse whitespace and trim. */
 export function clean(s) {
-  return (s || "").replace(/\s+/g, " ").trim();
+  return asText(s).replace(/\s+/g, " ").trim();
 }
 
 /**
@@ -15,7 +26,7 @@ export function clean(s) {
  * Block-level closers become newlines so paragraphs survive.
  */
 export function stripHtml(s) {
-  const text = (s || "")
+  const text = asText(s)
     .replace(/<(style|script)\b[^>]*>[\s\S]*?<\/\1>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<br\s*\/?>/gi, "\n")
@@ -54,7 +65,7 @@ export function parseSalaryText(text) {
 
 /** Like clean, but keep paragraph breaks — for multi-line job descriptions. */
 export function cleanMultiline(s) {
-  return (s || "")
+  return asText(s)
     .replace(/\r/g, "")
     .replace(/[ \t]+/g, " ")
     .replace(/ *\n */g, "\n")
