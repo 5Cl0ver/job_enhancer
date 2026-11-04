@@ -227,6 +227,10 @@
 
       <div class="saved" id="saved-all-wrap">
         <h2>Your saved jobs <span id="saved-all-count" class="count"></span></h2>
+        <p id="saved-sync-error" class="error" role="alert" hidden>
+          <span id="saved-sync-error-text"></span>
+          <button type="button" id="saved-sync-retry" class="link">Retry</button>
+        </p>
         <ul id="saved-all-list"></ul>
       </div>
 
@@ -292,6 +296,7 @@
     </div>
 
     <script src="config.js"></script>
+    <script src="dist/sidepanel-sync.js"></script>
     <script src="sidepanel.js"></script>
   </body>
 </html>

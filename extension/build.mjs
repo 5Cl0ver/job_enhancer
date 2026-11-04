@@ -13,6 +13,7 @@ const options = {
     bridge: "src/bridge.entry.js", // MAIN-world: mirrors Indeed's page JSON to the DOM
     background: "src/background.entry.js", // service worker (API/auth/backfill)
     autofill: "src/autofill.entry.js", // ATS application pages (Greenhouse/Lever)
+    "sidepanel-sync": "src/sidepanel-sync.entry.js", // side panel's saved-jobs change check
   },
   bundle: true,
   format: "iife",

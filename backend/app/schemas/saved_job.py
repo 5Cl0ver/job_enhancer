@@ -159,6 +159,27 @@ class SavedJobSchema(SavedJobBase):
     job_listing: JobListingSchema
 
 
+class SavedJobSummary(BaseModel):
+    """The few fields the extension's side panel shows for a saved job."""
+
+    id: uuid.UUID
+    job_listing_id: uuid.UUID
+    title: str
+    company: str
+    location: str
+    url: str
+    applied_at: datetime | None = None
+
+
+class SavedJobSummaryResponse(BaseModel):
+    """``changed`` is False (and ``jobs`` omitted) when the caller's ``version``
+    is still current — the list itself is never read in that case."""
+
+    version: str
+    changed: bool
+    jobs: list[SavedJobSummary] | None = None
+
+
 class SavedJobListItem(SavedJobBase):
     """A saved job for lists and the board: listing preview, no description."""
 

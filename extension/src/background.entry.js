@@ -9,6 +9,7 @@
 //
 // Bundled by esbuild. config.js is loaded at runtime from the extension root.
 import { friendlyApiError } from "./errors.js";
+import { parseSummary } from "./savedSync.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -439,20 +440,45 @@ async function syncApplications(applications) {
   return res.json();
 }
 
-// The user's saved jobs (for the "Your saved jobs" list in the panel).
-async function listSaved() {
+// The user's saved jobs for the panel — a change check, not a full download.
+// Pass the version from the last answer: if nothing changed the server replies
+// {changed:false} without reading the list. Otherwise it sends the slim list
+// (title, company, location, URL, applied date). Never the descriptions.
+async function listSaved(version) {
   const token = await getValidToken();
-  if (!token) return { signedIn: false, jobs: [] };
-  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/`, {
-    headers: { Authorization: `Bearer ${token}` },
-  });
+  if (!token) return { signedIn: false };
+  const qs = version ? `?version=${encodeURIComponent(version)}` : "";
+  let res;
+  try {
+    res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/summary${qs}`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+  } catch {
+    return { signedIn: true, error: "Can't reach Job Enhancer — check your connection." };
+  }
   // A dead session: clear it so the panel prompts a fresh sign-in instead of
   // silently showing "No saved jobs".
   if (res.status === 401) {
     await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
-    return { signedIn: false, jobs: [] };
+    return { signedIn: false };
   }
-  if (!res.ok) return { signedIn: true, jobs: [] };
+  // A backend from before the change check: use the old list, which the
+  // panel's once-a-minute schedule still keeps cheap. Remove after deploy.
+  if (res.status === 404) return listSavedLegacy(token);
+  if (!res.ok) {
+    return { signedIn: true, error: `Couldn't load your saved jobs (error ${res.status}).` };
+  }
+  const parsed = parseSummary(await res.json().catch(() => null));
+  return { signedIn: true, ...parsed };
+}
+
+async function listSavedLegacy(token) {
+  const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (!res.ok) {
+    return { signedIn: true, error: `Couldn't load your saved jobs (error ${res.status}).` };
+  }
   const data = await res.json().catch(() => []);
   const jobs = (Array.isArray(data) ? data : []).map((sj) => ({
     id: sj.id,
@@ -463,7 +489,7 @@ async function listSaved() {
     url: sj.job_listing?.apply_url || "",
     applied: !!sj.applied_at,
   }));
-  return { signedIn: true, jobs };
+  return { signedIn: true, changed: true, version: null, jobs };
 }
 
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
@@ -521,7 +547,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const out = await syncApplications(msg.applications || []);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "listSaved") {
-        sendResponse({ ok: true, ...(await listSaved()) });
+        sendResponse({ ok: true, ...(await listSaved(msg.version || null)) });
       } else if (msg.type === "saveJob") {
         const saved = await saveJob(msg.job);
         sendResponse({ ok: true, saved });
