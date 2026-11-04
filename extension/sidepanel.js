@@ -53,6 +53,34 @@ function findDuplicate(job) {
 // Saved jobs list
 // ---------------------------------------------------------------------------
 
+// Shown while the (possibly cold) backend is answering.
+function renderSavedLoading() {
+  $("saved-all-count").textContent = "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.textContent = "Loading your jobs…";
+  list.append(li);
+}
+
+// Shown when the load genuinely failed — a retry, NOT a fake "no jobs" state.
+function renderSavedError() {
+  $("saved-all-count").textContent = "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.append("Couldn't reach the server. ");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "mark-applied";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => loadSaved());
+  li.append(retry);
+  list.append(li);
+}
+
 function renderSavedAll() {
   $("saved-all-count").textContent = savedJobs.length ? `(${savedJobs.length})` : "";
   const list = $("saved-all-list");
@@ -120,11 +148,15 @@ function makeMarkAppliedButton(job, label) {
 // test/savedSync.spec.js): the list is only downloaded when it changed, and
 // scheduled/focus checks run at most once a minute while the panel is
 // visible and focused. Saves force a check (shared if one is in flight).
+let savedLoaded = false; // has a list been shown yet?
+
 function setSavedError(message) {
   $("saved-sync-error").hidden = !message;
-  $("saved-sync-error-text").textContent = message
-    ? `${message} Showing the last loaded list.`
-    : "";
+  $("saved-sync-error-text").textContent = !message
+    ? ""
+    : savedLoaded
+      ? `${message} Showing the last loaded list.`
+      : message;
 }
 
 const savedSync = self.JobEnhancerSavedSync.createSavedSync({
@@ -135,20 +167,33 @@ const savedSync = self.JobEnhancerSavedSync.createSavedSync({
     return res;
   },
   onJobs: async (jobs) => {
+    savedLoaded = true;
     savedJobs = jobs;
     renderSavedAll();
     populateJobSelect();
     renderContext(await detectContext());
   },
-  onError: setSavedError,
+  onError: async (message) => {
+    setSavedError(message);
+    // A failed FIRST load must not look like "no saved jobs" (most often the
+    // free-tier backend is still waking): show a retry in the list. After a
+    // list has loaded, keep it on screen under the error.
+    if (message && !savedLoaded) {
+      renderSavedError();
+      populateJobSelect();
+      renderContext(await detectContext());
+    }
+  },
   // Session expired/wedged — bounce to sign-in instead of showing empty.
   onSignedOut: () => show("login"),
   isActive: () => document.visibilityState === "visible" && document.hasFocus(),
 });
 
 // A forced check: after a save, sign-in, sync, or Retry. Downloads the slim
-// list only if something changed.
+// list only if something changed. "Loading…" only before the first list, so
+// a populated list never flashes.
 function loadSaved() {
+  if (!savedLoaded) renderSavedLoading();
   return savedSync.check({ force: true });
 }
 
