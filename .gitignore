@@ -82,3 +82,8 @@ backend/uploads/
 # Sanitized fixtures for tests go in extension/test/fixtures/ instead.
 _samples/
 workday-samples/
+
+# ── Real-email exports for labeling (contain real mail — NEVER commit) ────────
+# email_scan_debug.py --export writes here and refuses any path git would track.
+email_exports/
+*.email-export.csv
