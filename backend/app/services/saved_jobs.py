@@ -1,5 +1,6 @@
 """CRUD service for SavedJobs."""
 
+import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -7,10 +8,10 @@ from urllib.parse import quote_plus
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
-from sqlalchemy import func, select
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import defer, selectinload, with_expression
 
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
@@ -31,16 +32,43 @@ _SYNC_TITLE_THRESHOLD = 88
 _SYNC_COMPANY_THRESHOLD = 85
 
 
+# Characters of description a list view gets (the card shows ~3 lines).
+DESCRIPTION_PREVIEW_CHARS = 300
+
+
+def listing_loader(with_description: bool = True):
+    """Eager-load a saved job's listing. Without the description, the full text
+    never leaves the database: a short preview and a has-description flag are
+    computed in SQL instead."""
+    loader = selectinload(SavedJob.job_listing)
+    if with_description:
+        return loader
+    return loader.options(
+        defer(JobListing.description),
+        with_expression(
+            JobListing.description_preview,
+            func.substr(JobListing.description, 1, DESCRIPTION_PREVIEW_CHARS),
+        ),
+        with_expression(
+            JobListing.has_description,
+            func.coalesce(func.length(JobListing.description), 0) > 0,
+        ),
+    )
+
+
 async def list_saved_jobs(
     db: AsyncSession,
     user_id: uuid.UUID,
     collection_id: uuid.UUID | None = None,
     pipeline_stage_id: uuid.UUID | None = None,
     is_archived: bool = False,
+    *,
+    with_description: bool = True,
 ) -> Sequence[SavedJob]:
     stmt = (
         select(SavedJob)
-        .options(selectinload(SavedJob.job_listing))
+        .options(listing_loader(with_description))
+        .execution_options(populate_existing=not with_description)
         .where(SavedJob.user_id == user_id, SavedJob.is_archived == is_archived)
     )
     if collection_id is not None:
@@ -51,12 +79,61 @@ async def list_saved_jobs(
     return (await db.execute(stmt)).scalars().all()
 
 
+async def saved_jobs_version(db: AsyncSession, user_id: uuid.UUID) -> str:
+    """A short token that changes whenever the user's active saved-job list
+    does: one aggregate row, never the list.
+
+    It covers what the slim list shows — which jobs are in it and whether each
+    is applied — so it changes on a save, delete, archive or applied toggle
+    even when timestamps tie (SQLite stores whole seconds): job count, applied
+    count, lowest/highest id, and the latest created/updated times. Listing
+    backfills only touch fields the slim list doesn't show."""
+    row = (
+        await db.execute(
+            select(
+                func.count(SavedJob.id),
+                func.count(SavedJob.applied_at),
+                func.min(cast(SavedJob.id, String)),
+                func.max(cast(SavedJob.id, String)),
+                func.max(SavedJob.updated_at),
+                func.max(SavedJob.created_at),
+            ).where(SavedJob.user_id == user_id, SavedJob.is_archived.is_(False))
+        )
+    ).one()
+    raw = "|".join(str(v) for v in row)
+    return hashlib.sha256(raw.encode()).hexdigest()[:16]
+
+
+async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list:
+    """Title, company, location, URL and applied date — only those columns."""
+    rows = await db.execute(
+        select(
+            SavedJob.id,
+            SavedJob.job_listing_id,
+            SavedJob.applied_at,
+            JobListing.title,
+            JobListing.company,
+            JobListing.location,
+            JobListing.apply_url,
+        )
+        .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+        .where(SavedJob.user_id == user_id, SavedJob.is_archived.is_(False))
+        .order_by(SavedJob.created_at.desc())
+    )
+    return rows.all()
+
+
 async def get_saved_job(
-    db: AsyncSession, saved_job_id: uuid.UUID, user_id: uuid.UUID
+    db: AsyncSession,
+    saved_job_id: uuid.UUID,
+    user_id: uuid.UUID,
+    *,
+    with_description: bool = True,
 ) -> SavedJob:
     sj = await db.scalar(
         select(SavedJob)
-        .options(selectinload(SavedJob.job_listing))
+        .options(listing_loader(with_description))
+        .execution_options(populate_existing=not with_description)
         .where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
     )
     if not sj:
@@ -372,7 +449,12 @@ async def sync_applications(
         (
             await db.execute(
                 select(SavedJob)
-                .options(selectinload(SavedJob.job_listing))
+                # Matching uses titles/companies only; skip the descriptions.
+                .options(
+                    selectinload(SavedJob.job_listing).options(
+                        defer(JobListing.description)
+                    )
+                )
                 .where(SavedJob.user_id == user_id)
             )
         )
@@ -482,7 +564,7 @@ async def update_saved_job(
 ) -> SavedJob:
     from datetime import datetime
 
-    sj = await get_saved_job(db, saved_job_id, user_id)
+    sj = await get_saved_job(db, saved_job_id, user_id, with_description=False)
     updates = data.model_dump(exclude_unset=True)
 
     # Track stage changes for follow-up reminders
@@ -502,6 +584,6 @@ async def update_saved_job(
 async def delete_saved_job(
     db: AsyncSession, saved_job_id: uuid.UUID, user_id: uuid.UUID
 ) -> None:
-    sj = await get_saved_job(db, saved_job_id, user_id)
+    sj = await get_saved_job(db, saved_job_id, user_id, with_description=False)
     await db.delete(sj)
     await db.flush()

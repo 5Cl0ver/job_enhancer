@@ -1,7 +1,7 @@
 # Extension Manifest (`extension/`)
 
 Chrome MV3 **"Job Catcher"** — saves jobs to the tracker via a **Save button on
-Indeed/LinkedIn job pages** *and* a persistent **side panel** that captures any page.
+Indeed/LinkedIn/ZipRecruiter job pages** *and* a persistent **side panel** that captures any page.
 Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [README.md](README.md).
 
 ## Extraction (the core, and where the reliability lives)
@@ -12,7 +12,7 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `src/extract/jsonld.js` | Primary: parse schema.org `JobPosting` JSON-LD (handles arrays / `@graph`). Works across most boards |
 | `src/extract/indeed-embedded.js` | Indeed's reliable path: parses the job from its embedded JSON (`_initialData` on job pages, `mosaic-provider-jobcards` on feeds, open job by `?vjk=`), read from the bridge attribute or static `<script>` text |
 | `src/bridge.entry.js` → `dist/bridge.js` | **MAIN-world** content script (Indeed) — mirrors `window._initialData`/`window.mosaic` onto `<html data-je-embedded>` so the isolated extractor can read the page's own JS data |
-| `src/extract/indeed.js` / `linkedin.js` | Per-site detail-page selector fallbacks |
+| `src/extract/indeed.js` / `linkedin.js` / `ziprecruiter.js` | Per-site selector fallbacks (ZipRecruiter: the open job in the search page's right pane) |
 | `src/extract/generic.js` | Universal `og:title` / `h1` fallback; refuses page chrome (search/home titles) |
 | `src/extract/util.js` | `clean`, `stripHtml`, `textFrom`, `mergeJob`, remote detection |
 
@@ -20,8 +20,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 
 | File | Purpose |
 |---|---|
-| `manifest.json` | MV3 config: `side_panel` + `background` worker + `content_scripts` (`dist/content.js` on Indeed/LinkedIn); permissions + `host_permissions` |
-| `src/content.entry.js` → `dist/content.js` | Injects the **Save** button into the Indeed/LinkedIn job header (`#je-save-btn`); re-syncs when you switch jobs; asks the background `checkSaved` to show **blue "✓ Already saved"** proactively; falls back to a floating `#je-fab` if no header is found |
+| `manifest.json` | MV3 config: `side_panel` + `background` worker + `content_scripts` (`dist/content.js` on Indeed/LinkedIn/ZipRecruiter); permissions + `host_permissions` |
+| `src/content.entry.js` → `dist/content.js` | Injects the **Save** button on Indeed/LinkedIn/ZipRecruiter job pages (`#je-save-btn`); re-syncs when you switch jobs; asks the background `checkSaved` to show **blue "✓ Already saved"** proactively; falls back to a floating `#je-fab` if no header is found |
 | `src/inject.js` | Pure DOM helpers (title selectors, `findTitleEl`, `headingFor`) for anchoring the button — unit-tested against fixtures |
 | `src/capture.entry.js` → `dist/capture.js` | Injected on demand by the panel's **Capture this page**; runs `extractJob`, stashes result in `chrome.storage` |
 | `src/background.entry.js` → `dist/background.js` | Service worker (bundled) — the **only** caller of Supabase Auth + the API. Login, **serialized token refresh**, `saveJob`, `checkSaved`, `listSaved`; on a thin Indeed save it fetches the `/viewjob` page and **enriches** with the full description/salary/type before storing |

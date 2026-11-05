@@ -2,7 +2,7 @@
 //
 // Strategy — try the most reliable source first, then fill gaps:
 //   1. JSON-LD JobPosting  (standardized; best when present)
-//   2. per-site selectors  (Indeed / LinkedIn detail pages)
+//   2. per-site selectors  (Indeed / LinkedIn detail pages, ZipRecruiter pane)
 //   3. generic og:title/h1 (any other site)
 // Fields are merged first-non-empty-wins in that priority order, so a site
 // parser can supply a company that JSON-LD omitted, etc.
@@ -13,6 +13,7 @@ import { extractFromJsonLd } from "./jsonld.js";
 import { extractIndeedEmbedded, canonicalIndeedUrl } from "./indeed-embedded.js";
 import { extractIndeed, extractIndeedApply } from "./indeed.js";
 import { extractLinkedIn } from "./linkedin.js";
+import { extractZipRecruiter } from "./ziprecruiter.js";
 import { extractGeneric } from "./generic.js";
 import { mergeJob } from "./util.js";
 
@@ -27,6 +28,7 @@ function siteExtractor(url) {
   }
   if (host.includes("indeed.")) return { via: "indeed", fn: extractIndeed };
   if (host.includes("linkedin.")) return { via: "linkedin", fn: extractLinkedIn };
+  if (host.includes("ziprecruiter.")) return { via: "ziprecruiter", fn: extractZipRecruiter };
   return null;
 }
 

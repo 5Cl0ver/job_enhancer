@@ -53,6 +53,34 @@ function findDuplicate(job) {
 // Saved jobs list
 // ---------------------------------------------------------------------------
 
+// Shown while the (possibly cold) backend is answering.
+function renderSavedLoading() {
+  $("saved-all-count").textContent = "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.textContent = "Loading your jobs…";
+  list.append(li);
+}
+
+// Shown when the load genuinely failed — a retry, NOT a fake "no jobs" state.
+function renderSavedError() {
+  $("saved-all-count").textContent = "";
+  const list = $("saved-all-list");
+  list.innerHTML = "";
+  const li = document.createElement("li");
+  li.className = "muted";
+  li.append("Couldn't reach the server. ");
+  const retry = document.createElement("button");
+  retry.type = "button";
+  retry.className = "mark-applied";
+  retry.textContent = "Retry";
+  retry.addEventListener("click", () => loadSaved());
+  li.append(retry);
+  list.append(li);
+}
+
 function renderSavedAll() {
   $("saved-all-count").textContent = savedJobs.length ? `(${savedJobs.length})` : "";
   const list = $("saved-all-list");
@@ -116,17 +144,57 @@ function makeMarkAppliedButton(job, label) {
   return btn;
 }
 
-async function loadSaved() {
-  const res = await send({ type: "listSaved" }).catch(() => null);
+// Saved jobs come from a change check (dist/sidepanel-sync.js, tested in
+// test/savedSync.spec.js): the list is only downloaded when it changed, and
+// scheduled/focus checks run at most once a minute while the panel is
+// visible and focused. Saves force a check (shared if one is in flight).
+let savedLoaded = false; // has a list been shown yet?
+
+function setSavedError(message) {
+  $("saved-sync-error").hidden = !message;
+  $("saved-sync-error-text").textContent = !message
+    ? ""
+    : savedLoaded
+      ? `${message} Showing the last loaded list.`
+      : message;
+}
+
+const savedSync = self.JobEnhancerSavedSync.createSavedSync({
+  fetchSummary: async (version) => {
+    const res = await send({ type: "listSaved", version });
+    if (!res) return { signedIn: true, error: "The extension background didn't answer." };
+    if (res.ok === false && res.error) return { signedIn: true, error: res.error };
+    return res;
+  },
+  onJobs: async (jobs) => {
+    savedLoaded = true;
+    savedJobs = jobs;
+    renderSavedAll();
+    populateJobSelect();
+    renderContext(await detectContext());
+  },
+  onError: async (message) => {
+    setSavedError(message);
+    // A failed FIRST load must not look like "no saved jobs" (most often the
+    // free-tier backend is still waking): show a retry in the list. After a
+    // list has loaded, keep it on screen under the error.
+    if (message && !savedLoaded) {
+      renderSavedError();
+      populateJobSelect();
+      renderContext(await detectContext());
+    }
+  },
   // Session expired/wedged — bounce to sign-in instead of showing empty.
-  if (res && res.signedIn === false) {
-    show("login");
-    return;
-  }
-  savedJobs = res?.jobs || [];
-  renderSavedAll();
-  populateJobSelect();
-  renderContext(await detectContext());
+  onSignedOut: () => show("login"),
+  isActive: () => document.visibilityState === "visible" && document.hasFocus(),
+});
+
+// A forced check: after a save, sign-in, sync, or Retry. Downloads the slim
+// list only if something changed. "Loading…" only before the first list, so
+// a populated list never flashes.
+function loadSaved() {
+  if (!savedLoaded) renderSavedLoading();
+  return savedSync.check({ force: true });
 }
 
 // ---------------------------------------------------------------------------
@@ -1059,19 +1127,28 @@ async function saveThisPage() {
     return;
   }
 
-  let results;
-  try {
-    results = await chrome.scripting.executeScript({
-      target: { tabId: tab.id },
-      func: extractJobFromPage,
-    });
-  } catch {
-    btn.disabled = false;
-    status.textContent = "Can't read this page — open the job posting as a normal https page.";
-    return;
-  }
+  // On sites with our content script (Indeed / LinkedIn / ZipRecruiter), use its
+  // tested extractJob(). Anywhere else — or if that tab's script is orphaned —
+  // fall back to the self-contained inline reader below.
+  const viaContent = await chrome.tabs
+    .sendMessage(tab.id, { type: "extractJob" })
+    .catch(() => null);
+  let job = viaContent?.ok && viaContent.job?.title ? viaContent.job : null;
 
-  const job = results?.[0]?.result;
+  if (!job) {
+    let results;
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId: tab.id },
+        func: extractJobFromPage,
+      });
+    } catch {
+      btn.disabled = false;
+      status.textContent = "Can't read this page — open the job posting as a normal https page.";
+      return;
+    }
+    job = results?.[0]?.result;
+  }
   btn.disabled = false;
   if (!job) {
     status.textContent = "Couldn't read this page.";
@@ -1219,19 +1296,18 @@ document.addEventListener("DOMContentLoaded", () => {
     else $("login-error").textContent = res?.error || "Sign-in failed";
   });
 
-  // Keep the list and the context card honest: refresh when the panel regains
-  // focus, when the active tab changes, and on a gentle poll. Throttled.
-  let lastRefresh = 0;
-  const maybeRefresh = () => {
-    if (document.hidden || $("main-view").hidden) return;
-    const now = Date.now();
-    if (now - lastRefresh < 4000) return;
-    lastRefresh = now;
-    loadSaved();
+  // Keep the list honest with a cheap change check — never a full-list poll.
+  // Focus, visibility and the minute tick all go through the same check,
+  // which skips unless the panel is visible AND focused and a minute has
+  // passed; an unchanged answer downloads nothing.
+  const maybeCheck = () => {
+    if ($("main-view").hidden) return;
+    savedSync.check();
   };
-  document.addEventListener("visibilitychange", maybeRefresh);
-  window.addEventListener("focus", maybeRefresh);
-  setInterval(maybeRefresh, 15000);
+  document.addEventListener("visibilitychange", maybeCheck);
+  window.addEventListener("focus", maybeCheck);
+  setInterval(maybeCheck, self.JobEnhancerSavedSync.MIN_INTERVAL_MS);
+  $("saved-sync-retry").addEventListener("click", () => loadSaved());
   // The context card should track tab switches quickly (it's cheap — no API).
   try {
     chrome.tabs.onActivated.addListener(refreshContext);

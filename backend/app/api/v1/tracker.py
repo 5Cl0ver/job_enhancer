@@ -13,7 +13,7 @@ from app.schemas.pipeline_stage import (
     PipelineStageSchema,
     PipelineStageUpdate,
 )
-from app.schemas.saved_job import SavedJobSchema
+from app.schemas.saved_job import SavedJobListItem
 from app.services import tracker as svc
 
 router = APIRouter()
@@ -61,25 +61,26 @@ async def delete_stage(
     await db.commit()
 
 
-@router.post("/move", response_model=SavedJobSchema)
+@router.post("/move", response_model=SavedJobListItem)
 async def move_job(
     saved_job_id: uuid.UUID = Body(...),
     stage_id: uuid.UUID | None = Body(None),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
-) -> SavedJobSchema:
+) -> SavedJobListItem:
     """Move a saved job to a different Kanban column."""
     from sqlalchemy import select
-    from sqlalchemy.orm import selectinload
 
     from app.models.saved_job import SavedJob
+    from app.services.saved_jobs import listing_loader
 
     sj = await svc.move_job_to_stage(db, saved_job_id, stage_id, user.id)
     await db.commit()
-    # Reload with job_listing relationship
+    # Reload with the listing preview (the board never needs the description).
     sj = await db.scalar(
         select(SavedJob)
-        .options(selectinload(SavedJob.job_listing))
+        .options(listing_loader(with_description=False))
+        .execution_options(populate_existing=True)
         .where(SavedJob.id == sj.id)
     )
-    return SavedJobSchema.model_validate(sj)
+    return SavedJobListItem.model_validate(sj)

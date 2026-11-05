@@ -262,7 +262,13 @@ async def test_check_flags_thin_listing_and_backfill_upgrades_it(client: AsyncCl
     jl = next(
         s["job_listing"] for s in saved if s["job_listing"]["title"] == "Web Developer"
     )
-    assert jl["description"] == full_description
+    # The list carries a preview, not the full text (egress)...
+    assert "description" not in jl
+    assert jl["has_description"] is True
+    assert jl["description_preview"] == full_description[:300]
+    # ...the job detail view gets the full, upgraded description.
+    detail = (await client.get(f"/v1/jobs/{jl['id']}")).json()
+    assert detail["description"] == full_description
     assert jl["salary_min"] == 80709
     assert jl["job_type"] == "FULL_TIME"
 

@@ -15,7 +15,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 import httpx
-from sqlalchemy import Select, func, select
+from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
@@ -32,22 +32,28 @@ logger = logging.getLogger(__name__)
 # ---------------------------------------------------------------------------
 
 
-async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> JobListing | None:
-    """Insert a job listing if not already present (exact or fuzzy duplicate)."""
+async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> uuid.UUID | None:
+    """Insert a job listing if not already present (exact or fuzzy duplicate).
+
+    Returns the listing's id (existing or new), or None for a fuzzy duplicate.
+    A re-seen listing is refreshed with one ``UPDATE … RETURNING id`` — the row
+    (and its description) is never read back.
+    """
     title_norm = normalize(data["title"])
     company_norm = normalize(data["company"])
     location_norm = normalize(data["location"])
     content_hash = job_content_hash(title_norm, company_norm, location_norm)
 
-    # Check exact duplicate via content_hash
-    existing = await db.scalar(
-        select(JobListing).where(JobListing.content_hash == content_hash)
+    # Exact duplicate via content_hash: re-seen in a source feed, so it's alive.
+    existing_id = await db.scalar(
+        update(JobListing)
+        .where(JobListing.content_hash == content_hash)
+        .values(refreshed_at=datetime.now(UTC), is_expired=False)
+        .returning(JobListing.id)
+        .execution_options(synchronize_session=False)
     )
-    if existing:
-        # Re-seen in a source feed — it's alive
-        existing.refreshed_at = datetime.now(UTC)
-        existing.is_expired = False
-        return existing
+    if existing_id is not None:
+        return existing_id
 
     # Check fuzzy duplicate
     if await is_duplicate(db, title_norm, company_norm):
@@ -68,7 +74,7 @@ async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> JobListing 
         logger.debug("Upsert conflict (concurrent insert): %s", exc)
         await db.rollback()
         return None
-    return listing
+    return listing.id
 
 
 # ---------------------------------------------------------------------------

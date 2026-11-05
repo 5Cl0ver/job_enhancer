@@ -5,7 +5,7 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, relationship
+from sqlalchemy.orm import Mapped, mapped_column, query_expression, relationship
 
 from app.models import Base
 
@@ -46,6 +46,12 @@ class JobListing(Base):
     refreshed_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
+
+    # Query-only (no column, no migration): filled by SQL when a list view asks
+    # for a short preview instead of the full description — see
+    # ``app.services.saved_jobs.listing_loader``. None when not requested.
+    description_preview: Mapped[str | None] = query_expression()
+    has_description: Mapped[bool | None] = query_expression()
 
     # Relationships
     saved_by: Mapped[list["SavedJob"]] = relationship(  # type: ignore[name-defined]
