@@ -3,36 +3,25 @@
  *
  * Flow: type your email → we detect your provider and show the exact
  * app-password steps → connect (password encrypted at rest) → scan the inbox →
- * review each detected update (approve moves the card, dismiss ignores it, and
- * an approved move can be undone). We never read or move anything without you
- * approving it first.
+ * review what it found on the Email Updates page (/email-updates). Cards move by
+ * themselves only for emails that name the job exactly (switchable here); every
+ * other move waits for your click, and any move can be undone.
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import {
-  ArrowUpRight,
-  Check,
-  ChevronDown,
-  ExternalLink,
-  Loader2,
-  Mail,
-  RefreshCw,
-  Undo2,
-  X,
-} from "lucide-react";
+import { ArrowUpRight, Check, Loader2, Mail, RefreshCw } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import {
   useConnectEmail,
   useDetectedEvents,
   useDisconnectEmail,
   useEmailAccount,
-  useReviewEvent,
+  useEmailSettings,
   useScanInbox,
-  type Considered,
-  type DetectedEvent,
   type EmailAccount,
   type ScanResult,
 } from "@/hooks/useEmailAccount";
+import { group } from "@/lib/emailUpdates";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -45,6 +34,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Switch } from "@/components/ui/switch";
 
 // Per-provider setup guidance. Detection runs in the browser (by email domain)
 // so the right steps appear instantly as you type — no backend round-trip.
@@ -132,20 +122,6 @@ function detectGuide(email: string): Guide | null {
   return PROVIDERS.find((p) => p.domains.includes(domain)) ?? GENERIC;
 }
 
-const EVENT_LABELS: Record<DetectedEvent["event_type"], string> = {
-  applied: "Application received",
-  interview: "Interview",
-  rejected: "Rejection",
-  recruiter: "Recruiter reached out",
-};
-
-const EVENT_TONES: Record<DetectedEvent["event_type"], string> = {
-  applied: "bg-blue-500/10 text-blue-600 dark:text-blue-400",
-  interview: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400",
-  rejected: "bg-rose-500/10 text-rose-600 dark:text-rose-400",
-  recruiter: "bg-violet-500/10 text-violet-600 dark:text-violet-400",
-};
-
 export function EmailConnectCard() {
   const { data: account, isLoading } = useEmailAccount();
   const [reconnecting, setReconnecting] = useState(false);
@@ -159,8 +135,9 @@ export function EmailConnectCard() {
         </CardTitle>
         <CardDescription>
           Let Job Enhancer read your inbox to spot application updates and move
-          your tracker cards for you. Read-only, review-first — nothing moves
-          without your approval, and every move can be undone.
+          your tracker cards for you. Read-only: cards move by themselves only when an
+          email names the job exactly, everything else waits for your click, and
+          every move can be undone.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -404,28 +381,24 @@ function ConnectedView({
       )}
 
       {result && !scan.isPending && (
-        <div className="space-y-1 rounded-md border bg-muted/30 p-2.5 text-xs">
-          <div className="font-medium">
-            {result.detected === 0
-              ? "No new updates to review."
-              : `${result.detected} update${result.detected === 1 ? "" : "s"} to review below.`}
-          </div>
-          <div className="text-muted-foreground">
-            Read <strong>{result.scanned}</strong> email
-            {result.scanned === 1 ? "" : "s"} from the last {result.window_days}{" "}
-            days · checked against <strong>{result.candidates}</strong> saved job
-            {result.candidates === 1 ? "" : "s"} ·{" "}
-            <strong>{result.considered.length}</strong> other
-            {result.considered.length === 1 ? "" : "s"} considered
-          </div>
+        <div className="rounded-md border bg-muted/30 p-2.5 text-xs">
+          <span className="font-medium">
+            {result.detected === 0 && (result.review?.length ?? 0) === 0
+              ? "No new updates."
+              : `Found ${result.detected + (result.review?.length ?? 0)} new update${
+                  result.detected + (result.review?.length ?? 0) === 1 ? "" : "s"
+                }.`}
+          </span>{" "}
+          <span className="text-muted-foreground">
+            Read {result.scanned} email{result.scanned === 1 ? "" : "s"} from the last{" "}
+            {result.window_days} days.
+          </span>
         </div>
       )}
 
-      <DetectedEventsList />
+      <AutoMoveSwitch account={account} />
 
-      {result && result.considered.length > 0 && (
-        <ConsideredList items={result.considered} />
-      )}
+      <EmailUpdatesLink />
 
       <div className="flex justify-end border-t pt-3">
         <Button
@@ -442,205 +415,61 @@ function ConnectedView({
   );
 }
 
-function DetectedEventsList() {
-  const { data: events } = useDetectedEvents();
-  const review = useReviewEvent();
-  // Approved events leave the pending list; keep them briefly so we can offer Undo.
-  const [applied, setApplied] = useState<DetectedEvent[]>([]);
-
-  const pending = events ?? [];
-
-  const act = (ev: DetectedEvent, action: "apply" | "dismiss") => {
-    review.mutate(
-      { id: ev.id, action },
-      {
-        onSuccess: () => {
-          if (action === "apply") setApplied((a) => [ev, ...a]);
-        },
-      },
-    );
-  };
-
-  const undo = (ev: DetectedEvent) => {
-    review.mutate(
-      { id: ev.id, action: "undo" },
-      { onSuccess: () => setApplied((a) => a.filter((e) => e.id !== ev.id)) },
-    );
-  };
-
-  const hasContent = pending.length > 0 || applied.length > 0;
-  if (!hasContent) return null;
-
+/** On: an email that names the job exactly moves its card by itself. */
+function AutoMoveSwitch({ account }: { account: EmailAccount }) {
+  const settings = useEmailSettings();
+  const on = account.auto_move ?? true;
   return (
-    <div className="space-y-2">
-      {pending.map((ev) => (
-        <div
-          key={ev.id}
-          className="flex items-center justify-between gap-3 rounded-md border p-2.5"
-        >
-          <div className="min-w-0 space-y-0.5">
-            <div className="flex items-center gap-2">
-              <span
-                className={`rounded px-1.5 py-0.5 text-[11px] font-medium ${EVENT_TONES[ev.event_type]}`}
-              >
-                {EVENT_LABELS[ev.event_type]}
-              </span>
-              {ev.target_stage && (
-                <span className="text-xs text-muted-foreground">
-                  → {ev.target_stage}
-                </span>
-              )}
-            </div>
-            <p className="truncate text-xs font-medium">{ev.subject}</p>
-            <p className="truncate text-[11px] text-muted-foreground">
-              {ev.from_addr}
-            </p>
-            <div className="flex flex-wrap gap-3 pt-0.5">
-              {ev.job_listing_id && (
-                <Link
-                  to={`/jobs/${ev.job_listing_id}`}
-                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary underline"
-                >
-                  View job <ArrowUpRight className="h-3 w-3" />
-                </Link>
-              )}
-              {ev.mail_link && (
-                <a
-                  href={ev.mail_link}
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center gap-0.5 text-[11px] font-medium text-primary underline"
-                >
-                  Find email <ExternalLink className="h-3 w-3" />
-                </a>
-              )}
-            </div>
-          </div>
-          <div className="flex shrink-0 gap-1.5">
-            <Button
-              size="sm"
-              variant="outline"
-              className="h-7 gap-1 px-2"
-              onClick={() => act(ev, "apply")}
-              disabled={review.isPending}
-            >
-              <Check className="h-3.5 w-3.5" /> Approve
-            </Button>
-            <Button
-              size="sm"
-              variant="ghost"
-              className="h-7 w-7 p-0 text-muted-foreground"
-              onClick={() => act(ev, "dismiss")}
-              disabled={review.isPending}
-              aria-label="Dismiss"
-            >
-              <X className="h-3.5 w-3.5" />
-            </Button>
-          </div>
-        </div>
-      ))}
-
-      {applied.map((ev) => (
-        <div
-          key={ev.id}
-          className="flex items-center justify-between gap-3 rounded-md border border-dashed p-2.5 text-muted-foreground"
-        >
-          <p className="truncate text-xs">
-            Moved to <strong>{ev.target_stage}</strong> — {ev.subject}
-          </p>
-          <Button
-            size="sm"
-            variant="ghost"
-            className="h-7 gap-1 px-2"
-            onClick={() => undo(ev)}
-            disabled={review.isPending}
-          >
-            <Undo2 className="h-3.5 w-3.5" /> Undo
-          </Button>
-        </div>
-      ))}
+    <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+      <span className="min-w-0">
+        <Label htmlFor="auto-move" className="text-sm font-medium">
+          Move cards automatically
+        </Label>
+        <span className="block text-xs text-muted-foreground">
+          When an email names the job exactly, its card moves by itself. You can undo any move
+          on Email updates. Off: every update waits for your click.
+        </span>
+        {settings.isError && (
+          <span className="block text-xs text-destructive">
+            Couldn't save that. Try again.
+          </span>
+        )}
+      </span>
+      <Switch
+        id="auto-move"
+        checked={on}
+        disabled={settings.isPending}
+        onCheckedChange={(checked) => settings.mutate({ auto_move: checked })}
+      />
     </div>
   );
 }
 
-const REASON_LABELS: Record<Considered["reason"], string> = {
-  filtered_contact: "Filtered out (not surfaced)",
-  no_confident_match: "Signal seen, no confident job match",
-};
-
-/**
- * "What else I looked at" — a collapsible audit trail of the near-misses the
- * scan decided NOT to surface. This is where the user can verify the filtering
- * (e.g. spam that matched a saved company) and spot any real email we missed.
- * Pure spam (no job signal) is deliberately excluded — only decisions worth
- * reviewing appear here.
- */
-function ConsideredList({ items }: { items: Considered[] }) {
-  const [open, setOpen] = useState(false);
-
+/** Where detected updates are reviewed now: one link with the counts. */
+function EmailUpdatesLink() {
+  const { data: events } = useDetectedEvents();
+  const g = group(events ?? []);
+  const waiting = g.questions.length + g.important.length;
+  const moved = g.moved.length;
   return (
-    <div className="rounded-md border">
-      <button
-        onClick={() => setOpen((o) => !o)}
-        className="flex w-full items-center justify-between px-3 py-2 text-xs font-medium text-muted-foreground"
-      >
-        <span>What else I looked at ({items.length})</span>
-        <ChevronDown
-          className={`h-4 w-4 transition-transform ${open ? "rotate-180" : ""}`}
-        />
-      </button>
-      {open && (
-        <div className="space-y-2 border-t p-2">
-          <p className="px-1 text-[11px] text-muted-foreground">
-            These weren’t added to your board — either they matched a saved job
-            but we don’t auto-surface them, or they looked like an update but
-            couldn’t be confidently matched. Spam is hidden.
-          </p>
-          {items.map((c, i) => (
-            <div key={i} className="rounded-md bg-muted/40 p-2.5 text-xs">
-              <div className="mb-0.5 flex items-center gap-2">
-                <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] font-medium">
-                  {REASON_LABELS[c.reason]}
-                </span>
-                <span className="text-[11px] text-muted-foreground">
-                  {EVENT_LABELS[c.event_type]}
-                </span>
-              </div>
-              <p className="truncate font-medium">{c.subject}</p>
-              <p className="truncate text-[11px] text-muted-foreground">
-                {c.from_addr}
-                {c.date ? ` · ${new Date(c.date).toLocaleDateString()}` : ""}
-              </p>
-              {c.matched_company && (
-                <p className="text-[11px] text-muted-foreground">
-                  Matched: {c.matched_company}
-                  {c.matched_title ? ` — ${c.matched_title}` : ""}
-                </p>
-              )}
-              <div className="mt-1 flex flex-wrap gap-3">
-                {c.matched_job_listing_id && (
-                  <Link
-                    to={`/jobs/${c.matched_job_listing_id}`}
-                    className="inline-flex items-center gap-0.5 font-medium text-primary underline"
-                  >
-                    View job <ArrowUpRight className="h-3 w-3" />
-                  </Link>
-                )}
-                {c.mail_link && (
-                  <a
-                    href={c.mail_link}
-                    target="_blank"
-                    rel="noreferrer"
-                    className="inline-flex items-center gap-0.5 font-medium text-primary underline"
-                  >
-                    Find email <ExternalLink className="h-3 w-3" />
-                  </a>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
+    <Link
+      to="/email-updates"
+      className="flex items-center justify-between gap-3 rounded-md border p-3 text-sm hover:bg-muted/40"
+    >
+      <span>
+        <span className="font-medium">Email updates</span>
+        <span className="block text-xs text-muted-foreground">
+          {(moved ? `${moved} moved for you · ` : "") +
+            (waiting === 0
+              ? "Nothing waiting for you."
+              : `${waiting} update${waiting === 1 ? "" : "s"} waiting`) +
+              (g.questions.length ? ` · ${g.questions.length} need an answer` : "") +
+              (g.confirmations.length
+                ? ` · ${g.confirmations.length} confirmation${g.confirmations.length === 1 ? "" : "s"}`
+                : "")}
+        </span>
+      </span>
+      <ArrowUpRight className="h-4 w-4 shrink-0" aria-hidden />
+    </Link>
   );
 }

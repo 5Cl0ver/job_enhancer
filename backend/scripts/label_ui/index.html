@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="referrer" content="no-referrer" />
+    <title>Email Labeling</title>
+    <link rel="stylesheet" href="/app.css" />
+  </head>
+  <body>
+    <header>
+      <strong>Email labeling</strong>
+      <span id="progress">loading…</span>
+      <div class="bar"><div id="bar-fill"></div></div>
+      <label class="toggle"><input type="checkbox" id="hints" /> show the scanner's guess</label>
+    </header>
+
+    <main id="app" hidden>
+      <nav>
+        <button id="prev" title="Previous (←)">← Back</button>
+        <span id="position"></span>
+        <button id="next" title="Next (→)">Next →</button>
+        <button id="next-open" title="Next unlabeled (Enter)">Next unlabeled ⏎</button>
+      </nav>
+
+      <section class="email">
+        <div class="meta">
+          <span id="group" class="pill"></span>
+          <span id="role" class="pill"></span>
+          <span id="date"></span>
+          <span id="issues" class="warn"></span>
+        </div>
+        <div class="from" id="sender"></div>
+        <h2 id="subject"></h2>
+        <div id="guess" class="guess" hidden></div>
+        <div id="text" class="text"></div>
+      </section>
+
+      <section class="choose">
+        <h3>1. What is this email? <small>(keys 1–7)</small></h3>
+        <div id="types" class="buttons"></div>
+        <label class="inline"><input type="checkbox" id="reminder" /> reminder only — no card change</label>
+
+        <h3>2. Which saved job? <small>(0 = none)</small></h3>
+        <div class="buttons">
+          <button id="job-none" class="job">None / not a saved job</button>
+          <span id="job-current" class="current"></span>
+        </div>
+        <input id="job-search" type="search" placeholder="Type company or title to find a saved job…" autocomplete="off" />
+        <div id="jobs" class="buttons jobs"></div>
+
+        <h3>Note <small>(optional)</small></h3>
+        <input id="note" type="text" maxlength="500" placeholder="anything unusual about this one" autocomplete="off" />
+        <p id="status" class="status"></p>
+      </section>
+    </main>
+    <p id="error" class="error" hidden></p>
+    <footer>
+      Saved on every click. Close the tab any time; run the server again to continue.
+      <button id="merge">Write labeled CSV</button>
+    </footer>
+    <script src="/app.js"></script>
+  </body>
+</html>
