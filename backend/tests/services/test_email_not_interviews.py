@@ -5,6 +5,8 @@ interview practice, a "what happens next" step list in a confirmation, and a
 copy of a job email the user sent themselves.
 """
 
+import time
+
 import pytest
 
 from app.services.email_classify import (
@@ -117,3 +119,18 @@ class TestOwnMail:
         )
         result = await detect_events(db_session, acct, [original])
         assert len(result.created) == 1
+
+
+class TestLongLines:
+    def test_a_long_line_with_an_arrow_is_read_quickly(self):
+        # The step-label pattern once took exponential time on a long line with
+        # an arrow in it, which froze the inbox scan on one email.
+        line = "Apply -> " + " ".join(["something"] * 400) + "!"
+        start = time.perf_counter()
+        result = classify(
+            "Thanks for applying to Vellacor",
+            f"We have received your application.\n{line}",
+            "no-reply@vellacor.example",
+        )
+        assert time.perf_counter() - start < 1.0
+        assert result.event == APPLIED

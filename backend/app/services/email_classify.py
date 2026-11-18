@@ -478,8 +478,11 @@ _INTERVIEW_PREP = re.compile(
 # A short Title Case body line ("Complete Assessment", "Schedule Interview") or
 # a process flow ("Apply → Complete Assessment → Interview") is a step in a
 # "what happens next" list or a button label, not a request.
+# Words are split by required whitespace, so a long line can't be read more
+# than one way (an optional separator made matching take exponential time).
 _STEP_LABEL = re.compile(
-    r"^(?:[A-Z][\w'&/-]*\s?){1,4}$|^(?=.*(?:→|->|»))(?:\S+\s*){1,14}$"
+    r"^[A-Z][\w'&/-]*(?:\s+[A-Z][\w'&/-]*){0,3}\s*$"
+    r"|^(?=.*(?:→|->|»))\S+(?:\s+\S+){0,13}\s*$"
 )
 _STEP_WEIGHT = 0.3
 
