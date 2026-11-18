@@ -156,6 +156,45 @@ async function checkSaved(job) {
   return { saved: !!d.saved, needs_details: !!d.needs_details, signedIn: true };
 }
 
+// Claude Scout: is a run open in the app? Asked only from job pages with a full
+// posting showing, and cached (60s when open, 15s when not) so normal browsing
+// costs at most a tiny request every few seconds of reading jobs.
+let _scoutRun = { at: 0, id: null };
+
+async function scoutRunOpen(token) {
+  const ttl = _scoutRun.id ? 60_000 : 15_000;
+  if (Date.now() - _scoutRun.at < ttl) return _scoutRun.id;
+  let id = null;
+  try {
+    const res = await fetchWithTimeout(`${cfg.API_BASE}/v1/scout/runs/active`, {
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    if (res.ok) id = (await res.json()).run_id || null;
+  } catch {
+    id = null; // unreachable: try again after the short wait
+  }
+  _scoutRun = { at: Date.now(), id };
+  return id;
+}
+
+// Send the open posting, word for word, for the Scout run Claude is doing.
+// Returns {active:false} when no run is open, else {active:true, stored}.
+async function scoutCapture(job) {
+  const token = await getValidToken();
+  if (!token) return { active: false };
+  if (!(await scoutRunOpen(token))) return { active: false };
+  const res = await fetchWithTimeout(`${cfg.API_BASE}/v1/scout/captures`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(job),
+  }).catch(() => null);
+  if (!res) return { active: false }; // network: let the page try again
+  if (!res.ok) return { active: true, stored: false };
+  const d = await res.json().catch(() => ({}));
+  if (!d.stored) _scoutRun.at = 0; // the run may have just ended: re-ask next time
+  return { active: true, stored: !!d.stored };
+}
+
 // Everything ATS autofill needs, in one message: the profile vault, the
 // user's email, and the resume file (base64 — messages are JSON-serialized).
 async function getAutofillData() {
@@ -566,6 +605,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
+      } else if (msg.type === "scoutCapture") {
+        sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });
       } else if (msg.type === "backfillJob") {
         sendResponse({ ok: true, ...(await backfillJob(msg.job)) });
       } else if (msg.type === "getAutofillData") {

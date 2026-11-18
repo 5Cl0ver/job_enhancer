@@ -9,6 +9,8 @@ transaction boundary (services `flush`, routers `commit`).
 | `dedup.py` | Listing dedup | `normalize()`, `job_content_hash()` (SHA-256), `is_duplicate()` (rapidfuzz: title ≥88, company ≥85) |
 | `job_search.py` | Multi-source search | `aggregate_and_deduplicate()` — fetch Adzuna + JSearch in parallel, parse, dedupe, upsert, paginate; `mark_expired_listings()` (scheduled). **Being refactored to a pluggable adapter + cache model — see [docs/job-data-architecture.md](../../../docs/job-data-architecture.md)** |
 | `collections.py` | Collection CRUD | create/list/update/delete (blocks default) |
+| `scout_runs.py` | Claude Scout searches and runs | missions CRUD, `queue_run`, `runs_out`, `record_capture` (extension); connector side: `brief`, `check_jobs`, `report_job` (saves the captured page copy, never Claude's text), `finish_run`. Replies never grow with the tracker (spec research R8) |
+| `scout_dedupe.py` | Claude Scout keys (pure) | `company_key`, `title_key`, `url_key` (one key per posting across tracking params/side panes), `posting_problem` (search/home pages), `posting_link` |
 | `scout_tracks.py` | Claude Scout resume types | list/create/update/delete (≤8, unique names, own resumes only; delete untags jobs), `to_out()` adds file name + job count |
 | `saved_jobs.py` | Saved-job CRUD | `save_job()`, `list_saved_jobs()`, `update_saved_job()` (tracks `last_stage_change`), `delete_saved_job()` |
 | `saved_searches.py` | Saved searches + matches | create/list/delete, `refresh_saved_searches()` (scheduled), new-matches feed (FR-024) |

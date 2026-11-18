@@ -28,12 +28,13 @@ A saved, reusable setup.
 |---|---|---|
 | id | uuid pk | |
 | name | varchar(80) | "LinkedIn · IT Admin · 5 this week" (auto, editable) |
-| source | enum: linkedin, indeed, ziprecruiter, glassdoor, local_companies | |
+| source | linkedin, indeed, ziprecruiter (slice 2); local_companies in slice 3 | |
 | track_id | uuid FK resume_tracks (cascade) | |
-| job_count | int 1–15 | default 5 |
+| job_count | int 1–10 | default 5 |
 | posted_within_days | int: 1, 3, 7, 14, 30 | |
 | min_pay | int? | defaults to the track's |
-| location_rule | jsonb | `{zone: [cities], remote: "any"|"local_company_only"|"none"}` |
+| location | varchar(120)? | city or area, put into the search URL |
+| remote | varchar: any, remote_only, no_remote | |
 | min_fit | int 0–10 | default 6 |
 | extra_instructions | text? | ≤ 1000 chars |
 | last_run_at | timestamptz? | |
@@ -95,13 +96,37 @@ The local company log.
 | blocked | bool | user says never suggest |
 | checks | int | |
 
+## scout_captures
+
+The exact page copy, posted by the Job Catcher extension (or fetched from a
+Greenhouse/Lever/Ashby feed) during an open run. `report_job` turns a capture
+into the saved job; nothing in it comes from Claude (research R9).
+
+| field | type | notes |
+|---|---|---|
+| id | uuid pk | |
+| run_id | uuid FK scout_runs (cascade) | the open run it was captured in |
+| url_key | varchar | canonical posting URL; unique (run_id, url_key) |
+| title / company / location | varchar | as on the page |
+| description | text | full posting text, verbatim |
+| salary_min / salary_max / salary_period | int? / varchar? | as listed, else null |
+| posted_on | date? | as listed, else null |
+| is_remote | bool | |
+| via | varchar(20) | linkedin, indeed, ziprecruiter, jsonld, greenhouse, lever, ashby |
+| captured_at | timestamptz | unused captures are purged after 7 days |
+
+`scout_findings` gains `capture_id` (FK scout_captures, set null) and its
+`outcome` enum gains `waiting_for_copy` and `no_copy`. `scout_runs.status` gains
+`queued` (Start queues; the first brief marks it `running`).
+
 ## Changes to existing tables
 
 - `saved_jobs.track_id` uuid? FK resume_tracks (set null) — which resume to
   apply with; set by scout, editable on the job page.
-- `saved_jobs.scout_finding_id` uuid? — back-link for the "found by Scout" badge
-  and fit score on the job page.
+- (No `saved_jobs.scout_finding_id`: `scout_findings.saved_job_id` points the
+  other way, which is enough for the run page.)
 
 One additive Alembic migration per delivery slice (slice 1: `resume_tracks` +
-`saved_jobs.track_id`, revision `f7a8b9c0d1e3`); each downgrade drops what it
+`saved_jobs.track_id`, revision `f7a8b9c0d1e3`; slice 2: missions, runs,
+captures, findings, revision `a8b9c0d1e2f4`); each downgrade drops what it
 added.

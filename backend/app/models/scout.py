@@ -1,0 +1,189 @@
+"""Claude Scout ORM models: saved searches, runs, what each run found, and the
+exact page copies the extension captured.
+
+The app is the agent's memory (research R8): Claude in Chrome keeps nothing
+between chats. A **mission** is a saved search setup; Start queues a **run**;
+every job a run reports becomes a **finding** (the dedupe memory, kept even when
+the job wasn't saved); a **capture** is the posting exactly as the Job Catcher
+extension read it off the page, which is what gets saved (research R9).
+"""
+
+import uuid
+from datetime import datetime
+
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    SmallInteger,
+    String,
+    Text,
+    UniqueConstraint,
+    func,
+)
+from sqlalchemy.dialects.postgresql import UUID
+from sqlalchemy.orm import Mapped, mapped_column
+
+from app.models import Base
+
+SOURCES = ("linkedin", "indeed", "ziprecruiter")
+REMOTE_RULES = ("any", "remote_only", "no_remote")
+
+RUN_QUEUED = "queued"
+RUN_RUNNING = "running"
+RUN_DONE = "done"
+RUN_STOPPED = "stopped"
+
+SAVED = "saved"
+BELOW_BAR = "below_bar"
+DUPLICATE = "duplicate"
+WAITING = "waiting_for_copy"
+NO_COPY = "no_copy"
+
+
+def _now_col() -> Mapped[datetime]:
+    return mapped_column(
+        DateTime(timezone=True), nullable=False, server_default=func.now()
+    )
+
+
+def _user_col() -> Mapped[uuid.UUID]:
+    return mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+
+class ScoutMission(Base):
+    """A saved search: where to look, for which resume type, how many, how new."""
+
+    __tablename__ = "scout_missions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    name: Mapped[str] = mapped_column(String(80), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    track_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("resume_tracks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    job_count: Mapped[int] = mapped_column(Integer, nullable=False, default=5)
+    posted_within_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
+    min_pay: Mapped[int | None] = mapped_column(Integer)  # yearly USD
+    location: Mapped[str | None] = mapped_column(String(120))
+    remote: Mapped[str] = mapped_column(String(20), nullable=False, default="any")
+    min_fit: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=6)
+    extra_instructions: Mapped[str | None] = mapped_column(Text)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now_col()
+
+
+class ScoutRun(Base):
+    """One launch of a mission. ``criteria`` snapshots the mission and its
+    resume type at Start, so editing them later doesn't change a past run."""
+
+    __tablename__ = "scout_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    mission_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scout_missions.id", ondelete="SET NULL")
+    )
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("resume_tracks.id", ondelete="SET NULL")
+    )
+    criteria: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    playbook_version: Mapped[str] = mapped_column(String(20), nullable=False)
+    status: Mapped[str] = mapped_column(String(10), nullable=False, default=RUN_QUEUED)
+    note: Mapped[str | None] = mapped_column(Text)  # Claude's end note
+    created_at: Mapped[datetime] = _now_col()
+    started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class ScoutCapture(Base):
+    """A posting exactly as it appeared on the page, captured by the extension
+    while a run was open. Nothing in it comes from Claude."""
+
+    __tablename__ = "scout_captures"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scout_runs.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    url_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    title: Mapped[str] = mapped_column(String(500), nullable=False)
+    company: Mapped[str] = mapped_column(String(255), nullable=False)
+    location: Mapped[str | None] = mapped_column(String(255))
+    is_remote: Mapped[bool] = mapped_column(nullable=False, default=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    salary_min: Mapped[int | None] = mapped_column(Integer)
+    salary_max: Mapped[int | None] = mapped_column(Integer)
+    salary_period: Mapped[str | None] = mapped_column(String(10))
+    job_type: Mapped[str | None] = mapped_column(String(50))
+    via: Mapped[str | None] = mapped_column(String(20))
+    captured_at: Mapped[datetime] = _now_col()
+
+    __table_args__ = (
+        UniqueConstraint("run_id", "url_key", name="uq_scout_capture_run_url"),
+    )
+
+
+class ScoutFinding(Base):
+    """Every job a run reported: the memory that stops repeats. Kept whatever
+    the outcome (saved, below the bar, duplicate, no page copy)."""
+
+    __tablename__ = "scout_findings"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scout_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    track_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("resume_tracks.id", ondelete="SET NULL")
+    )
+    saved_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("saved_jobs.id", ondelete="SET NULL")
+    )
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    url: Mapped[str] = mapped_column(String(2000), nullable=False)
+    url_key: Mapped[str] = mapped_column(String(500), nullable=False)
+    # From the page copy; empty while the copy hasn't arrived.
+    company: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    title: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    company_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    title_key: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    # Claude's opinion, shown labelled as Claude's.
+    fit_score: Mapped[int] = mapped_column(SmallInteger, nullable=False)
+    why_fit: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    gaps: Mapped[str] = mapped_column(Text, nullable=False, default="")
+    # The app's own reason when it set the outcome (e.g. pay under the minimum).
+    app_note: Mapped[str | None] = mapped_column(String(200))
+    outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = _now_col()
+
+    __table_args__ = (
+        Index("ix_scout_findings_user_job", "user_id", "company_key", "title_key"),
+        Index("ix_scout_findings_user_url", "user_id", "url_key"),
+    )

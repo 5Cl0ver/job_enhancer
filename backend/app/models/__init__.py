@@ -26,6 +26,12 @@ from app.models.resume import Resume  # noqa: E402, F401
 from app.models.resume_track import ResumeTrack  # noqa: E402, F401
 from app.models.saved_job import SavedJob  # noqa: E402, F401
 from app.models.saved_search import SavedSearch  # noqa: E402, F401
+from app.models.scout import (  # noqa: E402, F401
+    ScoutCapture,
+    ScoutFinding,
+    ScoutMission,
+    ScoutRun,
+)
 from app.models.user import User  # noqa: E402, F401
 
 __all__ = [
@@ -43,4 +49,8 @@ __all__ = [
     "ResumeTrack",
     "GeneratedDocument",
     "SavedSearch",
+    "ScoutCapture",
+    "ScoutFinding",
+    "ScoutMission",
+    "ScoutRun",
 ]

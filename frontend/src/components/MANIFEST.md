@@ -22,7 +22,11 @@ separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
 
 | File | Purpose |
 |------|---------|
-| `ScoutPanel.tsx` | The Claude Scout tab |
+| `ScoutPanel.tsx` | The Claude Scout tab: views Start · History · Resume types (`?view=`) |
+| `ScoutStart.tsx` | Saved searches (create/edit/delete), Start (queues a run), the open run: the one line to say to Claude in Chrome + live progress |
+| `ScoutHistory.tsx` | Past runs; open one to see what it found |
+| `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job), below bar, already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
+| `errorText.ts` | The server's `detail` message for a failed request |
 | `ResumeTypes.tsx` | Resume types: five suggested types to start, cards, add/edit/delete dialog, resume upload that keeps the main resume |
 | `JobResumeType.tsx` | Resume type picker on a saved job's page |
 

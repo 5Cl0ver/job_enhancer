@@ -4,71 +4,75 @@ Added to `backend/app/mcp_server.py` beside `save_job`/`list_jobs`. Same auth
 (Supabase OAuth, the signed-in user only). None of them can change a pipeline
 stage or mark anything applied.
 
-## get_scout_brief(run_id: str) -> dict
+Design rules (research R8, R9):
 
-First call of every run. Marks a `pending` run `running`. Safe to call again
-(resume after a dropped connection).
+- **Small in, small out.** Every reply is a few hundred tokens at most, whatever
+  the size of the tracker. No tool ever returns a list of everything seen.
+- **Claude never copies a job.** The exact listing (title, company, location,
+  pay, posted date, full description, link) is captured from the page by the Job
+  Catcher extension, or fetched from the company's public job feed. Claude
+  sends only a link and its opinion (fit, why, gaps).
+- **Same line every time.** The user's prompt never changes: "Do my next Job
+  Scout run with the Job Enhancer connector." The app knows which run is next.
+
+## get_scout_brief(run_id: str | None = None) -> dict
+
+First call of every chat. With no id: the oldest `running` run, else the oldest
+`queued` one (marked `running`). Safe to call again: a fresh chat on a
+half-done run gets the progress and carries on.
 
 ```json
 {
-  "run_id": "…",
-  "playbook": "…versioned instructions: how to browse, what a posting link is, how to score…",
-  "playbook_version": "2026.11.1",
+  "run_id": "7f3c",
+  "playbook": "…short versioned rules (≈ 400 words)…",
+  "playbook_version": "2026.11.2",
   "source": "linkedin",
-  "job_count": 5,
-  "posted_within_days": 7,
-  "min_pay": 70000,
-  "min_fit": 6,
-  "location_rule": {"zone": ["Springfield", "Riverton", "…"], "remote": "local_company_only"},
-  "track": {
-    "name": "IT Admin",
-    "target_titles": ["IT Systems Administrator", "Jira Administrator", "…"],
-    "key_skills": ["Microsoft 365", "Entra ID", "…"],
-    "skip_rules": {"degree_only": true, "max_years": 7, "exclude": ["clearance", "SAP"]},
-    "notes": "…"
-  },
+  "start_urls": ["https://www.linkedin.com/jobs/search/?keywords=…&f_TPR=r604800&sortBy=DD"],
+  "track": {"name": "IT Admin", "titles": ["…"], "skills": ["…"], "skip": {"degree_only": true, "max_years": 7, "exclude": ["…"]}, "notes": "…"},
   "rubric": {"skills": 4, "experience": 2, "title_level": 2, "recency": 1, "pay_location": 1},
-  "already_reported_this_run": 2,
-  "skip": {
-    "jobs": [["acme", "it systems administrator"], "…company_key/title_key pairs…"],
-    "urls": ["linkedin.com/jobs/view/123", "…"]
-  },
-  "companies": {                     // local_companies source only
-    "due": [{"name": "…", "careers_url": "…", "ats": "greenhouse", "hot": true}],
-    "find_new": 10,
-    "employer_types": ["credit union", "law firm", "…"],
-    "avoid": ["…every known company name_key, incl. blocked…"]
-  }
+  "min_fit": 6,
+  "progress": {"saved": 2, "target": 5, "pages_left": 6},
+  "next": "Open the first start URL and send its job rows to check_jobs."
 }
 ```
 
-`skip.jobs` is capped (most recent 1,000); `check_job` is the authority.
+Never includes saved jobs, past findings or company lists. The app builds the
+search URL, so Claude doesn't click through filters.
 
-## check_job(company: str, title: str, url: str | None) -> dict
+## check_jobs(run_id, rows: list[{company, title, url?}]) -> dict
 
-Cheap pre-check before reading a full posting.
-`{"seen": true, "why": "already in your tracker (Applied)"}` or `{"seen": false}`.
+One call per results page (≤ 25 rows, as read from the list). Returns only the
+rows worth opening, by position:
 
-## report_job(run_id, company, title, url, location, description, fit_score, why_fit, gaps, posted_on=None, salary_min=None, salary_max=None, salary_period=None, is_remote=False) -> dict
+`{"open": [0, 3, 7], "skipped": {"in_tracker": 4, "seen_before": 9, "excluded": 2}}`
 
-- Rejects (outcome `rejected_link`) a URL that is a search/list page or a
-  careers homepage, with a reason the agent can act on.
-- Duplicate → outcome `duplicate`, nothing saved.
-- `fit_score < min_fit` → `below_bar`, remembered, not saved.
-- Otherwise saves through the same service as `save_job` (verbatim
-  description), into the "Scout" collection, with `track_id`, and notes
-  `Fit 8/10 (Strong) · LinkedIn · Posted 2026-11-17 · Why: … · Gaps: …`.
-- Returns `{"outcome": "...", "job_id": "...?", "saved_so_far": 3, "target": 5, "done": false}`.
+Dedupe (research R3) and the track's exclude words run here, server-side.
 
-Validation: fit 0–10; `posted_on` ISO date or null; description required for
-`saved` (≥ 200 chars, else `below_bar` is not used — it returns an error asking
-for the full text).
+## report_job(run_id, url, fit_score, why_fit, gaps) -> dict
+
+Called while the posting is open in the tab. Claude sends no job text.
+
+- The app looks for the page copy the extension captured for that link (or
+  fetches it from Greenhouse / Lever / Ashby by job id).
+  - **Found** → dedupe on the exact company + title; then `saved` (into the
+    "Scout" folder, tagged with the track) or `below_bar` (remembered, not saved).
+  - **Not found yet** → `{"outcome": "waiting_for_copy", "next": "Stay on the posting page and call report_job again."}` (the extension posts within a couple of seconds of the page loading).
+  - **Still not found on the second call** → `no_copy`: the finding is kept,
+    the job is *not* saved, and the run page shows "Open this job and press Save"
+    (the extension isn't installed, or the page has no readable posting).
+- A search page or careers homepage link → `rejected_link` with the reason.
+- `fit_score` 0–10; `why_fit`, `gaps` ≤ 600 chars each — Claude's opinion,
+  stored and shown labelled as Claude's.
+- Returns `{"outcome": "...", "saved": 3, "target": 5, "done": false, "next": "…"}`.
 
 ## log_company(run_id, name, careers_url=None, ats="unknown", employer_type=None, city=None, result="no_fit") -> dict
 
-Upserts `scout_companies` by `name_key`; sets `last_checked_at`, `last_result`,
-`checks += 1`; `hot` becomes true if any job from this company was saved.
+Local runs only. Upserts `scout_companies` by `name_key`; sets
+`last_checked_at`, `last_result`, `checks += 1`. Returns
+`{"next_company": {"name": "…", "careers_url": "…"} | null, "find_new": 3}` —
+the app hands out companies **one at a time**, never the whole log.
 
-## finish_scout_run(run_id, summary: str) -> dict
+## finish_scout_run(run_id, note: str = "") -> dict
 
-`running → done`; stores the summary; returns the counts the page shows.
+`running → done`; stores Claude's note (≤ 500 chars, e.g. "CAPTCHA after 3");
+returns the counts and whether another queued run is waiting.

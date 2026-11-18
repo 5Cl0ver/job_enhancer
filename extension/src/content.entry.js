@@ -12,6 +12,7 @@
 // JSON-LD → selectors), which identifies the open job strictly by ?vjk=.
 import { extractJob } from "./extract/index.js";
 import { shouldBackfill } from "./backfill.js";
+import { scoutDone, scoutPayload } from "./scoutCapture.js";
 import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
 import { readApplications } from "./extract/indeed-myjobs.js";
 const host = location.hostname;
@@ -26,6 +27,8 @@ const STALE_LABEL = "↻ Refresh page — extension updated";
 let btn = null;
 let currentKey = ""; // the open job we've reflected state for (so we only re-check on change)
 const backfilled = new Set(); // job keys we've already backfilled this page session
+const scoutSent = new Set(); // job keys Claude Scout is done with this page session
+let scoutInFlight = false;
 
 // When the extension is reloaded/updated, the copy of this script already
 // running in an open tab is ORPHANED — chrome.runtime dies and every
@@ -287,6 +290,7 @@ function sync() {
     }
     return;
   }
+  scoutCapture(job, key);
   if (key === currentKey) return; // same job — nothing to re-check
 
   currentKey = key;
@@ -313,6 +317,24 @@ function sync() {
       }
     })
     .catch(() => {});
+}
+
+// Claude Scout: while a run is open in the app, send the open posting exactly
+// as the page shows it. Re-tried on each sync until the description has loaded
+// and the app has answered; the background says whether a run is open.
+function scoutCapture(job, key) {
+  if (scoutInFlight || scoutSent.has(key)) return;
+  const payload = scoutPayload(job);
+  if (!payload) return;
+  scoutInFlight = true;
+  safeSend({ type: "scoutCapture", job: payload })
+    .then((res) => {
+      if (scoutDone(res)) scoutSent.add(key);
+    })
+    .catch(() => {})
+    .finally(() => {
+      scoutInFlight = false;
+    });
 }
 
 function ensureButton() {

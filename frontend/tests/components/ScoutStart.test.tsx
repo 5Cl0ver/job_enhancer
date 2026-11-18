@@ -1,0 +1,198 @@
+import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const get = vi.fn();
+const post = vi.fn();
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    get: (...args: unknown[]) => get(...args),
+    post: (...args: unknown[]) => post(...args),
+    patch: vi.fn(),
+    delete: vi.fn(),
+  },
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+  getAccessToken: vi.fn().mockResolvedValue("token"),
+  API_BASE: "http://localhost:8000",
+}));
+
+import { ScoutStart } from "@/components/scout/ScoutStart";
+import { SCOUT_LINE } from "@/lib/scout";
+
+const TRACK = {
+  id: "t1",
+  name: "IT Admin",
+  target_titles: ["IT Systems Administrator"],
+  key_skills: [],
+  skip_rules: { degree_only: true, max_years: null, exclude: [] },
+  min_pay: 70000,
+  resume_id: null,
+  resume_filename: null,
+  notes: null,
+  sort_order: 0,
+  job_count: 0,
+  created_at: "2026-11-18T00:00:00Z",
+  updated_at: "2026-11-18T00:00:00Z",
+};
+
+const MISSION = {
+  id: "m1",
+  name: "LinkedIn · IT Admin · 5 · last 7 days",
+  source: "linkedin",
+  track_id: "t1",
+  job_count: 5,
+  posted_within_days: 7,
+  min_pay: null,
+  location: "Springfield, IL",
+  remote: "any",
+  min_fit: 6,
+  extra_instructions: null,
+  last_run_at: null,
+  created_at: "2026-11-18T00:00:00Z",
+};
+
+const RUN = {
+  id: "r1",
+  mission_id: "m1",
+  name: MISSION.name,
+  source: "linkedin",
+  track_name: "IT Admin",
+  target: 5,
+  status: "queued",
+  note: null,
+  created_at: "2026-11-18T00:00:00Z",
+  started_at: null,
+  finished_at: null,
+  counts: { saved: 0, below_bar: 0, duplicate: 0, waiting_for_copy: 0, no_copy: 0 },
+  findings: [],
+};
+
+function renderStart() {
+  const qc = new QueryClient({
+    defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
+    mutationCache: new MutationCache({ onError: () => {} }),
+  });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter>
+        <ScoutStart onSetUpTypes={() => {}} />
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+function serve(routes: Record<string, unknown>) {
+  get.mockImplementation((path: string) => Promise.resolve(routes[path] ?? []));
+}
+
+describe("Claude Scout start", () => {
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+  });
+
+  it("shows a saved search with its settings", async () => {
+    serve({ "/v1/scout/tracks": [TRACK], "/v1/scout/missions": [MISSION] });
+    renderStart();
+    expect(await screen.findByText(MISSION.name)).toBeInTheDocument();
+    // Pay falls back to the resume type's minimum.
+    expect(screen.getByText(/5 jobs · last 7 days · \$70K\+ · fit 6\+/)).toBeInTheDocument();
+  });
+
+  it("Start queues a run and shows the one line to tell Claude", async () => {
+    let runs: unknown[] = [];
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/scout/tracks") return Promise.resolve([TRACK]);
+      if (path === "/v1/scout/missions") return Promise.resolve([MISSION]);
+      if (path === "/v1/scout/runs") return Promise.resolve(runs);
+      if (path === "/v1/scout/runs/r1") return Promise.resolve(RUN);
+      return Promise.resolve([]);
+    });
+    post.mockImplementation(() => {
+      runs = [RUN];
+      return Promise.resolve(RUN);
+    });
+    const user = userEvent.setup();
+    renderStart();
+
+    await user.click(await screen.findByRole("button", { name: "Start" }));
+    expect(post).toHaveBeenCalledWith("/v1/scout/missions/m1/runs", {});
+    expect(await screen.findByText(SCOUT_LINE)).toBeInTheDocument();
+    expect(screen.getByText("Waiting for Claude to start")).toBeInTheDocument();
+    // Only one search at a time.
+    await waitFor(() => expect(screen.getByRole("button", { name: "Start" })).toBeDisabled());
+  });
+
+  it("lists what a running search found, with Claude's reasons labelled", async () => {
+    const running = {
+      ...RUN,
+      status: "running",
+      counts: { ...RUN.counts, saved: 1, below_bar: 1 },
+      findings: [
+        {
+          id: "f1",
+          outcome: "saved",
+          source: "linkedin",
+          url: "https://www.linkedin.com/jobs/view/1",
+          company: "Brambleworks",
+          title: "IT Systems Administrator",
+          fit_score: 8,
+          why_fit: "Runs Microsoft 365 daily",
+          gaps: "No Intune cert",
+          app_note: null,
+          saved_job_id: "s1",
+          job_listing_id: "l1",
+          created_at: "2026-11-18T00:00:00Z",
+        },
+        {
+          id: "f2",
+          outcome: "no_copy",
+          source: "linkedin",
+          url: "https://www.linkedin.com/jobs/view/2",
+          company: "",
+          title: "",
+          fit_score: 7,
+          why_fit: "",
+          gaps: "",
+          app_note: "No page copy: open this job and press Save",
+          saved_job_id: null,
+          job_listing_id: null,
+          created_at: "2026-11-18T00:00:00Z",
+        },
+      ],
+    };
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [MISSION],
+      "/v1/scout/runs": [running],
+      "/v1/scout/runs/r1": running,
+    });
+    renderStart();
+
+    expect(await screen.findByText("Searching · 1 of 5 saved · 1 passed over")).toBeInTheDocument();
+    const saved = screen.getByRole("link", { name: "IT Systems Administrator" });
+    expect(saved).toHaveAttribute("href", "/jobs/l1");
+    expect(screen.getByText("Runs Microsoft 365 daily")).toBeInTheDocument();
+    expect(screen.getAllByText(/Claude: why it fits/)).toHaveLength(1);
+    const manual = screen.getByRole("link", { name: /open and press save/i });
+    expect(manual).toHaveAttribute("href", "https://www.linkedin.com/jobs/view/2");
+    // Claude has started, so the line to say is no longer shown.
+    expect(screen.queryByText(SCOUT_LINE)).toBeNull();
+  });
+
+  it("asks a new user to set up resume types first", async () => {
+    serve({ "/v1/scout/tracks": [], "/v1/scout/missions": [] });
+    renderStart();
+    expect(await screen.findByRole("button", { name: /set up resume types/i })).toBeInTheDocument();
+  });
+});

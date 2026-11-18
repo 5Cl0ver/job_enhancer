@@ -5,7 +5,7 @@
  */
 import { useRef, useState } from "react";
 import { FileText, Loader2, Pencil, Plus, Sparkles, Upload } from "lucide-react";
-import { ApiError } from "@/lib/api";
+import { errorText } from "@/components/scout/errorText";
 import { useResumes } from "@/hooks/useAI";
 import {
   useCreateTrack,
@@ -47,17 +47,6 @@ import {
 import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
-
-function errorText(e: unknown, fallback: string): string {
-  if (!(e instanceof ApiError)) return fallback;
-  try {
-    const detail = (JSON.parse(e.message) as { detail?: unknown }).detail;
-    if (typeof detail === "string") return detail;
-  } catch {
-    // not JSON: the message is already readable
-  }
-  return e.message || fallback;
-}
 
 export function ResumeTypes() {
   const { data: tracks, isLoading, isError } = useTracks();

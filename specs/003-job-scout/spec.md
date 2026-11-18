@@ -120,6 +120,14 @@ and source produce the best fits). "Not for me" on a job teaches the skip list.
   and desktop.
 - **FR-008** The agent's instructions (the "scout playbook") live in the repo,
   versioned, and are served by the brief — not pasted by the user.
+- **FR-009** Exact listings: every saved Scout job's title, company, location,
+  pay, posted date, link and full description are copied from the posting
+  itself (Job Catcher extension capture, or the employer's Greenhouse/Lever/Ashby
+  feed). Nothing in them is written or reworded by AI. Without a copy, the job
+  is not saved. Claude's fit, reasons and gaps are stored apart and labelled.
+- **FR-010** Small context: the user's prompt is one fixed line; no connector
+  reply grows with the size of the tracker or company log; Claude never sends job
+  text to the app; runs are small and resumable in a fresh chat (research R8).
 
 ## Success Criteria
 
@@ -129,6 +137,9 @@ and source produce the best fits). "Not for me" on a job teaches the skip list.
 - **SC-003** Every saved scout job has a fit score, a track and a direct link.
 - **SC-004** The user stops rewriting resumes per application: each scout job
   points at one of their track resumes.
+- **SC-005** A saved Scout job's description matches the posting word for word.
+- **SC-006** A 5-job run fits in under ~60k tokens of chat context, and the
+  1,000th run's brief is the same size as the first.
 
 ## Out of scope (for now)
 

@@ -13,7 +13,8 @@ saves jobs (`save_job`) and lists them (`list_jobs`) for Claude in Chrome. Keepi
 state server-side is what makes dedupe and the company log work across runs; a
 pasted "COMPANY LOG" block (today's approach) is lost, truncated or stale.
 A short prompt also can't drift from the rules, because the rules come back in
-the brief.
+the brief. *Superseded in part by R8–R10: the prompt is now one fixed line, the
+brief carries no skip lists, and the extension captures the listing.*
 
 **Alternatives considered**:
 - *Long generated prompt containing everything* (criteria + every saved job +
@@ -89,3 +90,84 @@ already does.
 **Decision**: Poll `GET /v1/scout/runs/{id}` every 5 s while a run is open
 (TanStack Query `refetchInterval`), stop when done. Free-tier friendly, no
 websockets; matches the side panel's cheap-poll pattern.
+
+## R8. Context budget: the real cost is the browsing, not the prompt (revised 2026-11-18)
+
+**Problem found in review**: the first design handed Claude the whole "already
+seen" list in the brief (grows forever) and had Claude echo each full job
+description back through `report_job` (doubles the tokens and lets the model
+reword the listing). The biggest cost was never modelled at all: what the
+browsing itself puts into the chat.
+
+**Findings**:
+- A screenshot costs ~1,000–1,800 input tokens; a 200k window "can fill up in
+  well under 100 screenshots", and old screenshots stay in the chat and are
+  re-read every turn ([Anthropic: best practices for computer and browser
+  use](https://claude.com/blog/best-practices-for-computer-and-browser-use-with-claude);
+  [claude-code #27869](https://github.com/anthropics/claude-code/issues/27869)).
+- Measured over 7,500+ Claude in Chrome calls: screenshot calls median 1,855
+  tokens vs 373 for text-only calls; the 23% of calls that were screenshots were
+  49% of all tokens ([dev.to analysis](https://dev.to/vousmeevoyez/your-browser-agent-pays-to-look-at-pictures-opencli-vs-claude-in-chrome-token-use-52ae)).
+- Anthropic's context-engineering guidance: keep "lightweight identifiers" and
+  load data just in time through tools; keep durable state in notes outside the
+  context window; split work so each context stays small and hands off a short
+  summary ([Effective context engineering for AI agents](https://www.anthropic.com/engineering/effective-context-engineering-for-ai-agents)).
+
+**Decision**: the app is the memory and the planner; each chat does one small,
+bounded piece of work, and nothing important lives in the chat.
+1. **Tiny brief** (about 1–1.5k tokens): rules, the track, the progress, the
+   start URL. No lists of saved jobs, findings or companies, ever.
+2. **Just-in-time dedupe**: `check_jobs` takes the rows of one results page and
+   returns the positions worth opening. Cost is per page and flat, however big
+   the tracker gets.
+3. **The app builds the search URL** (LinkedIn `keywords`, `f_TPR=r604800` for a
+   week, `sortBy=DD`, location, `f_WT=2` for remote; Indeed `q`, `l`,
+   `fromage`). Claude doesn't spend screenshots clicking filters. LinkedIn's
+   salary filter is unreliable, so the app applies min pay to the captured pay.
+4. **Text first**: the playbook tells Claude to read pages as text and take a
+   screenshot only when something has to be seen.
+5. **Claude never sends job text back** (R9): `report_job` is a link plus an
+   opinion, about 150 tokens.
+6. **Small, resumable runs**: a run is at most 5 saved jobs (board) or 5
+   companies (local). Progress lives in the app, so if a chat gets long or drops,
+   a new chat with the same one line continues it. Local runs hand out companies
+   one at a time (`log_company` returns the next one).
+
+**Budget target** (measured in the end-to-end test): a 5-job board run under
+~60k tokens of context, with the brief plus all app replies under 5k of that.
+
+**Alternatives**: a big generated prompt (the original fallback): dropped.
+Claude Code with a fresh sub-agent per job page (clean context per job): good
+for later scheduled runs, but it needs a terminal, and the user's tool is the
+Chrome side panel.
+
+## R9. The exact listing comes from the page, never from Claude (revised 2026-11-18)
+
+**Decision**: the saved job is a faithful copy of the posting. Nothing in it is
+written by AI.
+- The **Job Catcher extension** is already in the same Chrome and already has a
+  tested extractor (`extension/src/extract/`: JSON-LD → LinkedIn / Indeed /
+  ZipRecruiter selectors → generic) that reads the full description, company,
+  location and link off the page. While a Scout run is open, its content script
+  captures each job page Claude opens and posts it to `POST /v1/scout/captures`,
+  keyed by canonical URL. It learns a run is open from
+  `GET /v1/scout/runs/active` (cached 60 s, asked only on job pages).
+- Company sites on **Greenhouse, Lever or Ashby**: the app fetches the posting
+  from their public job-board APIs by job id, which is the employer's own data.
+- Other company sites: most hiring-system pages carry JSON-LD `JobPosting`; the
+  content script reads those too during an open run.
+- No copy → the job is not saved; the run page lists it with "Open and press
+  Save". The app never falls back to Claude's version of the text.
+- Claude's own words (fit, why, gaps) are stored separately and labelled as
+  Claude's.
+
+**Rationale**: the user tailors applications from the description, so it must
+be exact. A model relaying 1–3k words can drop or reword lines, and it costs
+output tokens and time. The extractor is already tested against saved pages.
+
+## R10. One line, every time
+
+**Decision**: Start puts a run in a queue; the prompt is always the same line
+("Do my next Job Scout run with the Job Enhancer connector"), so the user can
+save it as a Claude in Chrome shortcut. Shortcuts can be scheduled, but Chrome
+has to be open and the computer awake, so scheduling comes later.

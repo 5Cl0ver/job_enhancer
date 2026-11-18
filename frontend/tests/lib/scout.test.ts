@@ -2,8 +2,11 @@ import { describe, expect, it } from "vitest";
 import {
   MAX_TRACKS,
   STARTER_TRACKS,
+  fitBand,
   formatPay,
+  isOpen,
   parsePay,
+  runSummary,
   splitLines,
   splitList,
 } from "@/lib/scout";
@@ -45,5 +48,37 @@ describe("starter resume types", () => {
       STARTER_TRACKS.length,
     );
     for (const t of STARTER_TRACKS) expect(t.target_titles.length).toBeGreaterThan(0);
+  });
+});
+
+describe("scout runs", () => {
+  it("bands fit scores", () => {
+    expect([fitBand(9), fitBand(8), fitBand(7), fitBand(6), fitBand(5)]).toEqual([
+      "Strong",
+      "Strong",
+      "Good",
+      "Good",
+      "Weak",
+    ]);
+  });
+
+  it("summarises a run in one line", () => {
+    const counts = { saved: 2, below_bar: 1, duplicate: 1, waiting_for_copy: 0, no_copy: 0 };
+    expect(runSummary({ status: "queued", counts, target: 5 })).toBe(
+      "Waiting for Claude to start",
+    );
+    expect(runSummary({ status: "running", counts, target: 5 })).toBe(
+      "Searching · 2 of 5 saved · 2 passed over",
+    );
+    expect(runSummary({ status: "done", counts: { ...counts, below_bar: 0, duplicate: 0 }, target: 5 })).toBe(
+      "Done · 2 saved",
+    );
+  });
+
+  it("knows which runs are still open", () => {
+    expect(isOpen({ status: "queued" })).toBe(true);
+    expect(isOpen({ status: "running" })).toBe(true);
+    expect(isOpen({ status: "done" })).toBe(false);
+    expect(isOpen({ status: "stopped" })).toBe(false);
   });
 });

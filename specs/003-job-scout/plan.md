@@ -9,14 +9,14 @@
 **Claude Scout**, a new tab in the Search area (renamed **Find Jobs**, beside
 today's Job boards search): the user keeps a few **resume tracks** (one resume per
 kind of role), builds **missions** (source × track × count × recency × pay ×
-fit bar), and launches a run that produces a two-line prompt for **Claude in
-Chrome**. The browser agent does the human-like browsing (LinkedIn, Indeed, or
-small local company career pages); the app is its memory. Through new tools on
-the existing MCP connector the agent fetches a brief (criteria, versioned
-playbook, everything to skip), reports each job with a 0–10 fit score, logs each
-company it checked, and finishes the run. The app dedupes against the tracker and
-every past finding, saves good fits into a "Scout" folder tagged with their
-track, and shows the run live.
+fit bar), and queues runs. The user says one fixed line to **Claude in Chrome**
+("Do my next Job Scout run…"). The browser agent does the human-like browsing;
+the app is its memory and planner, so the chat stays small ([research R8](research.md)):
+a tiny brief with a ready-made search URL, a per-page "which of these are new?"
+check, and a per-job report that is just a link plus Claude's fit opinion. The
+**exact listing** is captured from the page by the Job Catcher extension, or
+fetched from Greenhouse/Lever/Ashby. Claude never writes it (R9). Good fits land
+in a "Scout" folder tagged with their track, and the run shows live.
 
 ## Technical Context
 
@@ -24,11 +24,11 @@ track, and shows the run live.
 **Primary Dependencies**: FastAPI, SQLAlchemy 2 async, Alembic, Pydantic v2,
 FastMCP (existing connector); Vite, React Router 7, TanStack Query v5,
 Tailwind v4, shadcn/ui
-**Storage**: Supabase Postgres — 5 new tables + 2 columns on `saved_jobs` ([data-model.md](data-model.md))
+**Storage**: Supabase Postgres — 6 new tables (incl. `scout_captures`) + 2 columns on `saved_jobs` ([data-model.md](data-model.md))
 **Testing**: pytest (SQLite in-memory + Postgres-specific checks per the schema-drift lesson), Vitest, Playwright for the page
 **Target Platform**: Render (API + MCP), Vercel (web), Claude in Chrome on the user's machine
 **Project Type**: Web application (existing `backend/` + `frontend/`)
-**Performance Goals**: brief < 500 ms with 1,000 saved jobs; report_job < 300 ms; page polls every 5 s only while a run is open
+**Performance Goals**: every connector reply ≤ ~1.5k tokens whatever the tracker size; a 5-job run under ~60k tokens of context (R8); brief < 500 ms; report_job < 300 ms; page polls every 5 s only while a run is open
 **Constraints**: $0 hosting (no headless browsers, no queues); the app never scrapes; board runs capped at 15 jobs; Supabase egress-conscious (no full-list polling)
 **Scale/Scope**: one user + friends; ~8 tracks, tens of missions, a few runs a day, hundreds of companies
 
@@ -78,7 +78,8 @@ backend/
 │   │   └── scout_companies.py    # due/hot/blocked
 │   ├── scout/playbook.md         # versioned agent instructions + rubric
 │   ├── api/v1/scout.py
-│   └── mcp_server.py             # + get_scout_brief, check_job, report_job, log_company, finish_scout_run
+│   ├── services/scout_feeds.py   # Greenhouse/Lever/Ashby public posting fetch
+│   └── mcp_server.py             # + get_scout_brief, check_jobs, report_job, log_company, finish_scout_run
 └── tests/{services/test_scout_*.py, api/test_scout.py, test_mcp_scout.py}
 
 frontend/
@@ -90,6 +91,10 @@ frontend/
 │   ├── hooks/useScout.ts
 │   └── lib/scout.ts              # labels, fit bands (pure)
 └── tests/{lib/scout.test.ts, components/Scout*.test.tsx}
+
+extension/
+├── src/scout-capture.js          # during an open run: extractJob() → POST /v1/scout/captures
+└── test/scout-capture.spec.js
 ```
 
 **Structure Decision**: existing web-app layout; the feature is one backend
@@ -100,7 +105,7 @@ feature and builds on each job's resume type.
 ## Delivery slices
 
 1. **Tracks** (US1): model, CRUD, Tracks tab, track badge + resume on job page.
-2. **Board missions** (US2): missions, runs, brief/check/report/finish, prompt card, live run, dedupe. *This is the demo.*
+2. **Board missions** (US2): missions, run queue, brief/check_jobs/report/finish, extension page capture, prompt card, live run, dedupe, token budget measured in the end-to-end run. *This is the demo.*
 3. **Local companies** (US3): company log, due logic, Companies tab.
 4. **Review & stats** (US4): dismiss → skip, per-track/source tallies, README section.
 
