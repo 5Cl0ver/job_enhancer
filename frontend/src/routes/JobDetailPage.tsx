@@ -2,6 +2,7 @@ import { useParams, useNavigate } from "react-router-dom";
 import { useJob } from "@/hooks/useJobs";
 import { useSavedJobId, useSaveJob, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { JobDetail } from "@/components/jobs/JobDetail";
+import { JobEmails } from "@/components/email/JobEmails";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** Full detail view for one job listing (reached by clicking a card title). */
@@ -39,6 +40,7 @@ export function JobDetailPage() {
           onGenerateDocuments={() => navigate(`/ai-apply?job=${id}`)}
         />
       )}
+      {isSaved && <JobEmails jobListingId={id} />}
     </div>
   );
 }

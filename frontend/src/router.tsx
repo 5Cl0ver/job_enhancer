@@ -11,6 +11,7 @@ import AnalyticsPage from "@/routes/AnalyticsPage";
 import AiApplyPage from "@/routes/AiApplyPage";
 import SettingsPage from "@/routes/SettingsPage";
 import AdminPage from "@/routes/AdminPage";
+import EmailUpdatesPage from "@/routes/EmailUpdatesPage";
 
 // The app's "map": which URL renders which component.
 // In Next.js this was implicit (folder names). Here it's explicit — you can
@@ -36,6 +37,7 @@ export const router = createBrowserRouter([
       { path: "saved", element: <Navigate to="/jobs" replace /> },
       { path: "tracker", element: <Navigate to="/jobs?view=board" replace /> },
       { path: "matches", element: <MatchesPage /> },
+      { path: "email-updates", element: <EmailUpdatesPage /> },
       { path: "analytics", element: <AnalyticsPage /> },
       { path: "ai-apply", element: <AiApplyPage /> },
       { path: "settings", element: <SettingsPage /> },

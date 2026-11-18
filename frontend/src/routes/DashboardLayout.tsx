@@ -8,6 +8,7 @@ import {
   Bot,
   Settings,
   Shield,
+  MailCheck,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { RequireAuth } from "@/routes/RequireAuth";
@@ -25,6 +26,7 @@ const NAV: NavItem[] = [
   { to: "/search", label: "Search", icon: Search, primary: true },
   { to: "/jobs", label: "My Jobs", icon: Briefcase, primary: true },
   { to: "/matches", label: "Matches", icon: Sparkles, primary: true },
+  { to: "/email-updates", label: "Email Updates", icon: MailCheck },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/ai-apply", label: "AI Apply", icon: Bot, primary: true },
   { to: "/settings", label: "Settings", icon: Settings, primary: true },

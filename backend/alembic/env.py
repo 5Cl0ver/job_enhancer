@@ -32,11 +32,18 @@ def do_run_migrations(connection):  # type: ignore[no-untyped-def]
 
 
 async def run_async_migrations() -> None:
+    url = config.get_main_option("sqlalchemy.url") or ""
+    # asyncpg-only options; SQLite (migration tests) takes none.
+    connect_args = (
+        {"ssl": "require", "prepared_statement_cache_size": 0}
+        if url.startswith("postgresql")
+        else {}
+    )
     connectable = async_engine_from_config(
         config.get_section(config.config_ini_section),  # type: ignore[arg-type]
         prefix="sqlalchemy.",
         poolclass=pool.NullPool,
-        connect_args={"ssl": "require", "prepared_statement_cache_size": 0},
+        connect_args=connect_args,
     )
     async with connectable.connect() as connection:
         await connection.run_sync(do_run_migrations)

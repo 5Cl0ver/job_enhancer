@@ -150,3 +150,26 @@ class TestReview:
         with pytest.raises(HTTPException) as exc:
             await undo_event(db_session, test_user.id, ev.id)
         assert exc.value.status_code == 409
+
+
+@pytest.mark.asyncio
+class TestMissingStage:
+    async def test_apply_refuses_when_target_stage_was_deleted(
+        self, db_session, test_user
+    ):
+        from fastapi import HTTPException
+
+        from app.models.detected_event import STATUS_PENDING
+
+        saved = await _stage(db_session, test_user, "Interested")
+        job = await _saved_job(db_session, test_user, saved.id)
+        ev = await _event(db_session, test_user, job, "Offer", saved.id)
+        offer = await _stage(db_session, test_user, "Offer")
+        await db_session.delete(offer)
+        await db_session.flush()
+        with pytest.raises(HTTPException) as exc:
+            await apply_event(db_session, test_user.id, ev.id)
+        assert exc.value.status_code == 409 and "no longer exists" in exc.value.detail
+        await db_session.refresh(job)
+        assert job.pipeline_stage_id == saved.id  # nothing moved
+        assert ev.status == STATUS_PENDING  # still reviewable / dismissable
