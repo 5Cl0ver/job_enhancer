@@ -358,12 +358,19 @@ async def detect_events(
     jobs = await _candidate_jobs(db, account.user_id)
     stage_orders, order_of_id = await _stage_orders(db, account.user_id)
     result = DetectResult(scanned=len(messages), candidates=len(jobs))
+    own_address = (account.email_address or "").lower()
 
     for msg in messages:
         if not msg.uid:
             continue
         key = logical_key(msg)
         if seen.has(msg, key) or seen.adopt_legacy(msg, key):
+            continue
+        if own_address and parseaddr(msg.from_addr or "")[1].lower() == own_address:
+            # Mail you sent yourself (a forward, a note) repeats an email that
+            # is already in the inbox — never a new update.
+            seen.add(msg, key)
+            result.skipped["own_mail"] = result.skipped.get("own_mail", 0) + 1
             continue
         # A hiring system's own template (Indeed, LinkedIn, Workday, …) is
         # read exactly: it names the company and job, and often the outcome.
