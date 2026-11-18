@@ -1,9 +1,13 @@
-"""Email auto-status endpoints — connect an inbox and review detected updates.
+"""Email auto-status endpoints — connect an inbox, scan it, review updates.
 
-Connect/read/disconnect live here now; the scan + per-event review actions are
-added alongside once the IMAP fetch layer lands.
+A scan is one read-only sync (``email_sync``): inbox + spam, per-folder
+cursors, headers first, bodies only for possible job emails. Its cursors are
+saved in the same transaction as the detected events. One scan per account at
+a time; a scan during a server-requested backoff returns 429 without
+connecting.
 """
 
+import asyncio
 import uuid
 from datetime import UTC, datetime
 
@@ -13,8 +17,18 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
-from app.models.detected_event import DetectedEvent
+from app.models.detected_event import (
+    STATUS_AUTO_APPLIED,
+    STATUS_CONTACT,
+    STATUS_HIDDEN,
+    STATUS_PENDING,
+    STATUS_REVIEW,
+    STATUS_UNSAVED,
+    DetectedEvent,
+)
 from app.models.email_account import STATUS_CONNECTED, STATUS_ERROR
+from app.models.job_listing import JobListing
+from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.schemas.email_account import (
@@ -22,39 +36,112 @@ from app.schemas.email_account import (
     DetectedEventOut,
     EmailAccountOut,
     EmailConnectRequest,
+    EmailMessageOut,
+    EmailSettingsRequest,
+    FolderSyncOut,
+    MatchCandidateOut,
     ProviderInfoOut,
+    ResolveEventRequest,
     ScanResult,
+    TrackEventRequest,
 )
 from app.services import email_accounts as svc
-from app.services import email_imap, email_review
+from app.services import email_review, email_sync, email_sync_state, email_view
+from app.services.email_classify import UNSURE
+from app.services.email_imap import ImapAuthError
+from app.services.email_prefilter import company_tokens
 from app.services.email_providers import detect_provider
-from app.services.email_scan import detect_events, mail_link
+from app.services.email_scan import (
+    IMPORTANT_EVENTS,
+    _candidate_jobs,
+    detect_events,
+    mail_link,
+)
 from app.utils import crypto
 
 router = APIRouter()
+
+# One scan per account at a time (in-process; the backend runs one instance).
+_SCAN_LOCKS: dict[uuid.UUID, asyncio.Lock] = {}
 
 
 async def _events_out(
     db: AsyncSession, provider: str, events: list[DetectedEvent]
 ) -> list[DetectedEventOut]:
-    """Enrich stored events with a link to the job in the app (job_listing_id)
-    and a link to the email in webmail (built from provider + subject)."""
+    """Enrich stored events with a link to the job in the app (job_listing_id),
+    a link to the email in webmail (built from provider + subject), and — for a
+    needs-review item — its candidate jobs' names. A candidate the user has
+    since archived or deleted is left out."""
     if not events:
         return []
-    ids = [e.saved_job_id for e in events]
+    ids: set[uuid.UUID] = {e.saved_job_id for e in events if e.saved_job_id}
+    for e in events:
+        ids.update(uuid.UUID(c) for c in e.review_candidates or [])
     rows = (
         await db.execute(
-            select(SavedJob.id, SavedJob.job_listing_id).where(SavedJob.id.in_(ids))
+            select(
+                SavedJob.id,
+                SavedJob.job_listing_id,
+                SavedJob.is_archived,
+                JobListing.company,
+                JobListing.title,
+            )
+            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .where(SavedJob.id.in_(ids), SavedJob.user_id == events[0].user_id)
         )
     ).all()
+    job_of = {r.id: r for r in rows}
     listing_of = {r.id: r.job_listing_id for r in rows}
+    stage_names = set(
+        await db.scalars(
+            select(PipelineStage.name).where(PipelineStage.user_id == events[0].user_id)
+        )
+    )
     out: list[DetectedEventOut] = []
     for e in events:
         d = DetectedEventOut.model_validate(e)
+        d.category = category_of(e)
         d.job_listing_id = listing_of.get(e.saved_job_id)
+        if (j := job_of.get(e.saved_job_id)) is not None:
+            d.company, d.title = j.company, j.title
+        else:  # not a saved job: the names read from the email, if any
+            d.company, d.title = e.job_company, e.job_title
+        d.stage_missing = bool(e.target_stage) and e.target_stage not in stage_names
         d.mail_link = mail_link(provider, subject=e.subject)
+        if e.status in (STATUS_REVIEW, STATUS_HIDDEN):
+            d.review_reason = (
+                "unsure" if e.event_type == UNSURE else e.match_evidence or "no_match"
+            )
+            for c in e.review_candidates or []:
+                r = job_of.get(uuid.UUID(c))
+                if r is not None and not r.is_archived:
+                    d.candidates.append(
+                        MatchCandidateOut(
+                            company=r.company,
+                            title=r.title,
+                            job_listing_id=r.job_listing_id,
+                            saved_job_id=r.id,
+                        )
+                    )
         out.append(d)
     return out
+
+
+def category_of(e: DetectedEvent) -> str:
+    """Where the Email Updates page shows an item. Only an important update
+    with an unclear job is a question; anything low-value is hidden."""
+    important = e.event_type in IMPORTANT_EVENTS
+    if e.status == STATUS_AUTO_APPLIED:
+        return "moved"
+    if e.status == STATUS_PENDING:
+        return "important" if important else "confirmation"
+    if e.status == STATUS_REVIEW and important:
+        return "question"
+    if e.status == STATUS_UNSAVED:
+        return "unsaved"
+    if e.status == STATUS_CONTACT:
+        return "contact"
+    return "hidden"
 
 
 @router.get("/provider", response_model=ProviderInfoOut)
@@ -74,6 +161,22 @@ async def get_connected_account(
     """The user's connected inbox, or null if none."""
     account = await svc.get_account(db, user.id)
     return EmailAccountOut.model_validate(account) if account else None
+
+
+@router.patch("/account", response_model=EmailAccountOut)
+async def update_settings(
+    data: EmailSettingsRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EmailAccountOut:
+    """Change Email Updates settings (whether sure updates move cards)."""
+    account = await svc.get_account(db, user.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="No email connected")
+    account.auto_move = data.auto_move
+    await db.commit()
+    await db.refresh(account)
+    return EmailAccountOut.model_validate(account)
 
 
 @router.post("/connect", response_model=EmailAccountOut, status_code=201)
@@ -103,43 +206,98 @@ async def scan_inbox(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ScanResult:
-    """Read the connected inbox and record any new detected updates (pending)."""
+    """Sync the connected inbox + spam and record new detected updates (pending)."""
     account = await svc.get_account(db, user.id)
     if account is None:
         raise HTTPException(status_code=404, detail="No email account connected")
 
-    password = crypto.decrypt(account.secret_encrypted)
-    try:
-        messages = await email_imap.fetch_recent(
-            account.imap_host,
-            account.imap_port,
-            account.email_address,
-            password,
+    now = datetime.now(tz=UTC)
+    if until := email_sync_state.backoff_until(account, now):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "The mail server asked us to slow down. "
+                f"Try again after {until:%H:%M} UTC."
+            ),
+            headers={"Retry-After": str(max(1, int((until - now).total_seconds())))},
         )
-    except email_imap.ImapAuthError:
-        account.status = STATUS_ERROR
-        account.last_error = "Login failed — check your app password."
-        await db.commit()
-        raise HTTPException(status_code=400, detail=account.last_error) from None
-    except Exception:
-        account.status = STATUS_ERROR
-        account.last_error = "Could not reach the mail server."
-        await db.commit()
-        raise HTTPException(status_code=502, detail=account.last_error) from None
+    lock = _SCAN_LOCKS.setdefault(account.id, asyncio.Lock())
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="A scan is already running.")
 
-    result = await detect_events(db, account, messages)
-    account.last_scan_at = datetime.now(tz=UTC)
-    account.status = STATUS_CONNECTED
-    account.last_error = None
-    await db.commit()
+    async with lock:
+        password = crypto.decrypt(account.secret_encrypted)
+        jobs = await _candidate_jobs(db, account.user_id)
+        locations, email_ids = await email_sync_state.known_keys(db, account.id)
+        opts = email_sync.SyncOptions(
+            saved_companies=company_tokens([j["company"] for j in jobs]),
+            known_locations=locations,
+            known_email_ids=email_ids,
+        )
+        cursors = await email_sync_state.load_cursors(db, account.id)
+        try:
+            result = await email_sync.sync_mailbox(
+                account.imap_host,
+                account.imap_port,
+                account.email_address,
+                password,
+                cursors,
+                opts,
+            )
+        except ImapAuthError:
+            account.status = STATUS_ERROR
+            account.last_error = "Login failed — check your app password."
+            await db.commit()
+            raise HTTPException(status_code=400, detail=account.last_error) from None
+        except Exception as exc:
+            # Couldn't connect or log in (network, or the server limiting us).
+            if getattr(exc, "reason", None) in email_sync.BACKOFF_REASONS:
+                email_sync_state.apply_backoff(account, now)
+            account.status = STATUS_ERROR
+            account.last_error = "Could not reach the mail server."
+            await db.commit()
+            raise HTTPException(status_code=502, detail=account.last_error) from None
+
+        detected = await detect_events(db, account, result.messages)
+        moved = (
+            await email_review.auto_apply(db, account.user_id, detected.created)
+            if account.auto_move
+            else []
+        )
+        await email_sync_state.save_cursors(db, account.id, result, now)
+        if result.interrupted in email_sync.BACKOFF_REASONS:
+            email_sync_state.apply_backoff(account, now)
+        else:
+            email_sync_state.clear_backoff(account)
+        account.last_scan_at = now
+        account.status = STATUS_CONNECTED
+        account.last_error = None
+        await db.commit()
+
     return ScanResult(
-        detected=len(result.created),
-        events=await _events_out(db, account.provider, result.created),
-        considered=[ConsideredOut.model_validate(c) for c in result.considered],
-        scanned=result.scanned,
-        candidates=result.candidates,
-        window_days=email_imap.DEFAULT_SINCE_DAYS,
+        detected=len(detected.created),
+        events=await _events_out(db, account.provider, detected.created),
+        review=await _events_out(db, account.provider, detected.review),
+        hidden=len(detected.hidden),
+        moved=len(moved),
+        unsaved=len(detected.unsaved),
+        contacts=len(detected.contacts),
+        skipped=detected.skipped,
+        considered=[ConsideredOut.model_validate(c) for c in detected.considered],
+        scanned=sum(r.headers_read for r in result.reports),
+        candidates=detected.candidates,
+        window_days=email_sync.BACKFILL_DAYS,
+        folders=[FolderSyncOut(**_folder_out(r)) for r in result.reports],
+        carried_over=result.carried_over,
+        interrupted=result.interrupted,
     )
+
+
+def _folder_out(report: email_sync.FolderReport) -> dict:
+    d = report.as_dict()
+    d["role"] = d.pop("folder_role")
+    d.pop("filter_reasons", None)
+    return d
 
 
 @router.get("/events", response_model=list[DetectedEventOut])
@@ -147,7 +305,8 @@ async def list_events(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[DetectedEventOut]:
-    """Detected updates awaiting review, newest first."""
+    """Detected updates and needs-review items awaiting the user, newest
+    first. Not capped: items stay until resolved or dismissed."""
     rows = await email_review.list_pending(db, user.id)
     account = await svc.get_account(db, user.id)
     return await _events_out(db, account.provider if account else "", rows)
@@ -163,6 +322,113 @@ async def apply_event(
     ev = await email_review.apply_event(db, user.id, event_id)
     await db.commit()
     return DetectedEventOut.model_validate(ev)
+
+
+@router.post("/events/{event_id}/resolve", response_model=DetectedEventOut)
+async def resolve_event(
+    event_id: uuid.UUID,
+    data: ResolveEventRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """Say which saved job a needs-review email is about (and, if it was
+    unsure, what it says). It becomes a pending update; nothing moves yet."""
+    ev = await email_review.resolve_event(
+        db, user.id, event_id, data.saved_job_id, data.event_type
+    )
+    await db.commit()
+    account = await svc.get_account(db, user.id)
+    (out,) = await _events_out(db, account.provider if account else "", [ev])
+    return out
+
+
+@router.post("/events/{event_id}/track", response_model=DetectedEventOut)
+async def track_event(
+    event_id: uuid.UUID,
+    data: TrackEventRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """Add the job an unsaved update is about to My Jobs, in the stage the
+    email describes. Only on the user's click; nothing else moves."""
+    account = await svc.get_account(db, user.id)
+    provider = account.provider if account else ""
+    ev = await email_review.track_event(
+        db, user.id, event_id, data.company.strip(), data.title.strip(), provider
+    )
+    await db.commit()
+    (out,) = await _events_out(db, provider, [ev])
+    return out
+
+
+@router.get("/events/{event_id}/message", response_model=EmailMessageOut)
+async def view_event_email(
+    event_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> EmailMessageOut:
+    """Open the email behind a detected update — fetched read-only from the
+    user's mailbox when asked, never stored, returned as plain text."""
+    ev = await db.scalar(
+        select(DetectedEvent).where(
+            DetectedEvent.id == event_id, DetectedEvent.user_id == user.id
+        )
+    )
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Detected event not found")
+    account = await svc.get_account(db, user.id)
+    if account is None or account.id != ev.email_account_id:
+        raise HTTPException(status_code=404, detail="That mailbox isn't connected")
+    try:
+        viewed = await email_view.view_email(account, ev)
+    except email_view.EmailGone:
+        raise HTTPException(
+            status_code=404,
+            detail="This email is no longer in your mailbox (moved or deleted).",
+        ) from None
+    except email_sync.SyncInterrupted:
+        raise HTTPException(
+            status_code=502, detail="Couldn't reach your mailbox. Try again."
+        ) from None
+    return EmailMessageOut(
+        subject=viewed.subject,
+        from_addr=viewed.from_addr,
+        date=viewed.date,
+        text=viewed.text,
+        mail_link=mail_link(account.provider, subject=viewed.subject),
+    )
+
+
+@router.get("/job-emails", response_model=list[DetectedEventOut])
+async def job_emails(
+    job_listing_id: uuid.UUID = Query(..., description="The job's listing id"),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectedEventOut]:
+    """Emails tied to one of the user's saved jobs (by its listing), newest
+    first — so the job's page can list them and open each one."""
+    saved_ids = list(
+        await db.scalars(
+            select(SavedJob.id).where(
+                SavedJob.user_id == user.id, SavedJob.job_listing_id == job_listing_id
+            )
+        )
+    )
+    if not saved_ids:
+        return []
+    rows = list(
+        await db.scalars(
+            select(DetectedEvent)
+            .where(
+                DetectedEvent.user_id == user.id,
+                DetectedEvent.saved_job_id.in_(saved_ids),
+                DetectedEvent.status != "dismissed",
+            )
+            .order_by(DetectedEvent.created_at.desc())
+        )
+    )
+    account = await svc.get_account(db, user.id)
+    return await _events_out(db, account.provider if account else "", rows)
 
 
 @router.post("/events/{event_id}/dismiss", response_model=DetectedEventOut)

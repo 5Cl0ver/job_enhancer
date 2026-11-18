@@ -1,0 +1,797 @@
+/**
+ * Email Updates — what your inbox says about your applications, in plain words.
+ *
+ * When an email names the job exactly (its link, job ID, or a hiring site's
+ * own template), the card has already moved: "Moved for you" sums those up by
+ * stage and lists the newest as slim rows that open for the email, the job,
+ * and Undo (Settings can turn this off). Other important updates (interview,
+ * assessment, offer, rejection) follow as slim rows with "Move to <stage>" /
+ * "Not this". A question appears only when an important email could be about
+ * more than one of your saved jobs. Important updates for jobs you didn't save
+ * get their own section ("Add to My Jobs" / "Not this"). Confirmations and
+ * recruiter messages sit in small collapsed sections; unclear emails are
+ * hidden. Long lists show the newest few until you ask for the rest, and
+ * technical details stay under "Details". Nothing else changes on a card until
+ * you click.
+ */
+import { Children, useState } from "react";
+import { Link } from "react-router-dom";
+import {
+  Briefcase,
+  CalendarCheck,
+  CheckCircle2,
+  ChevronDown,
+  ClipboardList,
+  ExternalLink,
+  Gift,
+  Loader2,
+  MailCheck,
+  Undo2,
+  XCircle,
+} from "lucide-react";
+import type { LucideIcon } from "lucide-react";
+import { ApiError } from "@/lib/api";
+import {
+  useAnswerQuestion,
+  useDetectedEvents,
+  useGroupAction,
+  useReviewEvent,
+  useTrackEvent,
+  type DetectedEvent,
+} from "@/hooks/useEmailAccount";
+import {
+  collapseRepeats,
+  group,
+  question,
+  reason,
+  sentence,
+  type UpdateGroup,
+} from "@/lib/emailUpdates";
+import { Button } from "@/components/ui/button";
+import { EmailViewer } from "@/components/email/EmailViewer";
+import { Skeleton } from "@/components/ui/skeleton";
+import { cn } from "@/lib/utils";
+
+const LOOK: Record<string, { icon: LucideIcon; tone: string }> = {
+  interview: { icon: CalendarCheck, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
+  assessment: { icon: ClipboardList, tone: "bg-amber-500/10 text-amber-600 dark:text-amber-400" },
+  offer: { icon: Gift, tone: "bg-teal-500/10 text-teal-600 dark:text-teal-400" },
+  rejected: { icon: XCircle, tone: "bg-rose-500/10 text-rose-600 dark:text-rose-400" },
+  applied: { icon: MailCheck, tone: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
+};
+const FALLBACK = { icon: Briefcase, tone: "bg-muted text-muted-foreground" };
+
+/** How many rows a long section shows before "Show all". */
+const SHOWN = 3;
+
+function when(iso: string): string {
+  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
+  if (days <= 0) return "Today";
+  if (days === 1) return "Yesterday";
+  if (days < 7) return `${days} days ago`;
+  return new Date(iso).toLocaleDateString();
+}
+
+function errorText(e: unknown, fallback: string): string {
+  return e instanceof ApiError ? e.message : fallback;
+}
+
+export default function EmailUpdatesPage() {
+  const { data: events, isLoading, isError } = useDetectedEvents();
+  const g = group(events ?? []);
+  const important = collapseRepeats(g.important);
+  const confirmations = collapseRepeats(g.confirmations);
+  const unsaved = collapseRepeats(g.unsaved);
+  const nothing =
+    !isLoading &&
+    g.moved.length +
+      g.questions.length +
+      g.important.length +
+      g.unsaved.length +
+      g.confirmations.length ===
+      0;
+
+  return (
+    <div className="container mx-auto max-w-3xl px-4 py-6">
+      <header className="mb-6 space-y-1">
+        <h1 className="text-2xl font-bold tracking-tight">Email updates</h1>
+        <p className="text-sm text-muted-foreground">
+          What your inbox says about your applications.
+        </p>
+      </header>
+
+      {isLoading && (
+        <div className="space-y-3">
+          {[0, 1, 2].map((i) => (
+            <Skeleton key={i} className="h-20 w-full" />
+          ))}
+        </div>
+      )}
+      {isError && (
+        <p className="text-sm text-destructive">Couldn't load your email updates. Try again.</p>
+      )}
+
+      {nothing && !isError && (
+        <div className="flex flex-col items-center gap-2 rounded-lg border py-12 text-center">
+          <CheckCircle2 className="h-8 w-8 text-emerald-500" aria-hidden />
+          <p className="font-medium">You're all caught up</p>
+          <p className="text-sm text-muted-foreground">
+            New updates from your inbox will show up here.{" "}
+            <Link to="/settings" className="text-primary underline">
+              Email settings
+            </Link>
+          </p>
+        </div>
+      )}
+
+      {g.moved.length > 0 && <MovedSection events={g.moved} />}
+
+      {g.questions.length > 0 && (
+        <Section title="Needs your answer" count={g.questions.length}>
+          {g.questions.map((ev) => (
+            <QuestionRow key={ev.id} ev={ev} />
+          ))}
+        </Section>
+      )}
+
+      {important.length > 0 && (
+        <Section
+          title="Waiting for your click"
+          count={important.length}
+          hint="These emails didn't name the job exactly, so the card stays put until you say so."
+        >
+          {important.map((u) => (
+            <UpdateRow key={u.lead.id} group={u} />
+          ))}
+        </Section>
+      )}
+
+      {unsaved.length > 0 && (
+        <Section
+          title="Not in your saved jobs"
+          count={unsaved.length}
+          hint="These won't change any card. Add one to My Jobs, or dismiss it."
+        >
+          {unsaved.map((u) => (
+            <UnsavedRow key={u.lead.id} group={u} />
+          ))}
+        </Section>
+      )}
+
+      {confirmations.length > 0 && (
+        <Collapsed
+          title="Application confirmations"
+          count={confirmations.length}
+          hint="Companies letting you know they received an application."
+        >
+          {confirmations.map((u) => (
+            <UpdateRow key={u.lead.id} group={u} />
+          ))}
+        </Collapsed>
+      )}
+
+      {g.contacts.length > 0 && (
+        <Collapsed
+          title="Recruiter messages"
+          count={g.contacts.length}
+          hint="Recruiters reaching out. Nothing to update."
+        >
+          {g.contacts.map((ev) => (
+            <HiddenRow key={ev.id} ev={ev} />
+          ))}
+        </Collapsed>
+      )}
+
+      {g.hidden.length > 0 && (
+        <Collapsed
+          title="Hidden"
+          count={g.hidden.length}
+          hint="Emails that weren't clear enough to act on. Job alerts and ads are left out entirely."
+          muted
+        >
+          {g.hidden.map((ev) => (
+            <HiddenRow key={ev.id} ev={ev} />
+          ))}
+        </Collapsed>
+      )}
+    </div>
+  );
+}
+
+function Heading({ title, count, hint }: { title: string; count: number; hint?: string }) {
+  return (
+    <>
+      <h2 className={cn("text-sm font-semibold text-muted-foreground", hint ? "mb-0.5" : "mb-3")}>
+        {title} <span className="font-normal">({count})</span>
+      </h2>
+      {hint && <p className="mb-3 text-xs text-muted-foreground">{hint}</p>}
+    </>
+  );
+}
+
+function ShowAll({ all, total, onToggle }: { all: boolean; total: number; onToggle: () => void }) {
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="mt-1.5 w-full gap-1 text-muted-foreground"
+      onClick={onToggle}
+      aria-expanded={all}
+    >
+      {all ? "Show less" : `Show all ${total}`}
+      <ChevronDown className={cn("h-4 w-4 transition-transform", all && "rotate-180")} aria-hidden />
+    </Button>
+  );
+}
+
+/** A titled list that shows the newest few rows until asked for the rest. */
+function Section({
+  title,
+  count,
+  hint,
+  children,
+}: {
+  title: string;
+  count: number;
+  hint?: string;
+  children: React.ReactNode;
+}) {
+  const [all, setAll] = useState(false);
+  const rows = Children.toArray(children);
+  return (
+    <section className="mb-8">
+      <Heading title={title} count={count} hint={hint} />
+      <ul className="space-y-1.5">{all ? rows : rows.slice(0, SHOWN)}</ul>
+      {rows.length > SHOWN && (
+        <ShowAll all={all} total={rows.length} onToggle={() => setAll((a) => !a)} />
+      )}
+    </section>
+  );
+}
+
+function Collapsed({
+  title,
+  count,
+  hint,
+  muted,
+  children,
+}: {
+  title: string;
+  count: number;
+  hint: string;
+  muted?: boolean;
+  children: React.ReactNode;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <section className={cn("mb-4 rounded-lg border", muted && "bg-muted/30")}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left"
+      >
+        <span>
+          <span className="text-sm font-medium">
+            {title} ({count})
+          </span>
+          <span className="block text-xs text-muted-foreground">{hint}</span>
+        </span>
+        <ChevronDown
+          className={cn("h-4 w-4 shrink-0 transition-transform", open && "rotate-180")}
+          aria-hidden
+        />
+      </button>
+      {open && <ul className="space-y-1.5 border-t p-3">{children}</ul>}
+    </section>
+  );
+}
+
+function Icon({ kind, small }: { kind: string; small?: boolean }) {
+  const { icon: I, tone } = LOOK[kind] ?? FALLBACK;
+  return (
+    <span
+      className={cn(
+        "flex shrink-0 items-center justify-center rounded-full",
+        small ? "h-7 w-7" : "mt-0.5 h-8 w-8",
+        tone,
+      )}
+    >
+      <I className={small ? "h-3.5 w-3.5" : "h-4 w-4"} aria-hidden />
+    </span>
+  );
+}
+
+/** Icon, company, then job · when — one slim block that fits any screen. */
+function RowHead({ ev, extra }: { ev: DetectedEvent; extra?: string }) {
+  const sub = [ev.company && ev.title, when(ev.created_at), extra].filter(Boolean).join(" · ");
+  return (
+    <>
+      <Icon kind={ev.event_type} small />
+      <span className="min-w-0 flex-1" title={sentence(ev)}>
+        <span className="block truncate text-sm font-medium">{ev.company || sentence(ev)}</span>
+        <span className="block truncate text-xs text-muted-foreground">{sub}</span>
+      </span>
+    </>
+  );
+}
+
+/** Subject, sender, why, and a link to the email — only when asked for. */
+function Details({ ev }: { ev: DetectedEvent }) {
+  const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState(false);
+  const why = reason(ev);
+  return (
+    <div className="mt-1">
+      <span className="flex flex-wrap gap-3">
+        <button
+          className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+          onClick={() => setViewing(true)}
+        >
+          View email
+        </button>
+        <button
+          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          onClick={() => setOpen((o) => !o)}
+          aria-expanded={open}
+        >
+          {open ? "Hide details" : "Details"}
+        </button>
+      </span>
+      <EmailViewer eventId={viewing ? ev.id : null} onClose={() => setViewing(false)} />
+      {open && (
+        <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2.5 text-xs">
+          <dt className="text-muted-foreground">What</dt>
+          <dd>{sentence(ev)}</dd>
+          <dt className="text-muted-foreground">Email</dt>
+          <dd className="break-words">{ev.subject || "(no subject)"}</dd>
+          <dt className="text-muted-foreground">From</dt>
+          <dd className="break-words">{ev.from_addr}</dd>
+          {why && (
+            <>
+              <dt className="text-muted-foreground">Why</dt>
+              <dd>{why}</dd>
+            </>
+          )}
+          {(ev.mail_link || ev.job_listing_id) && (
+            <>
+              <dt className="text-muted-foreground">Open</dt>
+              <dd className="flex flex-wrap gap-3">
+                {ev.mail_link && (
+                  <a
+                    href={ev.mail_link}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="inline-flex items-center gap-0.5 text-primary underline"
+                  >
+                    Find the email <ExternalLink className="h-3 w-3" aria-hidden />
+                  </a>
+                )}
+                {ev.job_listing_id && (
+                  <Link to={`/jobs/${ev.job_listing_id}`} className="text-primary underline">
+                    View the job
+                  </Link>
+                )}
+              </dd>
+            </>
+          )}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+/** Shown in place of a row after it's applied, with a way back. */
+function Done({ ev, onUndo, busy }: { ev: DetectedEvent; onUndo: () => void; busy: boolean }) {
+  return (
+    <li className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground sm:px-4">
+      <span className="flex min-w-0 items-center gap-2">
+        <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+        <span className="truncate">
+          {ev.company ? `${ev.company}: ` : "Updated"}
+          {ev.target_stage ? `moved to ${ev.target_stage}` : ""}.
+        </span>
+      </span>
+      <Button size="sm" variant="ghost" className="gap-1" onClick={onUndo} disabled={busy}>
+        <Undo2 className="h-3.5 w-3.5" aria-hidden /> Undo
+      </Button>
+    </li>
+  );
+}
+
+/** Cards the scan moved by itself: a count per stage, then the newest few. */
+function MovedSection({ events }: { events: DetectedEvent[] }) {
+  const [stage, setStage] = useState<string | null>(null);
+  const [all, setAll] = useState(false);
+  const stages = new Map<string, { count: number; kind: string }>();
+  for (const ev of events) {
+    const name = ev.target_stage ?? "Other";
+    const s = stages.get(name);
+    stages.set(name, { count: (s?.count ?? 0) + 1, kind: s?.kind ?? ev.event_type });
+  }
+  const list = stage ? events.filter((ev) => (ev.target_stage ?? "Other") === stage) : events;
+  const shown = all ? list : list.slice(0, SHOWN);
+  const pick = (name: string | null) => {
+    setStage(name);
+    setAll(false);
+  };
+
+  return (
+    <section className="mb-8">
+      <Heading
+        title="Moved for you"
+        count={events.length}
+        hint="These emails named the job exactly, so the card moved by itself. Tap one to see the email or undo it."
+      />
+      <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Show by stage">
+        <Chip active={stage === null} onClick={() => pick(null)}>
+          All {events.length}
+        </Chip>
+        {[...stages].map(([name, s]) => (
+          <Chip
+            key={name}
+            active={stage === name}
+            tone={(LOOK[s.kind] ?? FALLBACK).tone}
+            onClick={() => pick(stage === name ? null : name)}
+          >
+            {s.count} {name}
+          </Chip>
+        ))}
+      </div>
+      <ul className="space-y-1.5">
+        {shown.map((ev) => (
+          <MovedRow key={ev.id} ev={ev} />
+        ))}
+      </ul>
+      {list.length > SHOWN && (
+        <ShowAll all={all} total={list.length} onToggle={() => setAll((a) => !a)} />
+      )}
+    </section>
+  );
+}
+
+function Chip({
+  active,
+  tone,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  tone?: string;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        active ? "border-foreground/30 ring-1 ring-foreground/20" : "border-transparent",
+        tone ?? "bg-muted text-foreground",
+      )}
+    >
+      {children}
+    </button>
+  );
+}
+
+/** One slim line per moved card; tap it for the email, the job, and Undo. */
+function MovedRow({ ev }: { ev: DetectedEvent }) {
+  const review = useReviewEvent();
+  const [open, setOpen] = useState(false);
+  const [viewing, setViewing] = useState(false);
+  const [undone, setUndone] = useState(false);
+  const tone = (LOOK[ev.event_type] ?? FALLBACK).tone;
+  const why = reason(ev);
+  if (undone)
+    return (
+      <li className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
+        <Undo2 className="h-4 w-4" aria-hidden />
+        Put back where it was.
+      </li>
+    );
+  return (
+    <li className="rounded-lg border bg-card">
+      <button
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        className="flex w-full items-center gap-3 rounded-lg px-3 py-2.5 text-left hover:bg-muted/40 sm:px-4"
+      >
+        <RowHead ev={ev} />
+        {ev.target_stage && (
+          <span className={cn("shrink-0 rounded-full px-2 py-0.5 text-xs font-medium", tone)}>
+            {ev.target_stage}
+          </span>
+        )}
+        <ChevronDown
+          className={cn(
+            "h-4 w-4 shrink-0 text-muted-foreground transition-transform",
+            open && "rotate-180",
+          )}
+          aria-hidden
+        />
+      </button>
+      {open && (
+        <div className="space-y-2.5 border-t px-3 py-3 [overflow-wrap:anywhere] sm:px-4">
+          <p className="text-sm leading-snug">
+            {sentence(ev)}
+            {ev.target_stage && (
+              <span className="text-muted-foreground"> The card moved to {ev.target_stage}.</span>
+            )}
+          </p>
+          {why && <p className="text-xs text-muted-foreground">{why}</p>}
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" variant="outline" onClick={() => setViewing(true)}>
+              <MailCheck className="h-3.5 w-3.5" aria-hidden /> View email
+            </Button>
+            {ev.job_listing_id && (
+              <Button size="sm" variant="outline" asChild>
+                <Link to={`/jobs/${ev.job_listing_id}`}>
+                  <Briefcase className="h-3.5 w-3.5" aria-hidden /> View the job
+                </Link>
+              </Button>
+            )}
+            <Button
+              size="sm"
+              variant="outline"
+              disabled={review.isPending}
+              onClick={() =>
+                review.mutate({ id: ev.id, action: "undo" }, { onSuccess: () => setUndone(true) })
+              }
+            >
+              {review.isPending ? (
+                <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+              ) : (
+                <Undo2 className="h-3.5 w-3.5" aria-hidden />
+              )}
+              Undo
+            </Button>
+          </div>
+          {review.isError && (
+            <p className="text-xs text-destructive">
+              {errorText(review.error, "That didn't work. Try again.")}
+            </p>
+          )}
+          <EmailViewer eventId={viewing ? ev.id : null} onClose={() => setViewing(false)} />
+        </div>
+      )}
+    </li>
+  );
+}
+
+/** A slim row: what it's about on the left, its buttons right (below on a phone). */
+function SlimRow({
+  ev,
+  extra,
+  actions,
+  children,
+}: {
+  ev: DetectedEvent;
+  extra?: string;
+  actions: React.ReactNode;
+  children?: React.ReactNode;
+}) {
+  return (
+    <li className="rounded-lg border bg-card px-3 py-2.5 sm:px-4">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
+        <div className="flex min-w-0 flex-1 items-center gap-3">
+          <RowHead ev={ev} extra={extra} />
+        </div>
+        <div className="flex shrink-0 flex-wrap items-center gap-1.5 pl-10 sm:pl-0">{actions}</div>
+      </div>
+      <div className="pl-10 [overflow-wrap:anywhere]">
+        {children}
+        <Details ev={ev} />
+      </div>
+    </li>
+  );
+}
+
+function UpdateRow({ group: u }: { group: UpdateGroup }) {
+  const ev = u.lead;
+  const groupAct = useGroupAction();
+  const review = useReviewEvent();
+  const [done, setDone] = useState(false);
+  const busy = groupAct.isPending || review.isPending;
+  const act = (action: "apply" | "dismiss") =>
+    groupAct.mutate(
+      { lead: ev, repeats: u.repeats, action },
+      { onSuccess: () => setDone(action === "apply") },
+    );
+  const undo = () =>
+    review.mutate({ id: ev.id, action: "undo" }, { onSuccess: () => setDone(false) });
+
+  if (done) return <Done ev={ev} onUndo={undo} busy={busy} />;
+  const more = u.repeats.length;
+  return (
+    <SlimRow
+      ev={ev}
+      extra={more > 0 ? `${more + 1} emails` : undefined}
+      actions={
+        <>
+          <Button size="sm" onClick={() => act("apply")} disabled={busy || ev.stage_missing}>
+            {groupAct.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+            {ev.target_stage ? `Move to ${ev.target_stage}` : "Apply update"}
+          </Button>
+          <Button size="sm" variant="ghost" onClick={() => act("dismiss")} disabled={busy}>
+            Not this
+          </Button>
+        </>
+      }
+    >
+      {ev.stage_missing && (
+        <p className="mt-1 text-xs text-amber-600 dark:text-amber-400">
+          Your “{ev.target_stage}” stage no longer exists, so this can't be applied.
+        </p>
+      )}
+      {(groupAct.isError || review.isError) && (
+        <p className="mt-1 text-xs text-destructive">
+          {errorText(groupAct.error ?? review.error, "That didn't work. Try again.")}
+        </p>
+      )}
+    </SlimRow>
+  );
+}
+
+function QuestionRow({ ev }: { ev: DetectedEvent }) {
+  const answer = useAnswerQuestion();
+  const review = useReviewEvent();
+  const [done, setDone] = useState<DetectedEvent | null>(null);
+  const company = new Set((ev.candidates ?? []).map((c) => c.company)).size === 1;
+  const busy = answer.isPending || review.isPending;
+
+  if (done)
+    return (
+      <Done
+        ev={done}
+        busy={review.isPending}
+        onUndo={() => review.mutate({ id: ev.id, action: "undo" }, { onSuccess: () => setDone(null) })}
+      />
+    );
+  return (
+    <li className="flex gap-3 rounded-lg border border-amber-500/40 bg-card px-3 py-3 sm:px-4">
+      <Icon kind={ev.event_type} small />
+      <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
+        <p className="text-sm font-medium leading-snug">{question(ev)}</p>
+        <p className="text-xs text-muted-foreground">
+          {when(ev.created_at)} · Pick the job to update its card.
+        </p>
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {(ev.candidates ?? []).map((c) =>
+            c.saved_job_id ? (
+              <Button
+                key={c.saved_job_id}
+                size="sm"
+                variant="outline"
+                className="h-auto whitespace-normal py-1.5 text-left"
+                disabled={busy}
+                onClick={() =>
+                  answer.mutate(
+                    { id: ev.id, savedJobId: c.saved_job_id! },
+                    { onSuccess: (applied) => setDone(applied) },
+                  )
+                }
+              >
+                {company ? c.title : `${c.company} — ${c.title}`}
+              </Button>
+            ) : null,
+          )}
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => review.mutate({ id: ev.id, action: "dismiss" })}
+          >
+            None of these
+          </Button>
+        </div>
+        {(answer.isError || review.isError) && (
+          <p className="mt-1 text-xs text-destructive">
+            {errorText(answer.error ?? review.error, "That didn't work. Try again.")}
+          </p>
+        )}
+        <Details ev={ev} />
+      </div>
+    </li>
+  );
+}
+
+/** An important update about a job that isn't saved: add it, or dismiss. */
+function UnsavedRow({ group: u }: { group: UpdateGroup }) {
+  const ev = u.lead;
+  const track = useTrackEvent();
+  const groupAct = useGroupAction();
+  const [editing, setEditing] = useState(false);
+  const [company, setCompany] = useState(ev.company ?? "");
+  const [title, setTitle] = useState(ev.title ?? "");
+  const [added, setAdded] = useState<DetectedEvent | null>(null);
+  const busy = track.isPending || groupAct.isPending;
+  const more = u.repeats.length;
+
+  const add = () => {
+    if (!company.trim() || !title.trim()) {
+      setEditing(true);
+      return;
+    }
+    // Repeats are the same job only when the email named the role; otherwise
+    // they may be other roles at the company, so they stay on the page.
+    const sameJob = ev.title ? u.repeats : [];
+    track.mutate(
+      { lead: ev, repeats: sameJob, company: company.trim(), title: title.trim() },
+      { onSuccess: (done) => setAdded(done) },
+    );
+  };
+
+  if (added)
+    return (
+      <li className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
+        <CheckCircle2 className="h-4 w-4 text-emerald-500" aria-hidden />
+        Added to My Jobs{added.target_stage ? ` in ${added.target_stage}` : ""}.
+      </li>
+    );
+  return (
+    <SlimRow
+      ev={ev}
+      extra={more > 0 ? `${more + 1} emails` : undefined}
+      actions={
+        <>
+          <Button size="sm" variant="outline" onClick={add} disabled={busy}>
+            {track.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+            {editing ? "Save to My Jobs" : "Add to My Jobs"}
+          </Button>
+          <Button
+            size="sm"
+            variant="ghost"
+            disabled={busy}
+            onClick={() => groupAct.mutate({ lead: ev, repeats: u.repeats, action: "dismiss" })}
+          >
+            Not this
+          </Button>
+        </>
+      }
+    >
+      {editing && (
+        <div className="mt-2 grid gap-2 sm:grid-cols-2">
+          <input
+            aria-label="Company"
+            placeholder="Company"
+            className="h-8 rounded-md border bg-background px-2 text-sm"
+            value={company}
+            onChange={(e) => setCompany(e.target.value)}
+          />
+          <input
+            aria-label="Job title"
+            placeholder="Job title"
+            className="h-8 rounded-md border bg-background px-2 text-sm"
+            value={title}
+            onChange={(e) => setTitle(e.target.value)}
+          />
+        </div>
+      )}
+      {(track.isError || groupAct.isError) && (
+        <p className="mt-1 text-xs text-destructive">
+          {errorText(track.error ?? groupAct.error, "That didn't work. Try again.")}
+        </p>
+      )}
+    </SlimRow>
+  );
+}
+
+function HiddenRow({ ev }: { ev: DetectedEvent }) {
+  const review = useReviewEvent();
+  return (
+    <SlimRow
+      ev={ev}
+      actions={
+        <Button
+          size="sm"
+          variant="ghost"
+          onClick={() => review.mutate({ id: ev.id, action: "dismiss" })}
+          disabled={review.isPending}
+        >
+          Remove
+        </Button>
+      }
+    />
+  );
+}

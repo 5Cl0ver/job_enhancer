@@ -99,6 +99,8 @@ indent-style = "space"
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
 testpaths = ["tests"]
+# `evals/` (offline scoring tools) is imported by tests but not packaged.
+pythonpath = ["."]
 filterwarnings = ["ignore::DeprecationWarning"]
 
 [tool.mypy]

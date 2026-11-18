@@ -11,7 +11,7 @@ memory when we open the IMAP connection. One connected inbox per user.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, ForeignKey, Integer, String, Text, func
+from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
 
@@ -64,6 +64,17 @@ class EmailAccount(Base):
     last_error: Mapped[str | None] = mapped_column(Text)
     # Watermark so each scan only looks at mail newer than the last one.
     last_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Backoff after the server rate-limits or drops us. Stored so a restart
+    # doesn't reset it; a scan before ``sync_backoff_until`` doesn't connect.
+    sync_backoff_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    sync_backoff_level: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    # Move cards by themselves when a scan is sure which job an email is about
+    # (Settings switch). Off = every update waits for the user's click.
+    auto_move: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
