@@ -18,6 +18,7 @@ from app.models.email_account import EmailAccount
 from app.services import email_sync
 from app.services.email_imap import _parse_message
 from app.services.email_sync import MessageRef
+from app.services.email_text import clean_header
 from app.utils import crypto
 
 TEXT_LIMIT = 50_000
@@ -55,6 +56,10 @@ def _fetch_blocking(account: EmailAccount, ev: DetectedEvent) -> ViewedEmail:
     if raw is None:
         raise EmailGone(found.get("issue") or "vanished")
     msg = _parse_message(ev.message_uid, raw)
+    if ev.uidvalidity is None and not _same_email(ev, msg.subject, msg.from_addr):
+        # A row saved before folders were tracked: its UID may name another
+        # email by now, so only a matching subject and sender count.
+        raise EmailGone("vanished")
     return ViewedEmail(
         subject=msg.subject,
         from_addr=msg.from_addr,
@@ -64,9 +69,16 @@ def _fetch_blocking(account: EmailAccount, ev: DetectedEvent) -> ViewedEmail:
     )
 
 
+def _same_email(ev: DetectedEvent, subject: str, from_addr: str) -> bool:
+    return (
+        clean_header(ev.subject) == clean_header(subject)[:500]
+        and (ev.from_addr or "") == (from_addr or "")[:255]
+    )
+
+
 async def view_email(account: EmailAccount, ev: DetectedEvent) -> ViewedEmail:
     """Fetch the event's email (read-only). Raises EmailGone if it moved or was
     deleted, and the sync's own errors if the mailbox can't be reached."""
-    if ev.uidvalidity is None or not str(ev.message_uid).isdigit():
+    if not str(ev.message_uid).isdigit():
         raise EmailGone("unknown_location")
     return await asyncio.to_thread(_fetch_blocking, account, ev)

@@ -5,7 +5,8 @@
  * app-password steps → connect (password encrypted at rest) → scan the inbox →
  * review what it found on the Email Updates page (/email-updates). Cards move by
  * themselves only for emails that name the job exactly (switchable here); every
- * other move waits for your click, and any move can be undone.
+ * other move waits for your click, and any move can be undone. Email Updates
+ * shows the same inbox controls at its top (InboxBar).
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
@@ -17,9 +18,9 @@ import {
   useDisconnectEmail,
   useEmailAccount,
   useEmailSettings,
-  useScanInbox,
+  useFullScan,
   type EmailAccount,
-  type ScanResult,
+  type FullScan,
 } from "@/hooks/useEmailAccount";
 import { group } from "@/lib/emailUpdates";
 import { Alert, AlertDescription } from "@/components/ui/alert";
@@ -309,17 +310,11 @@ function ConnectedView({
   account: EmailAccount;
   onReconnect: () => void;
 }) {
-  const scan = useScanInbox();
+  const scan = useFullScan();
   const disconnect = useDisconnectEmail();
-  const [result, setResult] = useState<ScanResult | null>(null);
-
   const lastScan = account.last_scan_at
     ? new Date(account.last_scan_at).toLocaleString()
     : "never";
-
-  const handleScan = () => {
-    scan.mutate(undefined, { onSuccess: (r) => setResult(r) });
-  };
 
   return (
     <div className="space-y-4">
@@ -340,19 +335,7 @@ function ConnectedView({
           <p className="text-xs text-muted-foreground">Last scan: {lastScan}</p>
         </div>
         <div className="flex shrink-0 gap-2">
-          <Button
-            size="sm"
-            onClick={handleScan}
-            disabled={scan.isPending}
-            className="gap-1.5"
-          >
-            {scan.isPending ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            Scan now
-          </Button>
+          <ScanButton scan={scan} size="sm" />
         </div>
       </div>
 
@@ -367,34 +350,7 @@ function ConnectedView({
         </Alert>
       )}
 
-      {scan.isPending && (
-        <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
-          <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Reading your inbox… (a big inbox can take a moment)
-        </p>
-      )}
-
-      {scan.isError && (
-        <p className="text-xs text-destructive">
-          {scan.error instanceof ApiError ? scan.error.message : "Scan failed."}
-        </p>
-      )}
-
-      {result && !scan.isPending && (
-        <div className="rounded-md border bg-muted/30 p-2.5 text-xs">
-          <span className="font-medium">
-            {result.detected === 0 && (result.review?.length ?? 0) === 0
-              ? "No new updates."
-              : `Found ${result.detected + (result.review?.length ?? 0)} new update${
-                  result.detected + (result.review?.length ?? 0) === 1 ? "" : "s"
-                }.`}
-          </span>{" "}
-          <span className="text-muted-foreground">
-            Read {result.scanned} email{result.scanned === 1 ? "" : "s"} from the last{" "}
-            {result.window_days} days.
-          </span>
-        </div>
-      )}
+      <ScanStatus scan={scan} />
 
       <AutoMoveSwitch account={account} />
 
@@ -412,6 +368,103 @@ function ConnectedView({
         </Button>
       </div>
     </div>
+  );
+}
+
+function ScanButton({ scan, size }: { scan: FullScan & { run: () => void }; size?: "sm" }) {
+  return (
+    <Button size={size} onClick={scan.run} disabled={scan.running} className="gap-1.5">
+      {scan.running ? (
+        <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+      ) : (
+        <RefreshCw className="h-4 w-4" aria-hidden />
+      )}
+      {scan.running ? "Scanning…" : "Scan inbox"}
+    </Button>
+  );
+}
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
+
+/** What the scan is doing now, or what it found — in plain words. */
+function ScanStatus({ scan }: { scan: FullScan }) {
+  if (scan.running)
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        Reading your inbox… {plural(scan.read, "email")} read
+        {scan.found ? `, ${plural(scan.found, "update")} found` : ""} so far. A big inbox
+        takes a few minutes; you can keep using the page.
+      </p>
+    );
+  if (scan.error)
+    return (
+      <p className="text-xs text-destructive" aria-live="polite">
+        {scan.error}
+      </p>
+    );
+  if (!scan.passes) return null;
+  return (
+    <div className="rounded-md border bg-muted/30 p-2.5 text-xs" aria-live="polite">
+      <span className="font-medium">
+        {scan.found === 0
+          ? "No new updates."
+          : `Found ${plural(scan.found, "new update")}` +
+            (scan.moved ? `, and moved ${plural(scan.moved, "card")} for you.` : ".")}
+      </span>{" "}
+      <span className="text-muted-foreground">
+        {scan.done
+          ? `Read ${plural(scan.read, "email")} from the last ${scan.windowDays} days — your inbox is up to date.`
+          : `Read ${plural(scan.read, "email")} so far. There's more — tap Scan inbox again to keep going.`}
+      </span>
+    </div>
+  );
+}
+
+/** The inbox controls at the top of Email updates: scan the whole inbox, when
+ * it last checked, and whether cards move by themselves. Not connected yet:
+ * the full connect card. */
+export function InboxBar() {
+  const { data: account, isLoading } = useEmailAccount();
+  const scan = useFullScan();
+  if (isLoading) return null;
+  if (!account)
+    return (
+      <div className="mb-8">
+        <EmailConnectCard />
+      </div>
+    );
+  const last = account.last_scan_at
+    ? new Date(account.last_scan_at).toLocaleString()
+    : "never";
+  return (
+    <section className="mb-8 space-y-3 rounded-lg border bg-card p-3 sm:p-4">
+      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div className="min-w-0">
+          <p className="flex items-center gap-2 text-sm font-medium">
+            <Mail className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+            <span className="truncate">{account.email_address}</span>
+          </p>
+          <p className="text-xs text-muted-foreground">
+            Last checked {last} ·{" "}
+            <Link to="/settings" className="underline underline-offset-2">
+              Email settings
+            </Link>
+          </p>
+        </div>
+        <ScanButton scan={scan} />
+      </div>
+      {account.status === "error" && (
+        <p className="text-xs text-destructive">
+          {account.last_error || "Your inbox needs reconnecting."}{" "}
+          <Link to="/settings" className="font-medium underline">
+            Reconnect
+          </Link>
+        </p>
+      )}
+      <ScanStatus scan={scan} />
+      <AutoMoveSwitch account={account} />
+    </section>
   );
 }
 

@@ -18,6 +18,17 @@ class ApiError extends Error {
   }
 }
 
+/** FastAPI's `{"detail": "..."}` body as its sentence; anything else as is. */
+export function readableError(text: string): string {
+  try {
+    const detail = (JSON.parse(text) as { detail?: unknown }).detail;
+    if (typeof detail === "string" && detail) return detail;
+  } catch {
+    // not JSON: show the text itself
+  }
+  return text;
+}
+
 let _supabase: ReturnType<typeof createClient> | null = null;
 
 /** Current Supabase access token, or null when signed out. */
@@ -47,7 +58,7 @@ async function authedFetch(path: string, init: RequestInit = {}): Promise<Respon
 
   if (!res.ok) {
     const text = await res.text().catch(() => "Unknown error");
-    throw new ApiError(res.status, text);
+    throw new ApiError(res.status, readableError(text));
   }
 
   return res;
