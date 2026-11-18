@@ -18,6 +18,14 @@ alert, badge, button, card, dialog, dropdown-menu, input, label, select,
 separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
 `src/globals.css`; use `cn()` from `lib/utils`.
 
+## `scout/` — Claude Scout (Find Jobs → Claude Scout)
+
+| File | Purpose |
+|------|---------|
+| `ScoutPanel.tsx` | The Claude Scout tab |
+| `ResumeTypes.tsx` | Resume types: five suggested types to start, cards, add/edit/delete dialog, resume upload that keeps the main resume |
+| `JobResumeType.tsx` | Resume type picker on a saved job's page |
+
 ## `layout/`
 | File | Purpose |
 |---|---|

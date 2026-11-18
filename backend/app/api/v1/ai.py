@@ -9,6 +9,7 @@ from fastapi import (
     Depends,
     File,
     HTTPException,
+    Query,
     Request,
     UploadFile,
 )
@@ -59,6 +60,9 @@ _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 @router.post("/resumes", response_model=ResumeSchema, status_code=201)
 async def upload_resume(
     file: UploadFile = File(...),
+    # False: keep the current main resume (an upload for one resume type). The
+    # first resume a user uploads always becomes the main one.
+    make_active: bool = Query(True),
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ResumeSchema:
@@ -74,12 +78,15 @@ async def upload_resume(
 
     parsed_text = await resume_parser.parse_resume(content, file.content_type or "")
 
-    # Deactivate previous resumes
-    existing = await db.execute(
-        select(Resume).where(Resume.user_id == user.id, Resume.is_active.is_(True))
-    )
-    for old in existing.scalars().all():
-        old.is_active = False
+    current = (
+        await db.scalars(
+            select(Resume).where(Resume.user_id == user.id, Resume.is_active.is_(True))
+        )
+    ).all()
+    activate = make_active or not current
+    if activate:  # the new upload replaces the main resume
+        for old in current:
+            old.is_active = False
 
     resume = Resume(
         id=uuid.uuid4(),
@@ -89,7 +96,7 @@ async def upload_resume(
         file_size_bytes=len(content),
         extracted_text=parsed_text,
         file_data=content,  # original bytes — ATS autofill re-attaches the real file
-        is_active=True,
+        is_active=activate,
     )
     db.add(resume)
     await db.commit()

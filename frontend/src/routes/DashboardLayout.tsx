@@ -23,7 +23,7 @@ import { cn } from "@/lib/utils";
 type NavItem = { to: string; label: string; icon: LucideIcon; primary?: boolean };
 
 const NAV: NavItem[] = [
-  { to: "/search", label: "Search", icon: Search, primary: true },
+  { to: "/search", label: "Find Jobs", icon: Search, primary: true },
   { to: "/jobs", label: "My Jobs", icon: Briefcase, primary: true },
   { to: "/matches", label: "Matches", icon: Sparkles, primary: true },
   { to: "/email-updates", label: "Email Updates", icon: MailCheck },

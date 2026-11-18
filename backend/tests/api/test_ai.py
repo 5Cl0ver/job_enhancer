@@ -48,6 +48,28 @@ async def test_upload_parse_and_list(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_upload_for_a_resume_type_keeps_the_main_resume(client: AsyncClient):
+    """make_active=false (an upload from Resume types) leaves the main resume —
+    the one match scores and autofill use — as it was. The first upload is
+    always the main one."""
+    pdf = ("r.pdf", b"%PDF-1.4 fake", "application/pdf")
+    with patch(
+        "app.api.v1.ai.resume_parser.parse_resume",
+        new=AsyncMock(return_value="Python, SQL"),
+    ):
+        first = await client.post(
+            "/v1/ai/resumes", params={"make_active": "false"}, files={"file": pdf}
+        )
+        second = await client.post(
+            "/v1/ai/resumes", params={"make_active": "false"}, files={"file": pdf}
+        )
+    assert first.json()["is_active"] is True
+    assert second.json()["is_active"] is False
+    listed = (await client.get("/v1/ai/resumes")).json()
+    assert [r["id"] for r in listed if r["is_active"]] == [first.json()["id"]]
+
+
+@pytest.mark.asyncio
 async def test_generate_document_mocked(client: AsyncClient):
     """Generation returns content + transparency metadata (mocked NVIDIA)."""
     with patch(

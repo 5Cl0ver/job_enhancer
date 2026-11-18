@@ -23,6 +23,7 @@ from app.models.generated_document import GeneratedDocument  # noqa: E402, F401
 from app.models.job_listing import JobListing  # noqa: E402, F401
 from app.models.pipeline_stage import PipelineStage  # noqa: E402, F401
 from app.models.resume import Resume  # noqa: E402, F401
+from app.models.resume_track import ResumeTrack  # noqa: E402, F401
 from app.models.saved_job import SavedJob  # noqa: E402, F401
 from app.models.saved_search import SavedSearch  # noqa: E402, F401
 from app.models.user import User  # noqa: E402, F401
@@ -39,6 +40,7 @@ __all__ = [
     "PipelineStage",
     "SavedJob",
     "Resume",
+    "ResumeTrack",
     "GeneratedDocument",
     "SavedSearch",
 ]

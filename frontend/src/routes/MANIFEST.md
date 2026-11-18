@@ -10,7 +10,7 @@ React Router **page components** (the app's screens), wired up in
 | `RequireAuth.tsx` | (guard) | Redirect to `/login` if no Supabase session | `lib/supabase` |
 | `Login.tsx` | `/login` | Email/password + GitHub sign in/up | `lib/supabase` |
 | `AuthCallback.tsx` | `/auth/callback` | OAuth redirect landing → session → `/search` | `lib/supabase` |
-| `SearchPage.tsx` | `/search` | Search bar + filters + results | `hooks/useJobs`, `components/jobs` |
+| `SearchPage.tsx` | `/search` | "Find Jobs": tabs Job boards (search bar + filters + results) and Claude Scout (`?tab=scout`) | `hooks/useJobs`, `components/jobs`, `components/scout` |
 | `SavedPage.tsx` | `/saved` | Saved jobs + collections sidebar | `hooks/useSavedJobs`, `components/jobs` |
 | `TrackerPage.tsx` | `/tracker` | Kanban board wrapper | `components/tracker` |
 | `MatchesPage.tsx` | `/matches` | New-matches feed (saved searches) | `hooks/useSavedSearches` |
