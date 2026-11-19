@@ -178,7 +178,8 @@ async function scoutRunOpen(token) {
 }
 
 // Send the open posting, word for word, for the Scout run Claude is doing.
-// Returns {active:false} when no run is open, else {active:true, stored}.
+// Returns {active:false} when no run is open, else {active:true, stored} (plus
+// failed:true when the app errored, so the page sends it again).
 async function scoutCapture(job) {
   const token = await getValidToken();
   if (!token) return { active: false };
@@ -189,7 +190,7 @@ async function scoutCapture(job) {
     body: JSON.stringify(job),
   }).catch(() => null);
   if (!res) return { active: false }; // network: let the page try again
-  if (!res.ok) return { active: true, stored: false };
+  if (!res.ok) return { active: true, stored: false, failed: true }; // e.g. a cold start: try again
   const d = await res.json().catch(() => ({}));
   if (!d.stored) _scoutRun.at = 0; // the run may have just ended: re-ask next time
   return { active: true, stored: !!d.stored };

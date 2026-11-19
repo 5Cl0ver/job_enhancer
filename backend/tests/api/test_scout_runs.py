@@ -32,6 +32,15 @@ class TestMissions:
             json={"job_count": 3, "min_pay": None},
         )
         assert r.json()["job_count"] == 3
+        # An automatic name follows the search; a name the user typed stays.
+        assert r.json()["name"] == "LinkedIn · IT Admin · 3 · last 7 days"
+        r = await client.patch(
+            f"/v1/scout/missions/{mission['id']}", json={"name": "Morning LinkedIn"}
+        )
+        r = await client.patch(
+            f"/v1/scout/missions/{mission['id']}", json={"job_count": 4}
+        )
+        assert r.json()["name"] == "Morning LinkedIn"
         assert len((await client.get("/v1/scout/missions")).json()) == 1
         assert (
             await client.delete(f"/v1/scout/missions/{mission['id']}")
@@ -91,8 +100,10 @@ class TestRuns:
 
         listed = (await client.get("/v1/scout/runs")).json()
         assert [x["id"] for x in listed] == [run["id"]]
-        # Queued isn't "open" for the extension yet: Claude hasn't started.
-        assert (await client.get("/v1/scout/runs/active")).json() == {"run_id": None}
+        # Queued counts as open: the user presses Start, then pastes the line.
+        assert (await client.get("/v1/scout/runs/active")).json() == {
+            "run_id": run["id"]
+        }
 
         stopped = (await client.post(f"/v1/scout/runs/{run['id']}/stop")).json()
         assert stopped["status"] == "stopped"
@@ -111,7 +122,6 @@ class TestRuns:
                 "/v1/scout/missions", json={"source": "linkedin", "track_id": track_id}
             )
         ).json()
-        run = (await client.post(f"/v1/scout/missions/{mission['id']}/runs")).json()
         body = {
             "url": "https://www.linkedin.com/jobs/view/4099/",
             "title": "Jira Administrator",
@@ -122,6 +132,7 @@ class TestRuns:
             "stored": False
         }
 
+        run = (await client.post(f"/v1/scout/missions/{mission['id']}/runs")).json()
         row = await db_session.get(ScoutRun, __import__("uuid").UUID(run["id"]))
         row.status = "running"
         await db_session.flush()

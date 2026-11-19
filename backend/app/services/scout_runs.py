@@ -42,6 +42,7 @@ from app.models.scout import (
     ScoutMission,
     ScoutRun,
 )
+from app.schemas.collection import CollectionCreate
 from app.schemas.saved_job import ManualJobCreate
 from app.schemas.scout import (
     CaptureIn,
@@ -51,6 +52,7 @@ from app.schemas.scout import (
     RunCounts,
     RunOut,
 )
+from app.services import collections as col_svc
 from app.services import saved_jobs as sj_svc
 from app.services.scout_dedupe import (
     company_key,
@@ -146,11 +148,16 @@ async def update_mission(
     updates = data.model_dump(exclude_unset=True)
     if updates.get("track_id") is not None:
         await get_track(db, updates["track_id"], user_id)
+    old_track = await get_track(db, mission.track_id, user_id)
+    auto_named = mission.name == mission_name(
+        mission.source, old_track.name, mission.job_count, mission.posted_within_days
+    )
     for key, value in updates.items():
         if value is None and key not in ("min_pay", "location", "extra_instructions"):
             continue  # required fields: null means "leave as is"
         setattr(mission, key, value)
-    if "name" in updates and not updates["name"]:
+    renamed = "name" in updates and updates["name"]
+    if not renamed and (auto_named or "name" in updates):
         track = await get_track(db, mission.track_id, user_id)
         mission.name = mission_name(
             mission.source, track.name, mission.job_count, mission.posted_within_days
@@ -325,13 +332,25 @@ async def runs_out(
     return out
 
 
-async def active_run_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
+async def _open_run(db: AsyncSession, user_id: uuid.UUID) -> ScoutRun | None:
+    """The run Claude works on next: the oldest running one, else the oldest
+    queued one. The extension files page copies under the same run."""
     return await db.scalar(
-        select(ScoutRun.id)
+        select(ScoutRun)
         .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_RUNNING)
-        .order_by(ScoutRun.started_at.desc())
+        .order_by(ScoutRun.started_at)
+        .limit(1)
+    ) or await db.scalar(
+        select(ScoutRun)
+        .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_QUEUED)
+        .order_by(ScoutRun.created_at)
         .limit(1)
     )
+
+
+async def active_run_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
+    run = await _open_run(db, user_id)
+    return run.id if run else None
 
 
 async def record_capture(db: AsyncSession, user_id: uuid.UUID, data: CaptureIn) -> bool:
@@ -365,8 +384,10 @@ async def record_capture(db: AsyncSession, user_id: uuid.UUID, data: CaptureIn) 
 # Claude's side (through the connector)
 # --------------------------------------------------------------------------- #
 async def _run_for_agent(
-    db: AsyncSession, user_id: uuid.UUID, run_id: str | None
+    db: AsyncSession, user_id: uuid.UUID, run_id: str | None, *, start: bool = False
 ) -> ScoutRun:
+    """The run a tool call is about. Only get_scout_brief (start=True) moves a
+    queued run to running; the other tools never pick up a run by themselves."""
     if run_id:
         try:
             rid = uuid.UUID(str(run_id))
@@ -378,17 +399,7 @@ async def _run_for_agent(
         if run is None:
             raise ValueError("No such Scout run. Call get_scout_brief with no run_id.")
     else:
-        run = await db.scalar(
-            select(ScoutRun)
-            .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_RUNNING)
-            .order_by(ScoutRun.started_at)
-            .limit(1)
-        ) or await db.scalar(
-            select(ScoutRun)
-            .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_QUEUED)
-            .order_by(ScoutRun.created_at)
-            .limit(1)
-        )
+        run = await _open_run(db, user_id)
         if run is None:
             raise ValueError(
                 "No Scout run is waiting. Ask the user to press Start in the app "
@@ -400,6 +411,8 @@ async def _run_for_agent(
             "in the app."
         )
     if run.status == RUN_QUEUED:
+        if not start:
+            raise ValueError("This run hasn't started. Call get_scout_brief first.")
         run.status = RUN_RUNNING
         run.started_at = _now()
         await db.flush()
@@ -424,7 +437,7 @@ async def _progress(db: AsyncSession, run: ScoutRun) -> dict:
 
 
 async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dict:
-    run = await _run_for_agent(db, user_id, run_id)
+    run = await _run_for_agent(db, user_id, run_id, start=True)
     c = run.criteria
     progress = await _progress(db, run)
     return {
@@ -546,19 +559,30 @@ async def check_jobs(
     }
 
 
-async def _scout_folder(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
-    folder = await db.scalar(
+async def _find_scout_folder(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
+    return await db.scalar(
         select(Collection.id).where(
             Collection.user_id == user_id,
             func.lower(Collection.name) == SCOUT_FOLDER.lower(),
         )
     )
+
+
+async def _scout_folder(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
+    folder = await _find_scout_folder(db, user_id)
     if folder is not None:
         return folder
-    col = Collection(id=uuid.uuid4(), user_id=user_id, name=SCOUT_FOLDER)
-    db.add(col)
-    await db.flush()
-    return col.id
+    try:
+        async with db.begin_nested():  # another save may make it at the same time
+            col = await col_svc.create_collection(
+                db, user_id, CollectionCreate(name=SCOUT_FOLDER)
+            )
+        return col.id
+    except HTTPException:
+        folder = await _find_scout_folder(db, user_id)
+        if folder is None:
+            raise
+        return folder
 
 
 def _pay_note(capture: ScoutCapture, min_pay: int | None) -> str | None:
@@ -623,9 +647,10 @@ async def report_job(
     finding.gaps = (gaps or "")[:600]
 
     capture = await db.scalar(
-        select(ScoutCapture).where(
-            ScoutCapture.run_id == run.id, ScoutCapture.url_key == key
-        )
+        select(ScoutCapture)
+        .where(ScoutCapture.user_id == user_id, ScoutCapture.url_key == key)
+        .order_by(ScoutCapture.captured_at.desc())
+        .limit(1)
     )
     if capture is None:
         if not first_report:

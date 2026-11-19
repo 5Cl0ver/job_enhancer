@@ -10,6 +10,7 @@ Two keys, either one means "seen":
   key, e.g. ``linkedin.com/jobs/view/123``.
 """
 
+import hashlib
 import re
 from urllib.parse import parse_qsl, urlencode, urlsplit
 
@@ -40,8 +41,20 @@ def _host(url: str) -> str:
     return host.removeprefix("www.").lower()
 
 
+MAX_KEY = 500  # the url_key columns' length
+
+
 def url_key(url: str) -> str | None:
-    """One canonical key per posting, or None for a link that isn't http(s)."""
+    """One canonical key per posting, or None for a link that isn't http(s).
+    Never longer than MAX_KEY: a long link keeps its start plus a hash."""
+    key = _url_key(url)
+    if key is None or len(key) <= MAX_KEY:
+        return key
+    digest = hashlib.sha256(key.encode()).hexdigest()[:16]
+    return f"{key[: MAX_KEY - 17]}#{digest}"
+
+
+def _url_key(url: str) -> str | None:
     try:
         parts = urlsplit((url or "").strip())
     except ValueError:
@@ -98,11 +111,10 @@ def posting_problem(url: str) -> str | None:
         )
     if "indeed." in host and not key.startswith("indeed.com/viewjob"):
         return "That's an Indeed search page. Open the job and send its viewjob link."
-    zip_search = (
-        host.endswith("ziprecruiter.com")
-        and not key.startswith("ziprecruiter.com/job?")
-        and "/c/" not in path
-        and "/jobs/" not in path
+    # A ZipRecruiter job only has a lasting link of its own on its job page
+    # (/c/…, /jobs/…, /job/…); a search page with the job open beside it doesn't.
+    zip_search = host.endswith("ziprecruiter.com") and not any(
+        part in path for part in ("/c/", "/jobs/", "/job/")
     )
     if zip_search:
         return "That's a ZipRecruiter search page. Open the job and send its link."

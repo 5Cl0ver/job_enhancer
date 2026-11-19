@@ -54,4 +54,8 @@ describe("scoutDone", () => {
     expect(scoutDone({ active: true, stored: true })).toBe(true);
     expect(scoutDone({ active: true, stored: false })).toBe(true);
   });
+
+  it("tries again when the app errored (a cold start), so the copy isn't lost", () => {
+    expect(scoutDone({ active: true, stored: false, failed: true })).toBe(false);
+  });
 });

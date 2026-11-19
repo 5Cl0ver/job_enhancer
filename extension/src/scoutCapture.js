@@ -30,12 +30,16 @@ export function scoutPayload(job) {
   };
 }
 
+/** Failed sends of one job before the page stops trying it. */
+export const SCOUT_MAX_FAILS = 3;
+
 /**
  * Should the content script stop trying this job? Yes once the app stored it,
  * or once an open run turned it down (not a posting link). No while no run is
- * open, so a run that starts later still gets it.
- * @param {{active?: boolean, stored?: boolean} | undefined} res
+ * open, so a run that starts later still gets it, and no after an app error
+ * (a cold start), so the next sync sends it again.
+ * @param {{active?: boolean, stored?: boolean, failed?: boolean} | undefined} res
  */
 export function scoutDone(res) {
-  return !!res?.active;
+  return !!res?.active && !res.failed;
 }

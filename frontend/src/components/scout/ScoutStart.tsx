@@ -162,7 +162,6 @@ function MissionCard({
     <li className="flex flex-col gap-3 rounded-lg border p-4">
       <div className="min-w-0">
         <p className="truncate font-medium">{m.name}</p>
-        {!track && <p className="text-sm text-destructive">Its resume type was deleted</p>}
         <p className="mt-1 text-xs text-muted-foreground">{details.join(" · ")}</p>
       </div>
       {start.isError && (
@@ -171,7 +170,7 @@ function MissionCard({
       <div className="mt-auto flex gap-2">
         <Button
           className="flex-1 gap-1.5"
-          disabled={busy || start.isPending || !track}
+          disabled={busy || start.isPending}
           title={busy ? "Finish or stop the search that's running first" : undefined}
           onClick={() => start.mutate(m.id)}
         >

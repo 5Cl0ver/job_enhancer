@@ -151,6 +151,7 @@ class TestCheckJobs:
     async def test_too_many_rows_is_refused(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="many@test.dev")
         _, _, run_id = await _setup(maker, "many@test.dev")
+        await mcp_mod.get_scout_brief()
         rows = [{"company": f"C{i}", "title": "T"} for i in range(31)]
         with pytest.raises(ValueError, match="at most 30"):
             await mcp_mod.check_jobs(str(run_id), rows)
@@ -281,5 +282,45 @@ async def _setup_second_run(maker, email):
 @pytest.mark.asyncio
 async def test_captures_are_ignored_without_an_open_run(engine, monkeypatch):
     maker = await _connected_user(engine, monkeypatch, email="idle@test.dev")
-    user_id, _, _ = await _setup(maker, "idle@test.dev")  # queued, not running
+    user_id, _, run_id = await _setup(maker, "idle@test.dev")
+    async with maker() as db:
+        await scout_runs.stop_run(db, run_id, user_id)
+        await db.commit()
     assert await _capture(maker, user_id) is False
+
+
+@pytest.mark.asyncio
+async def test_copy_made_before_claude_starts_still_counts(engine, monkeypatch):
+    """The user presses Start, then pastes the line: a page Claude opens while
+    the run is still queued is copied under it, and report_job finds it."""
+    maker = await _connected_user(engine, monkeypatch, email="early@test.dev")
+    user_id, _, run_id = await _setup(maker, "early@test.dev")
+    assert await _capture(maker, user_id) is True
+    await mcp_mod.get_scout_brief()
+    out = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "")
+    assert out["outcome"] == "saved"
+
+
+@pytest.mark.asyncio
+async def test_copy_filed_under_another_open_run_is_still_found(engine, monkeypatch):
+    maker = await _connected_user(engine, monkeypatch, email="two@test.dev")
+    user_id, _, first = await _setup(maker, "two@test.dev")
+    _, _, second = await _setup_second_run(maker, "two@test.dev")
+    await mcp_mod.get_scout_brief(str(second))  # both runs are open now
+    await mcp_mod.get_scout_brief(str(first))
+    assert await _capture(maker, user_id) is True
+    out = await mcp_mod.report_job(str(second), JOB_URL, 8, "fits", "")
+    assert out["outcome"] == "saved"
+
+
+@pytest.mark.asyncio
+async def test_only_the_brief_starts_a_queued_run(engine, monkeypatch):
+    maker = await _connected_user(engine, monkeypatch, email="queue@test.dev")
+    user_id, _, run_id = await _setup(maker, "queue@test.dev")
+    with pytest.raises(ValueError, match="get_scout_brief"):
+        await mcp_mod.finish_scout_run("")
+    with pytest.raises(ValueError, match="get_scout_brief"):
+        await mcp_mod.report_job(str(run_id), JOB_URL, 8, "", "")
+    async with maker() as db:
+        run = await db.get(ScoutRun, run_id)
+        assert run.status == "queued"

@@ -3,6 +3,7 @@
 import pytest
 
 from app.services.scout_dedupe import (
+    MAX_KEY,
     company_key,
     posting_link,
     posting_problem,
@@ -54,6 +55,13 @@ class TestUrlKey:
     def test_not_a_web_link(self):
         assert url_key("mailto:jobs@vellacor.example") is None
 
+    def test_long_links_fit_the_column_and_stay_distinct(self):
+        base = "https://vellacor.example/careers/" + "x" * 900
+        a, b = url_key(base + "?id=1"), url_key(base + "?id=2")
+        assert len(a) <= MAX_KEY and len(b) <= MAX_KEY
+        assert a != b
+        assert url_key(base + "?id=1") == a
+
 
 class TestPostingProblem:
     @pytest.mark.parametrize(
@@ -63,6 +71,7 @@ class TestPostingProblem:
             "https://www.linkedin.com/jobs/collections/recommended/",
             "https://www.indeed.com/jobs?q=it+admin&l=Springfield",
             "https://www.ziprecruiter.com/jobs-search?search=it",
+            "https://www.ziprecruiter.com/jobs-search?search=it&lvk=abc123",
             "https://vellacor.example/careers",
             "https://vellacor.example/",
         ],
