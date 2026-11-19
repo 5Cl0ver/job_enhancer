@@ -13,6 +13,7 @@ read directly from ORM objects.
 | `pipeline_stage.py` | `PipelineStageCreate`, `PipelineStageUpdate`, `PipelineStageSchema` |
 | `saved_search.py` | `SavedSearchCreate`, `SavedSearchSchema`, new-matches feed shapes |
 | `resume.py` | `ResumeSchema`, `GeneratedDocumentCreate/Update/Schema` |
+| `scout.py` | `TrackCreate`, `TrackUpdate`, `TrackOut`, `SkipRules` (Claude Scout resume types; lists trimmed and de-duplicated); `MissionCreate/Update/Out`, `RunOut`, `FindingOut`, `CaptureIn` (description ≥ 200 chars) |
 
 **How this folder connects:** imported by `api/v1/*` routers as request bodies
 and `response_model`s; populated from `models/*` ORM objects. The generated

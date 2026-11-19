@@ -3,6 +3,7 @@ import { useJob } from "@/hooks/useJobs";
 import { useSavedJobId, useSaveJob, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { JobDetail } from "@/components/jobs/JobDetail";
 import { JobEmails } from "@/components/email/JobEmails";
+import { JobResumeType } from "@/components/scout/JobResumeType";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** Full detail view for one job listing (reached by clicking a card title). */
@@ -38,6 +39,7 @@ export function JobDetailPage() {
           isSaved={isSaved}
           onSave={toggleSave}
           onGenerateDocuments={() => navigate(`/ai-apply?job=${id}`)}
+          aside={isSaved ? <JobResumeType jobListingId={id} /> : null}
         />
       )}
       {isSaved && <JobEmails jobListingId={id} />}

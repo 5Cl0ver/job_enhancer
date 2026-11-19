@@ -81,6 +81,7 @@ You didn't have to implement any of these — the point of the design is that
 
 **Read:** `list_jobs`, `get_job`, `get_master_profile`, `get_pipeline`, `list_collections`
 **Write:** `save_job` (add a job Claude found on the web), `save_draft`, `set_status`, `mark_emailed`, `flag_for_research`, `move_to_collection`
+**Claude Scout:** `get_scout_brief`, `check_jobs`, `report_job`, `finish_scout_run` (see [specs/003-job-scout/contracts/mcp-tools.md](../specs/003-job-scout/contracts/mcp-tools.md)). The app keeps the memory; Claude sends links and its fit opinion, never job text; the Job Catcher extension supplies the exact posting.
 
 Collections are the user's folders. `save_job` takes an optional `collection`
 name and `list_jobs` filters by one; both resolve the name case-insensitively

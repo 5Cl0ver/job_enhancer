@@ -13,6 +13,8 @@ imports every model so Alembic can discover them.
 | `saved_job.py` | `SavedJob` | Join of User×JobListing + state (stage, notes, `applied_at`, follow-up, `is_archived`). `UNIQUE(user_id, job_listing_id)`. | `User`, `JobListing`, `Collection`, `PipelineStage` |
 | `saved_search.py` | `SavedSearch` | Stored search criteria; drives the daily new-matches feed (FR-024). | `User` |
 | `resume.py` | `Resume` | Uploaded resume; `extracted_text`; one `is_active` per user (≤10 MB). | `User` |
+| `scout.py` | `ScoutMission`, `ScoutRun`, `ScoutCapture`, `ScoutFinding` | Claude Scout: saved searches; runs (`criteria` snapshot, queued → running → done/stopped); the exact page copy the extension captured; every job a run reported (the dedupe memory, keyed by company/title and canonical URL) | `User`, `ResumeTrack`, `SavedJob` |
+| `resume_track.py` | `ResumeTrack` | Claude Scout resume type: target titles, key skills, `skip_rules`, `min_pay`, the resume to apply with. ≤8 per user, `UNIQUE(user_id, name)`; `saved_jobs.track_id` points here. | `User`, `Resume` |
 | `generated_document.py` | `GeneratedDocument` | AI resume/cover output; `model_used` + `generation_ms` (transparency); `edited_content`. | `User`, `JobListing`, `Resume`, `SavedJob` |
 
 ## Migrations (`alembic/versions/`)

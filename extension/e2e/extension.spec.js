@@ -87,3 +87,57 @@ test("side panel page renders the sign-in view without errors", async () => {
   expect(errors).toEqual([]);
   await page.close();
 });
+
+test("Claude Scout: a job page opened during a run is sent word for word", async () => {
+  // The real LinkedIn URL (so the content script runs), served from the fixture
+  // with a longer description, like a full posting.
+  const extra = "Own the developer platform end to end and mentor two engineers. ".repeat(3);
+  const html = readFileSync(join(fixtures, "linkedin-jobview.html"), "utf8").replace(
+    "5+ years with cloud infrastructure and Kubernetes.</p>",
+    `5+ years with cloud infrastructure and Kubernetes.</p><p class="_18f99264">${extra}</p>`,
+  );
+  const jobUrl = "https://www.linkedin.com/jobs/view/4012345678/";
+  await context.route(jobUrl, (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: html }),
+  );
+
+  // Signed in, a Scout run open, and the app's answers stubbed in the worker.
+  await worker.evaluate(async () => {
+    await chrome.storage.local.set({
+      je_token: "test-token",
+      je_expires: Math.floor(Date.now() / 1000) + 3600,
+    });
+    globalThis.__sent = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const path = new URL(url).pathname;
+      if (path === "/v1/scout/captures") globalThis.__sent.push(JSON.parse(opts.body));
+      const body =
+        path === "/v1/scout/runs/active"
+          ? { run_id: "run-1" }
+          : path === "/v1/scout/captures"
+            ? { stored: true }
+            : { saved: false };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+  });
+
+  const page = await context.newPage();
+  await page.goto(jobUrl);
+  await expect
+    .poll(() => worker.evaluate(() => globalThis.__sent.length), { timeout: 8000 })
+    .toBe(1);
+  const [sent] = await worker.evaluate(() => globalThis.__sent);
+  expect(sent.url).toBe(jobUrl);
+  expect(sent.title).toBe("Senior Platform Engineer");
+  expect(sent.company).toBe("Initech, Inc.");
+  expect(sent.description).toContain("Employment Type: Full-Time");
+  expect(sent.description).toContain(extra.trim());
+
+  // Sent once: the page keeps polling, but it's done with this job.
+  await page.waitForTimeout(4500);
+  expect(await worker.evaluate(() => globalThis.__sent.length)).toBe(1);
+  await page.close();
+});

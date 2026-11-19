@@ -37,6 +37,7 @@ from app.models.user import User
 from app.schemas.saved_job import ManualJobCreate
 from app.services import collections as col_svc
 from app.services import saved_jobs as sj_svc
+from app.services import scout_runs as scout_svc
 from app.services import tracker as tracker_svc
 
 
@@ -236,7 +237,10 @@ mcp = FastMCP(
         "Never mark a job applied or emailed unless the user says they did it. "
         "Collections are the user's folders: call list_collections to see them, "
         "pass `collection` to save_job to file a new job straight into one, and "
-        "use move_to_collection for a job that's already saved."
+        "use move_to_collection for a job that's already saved. "
+        "When the user asks for their Job Scout run, call get_scout_brief first "
+        "and follow its playbook: the app keeps the memory, takes the exact "
+        "posting text from the page itself, and tells you what to do next."
     ),
     auth=_build_auth(),
 )
@@ -467,6 +471,63 @@ async def flag_for_research(job_id: str, flagged: bool = True) -> dict:
         return _job_summary(
             sj, stages.get(sj.pipeline_stage_id), cols.get(sj.collection_id)
         )
+
+
+# --------------------------------------------------------------------------- #
+# Claude Scout: the app is the memory; every reply stays small (research R8)
+# --------------------------------------------------------------------------- #
+@mcp.tool
+async def get_scout_brief(run_id: str | None = None) -> dict:
+    """Start (or carry on with) the user's Job Scout run. Call this FIRST when
+    the user says "do my next Job Scout run". Leave run_id empty: the app picks
+    the run that's waiting. Returns the short playbook to follow, the resume type
+    to look for, a ready-made search URL with the filters already set, and the
+    progress so far. A fresh chat on a half-done run carries on where it was."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.brief(db, user.id, run_id)
+        await db.commit()
+        return out
+
+
+@mcp.tool
+async def check_jobs(run_id: str, rows: list[dict]) -> dict:
+    """Which jobs on this results page are new? Send every row of ONE page at
+    once (up to 30), each as {"company", "title", "url"} as shown in the list.
+    Returns the positions (0-based) worth opening; the rest are already in the
+    user's tracker, were found by an earlier run, or hit an excluded word."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.check_jobs(db, user.id, run_id, rows)
+        await db.commit()
+        return out
+
+
+@mcp.tool
+async def report_job(
+    run_id: str, url: str, fit_score: int, why_fit: str, gaps: str
+) -> dict:
+    """Report one job while its posting page is OPEN in the tab. Send only the
+    posting's link, your 0-10 fit score (the playbook's rubric), why it fits and
+    the gaps, each a sentence or two. Do NOT send the job text: the app saves
+    the exact posting from the page itself. Answers with the outcome (saved,
+    below_bar, duplicate, waiting_for_copy, no_copy, rejected_link), the
+    progress, and what to do next."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.report_job(
+            db, user.id, run_id, url, fit_score, why_fit, gaps
+        )
+        await db.commit()
+        return out
+
+
+@mcp.tool
+async def finish_scout_run(run_id: str, note: str = "") -> dict:
+    """End the run: when report_job says done, when results run out, or on a
+    CAPTCHA, login wall or error. ``note`` is one line for the user (e.g. "only
+    3 new jobs this week")."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.finish_run(db, user.id, run_id, note)
+        await db.commit()
+        return out
 
 
 def build_mcp_app():

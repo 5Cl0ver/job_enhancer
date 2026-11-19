@@ -15,9 +15,17 @@ interface JobDetailProps {
   onSave?: () => void;
   isSaved?: boolean;
   onGenerateDocuments?: () => void;
+  /** Shown right under the actions, above the description (e.g. resume type). */
+  aside?: React.ReactNode;
 }
 
-export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }: JobDetailProps) {
+export function JobDetail({
+  job,
+  onSave,
+  isSaved = false,
+  onGenerateDocuments,
+  aside,
+}: JobDetailProps) {
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
@@ -118,6 +126,8 @@ export function JobDetail({ job, onSave, isSaved = false, onGenerateDocuments }:
       </div>
 
       <Separator />
+
+      {aside}
 
       {/* How well the resume covers this job's named skills */}
       <MatchScore jobId={job.id} />
