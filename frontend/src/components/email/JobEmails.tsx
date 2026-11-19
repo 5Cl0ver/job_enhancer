@@ -43,7 +43,11 @@ export function JobEmails({ jobListingId }: { jobListingId: string }) {
           </li>
         ))}
       </ul>
-      <EmailViewer eventId={open} onClose={() => setOpen(null)} />
+      <EmailViewer
+        eventId={open}
+        mailLink={emails.find((e) => e.id === open)?.mail_link}
+        onClose={() => setOpen(null)}
+      />
     </section>
   );
 }

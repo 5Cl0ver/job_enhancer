@@ -4,8 +4,10 @@
  * review the pipeline updates the scan detects (approve / dismiss / undo), and
  * resolve the items it couldn't decide (pick the job, or dismiss).
  */
+import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { api } from "@/lib/api";
+import { api, ApiError } from "@/lib/api";
+import { scanIsDone } from "@/lib/emailUpdates";
 
 export interface ProviderInfo {
   provider: string;
@@ -69,6 +71,8 @@ export interface DetectedEvent {
   /** The chosen job's names, for a plain sentence. */
   company?: string | null;
   title?: string | null;
+  /** Where the saved job's card is now ("Interested"); null if unsaved. */
+  current_stage?: string | null;
   mail_link: string | null;
   created_at: string;
 }
@@ -153,6 +157,13 @@ export interface ScanResult {
   scanned: number;
   candidates: number;
   window_days: number;
+  /** Important updates about jobs you haven't saved. */
+  unsaved?: number;
+  /** Per-folder progress: a folder is done when "complete" with nothing left. */
+  folders?: { role: string; status: string; carried_over: number }[];
+  carried_over?: number;
+  /** Why a pass stopped early (rate_limited, connection_lost, …). */
+  interrupted?: string | null;
 }
 
 /** The user's connected inbox, or null when none is connected. */
@@ -222,6 +233,75 @@ export function useDetectedEvents() {
     queryFn: () => api.get<DetectedEvent[]>("/v1/email/events"),
     staleTime: 15_000,
   });
+}
+
+/** Most passes one click runs; each pass reads about a minute of mail. */
+const MAX_PASSES = 30;
+
+export interface FullScan {
+  running: boolean;
+  passes: number;
+  read: number;
+  found: number;
+  moved: number;
+  windowDays: number;
+  done: boolean;
+  error: string | null;
+}
+
+const IDLE: FullScan = {
+  running: false,
+  passes: 0,
+  read: 0,
+  found: 0,
+  moved: 0,
+  windowDays: 0,
+  done: false,
+  error: null,
+};
+
+/** One click reads the whole inbox: scan passes run back to back until every
+ * folder is done, refreshing the page's updates after each pass. */
+export function useFullScan() {
+  const qc = useQueryClient();
+  const [state, setState] = useState<FullScan>(IDLE);
+
+  const run = async () => {
+    let s: FullScan = { ...IDLE, running: true };
+    setState(s);
+    for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      let r: ScanResult;
+      try {
+        r = await api.post<ScanResult>("/v1/email/scan", {});
+      } catch (e) {
+        const error =
+          e instanceof ApiError && e.status === 429
+            ? "Yahoo asked us to slow down. What's read so far is saved — scan again in a few minutes."
+            : e instanceof ApiError
+              ? e.message
+              : "The scan stopped. Try again.";
+        s = { ...s, running: false, error };
+        break;
+      }
+      s = {
+        ...s,
+        passes: pass,
+        read: s.read + r.scanned,
+        found: s.found + r.detected + (r.review?.length ?? 0) + (r.unsaved ?? 0),
+        moved: s.moved + (r.moved ?? 0),
+        windowDays: r.window_days,
+        done: scanIsDone(r),
+      };
+      setState(s);
+      qc.invalidateQueries({ queryKey: ["email-events"] });
+      qc.invalidateQueries({ queryKey: ["job-emails"] });
+      if (s.done) break;
+    }
+    qc.invalidateQueries({ queryKey: ["email-account"] });
+    setState({ ...s, running: false });
+  };
+
+  return { ...state, run };
 }
 
 export function useScanInbox() {

@@ -7,6 +7,7 @@ import type {
   EmailCategory,
   MatchCandidate,
   ReviewReason,
+  ScanResult,
 } from "@/hooks/useEmailAccount";
 
 /** Important updates are listed in this order. */
@@ -190,4 +191,11 @@ export function group(events: DetectedEvent[]): Grouped {
   out.contacts.sort(newestFirst);
   out.hidden.sort(newestFirst);
   return out;
+}
+
+/** True when a scan pass left nothing to read: every folder finished with
+ * nothing carried over, and the pass wasn't cut short. */
+export function scanIsDone(r: ScanResult): boolean {
+  if (r.interrupted || (r.carried_over ?? 0) > 0) return false;
+  return (r.folders ?? []).every((f) => f.status === "complete" && f.carried_over === 0);
 }

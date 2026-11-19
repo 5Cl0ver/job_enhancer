@@ -5,9 +5,11 @@ import {
   group,
   question,
   reason,
+  scanIsDone,
   sentence,
 } from "@/lib/emailUpdates";
-import type { DetectedEvent } from "@/hooks/useEmailAccount";
+import type { DetectedEvent, ScanResult } from "@/hooks/useEmailAccount";
+import { readableError } from "@/lib/api";
 
 // Fictional events — only the fields the helpers read.
 function ev(o: Partial<DetectedEvent> = {}): DetectedEvent {
@@ -167,5 +169,41 @@ describe("reason", () => {
       "The email names the company and the job title.",
     );
     expect(reason(ev({ match_evidence: null }))).toBeNull();
+  });
+});
+
+describe("scanIsDone", () => {
+  const pass = (o: Partial<ScanResult> = {}): ScanResult => ({
+    detected: 0,
+    events: [],
+    considered: [],
+    scanned: 10,
+    candidates: 1,
+    window_days: 45,
+    folders: [{ role: "inbox", status: "complete", carried_over: 0 }],
+    carried_over: 0,
+    interrupted: null,
+    ...o,
+  });
+
+  it("stops once every folder is read", () => {
+    expect(scanIsDone(pass())).toBe(true);
+  });
+
+  it("keeps going while mail is left or a pass was cut short", () => {
+    expect(
+      scanIsDone(pass({ folders: [{ role: "inbox", status: "carried_over", carried_over: 40 }] })),
+    ).toBe(false);
+    expect(scanIsDone(pass({ carried_over: 3 }))).toBe(false);
+    expect(scanIsDone(pass({ interrupted: "connection_lost" }))).toBe(false);
+  });
+});
+
+describe("readableError", () => {
+  it("shows the server's sentence, not its JSON", () => {
+    expect(readableError('{"detail":"This email is no longer in your mailbox."}')).toBe(
+      "This email is no longer in your mailbox.",
+    );
+    expect(readableError("Bad gateway")).toBe("Bad gateway");
   });
 });

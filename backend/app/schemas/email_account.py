@@ -87,6 +87,9 @@ class DetectedEventOut(BaseModel):
     # The chosen job's names, for a plain sentence ("Acme rejected your …").
     company: str | None = None
     title: str | None = None
+    # Where the saved job's card is now ("Interested"), so the page can say
+    # what a click would change. None for unsaved jobs or a card with no stage.
+    current_stage: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}

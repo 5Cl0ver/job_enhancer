@@ -698,6 +698,7 @@ class TestAutoMoveFlow:
         assert [(e["status"], e["category"]) for e in events] == [
             ("auto_applied", "moved")
         ]
+        assert events[0]["current_stage"] == "Rejected"  # where the card is now
         undone = await client.post(f"/v1/email/events/{events[0]['id']}/undo")
         assert undone.status_code == 200
         await db_session.refresh(job)
@@ -722,6 +723,7 @@ class TestAutoMoveFlow:
         assert job.pipeline_stage_id is None
         events = (await client.get("/v1/email/events")).json()
         assert [e["category"] for e in events] == ["important"]
+        assert events[0]["current_stage"] is None  # the card has no stage yet
 
     async def test_settings_need_a_connected_inbox(self, client):
         r = await client.patch("/v1/email/account", json={"auto_move": False})

@@ -69,7 +69,8 @@ async def _events_out(
     db: AsyncSession, provider: str, events: list[DetectedEvent]
 ) -> list[DetectedEventOut]:
     """Enrich stored events with a link to the job in the app (job_listing_id),
-    a link to the email in webmail (built from provider + subject), and — for a
+    the card's current stage, a link to the email in webmail (built from
+    provider + subject), and — for a
     needs-review item — its candidate jobs' names. A candidate the user has
     since archived or deleted is left out."""
     if not events:
@@ -85,8 +86,10 @@ async def _events_out(
                 SavedJob.is_archived,
                 JobListing.company,
                 JobListing.title,
+                PipelineStage.name.label("stage"),
             )
             .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .outerjoin(PipelineStage, SavedJob.pipeline_stage_id == PipelineStage.id)
             .where(SavedJob.id.in_(ids), SavedJob.user_id == events[0].user_id)
         )
     ).all()
@@ -104,8 +107,11 @@ async def _events_out(
         d.job_listing_id = listing_of.get(e.saved_job_id)
         if (j := job_of.get(e.saved_job_id)) is not None:
             d.company, d.title = j.company, j.title
+            d.current_stage = j.stage
         else:  # not a saved job: the names read from the email, if any
             d.company, d.title = e.job_company, e.job_title
+            if d.company and not d.company[0].isalnum():
+                d.company = None  # a leftover like ".io" stored by an older scan
         d.stage_missing = bool(e.target_stage) and e.target_stage not in stage_names
         d.mail_link = mail_link(provider, subject=e.subject)
         if e.status in (STATUS_REVIEW, STATUS_HIDDEN):
