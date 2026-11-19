@@ -9,6 +9,7 @@ import {
   useQueryClient,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { cleanJob } from "@/lib/text";
 import type { JobListing, JobSearchResponse } from "@/types/api";
 
 export interface JobSearchParams {
@@ -39,11 +40,16 @@ function buildSearchUrl(params: JobSearchParams): string {
   return `/v1/jobs/?${qs.toString()}`;
 }
 
+function cleanResults(page: JobSearchResponse): JobSearchResponse {
+  return { ...page, results: page.results.map(cleanJob) };
+}
+
 /** Search jobs — paginated, keeps previous data while loading next page. */
 export function useJobSearch(params: JobSearchParams, enabled = true) {
   return useQuery<JobSearchResponse>({
     queryKey: ["jobs", "search", params],
     queryFn: () => api.get<JobSearchResponse>(buildSearchUrl(params)),
+    select: cleanResults,
     enabled: enabled && params.q.trim().length > 0,
     placeholderData: keepPreviousData,
     staleTime: 60_000, // 1 min — job listings don't change that fast
@@ -66,6 +72,7 @@ export function useJob(jobId: string | null) {
   return useQuery<JobListing>({
     queryKey: ["jobs", jobId],
     queryFn: () => api.get<JobListing>(`/v1/jobs/${jobId}`),
+    select: cleanJob,
     enabled: !!jobId,
     staleTime: 5 * 60_000, // 5 min
   });

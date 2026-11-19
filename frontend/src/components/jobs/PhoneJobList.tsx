@@ -36,7 +36,6 @@ import {
 } from "@/lib/jobFilters";
 import { readPref, writePref } from "@/lib/prefs";
 import { stageTone } from "@/lib/stageStyle";
-import { plainText } from "@/lib/text";
 import { cn } from "@/lib/utils";
 import type { SavedJob } from "@/types/api";
 
@@ -74,9 +73,7 @@ function Chip({
 
 function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string | null }) {
   const j = savedJob.job_listing;
-  const where = [plainText(j.company), j.is_remote ? "Remote" : j.location]
-    .filter(Boolean)
-    .join(" · ");
+  const where = [j.company, j.is_remote ? "Remote" : j.location].filter(Boolean).join(" · ");
   return (
     <li>
       <Link
@@ -84,7 +81,7 @@ function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string
         className="-mx-4 flex min-h-16 items-center gap-3 px-4 py-2.5 active:bg-accent"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium leading-snug">{plainText(j.title)}</p>
+          <p className="truncate font-medium leading-snug">{j.title}</p>
           <p className="truncate text-sm text-muted-foreground">{where}</p>
         </div>
         {j.is_expired ? (

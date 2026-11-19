@@ -135,7 +135,7 @@ export default function EmailUpdatesPage() {
           <p className="font-medium">You're all caught up</p>
           <p className="text-sm text-muted-foreground">
             New updates from your inbox will show up here.{" "}
-            <Link to="/settings" className="text-primary underline">
+            <Link to="/settings#email" className="text-primary underline">
               Email settings
             </Link>
           </p>

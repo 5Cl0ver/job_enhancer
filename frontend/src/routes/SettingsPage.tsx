@@ -1,7 +1,7 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, Download, Trash2, Loader2, Check } from "lucide-react";
-import { useIsPhone } from "@/hooks/useIsPhone";
+import { useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
@@ -29,31 +29,31 @@ export default function SettingsPage() {
   const userEmail = profile?.email ?? "";
 
   return (
-    <div className="container mx-auto max-w-2xl space-y-3 md:space-y-6 md:px-4 md:py-6">
+    <div className="container mx-auto flex max-w-2xl flex-col gap-3 md:gap-6 md:px-4 md:py-6">
       <div className="space-y-1 max-md:hidden">
         <h1 className="text-2xl font-bold tracking-tight">Account Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your account and data.</p>
       </div>
 
-      <Section title="Appearance">
+      <Section id="appearance" title="Appearance">
         <AppearanceCard />
       </Section>
-      <Section title="Application profile">
+      <Section id="profile" title="Application profile">
         <ApplicationProfileCard />
       </Section>
-      <Section title="Claude project">
+      <Section id="claude" title="Claude project">
         <ClaudeProjectCard />
       </Section>
-      <Section title="Email">
+      <Section id="email" title="Email">
         <EmailConnectCard />
       </Section>
-      <Section title="Saved answers">
+      <Section id="answers" title="Saved answers">
         <SavedAnswersCard />
       </Section>
-      <Section title="Export your data">
+      <Section id="export" title="Export your data">
         <DataExportCard />
       </Section>
-      <Section title="Delete account">
+      <Section id="delete" title="Delete account">
         <DeleteAccountCard email={userEmail} />
       </Section>
     </div>
@@ -62,20 +62,41 @@ export default function SettingsPage() {
 
 /**
  * On a phone, Settings is a short list: each part is one row that opens when
- * tapped, instead of seven cards end to end. On a computer the cards show as
- * they are.
+ * tapped, instead of seven cards end to end. On a computer the row isn't there
+ * and the card shows as it is. The card stays mounted either way, so nothing
+ * typed into it is lost by closing its row or turning the phone. `id` lets a
+ * link open one part directly (`/settings#email`).
  */
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
-  const phone = useIsPhone();
-  const [open, setOpen] = useState(false);
-  if (!phone) return <>{children}</>;
+function Section({
+  id,
+  title,
+  children,
+}: {
+  id: string;
+  title: string;
+  children: React.ReactNode;
+}) {
+  const { hash } = useLocation();
+  const linked = hash === `#${id}`;
+  const [open, setOpen] = useState(linked);
+  const ref = useRef<HTMLElement>(null);
+  useEffect(() => {
+    if (!linked) return;
+    setOpen(true);
+    ref.current?.scrollIntoView({ block: "start" });
+  }, [linked]);
+
   return (
-    <section className="overflow-hidden rounded-xl border bg-card">
+    <section
+      ref={ref}
+      id={id}
+      className="scroll-mt-16 max-md:overflow-hidden max-md:rounded-xl max-md:border max-md:bg-card md:contents"
+    >
       <button
         type="button"
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
-        className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left text-base font-medium active:bg-accent"
+        className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left text-base font-medium active:bg-accent md:hidden"
       >
         {title}
         <ChevronDown
@@ -83,12 +104,15 @@ function Section({ title, children }: { title: string; children: React.ReactNode
           aria-hidden
         />
       </button>
-      {/* The card inside loses its own frame and title: the row is both. */}
-      {open && (
-        <div className="border-t *:data-[slot=card]:rounded-none *:data-[slot=card]:ring-0 **:data-[slot=card-title]:hidden">
-          {children}
-        </div>
-      )}
+      {/* On a phone the card inside loses its own frame and title: the row is both. */}
+      <div
+        className={cn(
+          "md:contents max-md:border-t max-md:*:data-[slot=card]:rounded-none max-md:*:data-[slot=card]:ring-0 max-md:**:data-[slot=card-title]:hidden",
+          !open && "max-md:hidden",
+        )}
+      >
+        {children}
+      </div>
     </section>
   );
 }

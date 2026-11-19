@@ -13,14 +13,14 @@ export const PAGE_SIZE = 30;
  */
 export function useShowMore(resetKey: string) {
   const [state, setState] = useState({ key: resetKey, limit: PAGE_SIZE });
+  // A different list: forget how far the last one was scrolled, so coming back
+  // to it starts at one page again. (Adjusting state while rendering is
+  // React's way to reset on a changed input without an extra painted frame.)
+  if (state.key !== resetKey) setState({ key: resetKey, limit: PAGE_SIZE });
   const limit = state.key === resetKey ? state.limit : PAGE_SIZE;
   const showMore = useCallback(
-    () =>
-      setState((s) => ({
-        key: resetKey,
-        limit: (s.key === resetKey ? s.limit : PAGE_SIZE) + PAGE_SIZE,
-      })),
-    [resetKey],
+    () => setState((s) => ({ key: s.key, limit: s.limit + PAGE_SIZE })),
+    [],
   );
 
   const observer = useRef<IntersectionObserver | null>(null);

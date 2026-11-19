@@ -15,7 +15,6 @@ import { JobDetailDialog } from "@/components/tracker/JobDetailDialog";
 import { useToggleResearchFlag } from "@/hooks/useTracker";
 import { highlightParts } from "@/lib/boardFilter";
 import { getNextAction, TONE_STYLES } from "@/lib/nextAction";
-import { plainText } from "@/lib/text";
 import { cn } from "@/lib/utils";
 import type { PipelineStage, SavedJob } from "@/types/api";
 
@@ -63,7 +62,7 @@ export function CardFace({
   const isFollowUpOverdue = daysSinceStageChange >= followUpDays;
   // The CRM "next step" for this card (what to do / who's ghosting you).
   const nextAction = getNextAction(savedJob, { followUpDays, stageName: stageName ?? null });
-  const where = [plainText(job_listing.company), job_listing.location].filter(Boolean);
+  const where = [job_listing.company, job_listing.location].filter(Boolean);
 
   return (
     <div
@@ -78,7 +77,7 @@ export function CardFace({
     >
       <div className="flex items-start justify-between gap-1">
         <p className="line-clamp-2 text-sm font-medium leading-tight">
-          <Marked text={plainText(job_listing.title)} words={words} />
+          <Marked text={job_listing.title} words={words} />
         </p>
         <div className="flex shrink-0 items-center gap-0.5">
           {isFollowUpOverdue && (

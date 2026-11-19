@@ -63,7 +63,9 @@ export function TopBar() {
           </button>
         )}
         <p className="truncate text-xl font-semibold tracking-tight">
-          {page?.label ?? "Job Enhancer"}
+          {/* A job can be opened from My Jobs, Find Jobs, Matches or an email,
+              so its page isn't titled after any one of them. */}
+          {inner ? "Job" : (page?.label ?? "Job Enhancer")}
         </p>
         {/* The current page's own buttons land here (TopBarActions). */}
         <div id={ACTIONS_SLOT} className="-mr-2 ml-auto flex shrink-0 items-center gap-1" />

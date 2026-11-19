@@ -15,6 +15,14 @@ const NAMED: Record<string, string> = {
   mdash: "—",
 };
 
+/** A job with its title and company made readable. Applied once, where jobs
+ * are loaded, so every screen, search and sort sees the same clean text. */
+export function cleanJob<T extends { title: string; company: string }>(job: T): T {
+  const title = plainText(job.title);
+  const company = plainText(job.company);
+  return title === job.title && company === job.company ? job : { ...job, title, company };
+}
+
 export function plainText(text: string | null | undefined): string {
   if (!text) return "";
   return text.replace(/&(#x?[0-9a-f]+|[a-z]+);/gi, (whole, code: string) => {

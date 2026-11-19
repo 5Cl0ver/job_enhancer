@@ -4,8 +4,8 @@
     <meta charset="UTF-8" />
     <!-- viewport-fit=cover makes env(safe-area-inset-*) real on iPhones. -->
     <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
-    <meta name="theme-color" content="#fafafc" media="(prefers-color-scheme: light)" />
-    <meta name="theme-color" content="#0b0b12" media="(prefers-color-scheme: dark)" />
+    <!-- Set to the app's own theme by the script below and by theme-provider. -->
+    <meta name="theme-color" content="#0b0b12" />
     <!-- Add to Home Screen: opens full screen, without the browser's bars. -->
     <link rel="manifest" href="/manifest.webmanifest" />
     <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
@@ -30,6 +30,9 @@
             (t === "system" &&
               window.matchMedia("(prefers-color-scheme: dark)").matches);
           document.documentElement.classList.toggle("dark", dark);
+          document
+            .querySelector('meta[name="theme-color"]')
+            .setAttribute("content", dark ? "#0b0b12" : "#fafafc");
         } catch (e) {}
       })();
     </script>

@@ -23,7 +23,9 @@ export function JobDetailPage() {
   };
 
   return (
-    <div className="container mx-auto max-w-3xl md:px-4 md:py-6">
+    // max-md:pb-16: room for the phone's pinned Stage / Apply bar, below the
+    // last thing on the page (the job's emails).
+    <div className="container mx-auto max-w-3xl max-md:pb-16 md:px-4 md:py-6">
       {isLoading ? (
         <div className="space-y-4">
           <Skeleton className="h-8 w-2/3" />

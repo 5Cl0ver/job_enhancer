@@ -453,7 +453,7 @@ export function InboxBar() {
           </p>
           <p className="text-xs text-muted-foreground">
             Last checked {last} ·{" "}
-            <Link to="/settings" className="underline underline-offset-2">
+            <Link to="/settings#email" className="underline underline-offset-2">
               Email settings
             </Link>
           </p>
@@ -463,7 +463,7 @@ export function InboxBar() {
       {account.status === "error" && (
         <p className="text-xs text-destructive">
           {account.last_error || "Your inbox needs reconnecting."}{" "}
-          <Link to="/settings" className="font-medium underline">
+          <Link to="/settings#email" className="font-medium underline">
             Reconnect
           </Link>
         </p>
