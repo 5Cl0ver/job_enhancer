@@ -60,7 +60,7 @@ from app.services.email_imap import (
     parse_header_block,
 )
 from app.services.email_prefilter import HEADER_FIELDS, possible_job_email
-from app.services.email_scan import EmailMessage
+from app.services.email_scan import SCAN_TEXT_LIMIT, EmailMessage
 
 logger = logging.getLogger("app.email_sync")
 
@@ -510,6 +510,9 @@ class _FolderSync:
 
     def _message(self, uid: int, raw: bytes, email_id: str) -> EmailMessage:
         msg = _parse_message(str(uid), raw)
+        # Keep only the top of the text: a pass can hold hundreds of emails.
+        msg.body = msg.body[:SCAN_TEXT_LIMIT]
+        msg.newest_text = msg.newest_text[:SCAN_TEXT_LIMIT]
         msg.folder = self.folder
         msg.uidvalidity = self.uidvalidity
         msg.email_id = email_id
