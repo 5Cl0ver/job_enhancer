@@ -36,13 +36,13 @@ export function JobDetail({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      {/* Back link */}
+      {/* Back link (a phone has the back arrow in its top bar instead) */}
       <Link
-        to="/saved"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        to="/jobs"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground max-md:hidden"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to saved
+        Back to My Jobs
       </Link>
 
       {/* Header */}

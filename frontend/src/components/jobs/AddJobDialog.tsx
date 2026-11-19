@@ -21,7 +21,7 @@ import { Switch } from "@/components/ui/switch";
  * "Add job manually" (FR-004a) — paste a link from LinkedIn/Indeed/anywhere
  * plus a few details, and it becomes a normal tracked job.
  */
-export function AddJobDialog() {
+export function AddJobDialog({ compact = false }: { compact?: boolean }) {
   const [open, setOpen] = useState(false);
   const [url, setUrl] = useState("");
   const [title, setTitle] = useState("");
@@ -70,10 +70,17 @@ export function AddJobDialog() {
       }}
     >
       <DialogTrigger asChild>
-        <Button className="gap-2">
-          <Plus className="h-4 w-4" aria-hidden />
-          Add job
-        </Button>
+        {compact ? (
+          // The phone's top bar: just the plus.
+          <Button size="icon" variant="ghost" aria-label="Add job">
+            <Plus className="h-5 w-5" aria-hidden />
+          </Button>
+        ) : (
+          <Button className="gap-2">
+            <Plus className="h-4 w-4" aria-hidden />
+            Add job
+          </Button>
+        )}
       </DialogTrigger>
       <DialogContent>
         <DialogHeader>

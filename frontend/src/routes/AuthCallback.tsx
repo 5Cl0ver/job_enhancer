@@ -14,11 +14,11 @@ export function AuthCallback() {
     const supabase = createClient();
 
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate("/search", { replace: true });
+      if (data.session) navigate("/", { replace: true });
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) navigate("/search", { replace: true });
+      if (session) navigate("/", { replace: true });
     });
 
     return () => sub.subscription.unsubscribe();

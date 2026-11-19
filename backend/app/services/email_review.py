@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -43,7 +43,12 @@ from app.services.email_classify import (
     stage_for_event,
 )
 from app.services.email_match import JOB_ID, JOB_URL, TEMPLATE
-from app.services.email_scan import _stage_orders, card_action, mail_link
+from app.services.email_scan import (
+    IMPORTANT_EVENTS,
+    _stage_orders,
+    card_action,
+    mail_link,
+)
 from app.services.saved_jobs import save_manual_job
 from app.services.tracker import move_job_to_stage
 
@@ -90,6 +95,23 @@ async def list_pending(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEve
         .order_by(DetectedEvent.created_at.desc())
     )
     return list(rows)
+
+
+async def count_to_review(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """How many updates wait on the user: an important update that needs a
+    click, or one whose job is unclear. The same set the page lists first."""
+    return (
+        await db.scalar(
+            select(func.count())
+            .select_from(DetectedEvent)
+            .where(
+                DetectedEvent.user_id == user_id,
+                DetectedEvent.status.in_((STATUS_PENDING, STATUS_REVIEW)),
+                DetectedEvent.event_type.in_(IMPORTANT_EVENTS),
+            )
+        )
+        or 0
+    )
 
 
 async def auto_apply(

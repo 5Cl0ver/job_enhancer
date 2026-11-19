@@ -11,6 +11,7 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/tracker.py` | `/pipeline-stages` | stage CRUD + `POST /move` (Kanban) |
 | `v1/saved_searches.py` | `/saved-searches` | save/list/delete searches, new-matches feed, mark-seen (FR-024) |
 | `v1/analytics.py` | `/analytics` | `GET /analytics/summary` (totals + 8-week activity) |
+| `v1/attention.py` | `/attention` | `GET /attention` (counts for the nav badges: email updates to review; to-do counts reserved) |
 | `v1/scout.py` | `/scout` | Claude Scout: `GET/POST /scout/tracks`, `PATCH/DELETE /scout/tracks/{id}`; `GET/POST /scout/missions`, `PATCH/DELETE /scout/missions/{id}`, `POST /scout/missions/{id}/runs` (Start); `GET /scout/runs`, `GET /scout/runs/active` (extension), `GET /scout/runs/{id}`, `POST /scout/runs/{id}/stop`; `POST /scout/captures` (extension page copy) |
 | `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload; `?make_active=false` keeps the main resume), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET /ai/documents` (list, optional `?job_listing_id=`), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
 | `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export`, `DELETE /users/me` |

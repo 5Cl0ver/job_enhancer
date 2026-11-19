@@ -16,9 +16,9 @@ export default function MatchesPage() {
   const deleteSearch = useDeleteSavedSearch();
 
   return (
-    <div className="container mx-auto max-w-6xl px-4 py-6">
+    <div className="container mx-auto max-w-6xl md:px-4 md:py-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
-        <div className="space-y-1">
+        <div className="space-y-1 max-md:hidden">
           <h1 className="text-2xl font-bold tracking-tight">New Matches</h1>
           <p className="text-sm text-muted-foreground">
             Fresh results from your saved searches, checked daily.

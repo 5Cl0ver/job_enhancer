@@ -6,7 +6,7 @@ React Router **page components** (the app's screens), wired up in
 
 | File | Route | Purpose | Uses |
 |---|---|---|---|
-| `DashboardLayout.tsx` | `/` (layout) | Sidebar nav + `<Outlet/>` + sign-out; wraps children in `RequireAuth` | `lib/supabase` |
+| `DashboardLayout.tsx` | `/` (layout) | The app frame: desktop sidebar (icons, Email count), or on a phone a top bar + bottom tab bar (`components/layout/PhoneNav`); `<Outlet/>`; wraps children in `RequireAuth`. `/` opens My Jobs on a phone, Find Jobs on a computer | `useAttention`, `useProfile` |
 | `RequireAuth.tsx` | (guard) | Redirect to `/login` if no Supabase session | `lib/supabase` |
 | `Login.tsx` | `/login` | Email/password + GitHub sign in/up | `lib/supabase` |
 | `AuthCallback.tsx` | `/auth/callback` | OAuth redirect landing → session → `/search` | `lib/supabase` |

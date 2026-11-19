@@ -27,12 +27,12 @@ export function Login() {
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate("/search", { replace: true });
+        navigate("/", { replace: true });
       } else {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         if (data.session) {
-          navigate("/search", { replace: true });
+          navigate("/", { replace: true });
         } else {
           setInfo("Account created! Check your email to confirm, then sign in.");
           setMode("signin");

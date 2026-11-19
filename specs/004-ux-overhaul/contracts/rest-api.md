@@ -42,8 +42,9 @@ Each item gains:
 ```json
 "open_tasks": [{"id": "…", "kind": "interview", "title": "Interview: reply and prepare", "due_at": null}]
 ```
-and no longer carries the full description (the drawer fetches the one job it
-opens). New saves get the user's first stage when none is given.
+The list already carries a short preview, not the full description (the drawer
+fetches the one job it opens). New saves get the user's first stage when none
+is given.
 
 ### POST /pipeline-stages/move
 Unchanged. Now idempotent in the UI's eyes: moving a job to the stage it is

@@ -5,23 +5,22 @@ import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useSavedJobs, useUnsaveJob } from "@/hooks/useSavedJobs";
-
-type AppliedFilter = "all" | "applied" | "not";
-
-const PAY_OPTIONS = [
-  { label: "Any pay", value: 0 },
-  { label: "$50k+", value: 50_000 },
-  { label: "$75k+", value: 75_000 },
-  { label: "$100k+", value: 100_000 },
-  { label: "$125k+", value: 125_000 },
-  { label: "$150k+", value: 150_000 },
-];
+import { useShowMore } from "@/hooks/useShowMore";
+import {
+  NO_FILTERS,
+  PAY_OPTIONS,
+  filterJobs,
+  filtersSet,
+  jobTypesIn,
+  type AppliedFilter,
+  type JobFilters,
+} from "@/lib/jobFilters";
 
 const inputCls =
   "h-9 rounded-md border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
 
-/** The saved-jobs list (collections + filters + card grid). Shared by the
- *  "List" view of the combined My Jobs page. */
+/** The saved-jobs list on a computer (folders + filters + card grid): the
+ *  "List" view of My Jobs. A phone gets PhoneJobList instead. */
 export function SavedJobsBody() {
   const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
   const { data: savedJobs = [], isLoading, isError } = useSavedJobs({
@@ -29,53 +28,20 @@ export function SavedJobsBody() {
   });
   const unsaveJob = useUnsaveJob();
 
-  // --- Filters ---
-  const [q, setQ] = useState("");
-  const [remoteOnly, setRemoteOnly] = useState(false);
-  const [applied, setApplied] = useState<AppliedFilter>("all");
-  const [minPay, setMinPay] = useState(0);
-  const [jobType, setJobType] = useState("all");
-  const [loc, setLoc] = useState("");
+  const [filters, setFilters] = useState<JobFilters>(NO_FILTERS);
+  const set = (patch: Partial<JobFilters>) => setFilters((f) => ({ ...f, ...patch }));
+  const { q, loc, minPay, jobType, applied, remoteOnly } = filters;
 
   // Job-type choices come from what's actually in the list.
-  const jobTypes = useMemo(
-    () =>
-      [...new Set(savedJobs.map((s) => s.job_listing.job_type).filter(Boolean))].sort() as string[],
-    [savedJobs],
+  const jobTypes = useMemo(() => jobTypesIn(savedJobs), [savedJobs]);
+  const filtered = useMemo(() => filterJobs(savedJobs, filters), [savedJobs, filters]);
+  // Cards are drawn a page at a time; hundreds at once made the page crawl.
+  const { limit, showMore, moreRef } = useShowMore(
+    `${selectedCollection}|${JSON.stringify(filters)}`,
   );
 
-  const filtered = useMemo(() => {
-    return savedJobs.filter((sj) => {
-      const j = sj.job_listing;
-      if (q) {
-        const hay = `${j.title} ${j.company}`.toLowerCase();
-        if (!hay.includes(q.toLowerCase())) return false;
-      }
-      if (remoteOnly && !j.is_remote) return false;
-      if (applied === "applied" && !sj.applied_at) return false;
-      if (applied === "not" && sj.applied_at) return false;
-      if (minPay > 0) {
-        const pay = j.salary_max ?? j.salary_min ?? 0;
-        const yearly = j.salary_period === "hourly" ? pay * 2080 : pay;
-        if (yearly < minPay) return false;
-      }
-      if (jobType !== "all" && (j.job_type || "").toLowerCase() !== jobType.toLowerCase())
-        return false;
-      if (loc && !(j.location || "").toLowerCase().includes(loc.toLowerCase())) return false;
-      return true;
-    });
-  }, [savedJobs, q, remoteOnly, applied, minPay, jobType, loc]);
-
-  const activeFilters =
-    !!q || remoteOnly || applied !== "all" || minPay > 0 || jobType !== "all" || !!loc;
-  const clearFilters = () => {
-    setQ("");
-    setRemoteOnly(false);
-    setApplied("all");
-    setMinPay(0);
-    setJobType("all");
-    setLoc("");
-  };
+  const activeFilters = !!q || filtersSet(filters) > 0;
+  const clearFilters = () => setFilters(NO_FILTERS);
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
@@ -91,15 +57,15 @@ export function SavedJobsBody() {
             className={`${inputCls} w-full min-w-[160px] sm:w-auto sm:flex-1`}
             placeholder="Search title or company…"
             value={q}
-            onChange={(e) => setQ(e.target.value)}
+            onChange={(e) => set({ q: e.target.value })}
           />
           <input
             className={`${inputCls} w-32`}
             placeholder="Location / state"
             value={loc}
-            onChange={(e) => setLoc(e.target.value)}
+            onChange={(e) => set({ loc: e.target.value })}
           />
-          <select className={inputCls} value={minPay} onChange={(e) => setMinPay(Number(e.target.value))}>
+          <select className={inputCls} value={minPay} onChange={(e) => set({ minPay: Number(e.target.value) })}>
             {PAY_OPTIONS.map((o) => (
               <option key={o.value} value={o.value}>
                 {o.label}
@@ -107,7 +73,7 @@ export function SavedJobsBody() {
             ))}
           </select>
           {jobTypes.length > 0 && (
-            <select className={inputCls} value={jobType} onChange={(e) => setJobType(e.target.value)}>
+            <select className={inputCls} value={jobType} onChange={(e) => set({ jobType: e.target.value })}>
               <option value="all">Any type</option>
               {jobTypes.map((t) => (
                 <option key={t} value={t}>
@@ -119,7 +85,7 @@ export function SavedJobsBody() {
           <select
             className={inputCls}
             value={applied}
-            onChange={(e) => setApplied(e.target.value as AppliedFilter)}
+            onChange={(e) => set({ applied: e.target.value as AppliedFilter })}
           >
             <option value="all">All</option>
             <option value="not">Not applied</option>
@@ -127,7 +93,7 @@ export function SavedJobsBody() {
           </select>
           <button
             type="button"
-            onClick={() => setRemoteOnly((v) => !v)}
+            onClick={() => set({ remoteOnly: !remoteOnly })}
             className={`h-9 rounded-md border px-3 text-sm font-medium ${
               remoteOnly
                 ? "bg-primary text-primary-foreground"
@@ -181,7 +147,7 @@ export function SavedJobsBody() {
               Showing {filtered.length} of {savedJobs.length}
             </p>
             <div className="grid gap-4 sm:grid-cols-2">
-              {filtered.map((sj) => (
+              {filtered.slice(0, limit).map((sj) => (
                 <JobCard
                   key={sj.id}
                   job={sj.job_listing}
@@ -192,6 +158,17 @@ export function SavedJobsBody() {
                 />
               ))}
             </div>
+            {filtered.length > limit && (
+              <button
+                key={limit}
+                ref={moreRef}
+                type="button"
+                onClick={showMore}
+                className="mt-4 h-10 w-full rounded-md border border-dashed text-sm font-medium text-muted-foreground hover:bg-accent hover:text-foreground"
+              >
+                Show more ({filtered.length - limit} left)
+              </button>
+            )}
           </>
         )}
       </main>

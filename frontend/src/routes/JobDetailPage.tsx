@@ -22,7 +22,7 @@ export function JobDetailPage() {
   };
 
   return (
-    <div className="container mx-auto max-w-3xl px-4 py-6">
+    <div className="container mx-auto max-w-3xl md:px-4 md:py-6">
       {isLoading ? (
         <div className="space-y-4">
           <Skeleton className="h-8 w-2/3" />

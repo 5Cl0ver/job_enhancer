@@ -195,7 +195,7 @@ export function KanbanCard({
           onClick={stop}
           onKeyDown={stop}
           className={cn(
-            "rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground",
+            "rounded p-0.5 text-muted-foreground hover:bg-muted hover:text-foreground pointer-coarse:p-2.5",
             "focus-visible:opacity-100 data-[state=open]:opacity-100",
             "md:opacity-0 md:group-hover:opacity-100",
           )}
