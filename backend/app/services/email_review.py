@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import and_, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -98,20 +98,28 @@ async def list_pending(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEve
 
 
 async def count_to_review(db: AsyncSession, user_id: uuid.UUID) -> int:
-    """How many updates wait on the user: an important update that needs a
-    click, or one whose job is unclear. The same set the page lists first."""
-    return (
-        await db.scalar(
-            select(func.count())
-            .select_from(DetectedEvent)
-            .where(
-                DetectedEvent.user_id == user_id,
-                DetectedEvent.status.in_((STATUS_PENDING, STATUS_REVIEW)),
-                DetectedEvent.event_type.in_(IMPORTANT_EVENTS),
-            )
+    """How many items the Email Updates page lists as waiting on the user: each
+    important update whose job is unclear, plus each important update that
+    needs a click. Like the page, several emails saying the same thing about
+    one job (three rejections from one company) count once."""
+    rows = await db.execute(
+        select(
+            DetectedEvent.status, DetectedEvent.saved_job_id, DetectedEvent.event_type
+        ).where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.status.in_((STATUS_PENDING, STATUS_REVIEW)),
+            DetectedEvent.event_type.in_(IMPORTANT_EVENTS),
         )
-        or 0
     )
+    count = 0
+    seen: set[tuple[uuid.UUID, str]] = set()
+    for status, saved_job_id, event_type in rows:
+        if status == STATUS_PENDING and saved_job_id is not None:
+            if (saved_job_id, event_type) in seen:
+                continue
+            seen.add((saved_job_id, event_type))
+        count += 1
+    return count
 
 
 async def auto_apply(

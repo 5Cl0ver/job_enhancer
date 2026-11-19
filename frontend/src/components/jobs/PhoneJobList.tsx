@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { BookmarkX, Search, SlidersHorizontal, X } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
+import { CountBadge } from "@/components/layout/PhoneNav";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -117,6 +118,7 @@ export function PhoneJobList() {
     `${active}|${folder}|${JSON.stringify(filters)}`,
   );
   const stageNames = useMemo(() => new Map(stages.map((s) => [s.id, s.name])), [stages]);
+  const jobTypes = useMemo(() => jobTypesIn(jobs), [jobs]);
 
   const set = (patch: Partial<JobFilters>) => setFilters((f) => ({ ...f, ...patch }));
   const chooseStage = (id: string) => {
@@ -174,11 +176,7 @@ export function PhoneJobList() {
           >
             <SlidersHorizontal className="h-4 w-4" aria-hidden />
             Filters
-            {setCount > 0 && (
-              <span className="min-w-5 rounded-full bg-primary px-1.5 text-center text-[11px] font-semibold leading-5 text-primary-foreground">
-                {setCount}
-              </span>
-            )}
+            <CountBadge count={setCount} />
           </Button>
         </div>
 
@@ -307,7 +305,7 @@ export function PhoneJobList() {
                 ))}
               </select>
             </label>
-            {jobTypesIn(jobs).length > 0 && (
+            {jobTypes.length > 0 && (
               <label className="block space-y-1 text-sm font-medium">
                 Type
                 <select
@@ -316,7 +314,7 @@ export function PhoneJobList() {
                   onChange={(e) => set({ jobType: e.target.value })}
                 >
                   <option value="all">Any type</option>
-                  {jobTypesIn(jobs).map((t) => (
+                  {jobTypes.map((t) => (
                     <option key={t} value={t}>
                       {t}
                     </option>

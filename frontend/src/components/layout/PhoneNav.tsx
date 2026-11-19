@@ -39,8 +39,15 @@ export function TopBar() {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const page = pageFor(pathname);
-  // One level down (a job's own page): show a way back to the list.
+  // One level down (a job's own page): show a way back.
   const inner = !!page && pathname !== page.to;
+  // Back to wherever you came from (My Jobs, Matches, an email). Opened
+  // straight from a link there is nowhere to go back to, so go up to the list.
+  const back = () => {
+    const cameFromInside = ((window.history.state as { idx?: number } | null)?.idx ?? 0) > 0;
+    if (cameFromInside) navigate(-1);
+    else if (page) navigate(page.to, { replace: true });
+  };
 
   return (
     <header className="sticky top-0 z-30 border-b bg-background/95 pt-[env(safe-area-inset-top)] backdrop-blur md:hidden">
@@ -48,8 +55,8 @@ export function TopBar() {
         {inner && (
           <button
             type="button"
-            aria-label={`Back to ${page.label}`}
-            onClick={() => navigate(-1)}
+            aria-label="Back"
+            onClick={back}
             className="-ml-3 flex h-11 w-11 items-center justify-center rounded-md active:bg-accent"
           >
             <ArrowLeft className="h-5 w-5" />

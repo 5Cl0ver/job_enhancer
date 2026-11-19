@@ -72,11 +72,11 @@ describe("phone top bar", () => {
 
   it("offers a way back from a job's own page", () => {
     renderBar({}, "/jobs/123");
-    expect(screen.getByRole("button", { name: "Back to My Jobs" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
   });
 
   it("has no back arrow on a top-level page", () => {
     renderBar({}, "/jobs");
-    expect(screen.queryByRole("button", { name: /Back to/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Back" })).not.toBeInTheDocument();
   });
 });

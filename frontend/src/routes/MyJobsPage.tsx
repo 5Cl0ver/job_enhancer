@@ -73,9 +73,10 @@ export default function MyJobsPage() {
         "mx-auto max-w-full",
         // The board fills the window and its columns scroll, so the page itself
         // doesn't. The heights are the window minus the layout's padding; on a
-        // phone, minus the top bar too, down to just above the tab bar.
+        // phone, minus the top bar (and its 1px border) too, down to just above
+        // the tab bar.
         view === "board"
-          ? "-mb-8 flex h-[calc(100dvh-7.75rem-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col md:mb-0 md:h-[calc(100dvh-4rem)]"
+          ? "-mb-8 flex h-[calc(100dvh-7.75rem-1px-env(safe-area-inset-top)-env(safe-area-inset-bottom))] flex-col md:mb-0 md:h-[calc(100dvh-4rem)]"
           : "container md:px-4 md:py-6",
       )}
     >

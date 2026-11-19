@@ -51,6 +51,6 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Anything else -> send to search
-  { path: "*", element: <Navigate to="/search" replace /> },
+  // Anything else -> the app's start page
+  { path: "*", element: <Navigate to="/" replace /> },
 ]);
