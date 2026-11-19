@@ -10,6 +10,7 @@ by design: unknown emails and low-confidence matches are dropped, never guessed.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -59,6 +60,10 @@ from app.services.email_templates import IGNORE, read_template
 from app.services.email_text import clean_header
 
 logger = logging.getLogger("app.email_scan")
+
+# How much of an email a scan reads. Job news sits at the top; a long newsletter
+# read in full ties up the server's one worker until Render restarts it.
+SCAN_TEXT_LIMIT = 30_000
 
 # Updates worth the user's attention; only these can become a question.
 IMPORTANT_EVENTS = (INTERVIEW, ASSESSMENT, OFFER, REJECTED)
@@ -341,6 +346,24 @@ def card_action(
     return True, "forward"
 
 
+def _read(msg: EmailMessage, jobs: list[dict]):
+    """The CPU-heavy reading of one email: its hiring-system template, if any,
+    and the classifier's verdict (None when the template says to ignore it)."""
+    # A hiring system's own template (Indeed, LinkedIn, Workday, …) is
+    # read exactly: it names the company and job, and often the outcome.
+    tmpl = read_template(msg.subject, msg.from_addr, msg.body)
+    if tmpl is not None and tmpl.event == IGNORE:
+        return tmpl, None
+    verdict = classify(
+        msg.subject,
+        msg.classify_text,
+        msg.from_addr,
+        bulk=msg.list_mail,
+        job_sender=sender_is_saved_company(jobs, msg.from_addr, msg.reply_to),
+    )
+    return tmpl, verdict
+
+
 async def detect_events(
     db: AsyncSession,
     account: EmailAccount,
@@ -372,20 +395,14 @@ async def detect_events(
             seen.add(msg, key)
             result.skipped["own_mail"] = result.skipped.get("own_mail", 0) + 1
             continue
-        # A hiring system's own template (Indeed, LinkedIn, Workday, …) is
-        # read exactly: it names the company and job, and often the outcome.
-        tmpl = read_template(msg.subject, msg.from_addr, msg.body)
-        if tmpl is not None and tmpl.event == IGNORE:
+        msg.body = msg.body[:SCAN_TEXT_LIMIT]
+        msg.newest_text = msg.newest_text[:SCAN_TEXT_LIMIT]
+        # Off the event loop, so the app keeps answering while a scan reads.
+        tmpl, verdict = await asyncio.to_thread(_read, msg, jobs)
+        if verdict is None:
             seen.add(msg, key)
             result.skipped["job_alert"] = result.skipped.get("job_alert", 0) + 1
             continue
-        verdict = classify(
-            msg.subject,
-            msg.classify_text,
-            msg.from_addr,
-            bulk=msg.list_mail,
-            job_sender=sender_is_saved_company(jobs, msg.from_addr, msg.reply_to),
-        )
         event_type = verdict.event
         if tmpl is not None and tmpl.event:
             event_type = tmpl.event  # the template states the outcome
