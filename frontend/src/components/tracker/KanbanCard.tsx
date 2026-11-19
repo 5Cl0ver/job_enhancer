@@ -143,8 +143,8 @@ interface KanbanCardProps {
   stageName?: string | null;
   /** Every stage column, for the "Move to" menu. */
   stages: PipelineStage[];
-  /** The column this card is shown in. */
-  stageId: string;
+  /** The stage the job is in, or null when it has none yet. */
+  stageId: string | null;
   onMove: (stageId: string) => void;
   words?: string[];
   /** A search is on and this card doesn't match it. */
@@ -166,6 +166,13 @@ export function KanbanCard({
 }: KanbanCardProps) {
   const { listeners, setNodeRef, isDragging } = useDraggable({ id: savedJob.id });
   const [open, setOpen] = useState(false);
+  // The dialog is mounted the first time it's opened and then kept, so closing
+  // still animates, without a hidden dialog per card on a board of hundreds.
+  const [everOpened, setEverOpened] = useState(false);
+  const openDetails = () => {
+    setEverOpened(true);
+    setOpen(true);
+  };
   const toggleFlag = useToggleResearchFlag();
   // Distinguish a click from a drag: only open the detail if the pointer barely
   // moved (a drag moves ≥5px and is handled by dnd-kit instead).
@@ -177,7 +184,7 @@ export function KanbanCard({
   // keyboards. Its events must not reach the card (start a drag, open details).
   const stop = (e: React.SyntheticEvent) => e.stopPropagation();
   const menu = (
-    <DropdownMenu>
+    <DropdownMenu modal={false}>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
@@ -196,7 +203,15 @@ export function KanbanCard({
           <MoreHorizontal className="h-4 w-4" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="end" className="w-52" onClick={stop} onKeyDown={stop}>
+      <DropdownMenuContent
+        align="end"
+        className="w-52"
+        onClick={stop}
+        onKeyDown={stop}
+        onMouseDown={stop}
+        onTouchStart={stop}
+        onPointerDown={stop}
+      >
         <DropdownMenuLabel>Move to</DropdownMenuLabel>
         {stages.map((s) => (
           <DropdownMenuItem
@@ -217,7 +232,10 @@ export function KanbanCard({
           <Search className="h-3.5 w-3.5" aria-hidden />
           {flagged_for_research ? "Remove from Contact Further" : "Add to Contact Further"}
         </DropdownMenuItem>
-        <DropdownMenuItem onSelect={() => setOpen(true)}>Open details</DropdownMenuItem>
+        {/* After the menu has closed, so the two don't fight over focus. */}
+        <DropdownMenuItem onSelect={() => window.setTimeout(openDetails, 0)}>
+          Open details
+        </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>
   );
@@ -237,12 +255,12 @@ export function KanbanCard({
         onClick={(e) => {
           const d = downPos.current;
           if (d && Math.hypot(e.clientX - d.x, e.clientY - d.y) > 5) return; // was a drag
-          setOpen(true);
+          openDetails();
         }}
         onKeyDown={(e) => {
           if (e.key === "Enter" || e.key === " ") {
             e.preventDefault();
-            setOpen(true);
+            openDetails();
           }
         }}
         className={cn(
@@ -265,9 +283,7 @@ export function KanbanCard({
         />
       </div>
 
-      {/* Mounted only while open: a board of hundreds of cards shouldn't carry
-          hundreds of hidden dialogs. */}
-      {open && <JobDetailDialog savedJob={savedJob} open onOpenChange={setOpen} />}
+      {everOpened && <JobDetailDialog savedJob={savedJob} open={open} onOpenChange={setOpen} />}
     </>
   );
 }

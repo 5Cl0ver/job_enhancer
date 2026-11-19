@@ -41,23 +41,25 @@ describe("columnView", () => {
     job(String(i), i === 77 ? "Jira Administrator" : "Analyst", i === 77 ? "Quillstone" : "Vellacor"),
   );
 
+  const hits = (query: string) => many.filter((j) => matchesSearch(j, searchWords(query)));
+
   it("shows the first page and counts what is left", () => {
-    const view = columnView(many, [], PAGE_SIZE);
+    const view = columnView(many, null, PAGE_SIZE);
     expect(view.visible).toHaveLength(PAGE_SIZE);
     expect(view.hidden).toBe(70);
-    expect(view.matches).toBe(100);
+    expect(view.hitIds).toBeNull();
   });
 
   it("puts a match first even when it sits past the first page", () => {
-    const view = columnView(many, searchWords("jira"), PAGE_SIZE);
+    const view = columnView(many, hits("jira"), PAGE_SIZE);
     expect(view.visible[0].id).toBe("77");
-    expect(view.matches).toBe(1);
+    expect([...view.hitIds!]).toEqual(["77"]);
     expect(view.visible).toHaveLength(PAGE_SIZE);
   });
 
   it("never hides a match behind Show more", () => {
-    const view = columnView(many, searchWords("vellacor"), PAGE_SIZE);
-    expect(view.matches).toBe(99);
+    const view = columnView(many, hits("vellacor"), PAGE_SIZE);
+    expect(view.hitIds!.size).toBe(99);
     expect(view.visible).toHaveLength(99);
     expect(view.hidden).toBe(1);
   });

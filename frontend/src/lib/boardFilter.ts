@@ -25,30 +25,37 @@ export function matchesSearch(job: SavedJob, words: string[]): boolean {
 export interface ColumnView {
   /** Cards to render, matches first while searching. */
   visible: SavedJob[];
-  /** How many of the column's jobs match the search (all of them with none). */
-  matches: number;
+  /** Ids of the jobs that match the search; null when no search is on. */
+  hitIds: Set<string> | null;
   /** Jobs not rendered yet. */
   hidden: number;
 }
 
 /**
  * What one column shows: at most `limit` cards, except that every search match
- * is always shown (a match must never hide behind "Show more").
+ * is always shown (a match must never hide behind "Show more"). `hits` is the
+ * column's matching jobs, or null when no search is on.
  */
-export function columnView(jobs: SavedJob[], words: string[], limit: number): ColumnView {
-  if (words.length === 0) {
+export function columnView(
+  jobs: SavedJob[],
+  hits: SavedJob[] | null,
+  limit: number,
+): ColumnView {
+  if (hits === null) {
     const visible = jobs.slice(0, limit);
-    return { visible, matches: jobs.length, hidden: jobs.length - visible.length };
+    return { visible, hitIds: null, hidden: jobs.length - visible.length };
   }
-  const hits = jobs.filter((j) => matchesSearch(j, words));
-  const rest = jobs.filter((j) => !matchesSearch(j, words));
-  const visible = [...hits, ...rest.slice(0, Math.max(0, limit - hits.length))];
-  return { visible, matches: hits.length, hidden: jobs.length - visible.length };
+  const hitIds = new Set(hits.map((j) => j.id));
+  const room = Math.max(0, limit - hits.length);
+  const rest = jobs.filter((j) => !hitIds.has(j.id)).slice(0, room);
+  const visible = [...hits, ...rest];
+  return { visible, hitIds, hidden: jobs.length - visible.length };
 }
 
 /**
- * The stage column a job belongs in. A job with no stage, or one whose stage
- * was deleted, goes in the first column instead of vanishing from the board.
+ * The column a job is shown in. A job with no stage, or one whose stage was
+ * deleted, shows in the first column instead of vanishing from the board. It
+ * still has no stage: moving it into any column, the first included, sets one.
  */
 export function stageFor(job: SavedJob, stageIds: string[]): string | null {
   if (job.pipeline_stage_id && stageIds.includes(job.pipeline_stage_id)) {

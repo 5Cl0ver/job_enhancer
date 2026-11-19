@@ -268,31 +268,29 @@ export function KanbanBoard() {
     const id = stageFor(sj, stageIds);
     if (id) columns.get(id)?.push(sj);
   }
-  const matches = words.length
-    ? normalStages.flatMap((s) => (columns.get(s.id) ?? []).filter((sj) => matchesSearch(sj, words)))
-    : [];
+  // Each stage's matches, worked out once per search and shared with its column.
+  const hitsIn = (list: string[]) =>
+    new Map(
+      stageIds.map((id) => [id, (columns.get(id) ?? []).filter((sj) => matchesSearch(sj, list))]),
+    );
+  const hits = words.length > 0 ? hitsIn(words) : null;
+  const matchCount = hits ? [...hits.values()].reduce((n, list) => n + list.length, 0) : 0;
 
+  // mutateAsync, so every failed move reports itself even when several are in
+  // flight (per-call callbacks only fire for the latest one).
   const move = (savedJobId: string, stageId: string) => {
-    moveJob.mutate(
-      { savedJobId, stageId },
-      {
-        onError: () =>
-          toast.error("Couldn't move that job. It's back where it was.", {
-            action: { label: "Retry", onClick: () => move(savedJobId, stageId) },
-          }),
-      },
+    moveJob.mutateAsync({ savedJobId, stageId }).catch(() =>
+      toast.error("Couldn't move that job. It's back where it was.", {
+        action: { label: "Retry", onClick: () => move(savedJobId, stageId) },
+      }),
     );
   };
 
   const flag = (savedJobId: string) => {
-    toggleFlag.mutate(
-      { savedJobId, flagged: true },
-      {
-        onError: () =>
-          toast.error("Couldn't add that job to Contact Further.", {
-            action: { label: "Retry", onClick: () => flag(savedJobId) },
-          }),
-      },
+    toggleFlag.mutateAsync({ savedJobId, flagged: true }).catch(() =>
+      toast.error("Couldn't add that job to Contact Further.", {
+        action: { label: "Retry", onClick: () => flag(savedJobId) },
+      }),
     );
   };
 
@@ -310,9 +308,10 @@ export function KanbanBoard() {
       if (!dragged.flagged_for_research) flag(String(active.id));
       return;
     }
-    // Only columns take drops, so `over` is always a stage.
+    // Only columns take drops, so `over` is always a stage. A job with no stage
+    // can be dropped on the column it's shown in, which gives it that stage.
     const target = String(over.id);
-    if (stageIds.includes(target) && target !== stageFor(dragged, stageIds)) {
+    if (stageIds.includes(target) && target !== dragged.pipeline_stage_id) {
       move(dragged.id, target);
     }
   };
@@ -326,17 +325,27 @@ export function KanbanBoard() {
     updateStage.mutate({ id: b.id, sort_order: a.sort_order });
   };
 
-  // Enter in the search box goes to the first match and flashes it.
+  // Enter in the search box goes to the first match and flashes it. Worked out
+  // from what's typed right now, not the (slightly later) deferred search.
   const jumpToFirst = () => {
-    const first = matches[0];
+    const now = searchWords(query);
+    if (now.length === 0) return;
+    const first = [...hitsIn(now).values()].find((list) => list.length > 0)?.[0];
     if (!first) return;
-    setPulseId(first.id);
-    document
-      .getElementById(`card-${first.id}`)
-      ?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    // Clear first so a second Enter on the same card flashes it again.
+    setPulseId(null);
+    window.requestAnimationFrame(() => {
+      setPulseId(first.id);
+      document
+        .getElementById(`card-${first.id}`)
+        ?.scrollIntoView({ block: "nearest", inline: "center", behavior: "smooth" });
+    });
   };
 
-  if (stagesQuery.isError || jobsQuery.isError) {
+  // Only when there's nothing to show: a failed background refresh keeps the
+  // board that's already on screen.
+  const noData = stagesQuery.data === undefined || jobsQuery.data === undefined;
+  if (noData && (stagesQuery.isError || jobsQuery.isError)) {
     return (
       <ErrorState
         title="Couldn't load your jobs"
@@ -349,22 +358,7 @@ export function KanbanBoard() {
       </ErrorState>
     );
   }
-  if (stagesQuery.isLoading || jobsQuery.isLoading) return <BoardSkeleton />;
-  if (savedJobs.length === 0) {
-    return (
-      <EmptyState
-        icon={Briefcase}
-        title="No saved jobs yet"
-        action={
-          <Button asChild size="sm">
-            <Link to="/search">Find jobs</Link>
-          </Button>
-        }
-      >
-        Save a job and it shows up here, where you can move it from Applied to Offer.
-      </EmptyState>
-    );
-  }
+  if (noData) return <BoardSkeleton />;
 
   return (
     <div className="flex min-h-0 flex-1 flex-col gap-3">
@@ -404,17 +398,31 @@ export function KanbanBoard() {
             </kbd>
           )}
         </div>
-        {words.length > 0 && (
+        {hits && (
           <p className="text-sm text-muted-foreground" aria-live="polite">
-            {matches.length === 0
+            {matchCount === 0
               ? "No jobs match"
-              : `${matches.length} ${matches.length === 1 ? "match" : "matches"} · Enter to jump`}
+              : `${matchCount} ${matchCount === 1 ? "match" : "matches"} · Enter to jump`}
           </p>
         )}
         <div className="ml-auto">
           <AddStageDialog />
         </div>
       </div>
+
+      {savedJobs.length === 0 && (
+        <EmptyState
+          icon={Briefcase}
+          title="No saved jobs yet"
+          action={
+            <Button asChild size="sm">
+              <Link to="/search">Find jobs</Link>
+            </Button>
+          }
+        >
+          Save a job and it shows up here, where you can move it from Applied to Offer.
+        </EmptyState>
+      )}
 
       <div className="flex min-h-0 flex-1 snap-x gap-3 overflow-x-auto pb-2 sm:snap-none">
         <DndContext
@@ -434,6 +442,7 @@ export function KanbanBoard() {
               stages={normalStages}
               followUpDays={followUpDays}
               words={words}
+              hits={hits?.get(stage.id) ?? null}
               pulseId={pulseId}
               onMoveJob={move}
               canMoveLeft={i > 0}

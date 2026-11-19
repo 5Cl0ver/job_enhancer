@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { KanbanCard } from "@/components/tracker/KanbanCard";
-import { PAGE_SIZE, columnView, matchesSearch } from "@/lib/boardFilter";
+import { PAGE_SIZE, columnView } from "@/lib/boardFilter";
 import { cn } from "@/lib/utils";
 import type { PipelineStage, SavedJob } from "@/types/api";
 
@@ -14,6 +14,8 @@ interface PipelineColumnProps {
   followUpDays: number;
   /** Search words; empty when no search is on. */
   words: string[];
+  /** This stage's jobs that match the search; null when no search is on. */
+  hits: SavedJob[] | null;
   /** The card the search just jumped to. */
   pulseId: string | null;
   onMoveJob: (savedJobId: string, stageId: string) => void;
@@ -39,6 +41,7 @@ export function PipelineColumn({
   stages,
   followUpDays,
   words,
+  hits,
   pulseId,
   onMoveJob,
   canMoveLeft,
@@ -53,8 +56,8 @@ export function PipelineColumn({
   const scroller = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLButtonElement>(null);
   const columnColor = stage.color ? undefined : STAGE_COLORS[stage.name];
-  const view = columnView(jobs, words, limit);
-  const searching = words.length > 0;
+  const view = columnView(jobs, hits, limit);
+  const found = view.hitIds?.size ?? 0;
 
   // Add the next page when the "Show more" button scrolls into view.
   useEffect(() => {
@@ -125,10 +128,10 @@ export function PipelineColumn({
             <span
               className={cn(
                 "whitespace-nowrap rounded-full bg-background px-1.5 py-0.5 text-xs font-medium",
-                searching && view.matches > 0 && "bg-primary text-primary-foreground",
+                found > 0 && "bg-primary text-primary-foreground",
               )}
             >
-              {searching ? `${view.matches} of ${jobs.length}` : jobs.length}
+              {view.hitIds ? `${found} of ${jobs.length}` : jobs.length}
             </span>
           </div>
         </div>
@@ -143,20 +146,24 @@ export function PipelineColumn({
           isOver && "bg-muted/60",
         )}
       >
-        {view.visible.map((sj) => (
-          <KanbanCard
-            key={sj.id}
-            savedJob={sj}
-            followUpDays={followUpDays}
-            stageName={stage.name}
-            stages={stages}
-            stageId={stage.id}
-            onMove={(stageId) => onMoveJob(sj.id, stageId)}
-            words={words}
-            dimmed={searching && !matchesSearch(sj, words)}
-            pulse={pulseId === sj.id}
-          />
-        ))}
+        {view.visible.map((sj) => {
+          // A job with no stage is only shown here; it isn't in this stage yet.
+          const here = sj.pipeline_stage_id === stage.id;
+          return (
+            <KanbanCard
+              key={sj.id}
+              savedJob={sj}
+              followUpDays={followUpDays}
+              stageName={here ? stage.name : null}
+              stages={stages}
+              stageId={here ? stage.id : null}
+              onMove={(stageId) => onMoveJob(sj.id, stageId)}
+              words={words}
+              dimmed={view.hitIds !== null && !view.hitIds.has(sj.id)}
+              pulse={pulseId === sj.id}
+            />
+          );
+        })}
 
         {view.hidden > 0 && (
           <button

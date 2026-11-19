@@ -131,6 +131,24 @@ describe("KanbanBoard", () => {
     expect(toastError).not.toHaveBeenCalled();
   });
 
+  it("lets a job with no stage be put in the column it is shown in", async () => {
+    const user = userEvent.setup();
+    post.mockResolvedValue({});
+    renderBoard();
+    await user.type(await screen.findByLabelText("Search the board"), "tessaline");
+    await user.click(await screen.findByRole("button", { name: "Move or flag Help Desk Technician" }));
+    const applied = await screen.findByRole("menuitem", { name: "Applied" });
+    expect(applied).not.toHaveAttribute("data-disabled");
+    await user.click(applied);
+
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/pipeline-stages/move", {
+        saved_job_id: "n1",
+        stage_id: "applied",
+      }),
+    );
+  });
+
   it("tells the user when a move fails, with Retry", async () => {
     const user = userEvent.setup();
     post.mockRejectedValue(new Error("network"));
