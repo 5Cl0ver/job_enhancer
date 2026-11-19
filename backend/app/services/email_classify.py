@@ -467,6 +467,24 @@ _JOB_SENDER = re.compile(
     re.I,
 )
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+# Sellers of interview practice talk like interviewers ("schedule your mock
+# interview"). In marketing-looking mail that is an ad, never an interview.
+_INTERVIEW_PREP = re.compile(
+    r"\binterview (?:prep(?:aration)?|practice|coach(?:ing|es)?|tips|skills|course)\b|"
+    r"\b(?:mock|practice) interviews?\b|\bai (?:interview|mock)\w*|"
+    r"\binstant interviews?\b",
+    re.I,
+)
+# A short Title Case body line ("Complete Assessment", "Schedule Interview") or
+# a process flow ("Apply → Complete Assessment → Interview") is a step in a
+# "what happens next" list or a button label, not a request.
+# Words are split by required whitespace, so a long line can't be read more
+# than one way (an optional separator made matching take exponential time).
+_STEP_LABEL = re.compile(
+    r"^[A-Z][\w'&/-]*(?:\s+[A-Z][\w'&/-]*){0,3}\s*$"
+    r"|^(?=.*(?:→|->|»))\S+(?:\s+\S+){0,13}\s*$"
+)
+_STEP_WEIGHT = 0.3
 
 
 @dataclass
@@ -506,7 +524,10 @@ def _negated(sentence: str, start: int) -> bool:
 def _evidence(subject: str, text: str):
     """Per-event scores: each cue counts once (its best sentence)."""
     best: dict[int, tuple[float, str]] = {}
-    for sentence, factor in _sentences(subject, text):
+    has_subject = bool(subject and subject.strip())
+    for n, (sentence, factor) in enumerate(_sentences(subject, text)):
+        if (n or not has_subject) and _STEP_LABEL.match(sentence):
+            factor *= _STEP_WEIGHT  # body step label; a subject is meant to be short
         conditional = bool(_CONDITIONAL.search(sentence))
         maybe_rejected = bool(_CONDITIONAL_REJECTION.search(sentence))
         looking_back = bool(_PAST_REFERENCE.search(sentence))
@@ -574,6 +595,8 @@ def classify(
     )
     if not relevant:
         return Classification(UNKNOWN, reason="gate")
+    if looks_bulk and _INTERVIEW_PREP.search(joined):
+        return Classification(UNKNOWN, reason="promo")
 
     outcome = max((scores.get(e, 0.0) for e in _OUTCOMES), default=0.0)
     if outcome >= DECIDE_AT and APPLIED in scores:

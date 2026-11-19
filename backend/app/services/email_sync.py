@@ -823,7 +823,9 @@ def fetch_refs(
     Calls ``on_message(ref, raw, issue)`` once per ref as it completes, so the
     caller can save progress: ``raw`` is the message (headers only for an
     oversize one), or None when it is gone — ``issue`` then says why
-    (``vanished`` or ``uidvalidity_changed``). Raises :class:`SyncInterrupted`
+    (``vanished`` or ``uidvalidity_changed``). A ref with no UIDVALIDITY (a row
+    saved before folders were tracked) is read at the folder's current one; the
+    caller must check it is the same email. Raises :class:`SyncInterrupted`
     on a dropped connection or rate limit; refs already reported are done.
     """
     try:
@@ -846,11 +848,11 @@ def fetch_refs(
         for folder, items in by_folder.items():
             client.call("EXAMINE", conn.select, _quote(folder), True)
             uv = _response_int(conn, "UIDVALIDITY")
-            stale = [r for r in items if r.uidvalidity != uv]
+            stale = [r for r in items if r.uidvalidity not in (uv, None)]
             for r in stale:  # the folder was rebuilt: these UIDs mean nothing now
                 on_message(r, None, "uidvalidity_changed")
             items = sorted(
-                (r for r in items if r.uidvalidity == uv), key=lambda r: r.uid
+                (r for r in items if r.uidvalidity in (uv, None)), key=lambda r: r.uid
             )
             big = [r for r in items if r.size and r.size > max_body_bytes]
             small = [r for r in items if r not in big]

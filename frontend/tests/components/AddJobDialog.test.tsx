@@ -18,6 +18,14 @@ vi.mock("@/lib/api", () => ({
   },
   getAccessToken: vi.fn().mockResolvedValue("token"),
   API_BASE: "http://localhost:8000",
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
 }));
 
 import { AddJobDialog } from "@/components/jobs/AddJobDialog";
@@ -66,7 +74,7 @@ describe("AddJobDialog (FR-004a)", () => {
       mutate: vi.fn(),
       isPending: false,
       isError: true,
-      error: new Error("409 Conflict"),
+      error: new (await import("@/lib/api")).ApiError(409, "Job already saved"),
       reset: vi.fn(),
     } as unknown as ReturnType<typeof hooks.useAddManualJob>);
 

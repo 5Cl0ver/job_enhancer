@@ -11,8 +11,10 @@
  * get their own section ("Add to My Jobs" / "Not this"). Confirmations and
  * recruiter messages sit in small collapsed sections; unclear emails are
  * hidden. Long lists show the newest few until you ask for the rest, and
- * technical details stay under "Details". Nothing else changes on a card until
- * you click.
+ * technical details stay under "Details". Every row says what the email says
+ * and where its card is now ("Card: Interested → Rejected"), with the email and
+ * the job one tap away. The inbox itself (scan, last checked, auto-move) sits
+ * at the top. Nothing else changes on a card until you click.
  */
 import { Children, useState } from "react";
 import { Link } from "react-router-dom";
@@ -49,6 +51,7 @@ import {
 } from "@/lib/emailUpdates";
 import { Button } from "@/components/ui/button";
 import { EmailViewer } from "@/components/email/EmailViewer";
+import { InboxBar } from "@/components/settings/EmailConnectCard";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -60,6 +63,16 @@ const LOOK: Record<string, { icon: LucideIcon; tone: string }> = {
   applied: { icon: MailCheck, tone: "bg-blue-500/10 text-blue-600 dark:text-blue-400" },
 };
 const FALLBACK = { icon: Briefcase, tone: "bg-muted text-muted-foreground" };
+
+/** What the email says, in a few words, for the line under each row. */
+const SAYS: Record<string, string> = {
+  rejected: "Says you weren't selected",
+  applied: "Confirms they got your application",
+  interview: "Invites you to interview",
+  assessment: "Sends you an assessment",
+  offer: "Makes you an offer",
+  recruiter: "A recruiter reaching out",
+};
 
 /** How many rows a long section shows before "Show all". */
 const SHOWN = 3;
@@ -99,6 +112,8 @@ export default function EmailUpdatesPage() {
           What your inbox says about your applications.
         </p>
       </header>
+
+      <InboxBar />
 
       {isLoading && (
         <div className="space-y-3">
@@ -315,6 +330,32 @@ function RowHead({ ev, extra }: { ev: DetectedEvent; extra?: string }) {
   );
 }
 
+/** What the email says, and where its card is now versus where it would go. */
+function CardLine({ ev }: { ev: DetectedEvent }) {
+  const says = SAYS[ev.event_type];
+  let card: React.ReactNode = null;
+  if (!ev.saved_job_id) {
+    if (ev.status === "unsaved") card = "Not on your board yet";
+  } else if (ev.target_stage && ev.current_stage === ev.target_stage) {
+    card = `Card is already in ${ev.target_stage}`;
+  } else if (ev.target_stage) {
+    card = (
+      <>
+        Card: {ev.current_stage ?? "not on the board yet"} →{" "}
+        <span className="font-medium text-foreground">{ev.target_stage}</span>
+      </>
+    );
+  }
+  if (!says && !card) return null;
+  return (
+    <p className="mt-0.5 text-xs text-muted-foreground">
+      {says}
+      {says && card && " · "}
+      {card}
+    </p>
+  );
+}
+
 /** Subject, sender, why, and a link to the email — only when asked for. */
 function Details({ ev }: { ev: DetectedEvent }) {
   const [open, setOpen] = useState(false);
@@ -336,8 +377,20 @@ function Details({ ev }: { ev: DetectedEvent }) {
         >
           {open ? "Hide details" : "Details"}
         </button>
+        {ev.job_listing_id && (
+          <Link
+            to={`/jobs/${ev.job_listing_id}`}
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            View the job
+          </Link>
+        )}
       </span>
-      <EmailViewer eventId={viewing ? ev.id : null} onClose={() => setViewing(false)} />
+      <EmailViewer
+        eventId={viewing ? ev.id : null}
+        mailLink={ev.mail_link}
+        onClose={() => setViewing(false)}
+      />
       {open && (
         <dl className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md bg-muted/40 p-2.5 text-xs">
           <dt className="text-muted-foreground">What</dt>
@@ -516,7 +569,13 @@ function MovedRow({ ev }: { ev: DetectedEvent }) {
           <p className="text-sm leading-snug">
             {sentence(ev)}
             {ev.target_stage && (
-              <span className="text-muted-foreground"> The card moved to {ev.target_stage}.</span>
+              <span className="text-muted-foreground">
+                {" "}
+                The card moved to {ev.target_stage}.
+                {ev.current_stage &&
+                  ev.current_stage !== ev.target_stage &&
+                  ` It's in ${ev.current_stage} now.`}
+              </span>
             )}
           </p>
           {why && <p className="text-xs text-muted-foreground">{why}</p>}
@@ -552,14 +611,19 @@ function MovedRow({ ev }: { ev: DetectedEvent }) {
               {errorText(review.error, "That didn't work. Try again.")}
             </p>
           )}
-          <EmailViewer eventId={viewing ? ev.id : null} onClose={() => setViewing(false)} />
+          <EmailViewer
+        eventId={viewing ? ev.id : null}
+        mailLink={ev.mail_link}
+        onClose={() => setViewing(false)}
+      />
         </div>
       )}
     </li>
   );
 }
 
-/** A slim row: what it's about on the left, its buttons right (below on a phone). */
+/** A slim row: what it's about on the left, its buttons right — on a phone,
+ * the buttons come last, after what the email says and where the card is. */
 function SlimRow({
   ev,
   extra,
@@ -572,16 +636,17 @@ function SlimRow({
   children?: React.ReactNode;
 }) {
   return (
-    <li className="rounded-lg border bg-card px-3 py-2.5 sm:px-4">
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:gap-3">
-        <div className="flex min-w-0 flex-1 items-center gap-3">
-          <RowHead ev={ev} extra={extra} />
-        </div>
-        <div className="flex shrink-0 flex-wrap items-center gap-1.5 pl-10 sm:pl-0">{actions}</div>
+    <li className="grid grid-cols-1 rounded-lg border bg-card px-3 py-2.5 sm:grid-cols-[1fr_auto] sm:gap-x-3 sm:px-4">
+      <div className="flex min-w-0 items-center gap-3">
+        <RowHead ev={ev} extra={extra} />
       </div>
-      <div className="pl-10 [overflow-wrap:anywhere]">
+      <div className="min-w-0 pl-10 [overflow-wrap:anywhere]">
+        <CardLine ev={ev} />
         {children}
         <Details ev={ev} />
+      </div>
+      <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-10 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:self-center sm:pl-0">
+        {actions}
       </div>
     </li>
   );
@@ -611,7 +676,11 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
         <>
           <Button size="sm" onClick={() => act("apply")} disabled={busy || ev.stage_missing}>
             {groupAct.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-            {ev.target_stage ? `Move to ${ev.target_stage}` : "Apply update"}
+            {!ev.target_stage
+              ? "Apply update"
+              : ev.current_stage === ev.target_stage
+                ? "Got it"
+                : `Move to ${ev.target_stage}`}
           </Button>
           <Button size="sm" variant="ghost" onClick={() => act("dismiss")} disabled={busy}>
             Not this

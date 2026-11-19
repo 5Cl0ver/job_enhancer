@@ -38,8 +38,8 @@ async def _event(db, user, account, saved_job=None, uid="77", uidvalidity=5, **k
         saved_job_id=saved_job.id if saved_job else None,
         event_type="rejected",
         target_stage="Rejected",
-        from_addr="Talent <talent@vellacor.example>",
-        subject="Your application",
+        from_addr=kw.pop("from_addr", "Talent <talent@vellacor.example>"),
+        subject=kw.pop("subject", "Your application"),
         folder="INBOX",
         uidvalidity=uidvalidity,
         message_uid=uid,
@@ -117,7 +117,31 @@ class TestViewEmail:
         r = await client.get(f"/v1/email/events/{ev.id}/message")
         assert r.status_code == 404 and "no longer" in r.json()["detail"]
 
-    async def test_unknown_location_is_404_without_connecting(
+    async def test_older_row_opens_when_it_is_the_same_email(
+        self,
+        client,
+        db_session,
+        test_user,
+        enc_key,
+        fake_mailbox,
+    ):
+        """A row saved before folders were tracked has no UIDVALIDITY: read the
+        UID as it is now, and show it only if subject and sender still match."""
+        await _connect(client)
+        ev = await _event(
+            db_session,
+            test_user,
+            await _account(db_session, test_user),
+            uidvalidity=None,
+            subject="Your application to Vellacor",
+            from_addr="Brambleworks Careers <careers@brambleworks.example>",
+        )
+        r = await client.get(f"/v1/email/events/{ev.id}/message")
+        assert r.status_code == 200
+        (refs,) = fake_mailbox
+        assert (refs[0].uidvalidity, refs[0].uid) == (None, 77)
+
+    async def test_older_row_whose_uid_now_names_another_email_is_404(
         self,
         client,
         db_session,
@@ -131,9 +155,10 @@ class TestViewEmail:
             test_user,
             await _account(db_session, test_user),
             uidvalidity=None,
+            subject="A different email",
         )
         r = await client.get(f"/v1/email/events/{ev.id}/message")
-        assert r.status_code == 404 and fake_mailbox == []
+        assert r.status_code == 404 and "no longer" in r.json()["detail"]
 
     async def test_someone_elses_event_is_not_found(
         self,
@@ -199,3 +224,22 @@ class TestJobEmails:
     ):
         r = await client.get(f"/v1/email/job-emails?job_listing_id={uuid.uuid4()}")
         assert r.status_code == 200 and r.json() == []
+
+
+@pytest.mark.asyncio
+async def test_leftover_company_name_from_an_older_scan_is_not_shown(
+    client, db_session, test_user, enc_key
+):
+    """A row stored before the name fix keeps ".io"; the page gets no name, so
+    it falls back to a plain sentence instead."""
+    await _connect(client)
+    await _event(
+        db_session,
+        test_user,
+        await _account(db_session, test_user),
+        status="unsaved",
+        job_company=".io",
+        job_title="Data Engineer",
+    )
+    (ev,) = (await client.get("/v1/email/events")).json()
+    assert ev["company"] is None and ev["title"] == "Data Engineer"

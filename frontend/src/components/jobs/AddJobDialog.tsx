@@ -1,5 +1,6 @@
 import { useState } from "react";
 import { Link2, Loader2, Plus } from "lucide-react";
+import { ApiError } from "@/lib/api";
 import { useAddManualJob } from "@/hooks/useSavedJobs";
 import { Alert, AlertDescription } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
@@ -87,7 +88,7 @@ export function AddJobDialog() {
           {addJob.isError && (
             <Alert variant="destructive">
               <AlertDescription>
-                {addJob.error.message.includes("409")
+                {addJob.error instanceof ApiError && addJob.error.status === 409
                   ? "You already saved this job."
                   : "Could not add the job. Check the link and try again."}
               </AlertDescription>
