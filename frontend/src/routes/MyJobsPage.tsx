@@ -24,13 +24,30 @@ export default function MyJobsPage() {
   };
 
   return (
-    <div className="container mx-auto max-w-full px-4 py-6">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
+    <div
+      className={cn(
+        "mx-auto max-w-full",
+        // The board fills the window and its columns scroll, so the page itself
+        // doesn't. The heights are the window minus the layout's padding; on a
+        // phone the board runs down to just above the tab bar.
+        view === "board"
+          ? "-mb-8 flex h-[calc(100dvh-5rem-env(safe-area-inset-bottom))] flex-col md:mb-0 md:h-[calc(100dvh-4rem)]"
+          : "container px-4 py-6",
+      )}
+    >
+      <div
+        className={cn(
+          "flex flex-wrap items-center justify-between gap-3",
+          view === "board" ? "mb-3" : "mb-6",
+        )}
+      >
         <div className="space-y-1">
           <h1 className="text-2xl font-bold tracking-tight">My Jobs</h1>
-          <p className="text-sm text-muted-foreground">
-            Everything you've saved and where each one stands.
-          </p>
+          {view === "list" && (
+            <p className="text-sm text-muted-foreground">
+              Everything you've saved and where each one stands.
+            </p>
+          )}
         </div>
 
         <div className="flex items-center gap-3">

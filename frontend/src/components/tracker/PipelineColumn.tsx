@@ -1,14 +1,22 @@
+import { useEffect, useRef, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
-import { SortableContext, verticalListSortingStrategy } from "@dnd-kit/sortable";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { KanbanCard } from "@/components/tracker/KanbanCard";
+import { PAGE_SIZE, columnView, matchesSearch } from "@/lib/boardFilter";
 import { cn } from "@/lib/utils";
 import type { PipelineStage, SavedJob } from "@/types/api";
 
 interface PipelineColumnProps {
   stage: PipelineStage;
   jobs: SavedJob[];
+  /** Every stage column, for each card's "Move to" menu. */
+  stages: PipelineStage[];
   followUpDays: number;
+  /** Search words; empty when no search is on. */
+  words: string[];
+  /** The card the search just jumped to. */
+  pulseId: string | null;
+  onMoveJob: (savedJobId: string, stageId: string) => void;
   canMoveLeft?: boolean;
   canMoveRight?: boolean;
   onMove?: (dir: -1 | 1) => void;
@@ -28,21 +36,70 @@ const STAGE_COLORS: Record<string, string> = {
 export function PipelineColumn({
   stage,
   jobs,
+  stages,
   followUpDays,
+  words,
+  pulseId,
+  onMoveJob,
   canMoveLeft,
   canMoveRight,
   onMove,
 }: PipelineColumnProps) {
+  // The whole column is the drop target (never the cards inside it), so a card
+  // dropped anywhere in it, including on top of another card, lands here.
   const { setNodeRef, isOver } = useDroppable({ id: stage.id });
-  const jobIds = jobs.map((j) => j.id);
-  const columnColor = stage.color
-    ? undefined
-    : STAGE_COLORS[stage.name];
+  const [limit, setLimit] = useState(PAGE_SIZE);
+  const [opened, setOpened] = useState(false);
+  const scroller = useRef<HTMLDivElement>(null);
+  const more = useRef<HTMLButtonElement>(null);
+  const columnColor = stage.color ? undefined : STAGE_COLORS[stage.name];
+  const view = columnView(jobs, words, limit);
+  const searching = words.length > 0;
+
+  // Add the next page when the "Show more" button scrolls into view.
+  useEffect(() => {
+    const el = more.current;
+    if (!el || typeof IntersectionObserver === "undefined") return;
+    const io = new IntersectionObserver(
+      (entries) => {
+        if (entries.some((e) => e.isIntersecting)) setLimit((n) => n + PAGE_SIZE);
+      },
+      { root: scroller.current, rootMargin: "200px" },
+    );
+    io.observe(el);
+    return () => io.disconnect();
+  }, [limit, view.hidden]);
+
+  // An empty stage takes a narrow strip, not a whole column. It still takes drops.
+  if (jobs.length === 0 && !opened) {
+    return (
+      <button
+        ref={setNodeRef}
+        type="button"
+        onClick={() => setOpened(true)}
+        title={`${stage.name}: no jobs. Drop a job here, or click to open.`}
+        className={cn(
+          "flex w-11 shrink-0 snap-start flex-col items-center gap-2 rounded-lg border py-2 transition-shadow",
+          columnColor ?? "border-border bg-muted",
+          isOver && "ring-2 ring-primary",
+        )}
+      >
+        <span className="rounded-full bg-background px-1.5 py-0.5 text-xs font-medium">0</span>
+        <span className="text-sm font-semibold [writing-mode:vertical-rl]">{stage.name}</span>
+      </button>
+    );
+  }
 
   return (
-    <div className="flex w-64 shrink-0 flex-col gap-2">
+    <div
+      ref={setNodeRef}
+      className={cn(
+        "flex min-h-0 w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-lg transition-shadow sm:w-64",
+        isOver && "ring-2 ring-primary",
+      )}
+    >
       {/* Column header */}
-      <div className={cn("group rounded-t-lg border px-3 py-2", columnColor ?? "bg-muted border-border")}>
+      <div className={cn("rounded-t-lg border px-3 py-2", columnColor ?? "border-border bg-muted")}>
         <div className="flex items-center justify-between gap-1">
           <span className="truncate text-sm font-semibold">{stage.name}</span>
           <div className="flex items-center gap-0.5">
@@ -65,37 +122,55 @@ export function PipelineColumn({
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
-            <span className="rounded-full bg-background px-1.5 py-0.5 text-xs font-medium">
-              {jobs.length}
+            <span
+              className={cn(
+                "whitespace-nowrap rounded-full bg-background px-1.5 py-0.5 text-xs font-medium",
+                searching && view.matches > 0 && "bg-primary text-primary-foreground",
+              )}
+            >
+              {searching ? `${view.matches} of ${jobs.length}` : jobs.length}
             </span>
           </div>
         </div>
       </div>
 
-      {/* Drop zone */}
+      {/* Cards: this part scrolls, the header above stays put. */}
       <div
-        ref={setNodeRef}
+        ref={scroller}
         className={cn(
-          "flex min-h-[120px] flex-col gap-2 rounded-b-lg border border-t-0 p-2 transition-colors",
+          "flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-lg border border-t-0 p-2 transition-colors",
           columnColor ?? "border-border",
           isOver && "bg-muted/60",
         )}
       >
-        <SortableContext items={jobIds} strategy={verticalListSortingStrategy}>
-          {jobs.map((sj) => (
-            <KanbanCard
-              key={sj.id}
-              savedJob={sj}
-              followUpDays={followUpDays}
-              stageName={stage.name}
-            />
-          ))}
-        </SortableContext>
+        {view.visible.map((sj) => (
+          <KanbanCard
+            key={sj.id}
+            savedJob={sj}
+            followUpDays={followUpDays}
+            stageName={stage.name}
+            stages={stages}
+            stageId={stage.id}
+            onMove={(stageId) => onMoveJob(sj.id, stageId)}
+            words={words}
+            dimmed={searching && !matchesSearch(sj, words)}
+            pulse={pulseId === sj.id}
+          />
+        ))}
+
+        {view.hidden > 0 && (
+          <button
+            ref={more}
+            type="button"
+            onClick={() => setLimit((n) => n + PAGE_SIZE)}
+            className="shrink-0 rounded-md border border-dashed py-2 text-xs font-medium text-muted-foreground hover:bg-background hover:text-foreground"
+          >
+            Show more ({view.hidden} left)
+          </button>
+        )}
 
         {jobs.length === 0 && (
-          <p className="py-4 text-center text-xs text-muted-foreground">
-            Drop jobs here
-          </p>
+          <p className="py-4 text-center text-xs text-muted-foreground">Drop jobs here</p>
         )}
       </div>
     </div>
