@@ -63,6 +63,8 @@ export interface SavedJob {
   job_listing_id: string;
   collection_id: string | null;
   pipeline_stage_id: string | null;
+  /** The resume type (Claude Scout track) to apply with, or null. */
+  track_id: string | null;
   notes: string | null;
   applied_at: string | null;
   last_stage_change: string;

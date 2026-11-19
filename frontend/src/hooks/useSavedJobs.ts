@@ -91,6 +91,7 @@ export function useUpdateSavedJob() {
       id: string;
       collection_id?: string | null;
       pipeline_stage_id?: string | null;
+      track_id?: string | null;
       notes?: string | null;
       applied_at?: string | null;
       is_archived?: boolean;

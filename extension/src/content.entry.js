@@ -12,6 +12,7 @@
 // JSON-LD → selectors), which identifies the open job strictly by ?vjk=.
 import { extractJob } from "./extract/index.js";
 import { shouldBackfill } from "./backfill.js";
+import { SCOUT_MAX_FAILS, scoutDone, scoutPayload } from "./scoutCapture.js";
 import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
 import { readApplications } from "./extract/indeed-myjobs.js";
 const host = location.hostname;
@@ -26,6 +27,9 @@ const STALE_LABEL = "↻ Refresh page — extension updated";
 let btn = null;
 let currentKey = ""; // the open job we've reflected state for (so we only re-check on change)
 const backfilled = new Set(); // job keys we've already backfilled this page session
+const scoutSent = new Set(); // posting links Claude Scout is done with this page session
+const scoutFails = new Map(); // posting link -> failed sends
+let scoutInFlight = false;
 
 // When the extension is reloaded/updated, the copy of this script already
 // running in an open tab is ORPHANED — chrome.runtime dies and every
@@ -287,6 +291,7 @@ function sync() {
     }
     return;
   }
+  scoutCapture(job);
   if (key === currentKey) return; // same job — nothing to re-check
 
   currentKey = key;
@@ -313,6 +318,31 @@ function sync() {
       }
     })
     .catch(() => {});
+}
+
+// Claude Scout: while a run is open in the app, send the open posting exactly
+// as the page shows it. Re-tried on each sync until the description has loaded
+// and the app has answered; the background says whether a run is open.
+// Keyed by link, not title + company: one company can post the same title twice.
+function scoutCapture(job) {
+  if (scoutInFlight) return;
+  const payload = scoutPayload(job);
+  if (!payload || scoutSent.has(payload.url)) return;
+  const link = payload.url;
+  scoutInFlight = true;
+  safeSend({ type: "scoutCapture", job: payload })
+    .then((res) => {
+      if (scoutDone(res)) scoutSent.add(link);
+      else if (res?.failed) {
+        const fails = (scoutFails.get(link) || 0) + 1;
+        scoutFails.set(link, fails);
+        if (fails >= SCOUT_MAX_FAILS) scoutSent.add(link);
+      }
+    })
+    .catch(() => {})
+    .finally(() => {
+      scoutInFlight = false;
+    });
 }
 
 function ensureButton() {

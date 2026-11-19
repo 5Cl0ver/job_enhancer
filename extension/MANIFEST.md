@@ -21,7 +21,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | File | Purpose |
 |---|---|
 | `manifest.json` | MV3 config: `side_panel` + `background` worker + `content_scripts` (`dist/content.js` on Indeed/LinkedIn/ZipRecruiter); permissions + `host_permissions` |
-| `src/content.entry.js` → `dist/content.js` | Injects the **Save** button on Indeed/LinkedIn/ZipRecruiter job pages (`#je-save-btn`); re-syncs when you switch jobs; asks the background `checkSaved` to show **blue "✓ Already saved"** proactively; falls back to a floating `#je-fab` if no header is found |
+| `src/content.entry.js` → `dist/content.js` | Injects the **Save** button on Indeed/LinkedIn/ZipRecruiter job pages (`#je-save-btn`); re-syncs when you switch jobs; asks the background `checkSaved` to show **blue "✓ Already saved"** proactively; falls back to a floating `#je-fab` if no header is found. While a **Claude Scout** run is open, sends each job page word for word (`scoutCapture`) |
+| `src/scoutCapture.js` | Pure: `scoutPayload` (the capture to send, or null while the description is a snippet), `scoutDone` |
 | `src/inject.js` | Pure DOM helpers (title selectors, `findTitleEl`, `headingFor`) for anchoring the button — unit-tested against fixtures |
 | `src/capture.entry.js` → `dist/capture.js` | Injected on demand by the panel's **Capture this page**; runs `extractJob`, stashes result in `chrome.storage` |
 | `src/background.entry.js` → `dist/background.js` | Service worker (bundled) — the **only** caller of Supabase Auth + the API. Login, **serialized token refresh**, `saveJob`, `checkSaved`, `listSaved`; on a thin Indeed save it fetches the `/viewjob` page and **enriches** with the full description/salary/type before storing |

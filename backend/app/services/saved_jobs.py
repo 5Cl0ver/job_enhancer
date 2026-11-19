@@ -25,6 +25,7 @@ from app.schemas.saved_job import (
     SavedJobUpdate,
 )
 from app.services.dedup import job_content_hash, normalize
+from app.services.scout_tracks import get_track
 
 # Same thresholds the dedup service uses, so "is this the job I saved?" is judged
 # the same way across the app (title ≥88, company ≥85 token_sort_ratio).
@@ -566,6 +567,9 @@ async def update_saved_job(
 
     sj = await get_saved_job(db, saved_job_id, user_id, with_description=False)
     updates = data.model_dump(exclude_unset=True)
+    if updates.get("track_id") is not None:
+        # Only one of the user's own resume types (404 otherwise).
+        await get_track(db, updates["track_id"], user_id)
 
     # Track stage changes for follow-up reminders
     if (

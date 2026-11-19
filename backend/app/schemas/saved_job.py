@@ -127,6 +127,8 @@ class SavedJobUpdate(BaseModel):
     collection_id: uuid.UUID | None = None
     pipeline_stage_id: uuid.UUID | None = None
     notes: str | None = None
+    # The resume type to apply with (must be one of the user's); null clears it.
+    track_id: uuid.UUID | None = None
     applied_at: datetime | None = None
     is_archived: bool | None = None
     flagged_for_research: bool | None = None
@@ -141,6 +143,7 @@ class SavedJobBase(BaseModel):
     job_listing_id: uuid.UUID
     collection_id: uuid.UUID | None
     pipeline_stage_id: uuid.UUID | None
+    track_id: uuid.UUID | None = None
     notes: str | None
     applied_at: datetime | None
     last_stage_change: datetime
