@@ -16,7 +16,7 @@ from app.services.email_classify import (
     UNKNOWN,
     classify,
 )
-from app.services.email_scan import EmailMessage, detect_events
+from app.services.email_scan import SCAN_TEXT_LIMIT, EmailMessage, detect_events
 from tests.services.test_email_scan import _make_account, _make_saved_job
 
 
@@ -134,3 +134,31 @@ class TestLongLines:
         )
         assert time.perf_counter() - start < 1.0
         assert result.event == APPLIED
+
+
+class TestHugeEmails:
+    """A long newsletter once tied up the server's one worker for so long that
+    Render's health check restarted it, killing the scan and every other page."""
+
+    async def test_a_huge_email_is_read_quickly_and_still_counts(
+        self, db_session, test_user
+    ):
+        await _make_saved_job(db_session, test_user, "Globex", "Frontend Developer")
+        acct = await _make_account(db_session, test_user)
+        filler = "\n".join(
+            f"Line {i}: our latest offers, news and events for members."
+            for i in range(40_000)
+        )
+        huge = EmailMessage(
+            uid="11",
+            from_addr="talent@globex.example",
+            subject="Interview with Globex — Frontend Developer",
+            body="We'd like to schedule a call. What's your availability?\n" + filler,
+            folder="INBOX",
+            uidvalidity=1,
+        )
+        start = time.perf_counter()
+        result = await detect_events(db_session, acct, [huge])
+        assert time.perf_counter() - start < 3.0
+        assert len(huge.body) <= SCAN_TEXT_LIMIT
+        assert [e.event_type for e in result.created] == ["interview"]
