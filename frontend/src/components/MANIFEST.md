@@ -6,6 +6,7 @@ use them live in `src/routes/` (see its MANIFEST); the **data hooks** live in
 
 ```
 ui/  base shadcn primitives   layout/  legacy shell bits
+common/  shared page pieces (empty / error states)
 jobs/ tracker/ ai/ analytics/ admin/ settings/   feature UI
 ```
 
@@ -15,7 +16,7 @@ in `index.html`; wired in `src/providers.tsx`.
 
 ## `ui/` — shadcn/ui primitives
 alert, badge, button, card, dialog, dropdown-menu, input, label, select,
-separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
+separator, skeleton, sonner (toasts), switch, table, tabs, textarea. Themed via CSS variables in
 `src/globals.css`; use `cn()` from `lib/utils`.
 
 ## `scout/` — Claude Scout (Find Jobs → Claude Scout)
@@ -53,9 +54,15 @@ separator, skeleton, switch, table, tabs, textarea. Themed via CSS variables in
 ## `tracker/`
 | File | Purpose |
 |---|---|
-| `KanbanBoard.tsx` | `DndContext`, renders columns, drag-end → `useMoveJobStage` |
-| `PipelineColumn.tsx` | Droppable stage column + header/count |
-| `KanbanCard.tsx` | Draggable job card + follow-up-overdue badge |
+| `KanbanBoard.tsx` | The board: search box (`/`), `DndContext` (mouse + touch), columns, drag-end → `useMoveJobStage`; a failed move toasts with Retry. Fills the window; loading / error / empty states |
+| `PipelineColumn.tsx` | One stage. The whole column is the drop target (never its cards), scrolls on its own, draws 30 cards at a time, shows "n of N" while searching; an empty stage collapses to a strip |
+| `KanbanCard.tsx` | `CardFace` (the look, also used while dragging) + `KanbanCard` (draggable, opens details, "Move to" menu for phones and keyboards) |
+
+## `common/`
+| File | Purpose |
+|---|---|
+| `EmptyState.tsx` | Nothing here yet: what belongs on the screen + one button for the next step |
+| `ErrorState.tsx` | A load failed: plain words + Try again |
 
 ## `ai/` (final phase)
 | File | Purpose |

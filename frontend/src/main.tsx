@@ -3,6 +3,7 @@ import ReactDOM from "react-dom/client";
 import { RouterProvider } from "react-router-dom";
 import { Providers } from "@/providers";
 import { router } from "@/router";
+import "@fontsource-variable/geist";
 import "@/globals.css";
 
 // This is the entry point of the whole app (the file index.html loads).
