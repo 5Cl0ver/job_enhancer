@@ -35,6 +35,8 @@ import {
   type JobFilters,
 } from "@/lib/jobFilters";
 import { readPref, writePref } from "@/lib/prefs";
+import { stageTone } from "@/lib/stageStyle";
+import { plainText } from "@/lib/text";
 import { cn } from "@/lib/utils";
 import type { SavedJob } from "@/types/api";
 
@@ -72,7 +74,9 @@ function Chip({
 
 function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string | null }) {
   const j = savedJob.job_listing;
-  const where = [j.company, j.is_remote ? "Remote" : j.location].filter(Boolean).join(" · ");
+  const where = [plainText(j.company), j.is_remote ? "Remote" : j.location]
+    .filter(Boolean)
+    .join(" · ");
   return (
     <li>
       <Link
@@ -80,7 +84,7 @@ function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string
         className="-mx-4 flex min-h-16 items-center gap-3 px-4 py-2.5 active:bg-accent"
       >
         <div className="min-w-0 flex-1">
-          <p className="truncate font-medium leading-snug">{j.title}</p>
+          <p className="truncate font-medium leading-snug">{plainText(j.title)}</p>
           <p className="truncate text-sm text-muted-foreground">{where}</p>
         </div>
         {j.is_expired ? (
@@ -89,7 +93,12 @@ function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string
           </span>
         ) : (
           stageName && (
-            <span className="max-w-[40%] shrink-0 truncate rounded-full bg-muted px-2 py-0.5 text-xs font-medium text-muted-foreground">
+            <span
+              className={cn(
+                "max-w-[40%] shrink-0 truncate rounded-full px-2 py-0.5 text-xs font-medium",
+                stageTone(stageName).chip,
+              )}
+            >
               {stageName}
             </span>
           )
@@ -189,6 +198,7 @@ export function PhoneJobList() {
             .filter((s) => (counts.get(s.id) ?? 0) > 0 || s.id === active)
             .map((s) => (
               <Chip key={s.id} active={active === s.id} onClick={() => chooseStage(s.id)}>
+                <span className={cn("h-2 w-2 rounded-full", stageTone(s.name).dot)} aria-hidden />
                 {s.name} <span className="tabular-nums opacity-80">{counts.get(s.id) ?? 0}</span>
               </Chip>
             ))}

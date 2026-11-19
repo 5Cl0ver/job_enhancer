@@ -4,6 +4,7 @@ import { useSavedJobId, useSaveJob, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { JobDetail } from "@/components/jobs/JobDetail";
 import { JobEmails } from "@/components/email/JobEmails";
 import { JobResumeType } from "@/components/scout/JobResumeType";
+import { StagePicker } from "@/components/jobs/StagePicker";
 import { Skeleton } from "@/components/ui/skeleton";
 
 /** Full detail view for one job listing (reached by clicking a card title). */
@@ -11,7 +12,7 @@ export function JobDetailPage() {
   const { id = "" } = useParams();
   const navigate = useNavigate();
   const { data: job, isLoading, isError } = useJob(id);
-  const { savedJobId } = useSavedJobId(id);
+  const { savedJobId, savedJob } = useSavedJobId(id);
   const saveJob = useSaveJob();
   const unsaveJob = useUnsaveJob();
 
@@ -40,6 +41,7 @@ export function JobDetailPage() {
           onSave={toggleSave}
           onGenerateDocuments={() => navigate(`/ai-apply?job=${id}`)}
           aside={isSaved ? <JobResumeType jobListingId={id} /> : null}
+          stage={savedJob ? <StagePicker savedJob={savedJob} /> : null}
         />
       )}
       {isSaved && <JobEmails jobListingId={id} />}

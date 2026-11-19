@@ -62,7 +62,9 @@ export function TopBar() {
             <ArrowLeft className="h-5 w-5" />
           </button>
         )}
-        <p className="truncate text-lg font-semibold">{page?.label ?? "Job Enhancer"}</p>
+        <p className="truncate text-xl font-semibold tracking-tight">
+          {page?.label ?? "Job Enhancer"}
+        </p>
         {/* The current page's own buttons land here (TopBarActions). */}
         <div id={ACTIONS_SLOT} className="-mr-2 ml-auto flex shrink-0 items-center gap-1" />
       </div>
@@ -79,7 +81,10 @@ export function TopBarActions({ children }: { children: React.ReactNode }) {
 }
 
 const TAB =
-  "relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-2 text-[11px] font-medium transition-colors active:bg-accent";
+  "group relative flex min-h-14 flex-1 flex-col items-center justify-center gap-0.5 px-1 py-1.5 text-[11px] font-medium transition-colors";
+// The pill behind a tab's icon: filled for the current tab, a flash when pressed.
+const PILL =
+  "relative flex h-7 w-14 items-center justify-center rounded-full transition-colors group-active:bg-accent";
 
 export function TabBar({ emailCount, isAdmin }: { emailCount: number; isAdmin: boolean }) {
   const { pathname } = useLocation();
@@ -93,7 +98,7 @@ export function TabBar({ emailCount, isAdmin }: { emailCount: number; isAdmin: b
           indicator / Android gesture bar. */}
       <nav
         aria-label="Main"
-        className="fixed inset-x-0 bottom-0 z-40 flex border-t bg-card pb-[env(safe-area-inset-bottom)] md:hidden"
+        className="fixed inset-x-0 bottom-0 z-40 flex border-t bg-background pb-[env(safe-area-inset-bottom)] md:hidden"
       >
         {TABS.map((item) => (
           <NavLink
@@ -103,13 +108,17 @@ export function TabBar({ emailCount, isAdmin }: { emailCount: number; isAdmin: b
               cn(TAB, isActive ? "text-primary" : "text-muted-foreground")
             }
           >
-            <span className="relative">
-              <item.icon className="h-5 w-5" aria-hidden />
-              {item.to === "/email-updates" && (
-                <CountBadge count={emailCount} className="absolute -right-4 -top-1.5" />
-              )}
-            </span>
-            <span className="truncate">{item.short ?? item.label}</span>
+            {({ isActive }) => (
+              <>
+                <span className={cn(PILL, isActive && "bg-primary/15")}>
+                  <item.icon className="h-5 w-5" aria-hidden />
+                  {item.to === "/email-updates" && (
+                    <CountBadge count={emailCount} className="absolute -top-1 right-0" />
+                  )}
+                </span>
+                <span className="truncate">{item.short ?? item.label}</span>
+              </>
+            )}
           </NavLink>
         ))}
         <button
@@ -119,7 +128,9 @@ export function TabBar({ emailCount, isAdmin }: { emailCount: number; isAdmin: b
           onClick={() => setMoreOpen(true)}
           className={cn(TAB, onMorePage ? "text-primary" : "text-muted-foreground")}
         >
-          <Menu className="h-5 w-5" aria-hidden />
+          <span className={cn(PILL, onMorePage && "bg-primary/15")}>
+            <Menu className="h-5 w-5" aria-hidden />
+          </span>
           <span>More</span>
         </button>
       </nav>

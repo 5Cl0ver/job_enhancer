@@ -52,6 +52,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { InboxBar } from "@/components/settings/EmailConnectCard";
+import { ErrorState } from "@/components/common/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -90,7 +91,7 @@ function errorText(e: unknown, fallback: string): string {
 }
 
 export default function EmailUpdatesPage() {
-  const { data: events, isLoading, isError } = useDetectedEvents();
+  const { data: events, isLoading, isError, refetch } = useDetectedEvents();
   const g = group(events ?? []);
   const important = collapseRepeats(g.important);
   const confirmations = collapseRepeats(g.confirmations);
@@ -122,8 +123,10 @@ export default function EmailUpdatesPage() {
           ))}
         </div>
       )}
-      {isError && (
-        <p className="text-sm text-destructive">Couldn't load your email updates. Try again.</p>
+      {isError && !events && (
+        <ErrorState title="Couldn't load your email updates" onRetry={() => refetch()}>
+          The server didn&apos;t answer. Nothing was lost.
+        </ErrorState>
       )}
 
       {nothing && !isError && (
@@ -138,8 +141,6 @@ export default function EmailUpdatesPage() {
           </p>
         </div>
       )}
-
-      {g.moved.length > 0 && <MovedSection events={g.moved} />}
 
       {g.questions.length > 0 && (
         <Section title="Needs your answer" count={g.questions.length}>
@@ -172,6 +173,9 @@ export default function EmailUpdatesPage() {
           ))}
         </Section>
       )}
+
+      {/* What the app already handled comes after what still needs you. */}
+      {g.moved.length > 0 && <MovedSection events={g.moved} />}
 
       {confirmations.length > 0 && (
         <Collapsed
@@ -649,7 +653,8 @@ function SlimRow({
         {children}
         <Details ev={ev} />
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-10 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:self-center sm:pl-0">
+      {/* On a phone the buttons share the row's full width, the main one first. */}
+      <div className="mt-1 flex items-center gap-2 max-sm:*:flex-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:flex-wrap sm:gap-1.5 sm:self-center">
         {actions}
       </div>
     </li>

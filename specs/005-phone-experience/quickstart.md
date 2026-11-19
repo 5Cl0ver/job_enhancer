@@ -35,12 +35,12 @@ Component tests must prove:
 1. `useIsPhone` switches the shell: tab bar + top bar under 768 px, sidebar at
    or above it.
 2. The Email tab shows the `/attention` count and hides it at 0.
-3. More lists Admin only for admins, and "Show Claude Scout" only when hidden.
+3. More lists Admin only for admins.
 4. Stage chips: counts match the jobs, choosing one filters the list and is
    remembered; a remembered stage that no longer exists falls back to All.
 5. The filter sheet's "Show N jobs" equals the list it produces; Clear resets.
-6. Hiding Scout removes the Find Jobs switch and is undone from the toast,
-   More, or Settings; the preference is per device (no request is sent).
+6. A job's stage can be changed from its own page (the pinned bar on a phone),
+   and a failed move says so.
 7. A job with a very long title and company keeps its row inside the screen.
 8. Add job, as a sheet, keeps Save reachable with every field filled.
 
@@ -53,8 +53,8 @@ Component tests must prove:
 4. Tap **Email**: the count matches the cards; press **Not this** on one, Undo
    from the toast; open another card to read the email in the sheet; press
    the phone's Back: the sheet closes, the page stays.
-5. **Find Jobs** → ⋯ → **Hide Claude Scout**; the switch is gone. **More** →
-   **Show Claude Scout** brings it back.
+5. **Find Jobs** → Claude Scout: make a search, press Start, copy the line;
+   open History and Resume types. Nothing runs off the screen.
 6. **More** → Settings: a list of sections; open Email, go back.
 7. Turn on Reduce Motion: sheets appear without sliding; everything works.
 

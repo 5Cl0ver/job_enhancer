@@ -37,7 +37,7 @@ can restyle but can't swap a dialog for a sheet or a card for a row.
 
 **Decision**: bottom bar **My Jobs · Email · Find Jobs · More**. Email carries a
 count. More opens a bottom sheet: Matches, AI Apply, Analytics, Settings, Admin
-(admins only), Claude Scout (when hidden), Sign out. A 48 px sticky top bar
+(admins only), Sign out. A 48 px sticky top bar
 holds the page title and that page's actions. On a phone `/` opens My Jobs.
 
 **Rationale**: a bottom bar is for three to five destinations of equal weight,
@@ -134,24 +134,19 @@ agree; WCAG 2.2's floor is 24 px with spacing
 [Ahmad Shadeed: target size](https://ishadeed.com/article/target-size/)).
 iOS zooms the page for fields under 16 px.
 
-## R8. Hiding Claude Scout
+## R8. Parity: the phone does everything the computer does
 
-**Decision**: a per-device preference (`localStorage`), default shown. Hide
-from Find Jobs' ⋯ menu ("Hide Claude Scout") or Settings → Appearance. Hidden:
-the Job boards / Claude Scout switch disappears and Find Jobs is plain search;
-More shows "Claude Scout (hidden)" to bring it back. First open on a phone
-shows one line: it runs in Chrome on the computer, with **Hide on this phone**.
+**Decision**: no feature is hidden, removed or switched off on a phone. Each
+screen is rearranged for a thumb; none loses an action. Claude Scout stays in
+Find Jobs with all three views.
 
-**Rationale**: Scout drives Chrome on the desktop; on the phone it is at most a
-remote control. Per device matches that: hide it on the phone, keep it on the
-computer. No server change, and nothing is lost by hiding (runs continue).
+**Rationale**: the user said so in as many words ("I need everything to work on
+my phone as if it was on the computer"). Scout in particular is usable from a
+phone: the line it gives can be pasted into Claude on the phone, which drives
+Chrome on the computer.
 
-**Alternatives**: a server-side account setting (hides it on the computer too,
-which is where it's used); collapse-only (still takes the top of Find Jobs).
-
-**Open point**: "hide" could also have meant collapsing Scout's panels. The
-tab-level hide covers the stronger reading; confirm with the user on first
-demo.
+**Withdrawn**: an earlier draft planned a per-device "hide Claude Scout"
+switch, from a misread message. It was never asked for.
 
 ## R9. Installable, no service worker
 

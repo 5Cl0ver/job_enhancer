@@ -69,7 +69,7 @@ export function useSavedJobs(params?: {
 export function useSavedJobId(jobListingId: string) {
   const { data, isLoading } = useSavedJobs();
   const match = data?.find((sj) => sj.job_listing_id === jobListingId);
-  return { savedJobId: match?.id ?? null, isLoading };
+  return { savedJobId: match?.id ?? null, savedJob: match ?? null, isLoading };
 }
 
 export function useSaveJob() {

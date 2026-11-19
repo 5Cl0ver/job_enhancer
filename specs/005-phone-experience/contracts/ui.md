@@ -33,7 +33,7 @@ Wireframes are 390 px wide. Desktop is unchanged unless a line says "both".
 ```
 
 **More sheet**: Matches · AI Apply · Analytics · Settings · Admin (admins) ·
-Claude Scout (only when hidden: "Show Claude Scout") · theme switch · Sign out.
+Sign out.
 
 ## My Jobs
 
@@ -112,8 +112,8 @@ Claude Scout (only when hidden: "Show Claude Scout") · theme switch · Sign out
 ## Find Jobs
 
 ```text
-│ Find Jobs                        ⋯  │  ⋯ Hide Claude Scout
-│ [ Job boards | Claude Scout ]        │  absent when Scout is hidden
+│ Find Jobs                            │
+│ [ Job boards | Claude Scout ]        │
 │ [ 🔍 Job title, skill or company   ] │
 │ [ 📍 Anywhere ]  [ Filters ]         │
 ├──────────────────────────────────────┤
@@ -122,14 +122,10 @@ Claude Scout (only when hidden: "Show Claude Scout") · theme switch · Sign out
 ```
 
 - The keyword field is always full width. Place and Filters open sheets.
-- **Hide Claude Scout** (⋯): the switch disappears at once; a toast says
-  "Claude Scout hidden on this phone · Undo". Bring it back from More or
-  Settings → Appearance → Show Claude Scout.
-- First open of the Scout tab on a phone: a dismissible line, "Scout runs in
-  Chrome on your computer. Start a search here and watch it." **Hide on this
-  phone** · **Got it**.
 
-### Claude Scout (when shown)
+### Claude Scout
+
+Everything the computer has, nothing switched off.
 
 - Start: each saved search is a card with name, one detail line and a
   full-width **Start**; ⋯ for Edit / Delete. A running search shows progress

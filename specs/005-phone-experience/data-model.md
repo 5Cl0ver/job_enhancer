@@ -1,7 +1,7 @@
 # Data model: Phone experience
 
-No new tables and no migration. This feature is layout; what it stores is a
-few per-device choices and the install manifest.
+No new tables and no migration. This feature is layout; what it stores is one
+per-device choice and the install manifest.
 
 ## Per-device preferences (browser `localStorage`)
 
@@ -10,14 +10,12 @@ and parsing live in one place. A missing or unreadable value means the default.
 
 | Key | Type | Default | Meaning |
 |---|---|---|---|
-| `ui.hideScout` | `"1"` or absent | absent (shown) | Claude Scout is hidden on this device (slice 4) |
-| `ui.scoutPhoneNote` | `"seen"` or absent | absent | The one-line "Scout runs on your computer" note was dismissed |
 | `ui.jobsStage` | stage id or `"all"` | `"all"` | Last stage chip chosen on My Jobs (phone) |
 | `theme` | `light` · `dark` · `system` | `system` | Existing; unchanged |
 
 Rules:
-- Per device on purpose: hiding Scout on the phone must not hide it on the
-  computer ([research R8](research.md)).
+- These remember layout only. No feature is turned off by a preference
+  ([research R8](research.md)).
 - `ui.jobsStage` naming a stage that no longer exists falls back to `"all"`.
 - Nothing here is personal data; clearing the browser only resets the layout.
 
@@ -28,7 +26,7 @@ Rules:
 | `?stage=<id>` | `/jobs` | Stage chip (overrides `ui.jobsStage` when present) |
 | `?q=` | `/jobs` | Search text (already supported by the board) |
 | `?email=<event id>` | `/email-updates` | The email sheet is open; Back closes it |
-| `?tab=scout`, `?view=` | `/search` | Existing. With Scout hidden, `tab=scout` shows a "Claude Scout is hidden · Show" notice instead of a blank page |
+| `?tab=scout`, `?view=` | `/search` | Existing; unchanged |
 
 Filter choices on My Jobs stay in page state (as today); they reset when the
 page is left.

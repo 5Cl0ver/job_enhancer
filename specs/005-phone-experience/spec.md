@@ -4,11 +4,18 @@
 **Created**: 2026-11-19
 **Status**: Draft
 **Input**: The user, on their phone: "fix everything about the phone view, it's
-horrendous UI/UX, can't see anything, can't even see the email thing, I need to
-be able to hide Claude Scout easily and intuitively. I want the app to look and
-feel different on phone." With a screenshot of My Jobs → List where the header,
-view toggle, Add job, folders, search and five filters fill the screen before
-one job shows, and the only visible job card is cut off on the right.
+horrendous UI/UX, can't see anything, can't even see the email thing. I want
+the app to look and feel different on phone." With a screenshot of My Jobs →
+List where the header, view toggle, Add job, folders, search and five filters
+fill the screen before one job shows, and the only visible job card is cut off
+on the right. Clarified the same day: "I need everything to work on my phone as
+if it was on the computer. I need the UI/UX to look beautiful and sleek and
+proper. No long-drawn things, no confusing ways to understand things."
+
+**Rule**: the phone does everything the computer does. Nothing is hidden,
+removed or switched off on a phone; screens are rearranged, not reduced. (An
+earlier draft of this spec planned a "hide Claude Scout" switch from a misread
+message. It was never wanted and is gone.)
 
 Builds on [004-ux-overhaul](../004-ux-overhaul/spec.md): its board is shipped;
 its to-dos, Email History and Scout checklist are still to come and are reused
@@ -100,21 +107,20 @@ Scan is a button in the top bar; its progress is a slim line under it. The
 4. To review / History / Other mail (from 004) are a segmented control that
    stays visible while scrolling.
 
-### User Story 4 — Find Jobs, and Claude Scout only if you want it (P2)
+### User Story 4 — Find Jobs and Claude Scout, fully usable on a phone (P2)
 
 Search is one full-width box; place and filters open in a sheet. Results are
-rows like My Jobs. **Claude Scout can be hidden**: from the Find Jobs ⋯ menu or
-a switch in Settings; hidden, Find Jobs is just search. It comes back from
-More or Settings.
+rows like My Jobs. Claude Scout works on the phone as it does on the computer:
+make and edit searches, press Start, copy the line (to paste into Claude on the
+phone, which drives Chrome on the computer), watch a run, see its history, and
+manage resume types including uploading a résumé.
 
 **Acceptance**:
 1. The keyword box is full width and never collapses.
-2. Hide Claude Scout in two taps; show it again in three or fewer.
-3. Hiding is per device, so hiding it on the phone leaves it on the computer.
-4. The first time Scout is opened on a phone, one line explains it runs in
-   Chrome on the computer and offers **Hide on this phone**.
-5. With Scout shown: saved searches are rows with a full-width Start; a running
-   search shows its progress and findings; resume types list with Upload.
+2. Every Scout action available on the computer is available on the phone.
+3. Saved searches are cards with a full-width Start; a running search shows its
+   progress and findings; resume types list with Upload.
+4. No Scout card or form is wider than the screen.
 
 ### User Story 5 — The rest, and the feel (P2)
 
@@ -130,8 +136,6 @@ feedback (no hover on a phone). Loading shows skeleton rows.
 - A very long job title or company → truncates; never widens the row.
 - Phone in landscape or a small tablet (≥ 768 px) → desktop layout.
 - Installed app opened offline → the existing offline banner, no white screen.
-- Scout hidden while a search is running → the run continues; More shows
-  "Claude Scout (hidden) · 1 running".
 - 0 jobs / 0 updates → an empty state with one button, not a blank list.
 
 ## Requirements
@@ -153,7 +157,8 @@ feedback (no hover on a phone). Loading shows skeleton rows.
   wraps long words and links.
 - **FR-009** Email Updates phone layout per User Story 3.
 - **FR-010** Find Jobs phone layout; result rows; filter sheet.
-- **FR-011** Hide / show Claude Scout, per device, from Find Jobs and Settings.
+- **FR-011** Claude Scout on a phone: every action the computer has, laid out
+  for a phone.
 - **FR-012** Settings as a grouped list on phones; Matches, AI Apply, Analytics
   brought onto the shared pieces.
 - **FR-013** Press feedback, skeletons, reduced motion honoured.
@@ -173,7 +178,8 @@ Measured by the phone audit script at 390 × 844 (see
 - **SC-004** 0 primary actions under 44 px [1,159 of 1,159 controls on My Jobs
   under 40 px].
 - **SC-005** No page zoom on focusing any field.
-- **SC-006** Claude Scout hidden in ≤ 2 taps, shown again in ≤ 3.
+- **SC-006** Every page and action reachable on the computer is reachable on
+  the phone in at most two taps from the bottom bar.
 - **SC-007** Installed app opens with no browser bars.
 
 ## Out of scope

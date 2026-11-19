@@ -49,6 +49,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `SearchResults.tsx` | `useJobSearch` → grid of `JobCard` + pagination |
 | `JobCard.tsx` | Job card: title, company, salary, source, apply/save |
 | `SavedJobsBody.tsx` | My Jobs list on a computer: folders, filter bar, card grid drawn 30 at a time |
+| `StagePicker.tsx` | A saved job's stage as a coloured pill you can change (the board's move, from the job page; pinned at the bottom on a phone) |
 | `PhoneJobList.tsx` | My Jobs list on a phone: rows (about ten a screen), stage chips with counts (remembered per device), search, filters in a bottom sheet, 30 rows at a time |
 | `JobDetail.tsx` | Full job view (legacy; no `/jobs/:id` route yet) |
 | `SaveButton.tsx` | Optimistic save/unsave toggle |

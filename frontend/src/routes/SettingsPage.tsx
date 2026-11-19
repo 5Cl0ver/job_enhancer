@@ -1,6 +1,8 @@
 import { useEffect, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
-import { Download, Trash2, Loader2, Check } from "lucide-react";
+import { ChevronDown, Download, Trash2, Loader2, Check } from "lucide-react";
+import { useIsPhone } from "@/hooks/useIsPhone";
+import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
 import { Button } from "@/components/ui/button";
@@ -27,20 +29,67 @@ export default function SettingsPage() {
   const userEmail = profile?.email ?? "";
 
   return (
-    <div className="container mx-auto max-w-2xl space-y-6 md:px-4 md:py-6">
+    <div className="container mx-auto max-w-2xl space-y-3 md:space-y-6 md:px-4 md:py-6">
       <div className="space-y-1 max-md:hidden">
         <h1 className="text-2xl font-bold tracking-tight">Account Settings</h1>
         <p className="text-sm text-muted-foreground">Manage your account and data.</p>
       </div>
 
-      <AppearanceCard />
-      <ApplicationProfileCard />
-      <ClaudeProjectCard />
-      <EmailConnectCard />
-      <SavedAnswersCard />
-      <DataExportCard />
-      <DeleteAccountCard email={userEmail} />
+      <Section title="Appearance">
+        <AppearanceCard />
+      </Section>
+      <Section title="Application profile">
+        <ApplicationProfileCard />
+      </Section>
+      <Section title="Claude project">
+        <ClaudeProjectCard />
+      </Section>
+      <Section title="Email">
+        <EmailConnectCard />
+      </Section>
+      <Section title="Saved answers">
+        <SavedAnswersCard />
+      </Section>
+      <Section title="Export your data">
+        <DataExportCard />
+      </Section>
+      <Section title="Delete account">
+        <DeleteAccountCard email={userEmail} />
+      </Section>
     </div>
+  );
+}
+
+/**
+ * On a phone, Settings is a short list: each part is one row that opens when
+ * tapped, instead of seven cards end to end. On a computer the cards show as
+ * they are.
+ */
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  const phone = useIsPhone();
+  const [open, setOpen] = useState(false);
+  if (!phone) return <>{children}</>;
+  return (
+    <section className="overflow-hidden rounded-xl border bg-card">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left text-base font-medium active:bg-accent"
+      >
+        {title}
+        <ChevronDown
+          className={cn("h-5 w-5 text-muted-foreground transition-transform", open && "rotate-180")}
+          aria-hidden
+        />
+      </button>
+      {/* The card inside loses its own frame and title: the row is both. */}
+      {open && (
+        <div className="border-t *:data-[slot=card]:rounded-none *:data-[slot=card]:ring-0 **:data-[slot=card-title]:hidden">
+          {children}
+        </div>
+      )}
+    </section>
   );
 }
 

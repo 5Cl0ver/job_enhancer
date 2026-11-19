@@ -10,8 +10,8 @@ Under 768 px the app gets its own arrangement instead of a narrowed desktop
 page: a slim top bar and a four-tab bottom bar (**My Jobs · Email · Find Jobs ·
 More**), bottom sheets in place of dialogs, jobs and results as dense rows,
 stage chips as the phone's board, filters in a sheet, 44 px touch targets, and
-a home-screen install that drops the browser bars. Claude Scout can be hidden
-per device. Measured starting point and causes are in
+a home-screen install that drops the browser bars. The phone does everything
+the computer does; nothing is hidden. Measured starting point and causes are in
 [research.md](research.md) R1; the screens are specified in
 [contracts/ui.md](contracts/ui.md).
 
@@ -19,7 +19,7 @@ per device. Measured starting point and causes are in
 
 **Language/Version**: TypeScript 5 / React 19 (frontend); Python 3.11 only for the one shared endpoint
 **Primary Dependencies**: Vite, React Router 7, TanStack Query v5, Tailwind 4.3 (`pointer-coarse:` variant), shadcn/ui on Radix (Dialog doubles as the bottom sheet under 768 px), lucide. **No new runtime dependency.**
-**Storage**: none on the server. Three `localStorage` keys and a few URL params ([data-model.md](data-model.md))
+**Storage**: none on the server. One `localStorage` key and a few URL params ([data-model.md](data-model.md))
 **Testing**: Vitest + Testing Library with a `matchMedia` stub for phone vs desktop; Playwright at 390 × 844 (touch) for the measured criteria; pytest for `/attention`
 **Target Platform**: phone browsers (iOS Safari/Chrome, Android Chrome) and the same app installed to the home screen; Vercel + Render as today
 **Project Type**: Web application (existing `frontend/` + `backend/`)
@@ -32,8 +32,8 @@ per device. Measured starting point and causes are in
 | Principle | How this plan meets it |
 |---|---|
 | I. Portfolio quality | A measured before/after (audit table, success criteria with today's values), phone screenshots for the README, installable app |
-| II. User-centric | Driven by the user's own phone screenshot; the two things they do on a phone (check jobs, check email) are tabs; nothing they asked to hide stays in the way |
-| III. AI-powered | No AI change. Scout stays optional and can be hidden where it isn't useful |
+| II. User-centric | Driven by the user's own phone screenshot; the two things they do on a phone (check jobs, check email) are tabs; nothing is taken away on a phone |
+| III. AI-powered | No AI change. Scout is fully usable from a phone |
 | IV. Security & privacy | No new data; preferences are layout-only and local; `/attention` returns counts, never content, and is user-scoped |
 | V. Tests | Each slice ships with component tests (phone and desktop renders) and a Playwright phone spec that asserts the measured criteria, so regressions in overflow, target size or first-item position fail CI |
 | VI. Clean architecture | Phone pieces are separate components chosen by one `useIsPhone` hook; data hooks and pure helpers (`boardFilter`, `emailUpdates`, new `jobFilters`) are shared; preferences go through `lib/prefs.ts` |
@@ -76,7 +76,7 @@ frontend/
 │   ├── components/settings/SettingsList.tsx
 │   └── routes/{DashboardLayout,MyJobsPage,JobDetailPage,EmailUpdatesPage,SearchPage,SettingsPage,…}.tsx
 ├── tests/{lib/{prefs,jobFilters}.test.ts,
-│          components/{PhoneShell,JobList,FilterSheet,UpdateCard,HideScout}.test.tsx}
+│          components/{PhoneShell,JobList,FilterSheet,UpdateCard,ScoutPhone}.test.tsx}
 └── tests/e2e/phone.spec.ts                 # 390×844: first-item top, overflow, target sizes, tabs
 
 backend/
@@ -106,8 +106,8 @@ itself.
    List/Board toggle dropped on phones.
 3. **Email** (US3): update cards with full-width actions, email sheet, scan in
    the top bar, the auto-move switch moved to Email settings.
-4. **Find Jobs + Scout** (US4): search layout, filter sheet, result rows; hide /
-   show Claude Scout; Scout's phone views.
+4. **Find Jobs + Scout** (US4): search layout, filter sheet, result rows;
+   Scout's phone views, with every action the computer has.
 5. **The rest** (US5): Settings as a grouped list; Matches, AI Apply,
    Analytics; press states and skeletons; phone screenshots in the README.
 
@@ -119,7 +119,6 @@ into the phone pieces as they land; neither blocks slice 1 or 2 here.
 | Risk | Handling |
 |---|---|
 | iOS Safari quirks (dynamic toolbar height, keyboard covering pinned buttons) | Use `dvh` and `env(safe-area-inset-*)`; pin sheet footers with `position: sticky` inside the scroller; check on the user's own iPhone before each merge |
-| "Hide Claude Scout" meant something else | Ship the tab-level hide (the strongest reading) and confirm on the first demo (research R8) |
 | Desktop regressions from shared edits (button sizes, gutters) | Touch sizes are behind `pointer-coarse:`; gutter change is phone-only; desktop screenshots compared before/after in each PR |
 | Two layouts drifting apart | Shared hooks and pure helpers; component tests render both; the phone spec runs in CI |
 | An installed copy showing an old version | No service worker, so the browser's normal cache rules apply; Vercel serves hashed assets |

@@ -1,4 +1,5 @@
 import { Link } from "react-router-dom";
+import { plainText } from "@/lib/text";
 import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2, Check, Undo2 } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { Badge } from "@/components/ui/badge";
@@ -46,11 +47,11 @@ export function JobCard({
               to={`/jobs/${job.id}`}
               className="line-clamp-2 break-words font-semibold leading-tight hover:underline"
             >
-              {job.title}
+              {plainText(job.title)}
             </Link>
             <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
               <Building2 className="h-3.5 w-3.5 shrink-0" />
-              <span className="truncate">{job.company}</span>
+              <span className="truncate">{plainText(job.company)}</span>
             </div>
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">

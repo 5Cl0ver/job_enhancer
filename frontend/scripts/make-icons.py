@@ -1,6 +1,6 @@
 """Draw the home-screen icons into public/ (run once: `python scripts/make-icons.py`).
 
-A white briefcase with a check on the app's dark background. Drawn from shapes,
+A white briefcase with a check on the app's indigo. Drawn from shapes,
 so there is no source image or font to keep. The glyph sits inside the middle
 60% of the square, which is the safe zone for Android's "maskable" icons, so
 the same drawing serves every size.
@@ -11,8 +11,8 @@ from pathlib import Path
 from PIL import Image, ImageDraw
 
 OUT = Path(__file__).resolve().parents[1] / "public"
-BACKGROUND = (10, 10, 10)
-INK = (250, 250, 250)
+BACKGROUND = (79, 70, 229)  # the app's indigo
+INK = (255, 255, 255)
 SCALE = 4  # draw big, shrink for smooth edges
 
 
