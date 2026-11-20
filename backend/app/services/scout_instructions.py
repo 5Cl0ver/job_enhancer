@@ -54,16 +54,16 @@ RUBRIC_LABELS = {
     "recency": "posted recently",
     "pay_location": "pay and location",
 }
-LIMITS = {"links": 6, "pages": 2, "titles": 8, "companies": 15}
+LIMITS = {"links": 6, "search_pages": 2, "titles": 8, "companies": 15}
 LIMIT_RANGES = {
     "links": (1, 10),
-    "pages": (1, 8),
+    "search_pages": (1, 8),
     "titles": (2, 8),
     "companies": (5, 25),
 }
 LIMIT_LABELS = {
     "links": "Searches a run makes (one per title)",
-    "pages": "Results pages read per search",
+    "search_pages": "Results pages read per search",
     "titles": "Titles an Anything I'd be good at run searches",
     "companies": "Companies a Local companies run checks",
 }
@@ -98,7 +98,9 @@ def _decode(key: str, body: str | None) -> object:
         return ORIGINALS[key]
     if key in TEXT_KEYS:
         return body
-    return {**ORIGINALS[key], **json.loads(body)}
+    # Only the parts there are now: a limit saved under an old name is dropped.
+    saved = {k: v for k, v in json.loads(body).items() if k in ORIGINALS[key]}
+    return {**ORIGINALS[key], **saved}
 
 
 def rubric_text(weights: dict) -> str:

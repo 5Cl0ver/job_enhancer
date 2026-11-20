@@ -37,7 +37,7 @@ class TestVersions:
         assert not any(s["edited"] for s in sections.values())
         assert sections["playbook"]["current"] == instr.ORIGINALS["playbook"]
         assert sections["rubric"]["current"] == instr.RUBRIC
-        assert sections["limits"]["ranges"]["pages"] == [1, 8]
+        assert sections["limits"]["ranges"]["search_pages"] == [1, 8]
         # The locked rules are no section: there's nothing to edit them with.
         assert "rules" not in sections
         assert "Never apply" in instr.RULES
@@ -82,7 +82,7 @@ class TestVersions:
                 "add up to 10 (now 9)",
             ),
             ("rubric", {"values": {"skills": 10}}, "each part"),
-            ("limits", {"values": {"pages": 9}}, "choose 1 to 8"),
+            ("limits", {"values": {"search_pages": 9}}, "choose 1 to 8"),
             ("limits", {"values": {"companies": 2}}, "choose 5 to 25"),
             ("limits", {"values": {"sneaky": 3}}, "Unknown limit"),
         ],
@@ -100,11 +100,11 @@ class TestVersions:
         maker = await _connected_user(engine, monkeypatch, email="i7@test.dev")
         uid = await _user_id(maker, "i7@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 2})
+            await instr.save(db, uid, "limits", values={"search_pages": 3})
             out = await instr.save(db, uid, "limits", values={"titles": 5})
             assert out["current"] == {
                 "links": 6,
-                "pages": 2,
+                "search_pages": 3,
                 "titles": 5,
                 "companies": 15,
             }
@@ -113,11 +113,11 @@ class TestVersions:
         maker = await _connected_user(engine, monkeypatch, email="i8@test.dev")
         uid = await _user_id(maker, "i8@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 8})
+            await instr.save(db, uid, "limits", values={"search_pages": 8})
             await instr.reset(db, uid, "limits")
             (_, old) = await instr.history(db, uid, "limits")
             # The range got tighter since that version was saved.
-            monkeypatch.setitem(instr.LIMIT_RANGES, "pages", (1, 6))
+            monkeypatch.setitem(instr.LIMIT_RANGES, "search_pages", (1, 6))
             with pytest.raises(HTTPException) as e:
                 await instr.restore(db, uid, "limits", old["id"])
             assert e.value.status_code == 422 and "can't be used now" in e.value.detail
@@ -207,7 +207,7 @@ class TestRunsUseThem:
         maker = await _connected_user(engine, monkeypatch, email="l1@test.dev")
         uid = await _user_id(maker, "l1@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 1, "links": 1})
+            await instr.save(db, uid, "limits", values={"search_pages": 1, "links": 1})
             await db.commit()
         _, _, run_id = await _setup(maker, "l1@test.dev", job_count=10)
         brief = await mcp_mod.get_scout_brief()

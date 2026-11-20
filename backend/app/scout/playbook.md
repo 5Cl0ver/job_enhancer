@@ -12,11 +12,13 @@ app as your memory. Keep your own context small: the app remembers everything.
    with screenshots.
 3. The brief gives one start URL per search (start_urls, in order, named in
    searches). Open the first; it already has the filters set, so don't change
-   them. On LinkedIn, check the place the results show. If it isn't the
-   brief's place.location (e.g. a metro area or another city), or
+   them. On LinkedIn, if the brief has a place, check the place the results
+   show. If it isn't place.location (e.g. a metro area or another city), or
    place.geo_id is empty, type the place into LinkedIn's location box, pick
    the matching city, and send that page's address as page_url with
    place_fixed: true in its check_jobs. The app saves the place for later runs.
+   If the brief has resume_url, the run was already under way: open that
+   instead of the first start URL.
 4. For each page of results, read the list rows (company, job title, link).
    LinkedIn shows 25 a page and loads them as you scroll: scroll the list to
    its end first (no screenshots needed). Decide from the title alone whether

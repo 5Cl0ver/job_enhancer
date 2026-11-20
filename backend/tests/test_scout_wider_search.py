@@ -253,9 +253,135 @@ class TestPassedTitlesOnThePage:
             )
         await db_session.flush()
         r = await client.get(f"/v1/scout/tracks/{track['id']}/passes")
-        assert r.json()["count"] == 3
+        assert r.json()["count"] == 2  # titles, not rows
         assert r.json()["titles"][0] == {"title": "registered nurse", "times": 2}
         r = await client.post(f"/v1/scout/tracks/{track['id']}/start-fresh")
         assert r.status_code == 204
         r = await client.get(f"/v1/scout/tracks/{track['id']}/passes")
         assert r.json()["count"] == 0 and r.json()["since"] is not None
+
+
+ROWS5 = [{"company": f"Vellacor {i}", "title": "IT Admin"} for i in range(5)]
+
+
+@pytest.mark.asyncio
+class TestReviewFixes:
+    async def test_the_next_search_showing_the_same_jobs_doesnt_loop(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="r1@test.dev")
+        _, _, run_id = await _setup(maker, "r1@test.dev", job_count=10)
+        brief = await mcp_mod.get_scout_brief()
+        out = await mcp_mod.check_jobs(str(run_id), ROWS5, total_results=5)
+        assert out["next_page_url"] == brief["start_urls"][1]
+        # The next search lists the same 5 jobs: told apart by its address.
+        out = await mcp_mod.check_jobs(
+            str(run_id), ROWS5, total_results=5, page_url=brief["start_urls"][1]
+        )
+        assert "next_page_url" not in out and "last search" in out["next"]
+
+    async def test_same_jobs_without_an_address_move_on_the_second_time(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="r2@test.dev")
+        _, _, run_id = await _setup(maker, "r2@test.dev", job_count=10)
+        brief = await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), ROWS5, total_results=5)
+        out = await mcp_mod.check_jobs(str(run_id), ROWS5)  # could be a retry
+        assert out["next_page_url"] == brief["start_urls"][1]
+        out = await mcp_mod.check_jobs(str(run_id), ROWS5)  # again: it moved on
+        assert "next_page_url" not in out and "last search" in out["next"]
+
+    async def test_a_retry_changes_nothing(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="r3@test.dev")
+        _, _, run_id = await _setup(maker, "r3@test.dev", job_count=10)
+        brief = await mcp_mod.get_scout_brief()
+        first = await mcp_mod.check_jobs(
+            str(run_id), ROWS5, total_results=5, page_url=brief["start_urls"][0]
+        )
+        again = await mcp_mod.check_jobs(
+            str(run_id), ROWS5, total_results=5, page_url=brief["start_urls"][0]
+        )
+        assert again["next_page_url"] == first["next_page_url"]
+        assert again["next"] == first["next"]
+        # The next search's own total still counts.
+        out = await mcp_mod.check_jobs(
+            str(run_id),
+            [{"company": "Quillstone", "title": "Jira Admin"}],
+            total_results=400,
+            page_url=brief["start_urls"][1],
+        )
+        assert out["next_page_url"] == brief["start_urls"][1] + "&start=25"
+        async with maker() as db:
+            stats = (await db.get(ScoutRun, run_id)).stats
+            assert stats["_links"]["0"]["total"] == 5
+            assert stats["_links"]["1"]["total"] == 400
+
+    async def test_a_new_chat_carries_on_with_the_search_it_was_on(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="r4@test.dev")
+        _, _, run_id = await _setup(maker, "r4@test.dev", job_count=10)
+        brief = await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), ROWS5, total_results=5)
+        again = await mcp_mod.get_scout_brief(str(run_id))
+        assert again["resume_url"] == brief["start_urls"][1]
+        assert "Carry on where the run was" in again["next"]
+
+    async def test_a_changed_place_doesnt_get_the_old_places_id(
+        self, engine, monkeypatch
+    ):
+        from app.schemas.scout import MissionUpdate
+
+        maker = await _connected_user(engine, monkeypatch, email="r5@test.dev")
+        user_id, _, run_id = await _setup(maker, "r5@test.dev")
+        await mcp_mod.get_scout_brief()
+        async with maker() as db:
+            run = await db.get(ScoutRun, run_id)
+            await scout_runs.update_mission(
+                db, run.mission_id, user_id, MissionUpdate(location="Beaverton, OR")
+            )
+            await db.commit()
+        await mcp_mod.check_jobs(
+            str(run_id),
+            [{"company": "Vellacor", "title": "IT Systems Administrator"}],
+            page_url=LANDED,
+            place_fixed=True,
+        )
+        async with maker() as db:
+            run = await db.get(ScoutRun, run_id)
+            assert (await db.get(ScoutMission, run.mission_id)).linkedin_geo_id is None
+        assert scout_runs._geo_id("https://x.example/?geoId=12%C2%B2") is None
+
+    async def test_remote_only_has_no_place_to_fix(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="r6@test.dev")
+        _, _, run_id = await _setup(maker, "r6@test.dev")
+        async with maker() as db:
+            run = await db.get(ScoutRun, run_id)
+            run.criteria = {**run.criteria, "remote": "remote_only"}
+            await db.commit()
+        brief = await mcp_mod.get_scout_brief()
+        assert "place" not in brief
+
+    async def test_a_limit_saved_under_its_old_name_is_ignored(
+        self, engine, monkeypatch
+    ):
+        import json
+        import uuid
+
+        from app.models.scout import ScoutInstructionVersion
+
+        maker = await _connected_user(engine, monkeypatch, email="r7@test.dev")
+        user_id, _, _ = await _setup(maker, "r7@test.dev")
+        async with maker() as db:
+            db.add(
+                ScoutInstructionVersion(
+                    id=uuid.uuid4(),
+                    user_id=user_id,
+                    key="limits",
+                    body=json.dumps({"pages": 8, "titles": 8, "companies": 15}),
+                )
+            )
+            await db.commit()
+            section = await instr.section(db, user_id, "limits")
+        assert section["current"] == instr.LIMITS

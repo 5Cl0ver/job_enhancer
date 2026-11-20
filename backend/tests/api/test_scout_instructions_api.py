@@ -30,11 +30,11 @@ class TestInstructionsPage:
         r = await client.put("/v1/scout/instructions/playbook", json={"text": "Mine."})
         assert r.status_code == 200 and r.json()["edited"] is True
         r = await client.put(
-            "/v1/scout/instructions/limits", json={"values": {"pages": 6}}
+            "/v1/scout/instructions/limits", json={"values": {"search_pages": 6}}
         )
         assert r.json()["current"] == {
             "links": 6,
-            "pages": 6,
+            "search_pages": 6,
             "titles": 8,
             "companies": 15,
         }

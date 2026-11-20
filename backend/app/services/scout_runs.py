@@ -98,15 +98,17 @@ RUBRIC = instr.RUBRIC
 MAX_ROWS_PER_CHECK = 30
 # Results pages a run reads before it stops (the user can change it), and how
 # many of the resume type's titles one search asks for (runs take turns).
-MAX_PAGES = instr.LIMITS["pages"]
+MAX_PAGES = instr.LIMITS["search_pages"]
 TITLES_PER_SEARCH = 4
 HOURS_PER_YEAR = 2080
 # Findings that count as "seen": a job the user has decided on or has waiting
 # to decide, or that Claude already judged. A job with no page copy isn't seen;
 # it can be found again.
 _SEEN = (SAVED, PICKED, SKIPPED, BELOW_BAR, DUPLICATE)
-# Outcomes the user decided on, or that mean the user already has the job.
-_DECIDED = (SAVED, PICKED, SKIPPED, DUPLICATE)
+# Outcomes the user decided on. (A duplicate points at a job already in the
+# tracker, which in_tracker covers, or at an earlier finding that carries its
+# own outcome.)
+_DECIDED = (SAVED, PICKED, SKIPPED)
 # What counts toward a run's target: good fits, confirmed yet or not.
 _KEPT = (SAVED, PICKED)
 
@@ -416,6 +418,8 @@ def link_report(c: dict, stats: dict | None) -> list[dict]:
     """Each search the run read: what it asked for, how many results the board
     said it had, pages read, and filters its redirect dropped."""
     info = (stats or {}).get("_links") or {}
+    if not info or not c:
+        return []
     out = []
     for i, link in enumerate(search_links(c)):
         got = info.get(str(i))
@@ -480,7 +484,7 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
             "related titles to the resume type, pick a bigger radius"
             + (f", or {widen}." if widen else ".")
         )
-    budget = instr.limit(c, "pages") * max(1, len(search_links(c)))
+    budget = instr.limit(c, "search_pages") * max(1, len(search_links(c)))
     ran_out = run.status == RUN_DONE and s.get("pages", budget) < budget
     if ran_out and (widen or (radius and radius < 100)):
         more = [w for w in (widen, "pick a bigger radius" if radius else "") if w]
@@ -1012,9 +1016,13 @@ async def _brief_body(
         extra["source_steps"] = instr.text_for(c, c["source"])
         extra["posted_within_days"] = c["posted_within_days"]
     if not local:
-        extra["max_pages"] = instr.limit(c, "pages")  # per search
+        extra["max_pages"] = instr.limit(c, "search_pages")  # per search
         extra["searches"] = [link["title"] for link in search_links(c)]
-    if c["source"] == "linkedin":
+    if (
+        c["source"] == "linkedin"
+        and c.get("location")
+        and c.get("remote") != ("remote_only")
+    ):
         radius = _radius(c)
         extra["place"] = {
             "location": c.get("location"),
@@ -1052,13 +1060,30 @@ async def _brief_body(
             avoid=ov["avoid"],
             resume_types=await _resume_types(db, user_id),
         )
+    done_searching = False
+    so_far = run.stats or {}
+    if not local and not choosing and "_link" in so_far:
+        links = search_links(c)
+        at, at_pages = int(so_far["_link"]), int(so_far.get("_link_pages", 0))
+        if at < len(links):
+            resume = (page_url(c, at, at_pages) if at_pages else None) or links[at][
+                "url"
+            ]
+            extra["resume_url"] = resume
+            first = (
+                f"Carry on where the run was: open resume_url (search {at + 1} of "
+                f"{len(links)}, {links[at]['title']}) and send its rows to check_jobs."
+            )
+        else:
+            done_searching = True
+            first = "Every search has been read: call finish_scout_run."
     if choosing:
         first = (
             "Call get_master_profile, choose up to "
             f"{instr.limit(c, 'titles')} job titles the user would be good at (see "
             "broad_steps), then call set_search_titles: it gives you the start URLs."
         )
-    elif ready:
+    elif ready and not done_searching:
         first = (
             "Call get_master_profile once and score every job against the resume. "
             f"Then {first[0].lower()}{first[1:]}"
@@ -1313,34 +1338,62 @@ async def check_jobs(
             stats[why] = stats.get(why, 0) + 1
     # One company's openings (Local companies) aren't a results page.
     paged = c["source"] != LOCAL
-    resent = bool(marks) and sorted(set(marks)) == stats.get("_last")
+    link = int(stats.get("_link", 0))
+    link_pages = int(stats.get("_link_pages", 0))
+    page_marks = sorted(set(marks))
+    last = stats.get("_last")
+    if not isinstance(last, dict):  # runs from before searches were split
+        last = {"marks": last, "link": link}
+    # A call that repeats one already answered (a retry, or a new chat sending
+    # the last page again) changes nothing and gets the same answer. Rows the
+    # next search shares with the last page are told apart: by the address
+    # Claude landed on, or by being sent a second time.
+    seen_link = _link_of(c, page_url_seen) if paged and page_url_seen else None
+    resent = False
+    if seen_link is not None and seen_link < link:
+        resent = True  # a page of a search already done
+    elif page_marks and last.get("marks") == page_marks:
+        moved_on = last.get("link") != link
+        repeats = int(last.get("repeats", 0)) + 1
+        resent = not (moved_on and (seen_link == link or repeats >= 2))
+        last = {**last, "repeats": repeats}
+        stats["_last"] = last
+    if resent and last.get("answer"):
+        run.stats = {**stats, "_rows": sorted(counted)[-2000:]}
+        await db.flush()
+        progress = await _progress(db, run)
+        answer = {**last["answer"], "progress": progress}
+        if progress["done"]:
+            answer.pop("next_page_url", None)
+            answer["next"] = "Target reached: call finish_scout_run."
+        return answer
     ran_out = paged and not new_page and not resent
-    if new_page:  # the last page read, to tell it apart when sent again
-        stats["_last"] = sorted(set(marks))
     stats["_rows"] = sorted(counted)[-2000:]
 
     # Which search this page belongs to, and where Claude goes next: more pages
     # of this search, the next search, or done (spec 011).
     nxt_url: str | None = None
     note = ""
+    read_on = link  # the search this page was read on
     if paged:
         if place_fixed and page_url_seen and c["source"] == "linkedin":
             geo = _geo_id(page_url_seen)
-            if geo:  # LinkedIn's id for the place, kept for every later run
+            mission = (
+                await db.get(ScoutMission, run.mission_id) if run.mission_id else None
+            )
+            # Only for the place this run searches: the user may have changed it.
+            same_place = (
+                mission is not None
+                and mission.user_id == user_id
+                and (mission.location or None) == (c.get("location") or None)
+            )
+            if geo and same_place:  # LinkedIn's id for the place, kept for later runs
                 c = {**c, "geo_id": geo}
                 run.criteria = c
-                mission = (
-                    await db.get(ScoutMission, run.mission_id)
-                    if run.mission_id
-                    else None
-                )
-                if mission is not None and mission.user_id == user_id:
-                    mission.linkedin_geo_id = geo
+                mission.linkedin_geo_id = geo
                 note = " The place is saved for later runs."
         links = search_links(c)
-        link = int(stats.get("_link", 0))
-        link_pages = int(stats.get("_link_pages", 0))
-        per_search = instr.limit(c, "pages")
+        per_search = instr.limit(c, "search_pages")
         all_links = dict(stats.get("_links") or {})
         info = dict(all_links.get(str(link)) or {})
         if total_results is not None and "total" not in info:
@@ -1397,7 +1450,7 @@ async def check_jobs(
         elif nxt_url:
             after = (
                 f"open next_page_url (page {stats['_link_pages'] + 1} of "
-                f"{instr.limit(c, 'pages')} of this search)"
+                f"{instr.limit(c, 'search_pages')} of this search)"
             )
         else:
             after = "scroll the list for more jobs and send the next rows"
@@ -1416,7 +1469,37 @@ async def check_jobs(
     }
     if nxt_url and not progress["done"]:
         out["next_page_url"] = nxt_url
+    if paged and (new_page or ran_out):
+        saved = {k: v for k, v in out.items() if k != "progress"}
+        run.stats = {
+            **run.stats,
+            "_last": {"marks": page_marks, "link": read_on, "answer": saved},
+        }
+        await db.flush()
     return out
+
+
+def _link_of(c: dict, url: str) -> int | None:
+    """Which of the run's searches an address is a page of, by the words it
+    searched for (None when it can't tell)."""
+    key = {"linkedin": "keywords", "indeed": "q", "ziprecruiter": "search"}.get(
+        c["source"], "q"
+    )
+
+    def words(u: str) -> str | None:
+        try:
+            value = dict(parse_qsl(urlsplit(u).query)).get(key)
+        except ValueError:
+            return None
+        return " ".join(value.split()).casefold() if value else None
+
+    landed = words(url)
+    if not landed:
+        return None
+    for i, link in enumerate(search_links(c)):
+        if words(link["url"]) == landed:
+            return i
+    return None
 
 
 def _geo_id(url: str) -> str | None:
@@ -1424,7 +1507,7 @@ def _geo_id(url: str) -> str | None:
         geo = dict(parse_qsl(urlsplit(url).query)).get("geoId", "")
     except ValueError:
         return None
-    return geo if geo.isdigit() and len(geo) <= 20 else None
+    return geo if geo.isascii() and geo.isdigit() and len(geo) <= 20 else None
 
 
 def _pay_note(capture: ScoutCapture, min_pay: int | None) -> str | None:
@@ -1507,6 +1590,7 @@ async def report_job(
             url_key=key,
             outcome=WAITING,
             fit_score=0,
+            created_at=_now(),
         )
         db.add(finding)
     finding.fit_score = int(fit_score)

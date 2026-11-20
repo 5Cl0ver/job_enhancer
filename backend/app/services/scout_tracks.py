@@ -221,7 +221,7 @@ async def passes(db: AsyncSession, track_id: uuid.UUID, user_id: uuid.UUID) -> d
         )
     ).all()
     return {
-        "count": sum(n for _, n in rows),
+        "count": len([t for t, _ in rows if t]),
         "titles": [{"title": t, "times": n} for t, n in rows if t],
         "since": track.rules_changed_at,
     }
