@@ -65,7 +65,15 @@ export function JobDetailDialog({
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] gap-5 overflow-y-auto sm:max-w-xl">
+      <DialogContent
+        className="max-h-[88vh] gap-5 overflow-y-auto sm:max-w-xl"
+        // Following a link to another part of the app (the job's collection,
+        // its Scout search, the full page) closes the pop-up, so it never sits
+        // on top of the page the link went to.
+        onClickCapture={(e) => {
+          if ((e.target as HTMLElement).closest('a[href^="/"]')) onOpenChange(false);
+        }}
+      >
         {/* What the job is, and where it stands. */}
         <DialogHeader className="space-y-2 text-left">
           <DialogTitle className="break-words pr-8 text-xl leading-snug">

@@ -1,5 +1,4 @@
 import { useMemo, useState } from "react";
-import { useLocation } from "react-router-dom";
 import { BookmarkX, SlidersHorizontal, X } from "lucide-react";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { CollectionSidebar } from "@/components/jobs/CollectionSidebar";
@@ -42,13 +41,9 @@ export function SavedJobsBody() {
   // Clicking a job opens the same pop-up the board does; its emails open from
   // the card. Ids, so both follow the list as it refreshes.
   const { data: emails } = useJobEmailLatest();
-  // The pop-up belongs to the address it was opened at: following a link out
-  // of it (to the job's collection) closes it.
-  const { search } = useLocation();
-  const [opened, setOpened] = useState<{ id: string; at: string } | null>(null);
+  const [openId, setOpenId] = useState<string | null>(null);
   const [emailFor, setEmailFor] = useState<string | null>(null);
-  const openJob =
-    opened && opened.at === search ? savedJobs.find((sj) => sj.id === opened.id) : undefined;
+  const openJob = savedJobs.find((sj) => sj.id === openId);
   const openEmail = emailFor ? emails?.get(emailFor) : undefined;
 
   const [typed, setTyped] = useState<JobFilters>(NO_FILTERS);
@@ -198,7 +193,7 @@ export function SavedJobsBody() {
                   applied={!!sj.applied_at}
                   savedJobId={sj.id}
                   savedJob={sj}
-                  onOpen={() => setOpened({ id: sj.id, at: search })}
+                  onOpen={() => setOpenId(sj.id)}
                   email={emails?.get(sj.id)}
                   onOpenEmail={() => setEmailFor(sj.id)}
                   onSave={() => unsaveJob.mutate(sj.id)}
@@ -224,7 +219,7 @@ export function SavedJobsBody() {
         <JobDetailDialog
           savedJob={openJob}
           open
-          onOpenChange={(open) => !open && setOpened(null)}
+          onOpenChange={(open) => !open && setOpenId(null)}
         />
       )}
       <EmailViewer

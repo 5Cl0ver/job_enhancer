@@ -75,9 +75,14 @@ export function EmailViewer({
           )}
         </DialogHeader>
         {isLoading && (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Opening your email…
-          </p>
+          <div className="space-y-3">
+            <p className="flex items-center gap-2 text-sm text-muted-foreground">
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Opening your email…
+            </p>
+            {/* The way out to the mail site is known already: no need to wait
+                for the text to load to use it. */}
+            <MailLinks link={mailLink} search={searchLink} />
+          </div>
         )}
         {isError && (
           <div className="space-y-3">

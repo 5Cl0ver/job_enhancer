@@ -62,9 +62,10 @@ export function JobCard({
               <button
                 type="button"
                 onClick={onOpen}
-                className="line-clamp-2 break-words text-left font-semibold leading-tight hover:underline"
+                className="text-left font-semibold leading-tight hover:underline"
               >
-                {job.title}
+                {/* On a span: a button doesn't clamp its own text in every browser. */}
+                <span className="line-clamp-2 break-words">{job.title}</span>
               </button>
             ) : (
               <Link

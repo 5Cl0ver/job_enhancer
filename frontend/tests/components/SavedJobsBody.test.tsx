@@ -92,7 +92,15 @@ beforeEach(() => {
   get.mockImplementation((path: string) => {
     if (path.startsWith("/v1/collections")) return Promise.resolve(COLLECTIONS);
     if (path.startsWith("/v1/email/job-emails/latest")) return Promise.resolve([EMAIL]);
-    if (path.startsWith("/v1/email/messages")) return new Promise(() => {});
+    if (/\/v1\/email\/events\/[^/]+\/message/.test(path)) return new Promise(() => {});
+    if (path.endsWith("/source"))
+      return Promise.resolve({
+        origin: "scout",
+        saved_at: "2026-11-12T09:00:00Z",
+        collection: { id: "c1", name: "IT Admin" },
+        scout: null,
+        email: null,
+      });
     if (path.startsWith("/v1/jobs/")) return new Promise(() => {});
     if (path.includes("collection_id=gone")) return Promise.resolve([]);
     if (path.startsWith("/v1/saved-jobs")) return Promise.resolve(JOBS);
@@ -137,6 +145,18 @@ describe("My Jobs list (computer)", () => {
       "href",
       "/jobs/listing-1",
     );
+  });
+
+  it("closes the pop-up when a link in it goes somewhere else in the app", async () => {
+    renderAt("/jobs?folder=c1");
+    await userEvent.click(await screen.findByRole("button", { name: "Systems Administrator" }));
+    const dialog = await screen.findByRole("dialog");
+    // The link points at the page already showing: the pop-up still closes.
+    await userEvent.click(await within(dialog).findByRole("link", { name: /In IT Admin/ }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    // And it doesn't come back by itself.
+    await userEvent.click(screen.getByRole("button", { name: /All saved jobs/ }));
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 
   it("opens the email behind a job from its card", async () => {
