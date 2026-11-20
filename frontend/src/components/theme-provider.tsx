@@ -23,6 +23,9 @@ type ThemeContextValue = {
   setTheme: (theme: Theme) => void;
 };
 
+// The page background in each theme (index.html sets the same before first paint).
+const THEME_COLOR = { light: "#fafafc", dark: "#0b0b12" } as const;
+
 const ThemeContext = createContext<ThemeContextValue | undefined>(undefined);
 
 function systemPrefersDark(): boolean {
@@ -33,6 +36,10 @@ function systemPrefersDark(): boolean {
 function applyTheme(theme: Theme): "light" | "dark" {
   const resolved = theme === "system" ? (systemPrefersDark() ? "dark" : "light") : theme;
   document.documentElement.classList.toggle("dark", resolved === "dark");
+  // The phone's status bar / browser chrome matches the app, not the OS.
+  document
+    .querySelector('meta[name="theme-color"]')
+    ?.setAttribute("content", THEME_COLOR[resolved]);
   return resolved;
 }
 

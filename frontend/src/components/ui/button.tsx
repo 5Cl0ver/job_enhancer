@@ -21,10 +21,11 @@ const buttonVariants = cva(
         link: "text-primary underline-offset-4 hover:underline",
       },
       size: {
-        default: "h-9 px-4 py-2",
-        sm: "h-8 rounded-md px-3 text-xs",
-        lg: "h-10 rounded-md px-8",
-        icon: "h-9 w-9",
+        // pointer-coarse: a finger needs 44px; a mouse keeps the compact sizes.
+        default: "h-9 px-4 py-2 pointer-coarse:h-11",
+        sm: "h-8 rounded-md px-3 text-xs pointer-coarse:h-11 pointer-coarse:text-sm",
+        lg: "h-10 rounded-md px-8 pointer-coarse:h-11",
+        icon: "h-9 w-9 pointer-coarse:h-11 pointer-coarse:w-11",
       },
     },
     defaultVariants: {

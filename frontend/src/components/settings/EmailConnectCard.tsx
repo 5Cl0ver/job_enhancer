@@ -379,7 +379,13 @@ function ScanButton({ scan, size }: { scan: FullScan & { run: () => void }; size
       ) : (
         <RefreshCw className="h-4 w-4" aria-hidden />
       )}
-      {scan.running ? "Scanning…" : "Scan inbox"}
+      {scan.running ? (
+        "Scanning…"
+      ) : (
+        <>
+          Scan<span className="max-sm:hidden"> inbox</span>
+        </>
+      )}
     </Button>
   );
 }
@@ -435,11 +441,11 @@ export function InboxBar() {
       </div>
     );
   const last = account.last_scan_at
-    ? new Date(account.last_scan_at).toLocaleString()
+    ? new Date(account.last_scan_at).toLocaleString([], { dateStyle: "short", timeStyle: "short" })
     : "never";
   return (
-    <section className="mb-8 space-y-3 rounded-lg border bg-card p-3 sm:p-4">
-      <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+    <section className="mb-6 space-y-3 rounded-lg border bg-card p-3 sm:p-4">
+      <div className="flex items-center justify-between gap-3">
         <div className="min-w-0">
           <p className="flex items-center gap-2 text-sm font-medium">
             <Mail className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
@@ -447,7 +453,7 @@ export function InboxBar() {
           </p>
           <p className="text-xs text-muted-foreground">
             Last checked {last} ·{" "}
-            <Link to="/settings" className="underline underline-offset-2">
+            <Link to="/settings#email" className="underline underline-offset-2">
               Email settings
             </Link>
           </p>
@@ -457,7 +463,7 @@ export function InboxBar() {
       {account.status === "error" && (
         <p className="text-xs text-destructive">
           {account.last_error || "Your inbox needs reconnecting."}{" "}
-          <Link to="/settings" className="font-medium underline">
+          <Link to="/settings#email" className="font-medium underline">
             Reconnect
           </Link>
         </p>
@@ -473,14 +479,13 @@ function AutoMoveSwitch({ account }: { account: EmailAccount }) {
   const settings = useEmailSettings();
   const on = account.auto_move ?? true;
   return (
-    <div className="flex items-start justify-between gap-3 rounded-md border p-3">
+    <div className="flex items-center justify-between gap-3 border-t pt-3">
       <span className="min-w-0">
         <Label htmlFor="auto-move" className="text-sm font-medium">
           Move cards automatically
         </Label>
         <span className="block text-xs text-muted-foreground">
-          When an email names the job exactly, its card moves by itself. You can undo any move
-          on Email updates. Off: every update waits for your click.
+          Only when an email names the job exactly. You can undo any move.
         </span>
         {settings.isError && (
           <span className="block text-xs text-destructive">

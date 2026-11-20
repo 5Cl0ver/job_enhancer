@@ -12,6 +12,12 @@ import AiApplyPage from "@/routes/AiApplyPage";
 import SettingsPage from "@/routes/SettingsPage";
 import AdminPage from "@/routes/AdminPage";
 import EmailUpdatesPage from "@/routes/EmailUpdatesPage";
+import { useIsPhone } from "@/hooks/useIsPhone";
+
+/** Where the app opens: on a phone you check on your jobs; at a desk you search. */
+function Home() {
+  return <Navigate to={useIsPhone() ? "/jobs" : "/search"} replace />;
+}
 
 // The app's "map": which URL renders which component.
 // In Next.js this was implicit (folder names). Here it's explicit — you can
@@ -29,7 +35,7 @@ export const router = createBrowserRouter([
     path: "/",
     element: <DashboardLayout />,
     children: [
-      { index: true, element: <Navigate to="/search" replace /> },
+      { index: true, element: <Home /> },
       { path: "search", element: <SearchPage /> },
       // Saved + Tracker are one page now — same jobs, List/Board views.
       { path: "jobs", element: <MyJobsPage /> },
@@ -45,6 +51,6 @@ export const router = createBrowserRouter([
     ],
   },
 
-  // Anything else -> send to search
-  { path: "*", element: <Navigate to="/search" replace /> },
+  // Anything else -> the app's start page
+  { path: "*", element: <Navigate to="/" replace /> },
 ]);

@@ -14,6 +14,9 @@ optimistic updates where useful.
 | `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers` | `/v1/admin/*` |
 | `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useJobDocuments`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |
+| `useAttention.ts` | `useAttention` (counts for the nav badges; refreshed each minute and after any email action) | `GET /v1/attention` |
+| `useIsPhone.ts` | `useIsPhone` (screen under 768px) — for places where phone and desktop are different components | — |
+| `useShowMore.ts` | `useShowMore` (draw a long list 30 at a time; loads the next page as its button scrolls into view) | — |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every
 request flows through `lib/api.ts` (which attaches the Supabase Bearer token).

@@ -31,8 +31,8 @@ function AdminDashboard() {
   const { data: stats, isLoading } = useAdminStats();
 
   return (
-    <div className="container mx-auto max-w-6xl space-y-6 px-4 py-6">
-      <div className="space-y-1">
+    <div className="container mx-auto max-w-6xl space-y-6 md:px-4 md:py-6">
+      <div className="space-y-1 max-md:hidden">
         <h1 className="text-2xl font-bold tracking-tight">Admin Dashboard</h1>
         <p className="text-sm text-muted-foreground">Platform health and user overview.</p>
       </div>

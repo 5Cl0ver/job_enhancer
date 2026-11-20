@@ -44,7 +44,7 @@ export function JobCard({
           <div className="min-w-0 flex-1">
             <Link
               to={`/jobs/${job.id}`}
-              className="line-clamp-2 font-semibold leading-tight hover:underline"
+              className="line-clamp-2 break-words font-semibold leading-tight hover:underline"
             >
               {job.title}
             </Link>

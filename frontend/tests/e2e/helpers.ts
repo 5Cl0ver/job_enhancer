@@ -15,6 +15,7 @@ export async function signIn(page: Page) {
   await page.goto("/login");
   await page.getByLabel("Email").fill(E2E_EMAIL!);
   await page.getByLabel("Password").fill(E2E_PASSWORD!);
-  await page.getByRole("button", { name: /sign in with email/i }).click();
-  await expect(page).toHaveURL(/\/search/, { timeout: 15_000 });
+  await page.getByRole("button", { name: "Sign in", exact: true }).click();
+  // A computer opens on Find Jobs, a phone on My Jobs.
+  await expect(page).toHaveURL(/\/(search|jobs)/, { timeout: 15_000 });
 }

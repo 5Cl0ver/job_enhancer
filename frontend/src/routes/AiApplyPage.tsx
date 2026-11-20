@@ -63,8 +63,8 @@ export default function AIApplyPage() {
   const hasAIError = generateDoc.isError;
 
   return (
-    <div className="container mx-auto max-w-4xl space-y-6 px-4 py-6">
-      <div className="space-y-1">
+    <div className="container mx-auto max-w-4xl space-y-6 md:px-4 md:py-6">
+      <div className="space-y-1 max-md:hidden">
         <h1 className="text-2xl font-bold tracking-tight">AI Quick Apply</h1>
         <p className="text-sm text-muted-foreground">
           Upload your resume, select a job, and get AI-tailored documents in seconds.

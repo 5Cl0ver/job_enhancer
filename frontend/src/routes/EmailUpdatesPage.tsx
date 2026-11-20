@@ -52,6 +52,7 @@ import {
 import { Button } from "@/components/ui/button";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { InboxBar } from "@/components/settings/EmailConnectCard";
+import { ErrorState } from "@/components/common/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 
@@ -90,7 +91,7 @@ function errorText(e: unknown, fallback: string): string {
 }
 
 export default function EmailUpdatesPage() {
-  const { data: events, isLoading, isError } = useDetectedEvents();
+  const { data: events, isLoading, isError, refetch } = useDetectedEvents();
   const g = group(events ?? []);
   const important = collapseRepeats(g.important);
   const confirmations = collapseRepeats(g.confirmations);
@@ -105,8 +106,8 @@ export default function EmailUpdatesPage() {
       0;
 
   return (
-    <div className="container mx-auto max-w-3xl px-4 py-6">
-      <header className="mb-6 space-y-1">
+    <div className="container mx-auto max-w-3xl md:px-4 md:py-6">
+      <header className="mb-6 space-y-1 max-md:hidden">
         <h1 className="text-2xl font-bold tracking-tight">Email updates</h1>
         <p className="text-sm text-muted-foreground">
           What your inbox says about your applications.
@@ -122,8 +123,10 @@ export default function EmailUpdatesPage() {
           ))}
         </div>
       )}
-      {isError && (
-        <p className="text-sm text-destructive">Couldn't load your email updates. Try again.</p>
+      {isError && !events && (
+        <ErrorState title="Couldn't load your email updates" onRetry={() => refetch()}>
+          The server didn&apos;t answer. Nothing was lost.
+        </ErrorState>
       )}
 
       {nothing && !isError && (
@@ -132,14 +135,12 @@ export default function EmailUpdatesPage() {
           <p className="font-medium">You're all caught up</p>
           <p className="text-sm text-muted-foreground">
             New updates from your inbox will show up here.{" "}
-            <Link to="/settings" className="text-primary underline">
+            <Link to="/settings#email" className="text-primary underline">
               Email settings
             </Link>
           </p>
         </div>
       )}
-
-      {g.moved.length > 0 && <MovedSection events={g.moved} />}
 
       {g.questions.length > 0 && (
         <Section title="Needs your answer" count={g.questions.length}>
@@ -172,6 +173,9 @@ export default function EmailUpdatesPage() {
           ))}
         </Section>
       )}
+
+      {/* What the app already handled comes after what still needs you. */}
+      {g.moved.length > 0 && <MovedSection events={g.moved} />}
 
       {confirmations.length > 0 && (
         <Collapsed
@@ -357,21 +361,25 @@ function CardLine({ ev }: { ev: DetectedEvent }) {
 }
 
 /** Subject, sender, why, and a link to the email — only when asked for. */
+// On a touch screen these text links grow to a size a thumb can hit.
+const TOUCH_LINK =
+  "pointer-coarse:inline-flex pointer-coarse:min-h-11 pointer-coarse:items-center pointer-coarse:text-sm";
+
 function Details({ ev }: { ev: DetectedEvent }) {
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState(false);
   const why = reason(ev);
   return (
     <div className="mt-1">
-      <span className="flex flex-wrap gap-3">
+      <span className="flex flex-wrap gap-3 pointer-coarse:gap-x-5 pointer-coarse:gap-y-0">
         <button
-          className="text-xs font-medium text-primary underline-offset-2 hover:underline"
+          className={cn("text-xs font-medium text-primary underline-offset-2 hover:underline", TOUCH_LINK)}
           onClick={() => setViewing(true)}
         >
           View email
         </button>
         <button
-          className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          className={cn("text-xs text-muted-foreground underline-offset-2 hover:underline", TOUCH_LINK)}
           onClick={() => setOpen((o) => !o)}
           aria-expanded={open}
         >
@@ -380,7 +388,7 @@ function Details({ ev }: { ev: DetectedEvent }) {
         {ev.job_listing_id && (
           <Link
             to={`/jobs/${ev.job_listing_id}`}
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+            className={cn("text-xs text-muted-foreground underline-offset-2 hover:underline", TOUCH_LINK)}
           >
             View the job
           </Link>
@@ -518,7 +526,7 @@ function Chip({
       onClick={onClick}
       aria-pressed={active}
       className={cn(
-        "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+        "rounded-full border px-3 py-1 text-xs font-medium transition-colors pointer-coarse:min-h-11 pointer-coarse:px-4 pointer-coarse:text-sm",
         active ? "border-foreground/30 ring-1 ring-foreground/20" : "border-transparent",
         tone ?? "bg-muted text-foreground",
       )}
@@ -645,7 +653,8 @@ function SlimRow({
         {children}
         <Details ev={ev} />
       </div>
-      <div className="mt-2 flex flex-wrap items-center gap-1.5 pl-10 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:self-center sm:pl-0">
+      {/* On a phone the buttons share the row's full width, the main one first. */}
+      <div className="mt-1 flex items-center gap-2 max-sm:*:flex-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:flex-wrap sm:gap-1.5 sm:self-center">
         {actions}
       </div>
     </li>

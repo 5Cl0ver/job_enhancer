@@ -36,13 +36,33 @@ const DialogContent = React.forwardRef<
     <DialogPrimitive.Content
       ref={ref}
       className={cn(
-        "fixed left-1/2 top-1/2 z-50 grid w-full max-w-lg -translate-x-1/2 -translate-y-1/2 gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95 sm:rounded-lg",
+        // `max-w-lg` is unprefixed so a caller's own width (max-w-2xl,
+        // sm:max-w-sm) replaces it.
+        "fixed z-50 grid w-full max-w-lg gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        // From 768px: a box in the middle of the screen.
+        "md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg md:data-[state=closed]:zoom-out-95 md:data-[state=open]:zoom-in-95",
         className,
+        // On a phone: a sheet that slides up from the bottom, as wide as the
+        // screen and clear of the home indicator. Its frame (grab bar, close
+        // button) stays put; the content below scrolls. After `className` and
+        // forced, so a dialog's desktop width, height or scrolling can't break
+        // the sheet.
+        "max-md:inset-x-0 max-md:bottom-0 max-md:top-auto max-md:flex! max-md:flex-col max-md:w-full! max-md:max-w-none! max-md:max-h-[92dvh]! max-md:overflow-hidden! max-md:rounded-t-2xl max-md:border-x-0 max-md:border-b-0 max-md:pb-[calc(1.5rem+env(safe-area-inset-bottom))]! max-md:data-[state=closed]:slide-out-to-bottom max-md:data-[state=open]:slide-in-from-bottom",
       )}
       {...props}
     >
-      {children}
-      <DialogPrimitive.Close className="absolute right-4 top-4 rounded-sm opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground">
+      {/* The grab bar that says "this is a sheet". */}
+      <div
+        className="mx-auto -mb-1 -mt-2 h-1.5 w-10 shrink-0 rounded-full bg-muted md:hidden"
+        aria-hidden
+      />
+      {/* From 768px this wrapper isn't there (`contents`): the children sit
+          straight in the box's grid. On a phone it is the part that scrolls;
+          the side padding leaves room for focus rings. */}
+      <div className="md:contents max-md:-mx-1 max-md:grid max-md:min-h-0 max-md:gap-[inherit] max-md:overflow-y-auto max-md:overflow-x-hidden max-md:px-1">
+        {children}
+      </div>
+      <DialogPrimitive.Close className="absolute right-3 top-3 rounded-sm p-1 opacity-70 ring-offset-background transition-opacity hover:opacity-100 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-2 disabled:pointer-events-none data-[state=open]:bg-accent data-[state=open]:text-muted-foreground pointer-coarse:p-3">
         <XIcon className="h-4 w-4" />
         <span className="sr-only">Close</span>
       </DialogPrimitive.Close>
@@ -68,7 +88,9 @@ function DialogFooter({ className, ...props }: React.ComponentProps<"div">) {
   return (
     <div
       className={cn(
-        "flex flex-col-reverse sm:flex-row sm:justify-end sm:space-x-2",
+        "flex flex-col-reverse gap-2 sm:flex-row sm:justify-end sm:gap-0 sm:space-x-2",
+        // On a phone the buttons stay in reach while the sheet's content scrolls.
+        "max-md:sticky max-md:bottom-0 max-md:border-t max-md:bg-background max-md:pt-3",
         className,
       )}
       {...props}

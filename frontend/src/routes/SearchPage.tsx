@@ -43,8 +43,8 @@ export function SearchPage() {
   };
 
   return (
-    <div className="container mx-auto max-w-6xl space-y-6 px-4 py-6">
-      <h1 className="text-2xl font-bold tracking-tight">Find Jobs</h1>
+    <div className="container mx-auto max-w-6xl space-y-6 md:px-4 md:py-6">
+      <h1 className="text-2xl font-bold tracking-tight max-md:hidden">Find Jobs</h1>
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="w-full sm:w-auto">
