@@ -121,7 +121,10 @@ class JobEmailLatestOut(BaseModel):
     target_stage: str | None = None
     email_date: datetime | None = None
     created_at: datetime
-    # How many emails are tied to the job (not counting dismissed ones).
+    # The email in the user's webmail, for when it can't be shown in the app.
+    mail_link: str | None = None
+    mail_search_link: str | None = None
+    # How many emails explain the job's stage (moved it, or wait on the user).
     count: int
 
 

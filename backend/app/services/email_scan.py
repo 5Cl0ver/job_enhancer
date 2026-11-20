@@ -15,7 +15,7 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
 from urllib.parse import quote
 
@@ -157,8 +157,24 @@ _MAX_CONSIDERED = 40
 # folder's MAILBOXID and the message's EMAILID, the ids their IMAP server gives
 # out (RFC 8474 OBJECTID). The inbox is always mailbox 1.
 _YAHOO_HOSTS = {"yahoo": "mail.yahoo.com", "aol": "mail.aol.com"}
+_EARLIEST_EMAIL = datetime(2000, 1, 1, tzinfo=UTC)
 _INBOX_MAILBOX_ID = "1"
 _EMAILID_PREFIX = "emailid:"
+
+
+def sent_at(date: datetime | None, now: datetime | None = None) -> datetime | None:
+    """An email's Date header as a time worth storing: in UTC, and believable.
+    A header with no time zone is read as UTC. A date before 2000 or after
+    tomorrow is forged or broken (and can overflow the database), so it is
+    dropped; the page then says when the email was found instead."""
+    if date is None:
+        return None
+    try:
+        utc = (date if date.tzinfo else date.replace(tzinfo=UTC)).astimezone(UTC)
+    except (OverflowError, ValueError):
+        return None
+    latest = (now or datetime.now(tz=UTC)) + timedelta(days=1)
+    return utc if _EARLIEST_EMAIL <= utc <= latest else None
 
 
 def email_id_of(logical: str | None) -> str:
@@ -492,7 +508,7 @@ async def detect_events(
             "message_uid": msg.uid,
             "logical_key": key,
             "match_evidence": match.evidence or None,
-            "email_date": msg.date,
+            "email_date": sent_at(msg.date),
         }
 
         # A forward card move WITH a confident match becomes a pending update.

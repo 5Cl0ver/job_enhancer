@@ -374,7 +374,9 @@ export interface JobEmailLatest {
   target_stage: string | null;
   email_date?: string | null;
   created_at: string;
-  /** How many emails are tied to the job. */
+  mail_link?: string | null;
+  mail_search_link?: string | null;
+  /** How many emails explain the job's stage. */
   count: number;
 }
 

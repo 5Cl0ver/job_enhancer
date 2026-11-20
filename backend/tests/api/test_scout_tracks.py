@@ -209,7 +209,19 @@ class TestResumeFileAndSkills:
         assert r.content == b"%PDF-1.4"
         assert r.headers["content-type"] == "application/pdf"
         # Shown in the tab, not downloaded; quotes can't break the header.
-        assert r.headers["content-disposition"] == 'inline; filename="it admin.pdf"'
+        assert r.headers["content-disposition"] == (
+            "inline; filename=\"it admin.pdf\"; filename*=UTF-8''it%20%22admin%22.pdf"
+        )
+
+    async def test_a_file_name_with_other_alphabets_still_opens(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        resume = await self._with_file(db_session, test_user.id)
+        resume.filename = "Résumé – 履歴書.pdf"
+        await db_session.flush()
+        r = await client.get(f"/v1/ai/resumes/{resume.id}/file")
+        assert r.status_code == 200
+        assert "filename*=UTF-8''R%C3%A9sum%C3%A9" in r.headers["content-disposition"]
 
     async def test_skills_are_read_from_the_resume_text(
         self, client: AsyncClient, db_session, test_user

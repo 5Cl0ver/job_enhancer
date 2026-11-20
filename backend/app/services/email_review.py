@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Row, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -98,23 +98,44 @@ async def list_pending(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEve
     return list(rows)
 
 
-async def latest_by_job(
-    db: AsyncSession, user_id: uuid.UUID
-) -> list[tuple[DetectedEvent, int]]:
-    """For each saved job with emails: the email that best explains where its
-    card is (the newest one that moved it; failing that, the newest one about
-    it) and how many emails it has. Dismissed emails don't count."""
-    rows = await db.scalars(
-        select(DetectedEvent)
+# An email "about" a job, for explaining where its card sits: one that moved the
+# card, or one waiting for the user's click. Not a weak guess the scan hid, a
+# recruiter contact, or one the user dismissed.
+_EXPLAINS = (STATUS_APPLIED, STATUS_AUTO_APPLIED, STATUS_PENDING)
+
+
+async def latest_by_job(db: AsyncSession, user_id: uuid.UUID) -> list[tuple[Row, int]]:
+    """For each saved job with emails about it: the one that best explains
+    where its card is (the newest that moved it; failing that, the newest
+    waiting on the user) and how many such emails it has.
+
+    "Newest" is by when the email was sent, where that is known; a scan that
+    stores an old and a new email in one go gives both the same ``created_at``.
+    Only the columns the board needs are read."""
+    sent = func.coalesce(DetectedEvent.email_date, DetectedEvent.created_at)
+    rows = await db.execute(
+        select(
+            DetectedEvent.id,
+            DetectedEvent.saved_job_id,
+            DetectedEvent.event_type,
+            DetectedEvent.status,
+            DetectedEvent.target_stage,
+            DetectedEvent.email_date,
+            DetectedEvent.created_at,
+            DetectedEvent.logical_key,
+            DetectedEvent.folder,
+            DetectedEvent.subject,
+            DetectedEvent.from_addr,
+        )
         .where(
             DetectedEvent.user_id == user_id,
             DetectedEvent.saved_job_id.is_not(None),
-            DetectedEvent.status != STATUS_DISMISSED,
+            DetectedEvent.status.in_(_EXPLAINS),
         )
-        .order_by(DetectedEvent.created_at.desc())
+        .order_by(sent.desc(), DetectedEvent.id)
     )
     moved = (STATUS_APPLIED, STATUS_AUTO_APPLIED)
-    best: dict[uuid.UUID, DetectedEvent] = {}
+    best: dict[uuid.UUID, Row] = {}
     counts: dict[uuid.UUID, int] = {}
     for ev in rows:
         job = ev.saved_job_id

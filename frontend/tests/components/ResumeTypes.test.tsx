@@ -133,6 +133,41 @@ describe("Resume types", () => {
     );
   });
 
+  it("in the editor, skills follow the chosen resume until the user writes their own", async () => {
+    const user = userEvent.setup();
+    const RESUMES = [
+      { id: "ra", filename: "admin.pdf", is_active: false, created_at: "2026-11-01T10:00:00Z" },
+      { id: "rb", filename: "analyst.pdf", is_active: false, created_at: "2026-11-02T10:00:00Z" },
+    ];
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/scout/tracks") return Promise.resolve([{ ...TRACK, key_skills: [] }]);
+      if (path === "/v1/ai/resumes") return Promise.resolve(RESUMES);
+      if (path === "/v1/ai/resumes/ra/skills")
+        return Promise.resolve({ skills: ["PowerShell", "Intune"] });
+      if (path === "/v1/ai/resumes/rb/skills")
+        return Promise.resolve({ skills: ["Power BI", "Visio"] });
+      return Promise.resolve([]);
+    });
+    renderWithQuery(<ResumeTypes />);
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    const box = await screen.findByLabelText("Your key skills for this kind of role");
+    const pick = async (name: string) => {
+      await user.click(screen.getByRole("combobox", { name: "Resume to apply with" }));
+      await user.click(await screen.findByRole("option", { name }));
+    };
+
+    await pick("admin.pdf");
+    await waitFor(() => expect(box).toHaveValue("PowerShell, Intune"));
+    // Another resume: its skills replace the ones the app filled in.
+    await pick("analyst.pdf");
+    await waitFor(() => expect(box).toHaveValue("Power BI, Visio"));
+    // Once the user edits the box, choosing a resume leaves it alone.
+    await user.type(box, ", Excel");
+    await pick("admin.pdf");
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/v1/ai/resumes/ra/skills"));
+    expect(box).toHaveValue("Power BI, Visio, Excel");
+  });
+
   it("an attached resume can be viewed or replaced from the card", async () => {
     serve([{ ...TRACK, resume_id: "r1", resume_filename: "it-admin.pdf" }]);
     renderWithQuery(<ResumeTypes />);

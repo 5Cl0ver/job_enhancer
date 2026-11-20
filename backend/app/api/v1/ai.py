@@ -3,6 +3,7 @@
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -138,6 +139,14 @@ async def download_active_resume_file(
     )
 
 
+def _inline(filename: str) -> str:
+    """A Content-Disposition that shows the file in the tab under its own name.
+    Headers are latin-1 only, so the name goes twice (RFC 6266): a plain-ASCII
+    stand-in every browser accepts, and the real name percent-encoded."""
+    plain = re.sub(r'[^\x20-\x7e]|["\\]', "", filename).strip() or "resume"
+    return f"inline; filename=\"{plain}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
 async def _own_resume(db: AsyncSession, user: User, resume_id: uuid.UUID) -> Resume:
     resume = await db.scalar(
         select(Resume).where(Resume.id == resume_id, Resume.user_id == user.id)
@@ -163,11 +172,10 @@ async def view_resume_file(
             status_code=404,
             detail="This resume's file wasn't kept. Upload it again to view it.",
         )
-    name = re.sub(r'[\r\n"\\]', "", resume.filename)
     return StreamingResponse(
         io.BytesIO(resume.file_data),
         media_type=resume.mime_type,
-        headers={"Content-Disposition": f'inline; filename="{name}"'},
+        headers={"Content-Disposition": _inline(resume.filename)},
     )
 
 

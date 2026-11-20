@@ -3,7 +3,7 @@
  * Admin, …). Each says what Claude Scout should look for and skip, and which
  * resume to apply with. First-time users start from five suggested types.
  */
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import {
   Eye,
   FileText,
@@ -162,9 +162,9 @@ function StartHere({ onCustom }: { onCustom: () => void }) {
 }
 
 /** Open a resume in a new tab, or say why it couldn't be. */
-function viewResume(resumeId: string) {
-  openOwnFile(`/v1/ai/resumes/${resumeId}/file`).catch(() =>
-    toast.error("Couldn't open that resume. Try uploading it again."),
+function viewResume(resumeId: string, filename?: string | null) {
+  openOwnFile(`/v1/ai/resumes/${resumeId}/file`, filename ?? undefined).catch(
+    () => toast.error("Couldn't open that resume. Try uploading it again."),
   );
 }
 
@@ -252,7 +252,7 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
             variant="ghost"
             size="sm"
             className="h-7 gap-1 px-2"
-            onClick={() => viewResume(t.resume_id!)}
+            onClick={() => viewResume(t.resume_id!, t.resume_filename)}
           >
             <Eye className="h-3.5 w-3.5" aria-hidden /> View
           </Button>
@@ -347,34 +347,47 @@ function EditorForm({
   const busy = create.isPending || update.isPending || remove.isPending;
   const saveError = create.error ?? update.error ?? remove.error;
 
-  // Which skills the chosen resume names. Fills an empty skills box by itself;
-  // "Fill from resume" adds any that are missing to what's there.
+  // Which skills the chosen resume names. They fill the skills box when it is
+  // empty or still holds exactly what an earlier resume put there, so changing
+  // resume changes the skills, but anything the user typed is left alone.
+  // "Fill from resume" adds the missing ones to whatever is there.
   const [filling, setFilling] = useState(false);
   const [filledFrom, setFilledFrom] = useState<string | null>(null);
-  const fillSkills = async (id: string, mode: "if-empty" | "add") => {
-    if (id === NO_RESUME || (mode === "if-empty" && skills.trim())) return;
+  const autoFilled = useRef<string | null>(null); // what the app last put in the box
+  const request = useRef(0); // only the latest choice's answer is used
+  const latestSkills = useRef(skills);
+  useEffect(() => {
+    latestSkills.current = skills;
+  }, [skills]);
+  const fillSkills = async (id: string, mode: "follow" | "add") => {
+    const mine = ++request.current;
+    if (id === NO_RESUME) return;
     setFilling(true);
     try {
       const found = await resumeSkills(id);
-      if (found.length === 0) return;
-      setSkills((current) => {
-        const have = splitList(current);
-        const known = new Set(have.map((s) => s.toLowerCase()));
-        return [
-          ...have,
-          ...found.filter((s) => !known.has(s.toLowerCase())),
-        ].join(", ");
-      });
+      if (mine !== request.current || found.length === 0) return;
+      // What is in the box now (not when the request began).
+      const current = latestSkills.current;
+      const untouched = current.trim() === "" || current === autoFilled.current;
+      if (mode === "follow" && !untouched) return;
+      const have = mode === "follow" ? [] : splitList(current);
+      const known = new Set(have.map((s) => s.toLowerCase()));
+      const next = [
+        ...have,
+        ...found.filter((s) => !known.has(s.toLowerCase())),
+      ].join(", ");
+      autoFilled.current = next;
+      setSkills(next);
       setFilledFrom(id);
     } catch {
       // The box just stays as it is; the user can still type.
     } finally {
-      setFilling(false);
+      if (mine === request.current) setFilling(false);
     }
   };
   const chooseResume = (id: string) => {
     setResumeId(id);
-    void fillSkills(id, "if-empty");
+    void fillSkills(id, "follow");
   };
 
   const onUpload = (file: File | undefined) => {
@@ -541,7 +554,12 @@ function EditorForm({
               type="button"
               variant="outline"
               className="gap-1.5"
-              onClick={() => viewResume(resumeId)}
+              onClick={() =>
+                viewResume(
+                  resumeId,
+                  resumes.find((r) => r.id === resumeId)?.filename,
+                )
+              }
             >
               <Eye className="h-4 w-4" aria-hidden /> View
             </Button>

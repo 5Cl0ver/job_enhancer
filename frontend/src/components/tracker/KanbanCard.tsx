@@ -139,15 +139,18 @@ export function CardFace({
 
       {/* The next move, quietly: a coloured dot and a few words. */}
       {nextAction && (
-        <p
-          className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
-          title={`Suggested next step · no activity for ${daysSinceStageChange} days`}
-        >
+        <p className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground">
           <span
             className={cn("h-1.5 w-1.5 shrink-0 rounded-full", TONE_DOT[nextAction.tone])}
             aria-hidden
           />
           <span className="truncate">{nextAction.label}</span>
+          {/* Nothing has happened for longer than the follow-up time in Settings. */}
+          {daysSinceStageChange >= followUpDays && (
+            <span className="ml-auto shrink-0 font-medium text-amber-600 dark:text-amber-400">
+              quiet {daysSinceStageChange}d
+            </span>
+          )}
         </p>
       )}
     </div>
@@ -309,6 +312,8 @@ export function KanbanCard({
       {email && (
         <EmailViewer
           eventId={emailOpen ? email.event_id : null}
+          mailLink={email.mail_link}
+          searchLink={email.mail_search_link}
           onClose={() => setEmailOpen(false)}
         />
       )}

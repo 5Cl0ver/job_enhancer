@@ -432,6 +432,8 @@ async def job_emails_latest(
     """For every saved job with emails, the one that explains where its card
     sits — so the board can show "moved here by an email" on each card without
     a request per card."""
+    account = await svc.get_account(db, user.id)
+    provider = account.provider if account else ""
     return [
         JobEmailLatestOut(
             saved_job_id=ev.saved_job_id,
@@ -441,6 +443,14 @@ async def job_emails_latest(
             target_stage=ev.target_stage,
             email_date=ev.email_date,
             created_at=ev.created_at,
+            mail_link=mail_link(
+                provider,
+                subject=ev.subject,
+                email_id=email_id_of(ev.logical_key),
+                folder=ev.folder,
+                from_addr=ev.from_addr,
+            ),
+            mail_search_link=mail_search_link(provider, ev.subject, ev.from_addr),
             count=count,
         )
         for ev, count in await email_review.latest_by_job(db, user.id)

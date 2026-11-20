@@ -1,6 +1,13 @@
 """Links from a detected email to the message itself in the user's webmail."""
 
-from app.services.email_scan import email_id_of, mail_link, mail_search_link
+from datetime import UTC, datetime, timedelta, timezone
+
+from app.services.email_scan import (
+    email_id_of,
+    mail_link,
+    mail_search_link,
+    sent_at,
+)
 
 EMAIL_ID = "AHv3_oRrlHYyYacYYwjlWCQNEtA"  # the shape Yahoo's IMAP server gives
 
@@ -71,3 +78,25 @@ class TestEmailIdOf:
     def test_other_keys_have_none(self):
         assert email_id_of("msgid:abc|hash") == ""
         assert email_id_of(None) == ""
+
+
+class TestSentAt:
+    NOW = datetime(2026, 11, 19, 12, 0, tzinfo=UTC)
+
+    def test_is_stored_in_utc(self):
+        pacific = datetime(2026, 11, 18, 9, 14, tzinfo=timezone(timedelta(hours=-8)))
+        assert sent_at(pacific, self.NOW) == datetime(2026, 11, 18, 17, 14, tzinfo=UTC)
+
+    def test_a_date_with_no_time_zone_is_read_as_utc(self):
+        assert sent_at(datetime(2026, 11, 18, 9, 14), self.NOW) == datetime(
+            2026, 11, 18, 9, 14, tzinfo=UTC
+        )
+
+    def test_forged_or_broken_dates_are_dropped(self):
+        assert (
+            sent_at(datetime(1, 1, 1, tzinfo=timezone(timedelta(hours=5))), self.NOW)
+            is None
+        )
+        assert sent_at(datetime(1999, 12, 31, tzinfo=UTC), self.NOW) is None
+        assert sent_at(datetime(2030, 1, 1, tzinfo=UTC), self.NOW) is None
+        assert sent_at(None, self.NOW) is None

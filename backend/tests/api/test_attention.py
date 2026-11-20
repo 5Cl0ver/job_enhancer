@@ -1,6 +1,7 @@
 """API tests for the navigation badge counts."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
@@ -55,13 +56,17 @@ async def _saved_job(db, user):
     return saved
 
 
-async def _event(db, user, acct, event_type, status, saved_job_id=None):
+async def _event(
+    db, user, acct, event_type, status, saved_job_id=None, email_date=None
+):
     db.add(
         DetectedEvent(
             id=uuid.uuid4(),
             user_id=user.id,
             email_account_id=acct.id,
             saved_job_id=saved_job_id,
+            email_date=email_date,
+            logical_key=f"emailid:{uuid.uuid4().hex[:27]}",  # one per email
             event_type=event_type,
             from_addr="talent@vellacor.example",
             subject="About your application",
@@ -159,3 +164,36 @@ class TestLatestEmailPerJob:
         await _event(db_session, other, acct, "interview", STATUS_PENDING, theirs.id)
 
         assert (await client.get("/v1/email/job-emails/latest")).json() == []
+
+    async def test_weak_guesses_and_recruiter_mail_do_not_explain_a_stage(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        acct = await _account(db_session, test_user)
+        job = await _saved_job(db_session, test_user)
+        await _event(db_session, test_user, acct, "interview", STATUS_HIDDEN, job.id)
+        await _event(db_session, test_user, acct, "recruiter", "contact", job.id)
+        assert (await client.get("/v1/email/job-emails/latest")).json() == []
+
+    async def test_newest_means_when_it_was_sent_not_when_it_was_found(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        acct = await _account(db_session, test_user)
+        job = await _saved_job(db_session, test_user)
+        # One scan found both; the interview invite is the later email.
+        old = datetime(2026, 11, 1, 9, 0, tzinfo=UTC)
+        new = datetime(2026, 11, 10, 9, 0, tzinfo=UTC)
+        await _event(
+            db_session, test_user, acct, "interview", STATUS_PENDING, job.id, new
+        )
+        await _event(
+            db_session, test_user, acct, "applied", STATUS_PENDING, job.id, old
+        )
+
+        (row,) = (await client.get("/v1/email/job-emails/latest")).json()
+        assert row["event_type"] == "interview"
+        assert row["email_date"].startswith("2026-11-10")
+        # The board's quick view can still get out to the user's own mail.
+        assert row["mail_link"].startswith(
+            "https://mail.yahoo.com/d/folders/1/messages/"
+        )
+        assert "/d/search/keyword=" in row["mail_search_link"]
