@@ -49,15 +49,21 @@ RUBRIC = {
 }
 RUBRIC_LABELS = {
     "skills": "skills match",
-    "experience": "years/degree met",
+    "experience": "experience met",
     "title_level": "title and level",
     "recency": "posted recently",
     "pay_location": "pay and location",
 }
-LIMITS = {"pages": 4, "titles": 8, "companies": 15}
-LIMIT_RANGES = {"pages": (1, 8), "titles": (2, 8), "companies": (5, 25)}
+LIMITS = {"links": 6, "pages": 2, "titles": 8, "companies": 15}
+LIMIT_RANGES = {
+    "links": (1, 10),
+    "pages": (1, 8),
+    "titles": (2, 8),
+    "companies": (5, 25),
+}
 LIMIT_LABELS = {
-    "pages": "Results pages a run reads",
+    "links": "Searches a run makes (one per title)",
+    "pages": "Results pages read per search",
     "titles": "Titles an Anything I'd be good at run searches",
     "companies": "Companies a Local companies run checks",
 }
@@ -98,8 +104,12 @@ def _decode(key: str, body: str | None) -> object:
 def rubric_text(weights: dict) -> str:
     parts = ", ".join(f"{RUBRIC_LABELS[k]} {weights[k]}" for k in RUBRIC)
     return (
-        f"Rubric (out of 10, judged against the resume): {parts}. Be honest: a 9 "
-        "or 10 means the user meets nearly everything listed."
+        f"Rubric (out of 10, judged against the resume): {parts}. Count the "
+        "user's experience as equal to a degree unless the posting strictly "
+        "requires one and the resume type's skip rules say degree_only. Pay "
+        "that isn't listed counts as met, and on-site, hybrid and remote are "
+        "all fine. Be honest: a 9 or 10 means the user meets nearly everything "
+        "listed."
     )
 
 

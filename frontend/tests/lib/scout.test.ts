@@ -243,3 +243,32 @@ describe("local companies", () => {
     ).toBe("No careers page · you skipped it");
   });
 });
+
+import { boardRadius, droppedLine, linksLine } from "@/lib/scout";
+
+describe("wider search helpers", () => {
+  it("rounds a radius up to what each board offers", () => {
+    expect(boardRadius("linkedin", 40)).toBe(50);
+    expect(boardRadius("indeed", 30)).toBe(35);
+    expect(boardRadius("linkedin", 150)).toBe(100);
+    expect(boardRadius("google_jobs", 40)).toBe(40);
+  });
+
+  it("says each search's result count and any dropped filters", () => {
+    const run = {
+      source: "linkedin" as const,
+      links: [
+        { title: "IT Administrator", total: 27, pages: 2, dropped: [] },
+        { title: "M365 Admin", total: 4, pages: 1, dropped: ["sortBy"] },
+        { title: "IT Specialist", total: null, pages: 0, dropped: ["sortBy"] },
+      ],
+    };
+    expect(linksLine(run)).toBe(
+      "LinkedIn's results per search: IT Administrator 27 · M365 Admin 4.",
+    );
+    expect(droppedLine(run)).toBe(
+      "LinkedIn dropped these filters when it opened the search: sortBy.",
+    );
+    expect(linksLine({ source: "linkedin", links: [] })).toBeNull();
+  });
+});

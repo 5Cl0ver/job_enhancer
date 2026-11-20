@@ -493,41 +493,60 @@ def _page(n):
 
 @pytest.mark.asyncio
 class TestPages:
-    async def test_hands_out_the_next_page_up_to_four(self, engine, monkeypatch):
+    async def test_each_title_is_its_own_search_two_pages_each(
+        self, engine, monkeypatch
+    ):
         maker = await _connected_user(engine, monkeypatch, email="pages@test.dev")
         _, _, run_id = await _setup(maker, "pages@test.dev", job_count=10)
         brief = await mcp_mod.get_scout_brief()
-        assert brief["max_pages"] == 4
-        out = await mcp_mod.check_jobs(str(run_id), _page(0))
+        assert brief["max_pages"] == 2
+        assert brief["searches"] == ["IT Systems Administrator", "Jira Administrator"]
+        first, second = brief["start_urls"]
+        out = await mcp_mod.check_jobs(str(run_id), _page(0), total_results=31)
         assert out["pages_read"] == 1
-        assert out["next_page_url"] == brief["start_urls"][0] + "&start=25"
-        assert "next_page_url (page 2 of 4)" in out["next"]
+        assert out["next_page_url"] == first + "&start=25"
+        assert "page 2 of 2 of this search" in out["next"]
         # The same page sent again isn't a new page.
         out = await mcp_mod.check_jobs(str(run_id), _page(0))
         assert out["pages_read"] == 1 and out["next_page_url"].endswith("&start=25")
-        for n in (1, 2):
-            out = await mcp_mod.check_jobs(str(run_id), _page(n))
-        assert out["next_page_url"].endswith("&start=75")
+        # Two pages read: on to the next search.
+        out = await mcp_mod.check_jobs(str(run_id), _page(1))
+        assert out["next_page_url"] == second
+        assert "the next search, Jira Administrator (2 of 2)" in out["next"]
+        out = await mcp_mod.check_jobs(str(run_id), _page(2), total_results=60)
+        assert out["next_page_url"] == second + "&start=25"
         out = await mcp_mod.check_jobs(str(run_id), _page(3))
         assert out["pages_read"] == 4 and "next_page_url" not in out
-        assert "finish_scout_run" in out["next"] and "last" in out["next"]
+        assert "finish_scout_run" in out["next"] and "last search" in out["next"]
+        fin = await mcp_mod.finish_scout_run(str(run_id), "")
+        assert (
+            "LinkedIn's results per search: IT Systems Administrator 31 · "
+            "Jira Administrator 60."
+        ) in fin["next"]
 
-    async def test_past_the_last_page_says_there_are_no_more(self, engine, monkeypatch):
+    async def test_a_search_that_runs_out_moves_on(self, engine, monkeypatch):
         """Boards show an empty page, or earlier rows again, past their last
-        page: Claude is told to finish, not handed the same link again."""
+        page: that search is done and the next one starts."""
         maker = await _connected_user(engine, monkeypatch, email="end@test.dev")
         _, _, run_id = await _setup(maker, "end@test.dev", job_count=10)
-        await mcp_mod.get_scout_brief()
+        brief = await mcp_mod.get_scout_brief()
         await mcp_mod.check_jobs(str(run_id), _page(0))
-        await mcp_mod.check_jobs(str(run_id), _page(1))
-        for rows in ([], _page(0)[:2] + _page(1)[:1]):
-            out = await mcp_mod.check_jobs(str(run_id), rows)
-            assert "next_page_url" not in out and out["pages_read"] == 2
-            assert "no more results" in out["next"]
-            assert "finish_scout_run" in out["next"]
-        # The last page sent again (a new chat picking up) still goes on.
-        out = await mcp_mod.check_jobs(str(run_id), _page(1))
-        assert out["next_page_url"].endswith("&start=50")
+        out = await mcp_mod.check_jobs(str(run_id), [])
+        assert out["next_page_url"] == brief["start_urls"][1]
+        assert out["pages_read"] == 1
+        # The next search shows only jobs the first one had: done too.
+        out = await mcp_mod.check_jobs(str(run_id), _page(0)[:2])
+        assert "next_page_url" not in out
+        assert "last search" in out["next"] and "finish_scout_run" in out["next"]
+
+    async def test_a_search_with_fewer_results_than_a_page_moves_on(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="few@test.dev")
+        _, _, run_id = await _setup(maker, "few@test.dev", job_count=10)
+        brief = await mcp_mod.get_scout_brief()
+        out = await mcp_mod.check_jobs(str(run_id), _page(0), total_results=3)
+        assert out["next_page_url"] == brief["start_urls"][1]
 
 
 @pytest.mark.asyncio

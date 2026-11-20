@@ -190,13 +190,17 @@ class TestClaudeChoosesTheTitles:
         await mcp_mod.get_scout_brief()
         out = await mcp_mod.set_search_titles(str(run_id), TITLES)
         assert out["titles"] == TITLES and out["dropped"] == []
-        (url,) = out["start_urls"]
+        # One search per title, as plain words.
+        urls = out["start_urls"]
+        assert [parse_qs(urlsplit(u).query)["keywords"] for u in urls] == [
+            [t] for t in TITLES
+        ]
+        url = urls[0]
         q = parse_qs(urlsplit(url).query)
-        assert q["keywords"] == [" OR ".join(f'"{t}"' for t in TITLES)]
         assert q["location"] == ["Springfield, IL"] and q["distance"] == ["25"]
-        assert q["f_TPR"] == ["r259200"]
+        assert q["f_TPR"] == ["r259200"] and q["sortBy"] == ["DD"]
         brief = await mcp_mod.get_scout_brief(str(run_id))  # a fresh chat
-        assert brief["start_urls"] == [url]
+        assert brief["start_urls"] == urls
         page = await mcp_mod.check_jobs(
             str(run_id), [{"company": "Vellacor", "title": "IT Systems Administrator"}]
         )

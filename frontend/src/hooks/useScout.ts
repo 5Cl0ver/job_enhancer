@@ -41,7 +41,12 @@ export function useUpdateTrack() {
   return useMutation({
     mutationFn: ({ id, ...data }: Partial<TrackInput> & { id: string }) =>
       api.patch<Track>(`/v1/scout/tracks/${id}`, data),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ["scout-tracks"] }),
+    onSuccess: (_t, { id }) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["scout-tracks"] }),
+        // New titles, skills or rules start the type fresh.
+        qc.invalidateQueries({ queryKey: ["scout-track-passes", id] }),
+      ]),
   });
 }
 
@@ -126,6 +131,30 @@ export function useAttachResume() {
 // ---------------------------------------------------------------------------
 // Searches (missions) and runs
 // ---------------------------------------------------------------------------
+
+/** The titles Claude passed over for one resume type. */
+export function useTrackPasses(trackId: string) {
+  return useQuery({
+    queryKey: ["scout-track-passes", trackId],
+    queryFn: () =>
+      api.get<{
+        count: number;
+        titles: { title: string; times: number }[];
+        since: string | null;
+      }>(`/v1/scout/tracks/${trackId}/passes`),
+  });
+}
+
+/** Weigh a resume type's passed-over titles and low-scored jobs again. */
+export function useStartFresh() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (trackId: string) =>
+      api.post(`/v1/scout/tracks/${trackId}/start-fresh`, {}),
+    onSuccess: (_r, trackId) =>
+      qc.invalidateQueries({ queryKey: ["scout-track-passes", trackId] }),
+  });
+}
 
 export function useMissions() {
   return useQuery<Mission[]>({

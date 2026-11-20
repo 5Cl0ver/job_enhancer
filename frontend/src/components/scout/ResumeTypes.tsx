@@ -15,6 +15,7 @@ import {
 } from "lucide-react";
 import { toast } from "sonner";
 import { errorText } from "@/components/scout/errorText";
+import { FillSkills, PassedTitles } from "@/components/scout/TrackMemory";
 import { useResumes } from "@/hooks/useAI";
 import { openOwnFile } from "@/lib/openFile";
 import {
@@ -230,11 +231,15 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
         </p>
       )}
       {t.key_skills.length === 0 && (
-        <p className="text-xs text-amber-600 dark:text-amber-400">
-          No skills listed. Add a few, or Claude scores from your uploaded
-          resume only.
-        </p>
+        <>
+          <p className="text-xs text-amber-600 dark:text-amber-400">
+            No skills listed. Add a few, or Claude scores from your uploaded
+            resume only.
+          </p>
+          <FillSkills track={t} />
+        </>
       )}
+      <PassedTitles track={t} />
       {/* The resume for this type: see it, or put one here without opening Edit. */}
       <input
         ref={fileInput}
@@ -336,6 +341,10 @@ function EditorForm({
   const skip = track?.skip_rules ?? DEFAULT_SKIP;
   const [name, setName] = useState(track?.name ?? "");
   const [titles, setTitles] = useState((track?.target_titles ?? []).join("\n"));
+  const [related, setRelated] = useState(
+    (track?.related_titles ?? []).join("\n"),
+  );
+  const [exact, setExact] = useState(track?.exact_titles ?? false);
   const [skills, setSkills] = useState((track?.key_skills ?? []).join(", "));
   const [pay, setPay] = useState(
     track?.min_pay != null ? String(track.min_pay) : "",
@@ -430,6 +439,8 @@ function EditorForm({
     const data: TrackInput = {
       name: name.trim(),
       target_titles: splitLines(titles),
+      related_titles: splitLines(related),
+      exact_titles: exact,
       key_skills: splitList(skills),
       skip_rules: {
         degree_only: degreeOnly,
@@ -476,6 +487,34 @@ function EditorForm({
           onChange={(e) => setTitles(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">One per line, up to 15.</p>
+      </div>
+
+      <div className="space-y-1.5">
+        <Label htmlFor="track-related">Also search for (related titles)</Label>
+        <Textarea
+          id="track-related"
+          rows={3}
+          value={related}
+          placeholder={"e.g. Systems Administrator\nMicrosoft 365 Admin\nIT Specialist"}
+          onChange={(e) => setRelated(e.target.value)}
+        />
+        <p className="text-xs text-muted-foreground">
+          Close variants that cast a wider net. Each title gets its own search.
+        </p>
+      </div>
+
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <Label htmlFor="track-exact" className="text-sm font-normal">
+            Exact titles only
+          </Label>
+          <p className="text-xs text-muted-foreground">
+            {exact
+              ? "Titles are searched as exact phrases, together in one search."
+              : "Off: titles are searched as plain words, so close variants show up too."}
+          </p>
+        </div>
+        <Switch id="track-exact" checked={exact} onCheckedChange={setExact} />
       </div>
 
       <div className="space-y-1.5">
@@ -602,9 +641,16 @@ function EditorForm({
       <div className="space-y-3 rounded-md border p-3">
         <p className="text-sm font-medium">Skip these jobs</p>
         <div className="flex items-start justify-between gap-3">
-          <Label htmlFor="track-degree" className="text-sm font-normal">
-            Needs a degree, with no “or equivalent experience”
-          </Label>
+          <div className="min-w-0">
+            <Label htmlFor="track-degree" className="text-sm font-normal">
+              Needs a degree, with no “or equivalent experience”
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {degreeOnly
+                ? "On: Claude passes these jobs over."
+                : "Off: these jobs are scored like any other, the degree listed under gaps."}
+            </p>
+          </div>
           <Switch
             id="track-degree"
             checked={degreeOnly}

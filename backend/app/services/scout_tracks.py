@@ -11,6 +11,7 @@ the limit, and the page can't change or delete it.
 
 import uuid
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
 from sqlalchemy import delete, func, select, update
@@ -19,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.models.resume import Resume
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
-from app.models.scout import ScoutPass
+from app.models.scout import PASS_DAYS, ScoutPass
 from app.schemas.scout import MAX_TRACKS, TrackCreate, TrackOut, TrackUpdate
 
 SCOPED, BROAD = "scoped", "broad"
@@ -143,6 +144,8 @@ async def create_track(
         user_id=user_id,
         name=data.name,
         target_titles=data.target_titles,
+        related_titles=data.related_titles,
+        exact_titles=data.exact_titles,
         key_skills=data.key_skills,
         skip_rules=data.skip_rules.model_dump(),
         min_pay=data.min_pay,
@@ -164,22 +167,64 @@ async def update_track(
         await _check_name(db, user_id, updates["name"], except_id=track.id)
     if "resume_id" in updates:
         await _check_resume(db, updates["resume_id"], user_id)
-    fit_before = (track.target_titles, track.key_skills, track.skip_rules)
+
+    def fit(t: ResumeTrack) -> tuple:
+        return (
+            t.target_titles,
+            t.related_titles,
+            t.exact_titles,
+            t.key_skills,
+            t.skip_rules,
+        )
+
+    fit_before = fit(track)
     for key, value in updates.items():
         if value is None and key in (
             "name",
             "target_titles",
+            "related_titles",
+            "exact_titles",
             "key_skills",
             "skip_rules",
         ):
             continue  # required fields: null means "leave as is"
         setattr(track, key, value)
-    # Titles Claude passed over were judged against the old titles and skills:
-    # weigh them again from the next run.
-    if (track.target_titles, track.key_skills, track.skip_rules) != fit_before:
-        await db.execute(delete(ScoutPass).where(ScoutPass.track_id == track.id))
+    # Titles Claude passed over, and jobs scored below the bar, were judged
+    # against the old titles, skills and rules: weigh them again from the next
+    # run.
+    if fit(track) != fit_before:
+        await start_fresh(db, track)
     await db.flush()
     return track
+
+
+async def start_fresh(db: AsyncSession, track: ResumeTrack) -> None:
+    """Forget the titles Claude passed over for this resume type, and let jobs
+    it scored below the bar be looked at again (spec 011)."""
+    await db.execute(delete(ScoutPass).where(ScoutPass.track_id == track.id))
+    track.rules_changed_at = datetime.now(UTC)
+
+
+async def passes(db: AsyncSession, track_id: uuid.UUID, user_id: uuid.UUID) -> dict:
+    """The titles Claude passed over for this resume type (last 30 days), most
+    often first."""
+    track = await get_track(db, track_id, user_id)
+    rows = (
+        await db.execute(
+            select(ScoutPass.title_key, func.count())
+            .where(
+                ScoutPass.track_id == track.id,
+                ScoutPass.created_at >= datetime.now(UTC) - timedelta(days=PASS_DAYS),
+            )
+            .group_by(ScoutPass.title_key)
+            .order_by(func.count().desc(), ScoutPass.title_key)
+        )
+    ).all()
+    return {
+        "count": sum(n for _, n in rows),
+        "titles": [{"title": t, "times": n} for t, n in rows if t],
+        "since": track.rules_changed_at,
+    }
 
 
 async def delete_track(

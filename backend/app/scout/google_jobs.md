@@ -3,7 +3,7 @@ These steps replace playbook steps 3 and 4; the rest of the playbook holds.
 
 a. If Google shows a "Date posted" filter, choose the one closest to the
    search's "posted within" days first. Otherwise leave the filters as they are.
-b. Read the jobs in the list as rows ({"company", "title", "fits"}; Google
+b. There's one start URL per search (title). Read the jobs in the list as rows ({"company", "title", "fits"}; Google
    gives no link of their own) and send them to check_jobs, up to 30 at a
    time. For more, scroll the list and send the next ones.
 c. For each job it returns that fits: open it, then open its "Apply on" link,

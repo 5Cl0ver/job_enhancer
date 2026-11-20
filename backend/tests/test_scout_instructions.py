@@ -102,7 +102,12 @@ class TestVersions:
         async with maker() as db:
             await instr.save(db, uid, "limits", values={"pages": 2})
             out = await instr.save(db, uid, "limits", values={"titles": 5})
-            assert out["current"] == {"pages": 2, "titles": 5, "companies": 15}
+            assert out["current"] == {
+                "links": 6,
+                "pages": 2,
+                "titles": 5,
+                "companies": 15,
+            }
 
     async def test_restore_rechecks_the_version(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="i8@test.dev")
@@ -198,21 +203,21 @@ class TestRunsUseThem:
         out = await mcp_mod.get_scout_brief()
         assert out["playbook"].startswith(instr.ORIGINALS["playbook"][:40])
 
-    async def test_pages_limit(self, engine, monkeypatch):
+    async def test_pages_and_searches_limits(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="l1@test.dev")
         uid = await _user_id(maker, "l1@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 2})
+            await instr.save(db, uid, "limits", values={"pages": 1, "links": 1})
             await db.commit()
         _, _, run_id = await _setup(maker, "l1@test.dev", job_count=10)
         brief = await mcp_mod.get_scout_brief()
-        assert brief["max_pages"] == 2
+        assert brief["max_pages"] == 1
+        # One search a run (the first title), one page of it.
+        assert brief["searches"] == ["IT Systems Administrator"]
         from tests.test_mcp_scout import _page
 
         out = await mcp_mod.check_jobs(str(run_id), _page(0))
-        assert "page 2 of 2" in out["next"]
-        out = await mcp_mod.check_jobs(str(run_id), _page(1))
-        assert "next_page_url" not in out and "last of the 2" in out["next"]
+        assert "next_page_url" not in out and "last search" in out["next"]
 
     async def test_titles_limit(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="l2@test.dev")
