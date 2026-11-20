@@ -146,7 +146,10 @@ class TestPicksWait:
         await scout_runs.check_jobs(db_session, test_user.id, str(run.id), rows[:1])
         await db_session.commit()
         body = (await client.get(f"/v1/scout/runs/{run.id}")).json()
-        assert body["looked_at"] == {"rows": 2}  # counts only, no fingerprints
+        assert body["looked_at"] == {
+            "rows": 2,
+            "pages": 1,
+        }  # counts only, no fingerprints
 
     async def test_seen_before_means_another_search(
         self, client: AsyncClient, db_session, test_user
@@ -164,7 +167,7 @@ class TestPicksWait:
         await scout_runs.check_jobs(db_session, test_user.id, str(again.id), rows)
         await db_session.commit()
         later = (await client.get(f"/v1/scout/runs/{again.id}")).json()
-        assert later["looked_at"] == {"rows": 3, "seen_before": 3}
+        assert later["looked_at"] == {"rows": 3, "seen_before": 3, "pages": 1}
 
 
 @pytest.mark.asyncio

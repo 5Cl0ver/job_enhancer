@@ -62,6 +62,9 @@ COMPANY_NONE = "none"
 COMPANY_NO_CAREERS = "no_careers"
 COMPANY_RESULTS = (COMPANY_OPENINGS, COMPANY_NONE, COMPANY_NO_CAREERS)
 
+# How long a row Claude passed over by its title stays passed over.
+PASS_DAYS = 30
+
 
 def _now_col() -> Mapped[datetime]:
     return mapped_column(
@@ -136,7 +139,8 @@ class ScoutRun(Base):
     status: Mapped[str] = mapped_column(String(10), nullable=False, default=RUN_QUEUED)
     note: Mapped[str | None] = mapped_column(Text)  # Claude's end note
     # Running totals of the result rows Claude checked and why some were passed
-    # over: {"rows", "in_tracker", "seen_before", "excluded"}. Counts only.
+    # over: {"rows", "in_tracker", "seen_before", "excluded", "title_passed",
+    # "pages"}. Counts only.
     stats: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = _now_col()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
@@ -252,4 +256,32 @@ class ScoutCompany(Base):
 
     __table_args__ = (
         UniqueConstraint("user_id", "key", name="uq_scout_company_user_key"),
+    )
+
+
+class ScoutPass(Base):
+    """A results row Claude passed over because its title didn't fit the resume
+    type, so later runs for that resume type skip it without weighing it again.
+    Keys only, never job text; rows older than ``PASS_DAYS`` don't count."""
+
+    __tablename__ = "scout_passes"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    # A title that doesn't fit one resume type may fit another.
+    track_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("resume_tracks.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    company_key: Mapped[str] = mapped_column(String(255), nullable=False, default="")
+    title_key: Mapped[str] = mapped_column(String(500), nullable=False, default="")
+    url_key: Mapped[str | None] = mapped_column(String(500))
+    created_at: Mapped[datetime] = _now_col()
+
+    __table_args__ = (
+        Index("ix_scout_passes_track_title", "track_id", "title_key"),
+        Index("ix_scout_passes_track_url", "track_id", "url_key"),
     )

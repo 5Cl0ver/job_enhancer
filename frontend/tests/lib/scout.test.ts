@@ -121,7 +121,7 @@ describe("scout runs", () => {
     const line = lookedAt({ status: "done", counts, target: 5, looked_at });
     expect(line).toBe(
       "Asked for 5, found 2. Looked at 24 postings: 9 seen in earlier searches · " +
-        "4 skipped by title · 2 already in My Jobs · 3 below your bar · " +
+        "4 had a word you skip · 2 already in My Jobs · 3 below your bar · " +
         "1 couldn't be copied · 3 not opened.",
     );
     const numbers = [...line!.split("postings:")[1].matchAll(/(\d+) /g)].map(
@@ -145,6 +145,23 @@ describe("scout runs", () => {
     expect(
       lookedAt({ status: "done", counts, target: 5, looked_at: null }),
     ).toBe("Asked for 5, found 2. 3 below your bar · 1 couldn't be copied.");
+  });
+
+  it("counts the titles Claude said didn't fit, apart from the words you skip", () => {
+    const counts = {
+      picked: 1,
+      saved: 0,
+      skipped: 0,
+      below_bar: 0,
+      duplicate: 0,
+      waiting_for_copy: 0,
+      no_copy: 0,
+    };
+    const looked_at = { rows: 20, title_passed: 12, excluded: 2, seen_before: 5 };
+    expect(lookedAt({ status: "done", counts, target: 3, looked_at })).toBe(
+      "Asked for 3, found 1. Looked at 20 postings: 5 seen in earlier searches · " +
+        "12 titles didn't fit · 2 had a word you skip.",
+    );
   });
 
   it("ticks good fits by default and follows the user's changes", () => {

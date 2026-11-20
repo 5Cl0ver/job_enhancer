@@ -313,6 +313,8 @@ export interface Run {
   folder: { id: string | null; name: string } | null;
   /** The result rows Claude checked, and why some were passed over. */
   looked_at: Record<string, number> | null;
+  /** What to change when a finished search came back short. */
+  tip?: string | null;
   findings: Finding[];
 }
 
@@ -374,7 +376,7 @@ export function runSummary(
 /**
  * Why a finished search came back with fewer jobs than asked, in one line whose
  * numbers add up: "Asked for 5, found 2. Looked at 24 postings: 9 seen in
- * earlier searches · 4 skipped by title · …". Null while it's running or when
+ * earlier searches · 4 titles didn't fit · …". Null while it's running or when
  * it found what was asked.
  */
 export function lookedAt(
@@ -391,10 +393,13 @@ export function lookedAt(
   };
   const seen = run.looked_at?.seen_before ?? 0;
   const excluded = run.looked_at?.excluded ?? 0;
+  // Titles Claude said don't fit the resume type (remembered for next time).
+  const unfit = run.looked_at?.title_passed ?? 0;
   const tracked = run.looked_at?.in_tracker ?? 0;
   const uncopied = c.no_copy + c.waiting_for_copy;
   add(seen, "seen in earlier searches");
-  add(excluded, "skipped by title");
+  add(unfit, "titles didn't fit");
+  add(excluded, "had a word you skip");
   add(tracked, "already in My Jobs");
   add(c.below_bar, "below your bar");
   add(c.duplicate, "you already had");
@@ -405,9 +410,9 @@ export function lookedAt(
   // A job reported without going through the results-page check still counts.
   const rows = Math.max(
     run.looked_at.rows ?? 0,
-    seen + excluded + tracked + opened,
+    seen + unfit + excluded + tracked + opened,
   );
-  add(rows - seen - excluded - tracked - opened, "not opened");
+  add(rows - seen - unfit - excluded - tracked - opened, "not opened");
   const looked = `Looked at ${rows} ${rows === 1 ? "posting" : "postings"}`;
   return parts.length
     ? `${head} ${looked}: ${parts.join(" · ")}.`

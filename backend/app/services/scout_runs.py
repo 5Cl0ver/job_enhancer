@@ -5,7 +5,9 @@ The app is the memory and the planner; each chat with Claude stays small
 
 - ``brief`` hands out short rules, the resume type and a ready-made search URL.
   It never sends lists of saved jobs or past findings.
-- ``check_jobs`` answers "which of these rows are new?" for one results page.
+- ``check_jobs`` answers "which of these rows are new?" for one results page,
+  remembers the rows Claude passed over by title (``scout_passes``) and hands
+  out the next page's link, up to ``MAX_PAGES`` pages a run.
 - ``report_job`` takes a link plus Claude's opinion. The job saved is the exact
   page copy the Job Catcher extension captured (``record_capture``); nothing in
   it comes from Claude (research R9).
@@ -20,7 +22,7 @@ message Claude can act on; the page's REST functions raise ``HTTPException``.
 import hashlib
 import uuid
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
@@ -38,6 +40,7 @@ from app.models.scout import (
     DUPLICATE,
     LOCAL,
     NO_COPY,
+    PASS_DAYS,
     PICKED,
     RUN_DONE,
     RUN_QUEUED,
@@ -49,6 +52,7 @@ from app.models.scout import (
     ScoutCapture,
     ScoutFinding,
     ScoutMission,
+    ScoutPass,
     ScoutRun,
 )
 from app.schemas.scout import (
@@ -76,7 +80,7 @@ from app.services.scout_dedupe import (
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import get_track
 
-PLAYBOOK_VERSION = "2026.11.4"
+PLAYBOOK_VERSION = "2026.11.5"
 PLAYBOOK = (Path(__file__).parent.parent / "scout" / "playbook.md").read_text(
     encoding="utf-8"
 )
@@ -94,6 +98,10 @@ RUBRIC = {
     "pay_location": 1,
 }
 MAX_ROWS_PER_CHECK = 30
+# Results pages a run reads before it stops, and how many of the resume type's
+# titles one search asks for (runs take turns with the rest).
+MAX_PAGES = 4
+TITLES_PER_SEARCH = 4
 HOURS_PER_YEAR = 2080
 # Findings that count as "seen": a job the user has decided on or has waiting
 # to decide, or that Claude already judged. A job with no page copy isn't seen;
@@ -245,10 +253,21 @@ async def delete_mission(
 # --------------------------------------------------------------------------- #
 # Runs (the page's side)
 # --------------------------------------------------------------------------- #
+def search_titles(c: dict) -> list[str]:
+    """The titles one search asks for. A resume type with more than
+    ``TITLES_PER_SEARCH`` takes turns: each run (``round``) asks for the next
+    ones, so runs don't all see the same results."""
+    titles = list(c["track"]["titles"] or [])
+    if len(titles) <= TITLES_PER_SEARCH:
+        return titles or [c["track"]["name"]]
+    first = (int(c.get("round") or 0) * TITLES_PER_SEARCH) % len(titles)
+    return (titles[first:] + titles[:first])[:TITLES_PER_SEARCH]
+
+
 def start_urls(c: dict) -> list[str]:
     """The search page Claude opens, with the filters already set, so it never
     spends screenshots clicking through them."""
-    titles = c["track"]["titles"][:4] or [c["track"]["name"]]
+    titles = search_titles(c)
     days = c["posted_within_days"]
     location = c.get("location") or ""
     remote = c.get("remote", "any")
@@ -294,6 +313,53 @@ def start_urls(c: dict) -> list[str]:
     if radius:
         q["radius"] = str(radius)
     return [f"https://www.ziprecruiter.com/jobs-search?{urlencode(q)}"]
+
+
+def page_url(c: dict, pages_read: int) -> str | None:
+    """The link to the next results page after ``pages_read`` pages, so Claude
+    opens it instead of finding and clicking the board's page buttons. None
+    where results don't come in numbered pages (Google)."""
+    source = c["source"]
+    if source not in ("linkedin", "indeed", "ziprecruiter"):
+        return None
+    url = start_urls(c)[0]
+    if source == "ziprecruiter":
+        return f"{url}&page={pages_read + 1}"
+    per_page = 25 if source == "linkedin" else 10
+    return f"{url}&start={pages_read * per_page}"
+
+
+def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
+    """One line on what to change when a finished search came back short (the
+    page shows it under the numbers). None when it found what was asked."""
+    c = run.criteria or {}
+    if run.status not in (RUN_DONE, RUN_STOPPED) or c.get("source") == LOCAL:
+        return None
+    found = sum(counts.get(o, 0) for o in (PICKED, SAVED, SKIPPED))
+    s = run.stats or {}
+    rows = s.get("rows", 0)
+    if found >= c.get("job_count", 0) or not rows:
+        return None
+    days = c.get("posted_within_days", 7)
+    wider = next((d for d in (3, 7, 14, 30) if d > days), None)
+    widen = f'widen "Posted" to "Last {wider} days"' if wider else ""
+    radius = c.get("radius_miles")
+    if (s.get("seen_before", 0) + s.get("in_tracker", 0)) * 2 >= rows:
+        return (
+            "Most of these jobs were already seen: the search ran recently and "
+            "few new ones have been posted since. Give it a day"
+            + (f", or {widen}." if widen else ".")
+        )
+    if s.get("title_passed", 0) * 2 >= rows:
+        return (
+            "Most job titles didn't fit the resume type. Add the titles you want "
+            "to the resume type so the search asks for them."
+        )
+    ran_out = run.status == RUN_DONE and s.get("pages", MAX_PAGES) < MAX_PAGES
+    if ran_out and (widen or (radius and radius < 100)):
+        more = [w for w in (widen, "pick a bigger radius" if radius else "") if w]
+        return f"The search ran out of results. For more, {' or '.join(more)}."
+    return None
 
 
 # Kinds of local employers a "Local companies" search looks through, a couple
@@ -528,6 +594,7 @@ async def runs_out(
                     if r.stats
                     else None
                 ),
+                tip=run_tip(r, counts.get(r.id, {})),
                 findings=findings.get(r.id, []),
             )
         )
@@ -686,6 +753,8 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
     if c["source"] in SOURCE_STEPS:
         extra["source_steps"] = SOURCE_STEPS[c["source"]]
         extra["posted_within_days"] = c["posted_within_days"]
+    if not local:
+        extra["max_pages"] = MAX_PAGES
     first = "Open the start URL and send the first page of rows to check_jobs."
     if local:
         extra["recheck"] = await companies.rechecks(db, user_id, run)
@@ -783,68 +852,197 @@ async def _seen_jobs(
     return seen
 
 
+async def _passed(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    track_id: uuid.UUID | None,
+    pairs: set[tuple[str, str]],
+    urls: set[str],
+) -> set[tuple[str, str] | str]:
+    """Which of these rows Claude passed over by title for this resume type in
+    the last ``PASS_DAYS``."""
+    titles = {t for _, t in pairs if t}
+    if track_id is None or not (titles or urls):
+        return set()
+    conditions = []
+    if titles:
+        conditions.append(ScoutPass.title_key.in_(titles))
+    if urls:
+        conditions.append(ScoutPass.url_key.in_(urls))
+    rows = await db.execute(
+        select(ScoutPass.company_key, ScoutPass.title_key, ScoutPass.url_key).where(
+            ScoutPass.user_id == user_id,
+            ScoutPass.track_id == track_id,
+            ScoutPass.created_at >= _now() - timedelta(days=PASS_DAYS),
+            or_(*conditions),
+        )
+    )
+    out: set[tuple[str, str] | str] = set()
+    for ck, tk, uk in rows.all():
+        if (ck, tk) in pairs:
+            out.add((ck, tk))
+        if uk and uk in urls:
+            out.add(uk)
+    return out
+
+
+def _fits(row: dict) -> bool:
+    """Claude's call on the title alone; a row without one is opened."""
+    fits = row.get("fits", True)
+    if isinstance(fits, str):
+        return fits.strip().lower() not in ("false", "no", "0")
+    return fits is not False
+
+
 async def check_jobs(
     db: AsyncSession, user_id: uuid.UUID, run_id: str | None, rows: list[dict]
 ) -> dict:
     run = await _run_for_agent(db, user_id, run_id)
     if len(rows) > MAX_ROWS_PER_CHECK:
         raise ValueError(f"Send at most {MAX_ROWS_PER_CHECK} rows per call (one page).")
-    exclude = run.criteria["track"].get("skip", {}).get("exclude", [])
+    c = run.criteria
+    exclude = c["track"].get("skip", {}).get("exclude", [])
     keyed = []
     for row in rows:
+        row = row if isinstance(row, dict) else {}
+        # Cut to the stored keys' lengths, so a very long title still matches.
         pair = (
-            company_key(str(row.get("company", ""))),
-            title_key(str(row.get("title", ""))),
+            company_key(str(row.get("company", "")))[:255],
+            title_key(str(row.get("title", "")))[:500],
         )
         uk = url_key(str(row.get("url") or ""))
         keyed.append((row, pair, uk))
-    seen = await _seen_jobs(
-        db,
-        user_id,
-        {p for _, p, _ in keyed if p[0] and p[1]},
-        {u for _, _, u in keyed if u},
-    )
-    open_rows: list[int] = []
-    skipped = {"in_tracker": 0, "seen_before": 0, "excluded": 0}
-    for i, (row, pair, uk) in enumerate(keyed):
+    pairs = {p for _, p, _ in keyed if p[0] and p[1]}
+    urls = {u for _, _, u in keyed if u}
+    seen = await _seen_jobs(db, user_id, pairs, urls)
+    # Rows passed over by title before (an earlier run, or an earlier page).
+    passed = await _passed(db, user_id, run.track_id, pairs, urls)
+
+    # Why each row isn't opened, or None for a row worth opening.
+    reasons: list[str | None] = []
+    passed_before: list[bool] = []
+    for row, pair, uk in keyed:
         why = seen.get(pair) or (seen.get(uk) if uk else None)
+        before = not why and (pair in passed or (uk is not None and uk in passed))
+        if before:
+            why = "title_passed"
+        if not why and _excluded(str(row.get("title", "")), exclude):
+            why = "excluded"
+        if not why and not _fits(row):
+            why = "title_passed"
+        reasons.append(why)
+        passed_before.append(before)
+    open_rows = [i for i, why in enumerate(reasons) if why is None]
+    skipped = {"in_tracker": 0, "seen_before": 0, "excluded": 0, "title_passed": 0}
+    for why in reasons:
         if why:
             skipped[why] += 1
-        elif _excluded(str(row.get("title", "")), exclude):
-            skipped["excluded"] += 1
-        else:
-            open_rows.append(i)
+
+    # Remember the rows Claude passed over by title, so later runs for this
+    # resume type skip them. Keys only; old ones are cleared as new ones come.
+    remembered: set = set()
+    for (_row, pair, uk), why, before in zip(
+        keyed, reasons, passed_before, strict=True
+    ):
+        if why != "title_passed" or before or run.track_id is None:
+            continue
+        mark = uk or pair
+        if not (uk or all(pair)) or mark in remembered:
+            continue
+        remembered.add(mark)
+        db.add(
+            ScoutPass(
+                id=uuid.uuid4(),
+                user_id=user_id,
+                track_id=run.track_id,
+                company_key=pair[0],
+                title_key=pair[1],
+                url_key=uk,
+            )
+        )
+    if remembered:
+        await db.execute(
+            ScoutPass.__table__.delete().where(
+                ScoutPass.user_id == user_id,
+                ScoutPass.created_at < _now() - timedelta(days=PASS_DAYS),
+            )
+        )
+
     # So the page can say why a search came back short: "looked at 24, 9 seen
-    # before, 4 skipped by title". Counts only, added up across pages; a row
+    # before, 4 titles didn't fit". Counts only, added up across pages; a row
     # Claude sends twice (the same page again) is counted once, by a short
-    # fingerprint, never its text.
+    # fingerprint, never its text. A page with any row not counted before is a
+    # new page read; one with none (empty, or only rows from earlier pages,
+    # which boards show past their last page) means the results ran out,
+    # unless it's the last page sent again.
     stats = dict(run.stats or {})
     counted = set(stats.get("_rows", []))
-    for i, (_row, pair, uk) in enumerate(keyed):
+    marks: list[str] = []
+    new_page = False
+    for (_row, pair, uk), why in zip(keyed, reasons, strict=True):
+        if not (uk or (pair[0] and pair[1])):
+            continue
         mark = hashlib.sha1((uk or f"{pair[0]}|{pair[1]}").encode()).hexdigest()[:12]
-        if mark in counted or not (uk or (pair[0] and pair[1])):
+        marks.append(mark)
+        if mark in counted:
             continue
         counted.add(mark)
+        new_page = True
         stats["rows"] = stats.get("rows", 0) + 1
-        why = seen.get(pair) or (seen.get(uk) if uk else None)
         if why:
             stats[why] = stats.get(why, 0) + 1
-        elif i not in open_rows:
-            stats["excluded"] = stats.get("excluded", 0) + 1
+    # One company's openings (Local companies) aren't a results page.
+    paged = c["source"] != LOCAL
+    resent = bool(marks) and sorted(set(marks)) == stats.get("_last")
+    ran_out = paged and not new_page and not resent
+    if new_page and paged:
+        stats["pages"] = stats.get("pages", 0) + 1
+    if new_page:  # the last page read, to tell it apart when sent again
+        stats["_last"] = sorted(set(marks))
     stats["_rows"] = sorted(counted)[-2000:]
     run.stats = stats
     await db.flush()
     progress = await _progress(db, run)
-    return {
+    pages = stats.get("pages", 0)
+    more = pages < MAX_PAGES and not ran_out
+    next_page = page_url(c, pages) if more else None
+    if progress["done"]:
+        nxt = "Target reached: call finish_scout_run."
+    elif not paged:
+        nxt = (
+            "Open each of these rows' postings in turn and report_job them, "
+            "then call company_checked."
+            if open_rows
+            else "None new at this company: call company_checked."
+        )
+    else:
+        if next_page:
+            after = f"open next_page_url (page {pages + 1} of {MAX_PAGES})"
+        elif more:
+            after = "scroll the list for more jobs and send the next rows"
+        elif ran_out:
+            after = "there are no more results, so call finish_scout_run"
+        else:
+            after = (
+                f"call finish_scout_run: that was the last of the {MAX_PAGES} "
+                "pages a run reads"
+            )
+        nxt = (
+            "Open each of these rows' postings in turn and report_job them. "
+            f"Then {after}."
+            if open_rows
+            else f"None new on this page: {after}."
+        )
+    out = {
         "open": open_rows,
         "skipped": skipped,
+        "pages_read": pages,
         "progress": progress,
-        "next": (
-            "Open each of these rows' postings in turn and report_job them."
-            if open_rows
-            else "None new on this page: go to the next page of results."
-        ),
+        "next": nxt,
     }
+    if next_page and not progress["done"]:
+        out["next_page_url"] = next_page
+    return out
 
 
 def _pay_note(capture: ScoutCapture, min_pay: int | None) -> str | None:

@@ -30,6 +30,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `RunReview.tsx` | The review: Claude's good fits ticked, the rest unticked, the collection pre-filled, one "Save N to My Jobs" button; `SavedNote` says where they went, with a link |
 | `FolderSelect.tsx` | "Save into": the search's own collection, one of the user's, or a new one named on the spot |
 | `ScoutHistory.tsx` | Past runs; open one to see what it found (and, for Local companies, how many companies it checked) |
+| `RunTip.tsx` | Under a search that came back short: the app's one-line tip on what to change (wait a day, a wider "Posted", a bigger radius, more titles on the resume type) |
 | `ScoutCompanies.tsx` | Above History: the local companies checked, folded away; each links to its careers page, with "Check next run" and "Never check" |
 | `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job and its collection), passed on or below bar (Save to My Jobs while the page copy exists), already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
 | `errorText.ts` | The server's `detail` message for a failed request |
