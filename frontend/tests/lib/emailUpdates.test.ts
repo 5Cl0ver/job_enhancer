@@ -207,3 +207,20 @@ describe("readableError", () => {
     expect(readableError("Bad gateway")).toBe("Bad gateway");
   });
 });
+
+describe("mailName / emailLabel", () => {
+  it("names the mail site a link goes to", async () => {
+    const { mailName } = await import("@/lib/emailUpdates");
+    expect(mailName("https://mail.yahoo.com/d/folders/1/messages/abc")).toBe("Yahoo Mail");
+    expect(mailName("https://mail.google.com/mail/u/0/#search/x")).toBe("Gmail");
+    expect(mailName("https://mail.aol.com/d/search/keyword=x")).toBe("AOL Mail");
+    expect(mailName("https://example.com/mail")).toBe("your mail");
+  });
+
+  it("labels an email on a card by what it is", async () => {
+    const { emailLabel } = await import("@/lib/emailUpdates");
+    expect(emailLabel("interview")).toBe("Interview email");
+    expect(emailLabel("rejected")).toBe("Rejection email");
+    expect(emailLabel("unsure")).toBe("Email");
+  });
+});

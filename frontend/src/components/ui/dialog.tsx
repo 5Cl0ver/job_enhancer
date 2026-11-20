@@ -19,7 +19,7 @@ const DialogOverlay = React.forwardRef<
   <DialogPrimitive.Overlay
     ref={ref}
     className={cn(
-      "fixed inset-0 z-50 bg-black/50 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+      "fixed inset-0 z-50 bg-black/60 backdrop-blur-[2px] data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
       className,
     )}
     {...props}
@@ -37,10 +37,12 @@ const DialogContent = React.forwardRef<
       ref={ref}
       className={cn(
         // `max-w-lg` is unprefixed so a caller's own width (max-w-2xl,
-        // sm:max-w-sm) replaces it.
-        "fixed z-50 grid w-full max-w-lg gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
+        // sm:max-w-sm) replaces it. The one column may shrink to the box, so
+        // long content (a file name in a select) can't make the dialog scroll
+        // sideways.
+        "fixed z-50 grid w-full max-w-lg grid-cols-[minmax(0,1fr)] gap-4 border bg-background p-6 shadow-lg duration-200 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0",
         // From 768px: a box in the middle of the screen.
-        "md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-lg md:data-[state=closed]:zoom-out-95 md:data-[state=open]:zoom-in-95",
+        "md:left-1/2 md:top-1/2 md:-translate-x-1/2 md:-translate-y-1/2 md:rounded-2xl md:shadow-2xl md:data-[state=closed]:zoom-out-95 md:data-[state=open]:zoom-in-95",
         className,
         // On a phone: a sheet that slides up from the bottom, as wide as the
         // screen and clear of the home indicator. Its frame (grab bar, close

@@ -122,3 +122,40 @@ class TestAttention:
         await _event(db_session, other, acct, "interview", STATUS_PENDING)
 
         assert (await client.get("/v1/attention")).json()["email_review"] == 0
+
+
+@pytest.mark.asyncio
+class TestLatestEmailPerJob:
+    async def test_the_email_that_moved_the_card_explains_it(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        acct = await _account(db_session, test_user)
+        job = await _saved_job(db_session, test_user)
+        # Oldest first: a confirmation, then the email that moved the card, then
+        # a newer one still waiting, and one the user dismissed.
+        await _event(db_session, test_user, acct, "applied", STATUS_PENDING, job.id)
+        await _event(
+            db_session, test_user, acct, "interview", STATUS_AUTO_APPLIED, job.id
+        )
+        await _event(db_session, test_user, acct, "assessment", STATUS_PENDING, job.id)
+        await _event(db_session, test_user, acct, "rejected", STATUS_DISMISSED, job.id)
+
+        rows = (await client.get("/v1/email/job-emails/latest")).json()
+        assert len(rows) == 1
+        assert rows[0]["saved_job_id"] == str(job.id)
+        assert rows[0]["event_type"] == "interview"
+        assert rows[0]["status"] == STATUS_AUTO_APPLIED
+        assert rows[0]["count"] == 3
+
+    async def test_jobs_without_emails_and_other_users_are_left_out(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        await _saved_job(db_session, test_user)
+        other = User(id=uuid.uuid4(), email="other2@test.dev")
+        db_session.add(other)
+        await db_session.flush()
+        theirs = await _saved_job(db_session, other)
+        acct = await _account(db_session, other)
+        await _event(db_session, other, acct, "interview", STATUS_PENDING, theirs.id)
+
+        assert (await client.get("/v1/email/job-emails/latest")).json() == []

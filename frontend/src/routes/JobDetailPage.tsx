@@ -6,6 +6,25 @@ import { JobEmails } from "@/components/email/JobEmails";
 import { JobResumeType } from "@/components/scout/JobResumeType";
 import { StagePicker } from "@/components/jobs/StagePicker";
 import { Skeleton } from "@/components/ui/skeleton";
+import { usePipelineStages } from "@/hooks/useTracker";
+import type { SavedJob } from "@/types/api";
+
+/** "In Phone Screen since Aug 20": the stage in words, with when it got there. */
+function StageSince({ savedJob }: { savedJob: SavedJob }) {
+  const { data: stages = [] } = usePipelineStages();
+  const stage = stages.find((s) => s.id === savedJob.pipeline_stage_id);
+  if (!stage) return null;
+  return (
+    <p className="text-sm text-muted-foreground">
+      In <span className="font-medium text-foreground">{stage.name}</span> since{" "}
+      {new Date(savedJob.last_stage_change).toLocaleDateString(undefined, {
+        month: "short",
+        day: "numeric",
+        year: "numeric",
+      })}
+    </p>
+  );
+}
 
 /** Full detail view for one job listing (reached by clicking a card title). */
 export function JobDetailPage() {
@@ -42,11 +61,19 @@ export function JobDetailPage() {
           isSaved={isSaved}
           onSave={toggleSave}
           onGenerateDocuments={() => navigate(`/ai-apply?job=${id}`)}
-          aside={isSaved ? <JobResumeType jobListingId={id} /> : null}
+          aside={
+            isSaved ? (
+              <>
+                {/* First: where this job stands, and the emails that explain it. */}
+                {savedJob && <StageSince savedJob={savedJob} />}
+                <JobEmails jobListingId={id} sayWhenNone />
+                <JobResumeType jobListingId={id} />
+              </>
+            ) : null
+          }
           stage={savedJob ? <StagePicker savedJob={savedJob} /> : null}
         />
       )}
-      {isSaved && <JobEmails jobListingId={id} />}
     </div>
   );
 }

@@ -397,6 +397,7 @@ function Details({ ev }: { ev: DetectedEvent }) {
       <EmailViewer
         eventId={viewing ? ev.id : null}
         mailLink={ev.mail_link}
+        searchLink={ev.mail_search_link}
         onClose={() => setViewing(false)}
       />
       {open && (
@@ -622,6 +623,7 @@ function MovedRow({ ev }: { ev: DetectedEvent }) {
           <EmailViewer
         eventId={viewing ? ev.id : null}
         mailLink={ev.mail_link}
+        searchLink={ev.mail_search_link}
         onClose={() => setViewing(false)}
       />
         </div>

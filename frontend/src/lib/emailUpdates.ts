@@ -199,3 +199,25 @@ export function scanIsDone(r: ScanResult): boolean {
   if (r.interrupted || (r.carried_over ?? 0) > 0) return false;
   return (r.folders ?? []).every((f) => f.status === "complete" && f.carried_over === 0);
 }
+
+/** The name of the mail site a link goes to, for the button that opens it. */
+export function mailName(link: string): string {
+  if (link.includes("mail.google.")) return "Gmail";
+  if (link.includes("mail.aol.")) return "AOL Mail";
+  if (link.includes("mail.yahoo.")) return "Yahoo Mail";
+  return "your mail";
+}
+
+const EMAIL_LABEL: Record<string, string> = {
+  interview: "Interview email",
+  assessment: "Assessment email",
+  offer: "Offer email",
+  rejected: "Rejection email",
+  applied: "Confirmation email",
+  recruiter: "Recruiter email",
+};
+
+/** A few words for an email on a job's card ("Interview email"). */
+export function emailLabel(eventType: string): string {
+  return EMAIL_LABEL[eventType] ?? "Email";
+}

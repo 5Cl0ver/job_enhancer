@@ -1,8 +1,7 @@
 import { useRef, useState } from "react";
 import { useDraggable } from "@dnd-kit/core";
-import { AlertTriangle, Check, Clock, MailCheck, MoreHorizontal, Search } from "lucide-react";
+import { Check, Mail, MailCheck, MoreHorizontal, Search } from "lucide-react";
 import { formatDistanceToNow, differenceInDays, format } from "date-fns";
-import { Badge } from "@/components/ui/badge";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -11,10 +10,13 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
+import { EmailViewer } from "@/components/email/EmailViewer";
 import { JobDetailDialog } from "@/components/tracker/JobDetailDialog";
+import type { JobEmailLatest } from "@/hooks/useEmailAccount";
 import { useToggleResearchFlag } from "@/hooks/useTracker";
 import { highlightParts } from "@/lib/boardFilter";
-import { getNextAction, TONE_STYLES } from "@/lib/nextAction";
+import { emailLabel } from "@/lib/emailUpdates";
+import { getNextAction, TONE_DOT } from "@/lib/nextAction";
 import { cn } from "@/lib/utils";
 import type { PipelineStage, SavedJob } from "@/types/api";
 
@@ -44,6 +46,9 @@ interface CardFaceProps {
   words?: string[];
   /** Buttons shown at the top right (the Move menu). */
   actions?: React.ReactNode;
+  /** The email behind this job's stage, and what opening it does. */
+  email?: JobEmailLatest;
+  onOpenEmail?: () => void;
   className?: string;
 }
 
@@ -55,41 +60,35 @@ export function CardFace({
   stageName,
   words = [],
   actions,
+  email,
+  onOpenEmail,
   className,
 }: CardFaceProps) {
   const { job_listing, last_stage_change, applied_at, flagged_for_research, emailed_at } = savedJob;
   const daysSinceStageChange = differenceInDays(new Date(), new Date(last_stage_change));
-  const isFollowUpOverdue = daysSinceStageChange >= followUpDays;
   // The CRM "next step" for this card (what to do / who's ghosting you).
   const nextAction = getNextAction(savedJob, { followUpDays, stageName: stageName ?? null });
-  const where = [job_listing.company, job_listing.location].filter(Boolean);
+  const where = [
+    job_listing.company,
+    job_listing.is_remote ? "Remote" : job_listing.location,
+  ].filter(Boolean);
 
   return (
     <div
       className={cn(
-        "group rounded-lg border bg-card p-3 text-card-foreground shadow-sm",
+        "group rounded-xl border bg-card p-3.5 text-card-foreground shadow-xs",
         "transition-[transform,box-shadow,border-color] duration-150 motion-reduce:transition-none",
         "hover:-translate-y-0.5 hover:border-primary/50 hover:shadow-lg hover:ring-2 hover:ring-primary/15",
         "motion-reduce:hover:translate-y-0",
-        flagged_for_research && "border-amber-300 ring-1 ring-amber-200 dark:ring-amber-800",
+        flagged_for_research && "border-amber-400/60",
         className,
       )}
     >
       <div className="flex items-start justify-between gap-1">
-        <p className="line-clamp-2 text-sm font-medium leading-tight">
+        <p className="line-clamp-2 text-sm font-semibold leading-snug">
           <Marked text={job_listing.title} words={words} />
         </p>
-        <div className="flex shrink-0 items-center gap-0.5">
-          {isFollowUpOverdue && (
-            <span
-              aria-label="Follow-up overdue"
-              title={`No activity for ${daysSinceStageChange} days`}
-            >
-              <AlertTriangle className="h-3.5 w-3.5 text-amber-500" />
-            </span>
-          )}
-          {actions}
-        </div>
+        <div className="flex shrink-0 items-center gap-0.5">{actions}</div>
       </div>
 
       <p className="mt-1 truncate text-xs text-muted-foreground">
@@ -101,37 +100,54 @@ export function CardFace({
         ))}
       </p>
 
-      <div className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground">
-        {job_listing.is_remote && (
-          <Badge variant="secondary" className="text-xs">
-            Remote
-          </Badge>
-        )}
-        {applied_at && (
-          <span className="flex items-center gap-1">
-            <Clock className="h-3 w-3 shrink-0" aria-hidden />
-            Applied {formatDistanceToNow(new Date(applied_at), { addSuffix: true })}
-          </span>
-        )}
-        {emailed_at && (
-          <span className="flex items-center gap-1 text-emerald-600">
-            <MailCheck className="h-3 w-3 shrink-0" aria-hidden />
-            Emailed {format(new Date(emailed_at), "MMM d")}
-          </span>
-        )}
-      </div>
-
-      {/* CRM next-action pill — tells you the next move at a glance. */}
-      {nextAction && (
-        <div
-          className={cn(
-            "mt-1.5 inline-flex w-fit items-center rounded-full px-2 py-0.5 text-[11px] font-medium",
-            TONE_STYLES[nextAction.tone],
+      {(applied_at || emailed_at) && (
+        <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground/80">
+          {applied_at && (
+            <span>Applied {formatDistanceToNow(new Date(applied_at), { addSuffix: true })}</span>
           )}
-          title="Suggested next step"
+          {emailed_at && (
+            <span className="flex items-center gap-1 text-emerald-600 dark:text-emerald-400">
+              <MailCheck className="h-3 w-3 shrink-0" aria-hidden />
+              Emailed {format(new Date(emailed_at), "MMM d")}
+            </span>
+          )}
+        </p>
+      )}
+
+      {/* Why the card is where it is: the email that put it here. Opens the
+          email without opening the job. */}
+      {email && (
+        <button
+          type="button"
+          onMouseDown={(e) => e.stopPropagation()}
+          onTouchStart={(e) => e.stopPropagation()}
+          onPointerDown={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onOpenEmail?.();
+          }}
+          className="mt-1.5 flex w-full items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-left text-xs font-medium text-primary hover:bg-primary/15 pointer-coarse:py-2"
         >
-          {nextAction.label}
-        </div>
+          <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
+          <span className="truncate">
+            {emailLabel(email.event_type)} · {format(new Date(email.created_at), "MMM d")}
+          </span>
+        </button>
+      )}
+
+      {/* The next move, quietly: a coloured dot and a few words. */}
+      {nextAction && (
+        <p
+          className="mt-2 flex items-center gap-1.5 text-xs text-muted-foreground"
+          title={`Suggested next step · no activity for ${daysSinceStageChange} days`}
+        >
+          <span
+            className={cn("h-1.5 w-1.5 shrink-0 rounded-full", TONE_DOT[nextAction.tone])}
+            aria-hidden
+          />
+          <span className="truncate">{nextAction.label}</span>
+        </p>
       )}
     </div>
   );
@@ -151,6 +167,8 @@ interface KanbanCardProps {
   dimmed?: boolean;
   /** Flash once (the search jumped to this card). */
   pulse?: boolean;
+  /** The email behind this job's stage, if it has one. */
+  email?: JobEmailLatest;
 }
 
 export function KanbanCard({
@@ -163,6 +181,7 @@ export function KanbanCard({
   words = [],
   dimmed,
   pulse,
+  email,
 }: KanbanCardProps) {
   const { listeners, setNodeRef, isDragging } = useDraggable({ id: savedJob.id });
   const [open, setOpen] = useState(false);
@@ -173,6 +192,7 @@ export function KanbanCard({
     setEverOpened(true);
     setOpen(true);
   };
+  const [emailOpen, setEmailOpen] = useState(false);
   const toggleFlag = useToggleResearchFlag();
   // Distinguish a click from a drag: only open the detail if the pointer barely
   // moved (a drag moves ≥5px and is handled by dnd-kit instead).
@@ -279,9 +299,18 @@ export function KanbanCard({
           stageName={stageName}
           words={matched ? words : []}
           actions={menu}
+          email={email}
+          onOpenEmail={() => setEmailOpen(true)}
           className={cn(matched && "border-primary/60 ring-2 ring-primary/40")}
         />
       </div>
+
+      {email && (
+        <EmailViewer
+          eventId={emailOpen ? email.event_id : null}
+          onClose={() => setEmailOpen(false)}
+        />
+      )}
 
       {everOpened && <JobDetailDialog savedJob={savedJob} open={open} onOpenChange={setOpen} />}
     </>

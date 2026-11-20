@@ -1,19 +1,41 @@
 import { useState } from "react";
-import { Building2, MapPin, ExternalLink, Search, Check, Copy, Mail, MailCheck } from "lucide-react";
+import { Link } from "react-router-dom";
+import {
+  Building2,
+  Check,
+  ExternalLink,
+  Mail,
+  MailCheck,
+  MapPin,
+  Maximize2,
+  Search,
+  Sparkles,
+} from "lucide-react";
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";
-import { useToggleResearchFlag, useToggleEmailed } from "@/hooks/useTracker";
+import { JobEmails } from "@/components/email/JobEmails";
+import { StagePicker } from "@/components/jobs/StagePicker";
+import {
+  usePipelineStages,
+  useToggleResearchFlag,
+  useToggleEmailed,
+} from "@/hooks/useTracker";
 import { useProfile } from "@/hooks/useProfile";
 import { useJob } from "@/hooks/useJobs";
 import { JobDocuments } from "@/components/ai/JobDocuments";
+import { cn } from "@/lib/utils";
 import type { JobListing, SavedJob } from "@/types/api";
+
+/** Descriptions longer than this start folded. */
+const LONG_DESCRIPTION = 500;
 
 function money(n: number) {
   return `$${n.toLocaleString()}`;
@@ -22,7 +44,8 @@ function money(n: number) {
 export function salaryText(j: JobListing): string | null {
   if (!j.salary_min && !j.salary_max) return null;
   const per = j.salary_period === "hourly" ? "/hr" : "/yr";
-  if (j.salary_min && j.salary_max) return `${money(j.salary_min)}–${money(j.salary_max)} ${per}`;
+  if (j.salary_min && j.salary_max)
+    return `${money(j.salary_min)}–${money(j.salary_max)} ${per}`;
   return `${money(j.salary_min ?? j.salary_max!)} ${per}`;
 }
 
@@ -89,6 +112,8 @@ export function JobDetailDialog({
   const toggleEmailed = useToggleEmailed();
   const { data: profile } = useProfile();
   const [copied, setCopied] = useState(false);
+  const [showAll, setShowAll] = useState(false);
+  const { data: stages = [] } = usePipelineStages();
 
   // Open the user's mail client pre-filled with a subject, and auto-mark the
   // job "Emailed" — that's the seamless loop (research gives the address + draft,
@@ -97,7 +122,10 @@ export function JobDetailDialog({
     const subject = `Application for ${j.title} at ${j.company}`;
     window.location.href = `mailto:?subject=${encodeURIComponent(subject)}`;
     if (!savedJob.emailed_at) {
-      toggleEmailed.mutate({ savedJobId: savedJob.id, emailedAt: new Date().toISOString() });
+      toggleEmailed.mutate({
+        savedJobId: savedJob.id,
+        emailedAt: new Date().toISOString(),
+      });
     }
   };
 
@@ -113,42 +141,114 @@ export function JobDetailDialog({
     // Open the user's linked Claude Project (shared with the extension) if set,
     // otherwise a fresh Claude chat. Set it in Settings → Claude Project.
     const url = profile?.claude_project_url?.trim();
-    window.open(url && /^https?:\/\//i.test(url) ? url : "https://claude.ai/new", "_blank", "noopener");
+    window.open(
+      url && /^https?:\/\//i.test(url) ? url : "https://claude.ai/new",
+      "_blank",
+      "noopener",
+    );
   };
+
+  const stage = stages.find((st) => st.id === savedJob.pipeline_stage_id);
+  const facts = [
+    savedJob.applied_at &&
+      `Applied ${format(new Date(savedJob.applied_at), "MMM d")}`,
+    stage &&
+      `In ${stage.name} since ${format(new Date(savedJob.last_stage_change), "MMM d")}`,
+    `Saved ${format(new Date(savedJob.created_at), "MMM d")}`,
+  ].filter(Boolean);
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-        <DialogHeader>
-          <DialogTitle className="pr-6 text-lg leading-snug">{j.title}</DialogTitle>
+      <DialogContent className="max-h-[88vh] gap-5 overflow-y-auto sm:max-w-xl">
+        {/* What the job is, and where it stands. */}
+        <DialogHeader className="space-y-2 text-left">
+          <DialogTitle className="break-words pr-8 text-xl leading-snug">
+            {j.title}
+          </DialogTitle>
+          <DialogDescription asChild>
+            <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-sm text-muted-foreground">
+              <span className="flex items-center gap-1.5">
+                <Building2 className="h-4 w-4" aria-hidden /> {j.company}
+              </span>
+              {j.location && (
+                <span className="flex items-center gap-1.5">
+                  <MapPin className="h-4 w-4" aria-hidden /> {j.location}
+                </span>
+              )}
+              {j.is_remote && <Badge variant="secondary">Remote</Badge>}
+              {pay && (
+                <span className="font-medium text-foreground">{pay}</span>
+              )}
+            </div>
+          </DialogDescription>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
+            <StagePicker savedJob={savedJob} />
+            <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>
+          </div>
         </DialogHeader>
 
-        <div className="space-y-3 text-sm">
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-            <span className="flex items-center gap-1">
-              <Building2 className="h-3.5 w-3.5" /> {j.company}
-            </span>
-            {j.location && (
-              <span className="flex items-center gap-1">
-                <MapPin className="h-3.5 w-3.5" /> {j.location}
-              </span>
-            )}
-            {j.is_remote && <Badge variant="secondary">Remote</Badge>}
-            {pay && <span className="font-medium text-foreground">{pay}</span>}
-          </div>
+        {/* Why it's in that stage: the emails behind it, first. */}
+        <JobEmails jobListingId={savedJob.job_listing_id} sayWhenNone />
 
-          <div className="flex flex-wrap gap-x-4 gap-y-1 text-xs text-muted-foreground">
-            {savedJob.applied_at && (
-              <span>Applied {format(new Date(savedJob.applied_at), "MMM d, yyyy")}</span>
+        {/* What you can do with it. */}
+        <section className="space-y-2">
+          <SectionTitle>Actions</SectionTitle>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {j.apply_url && (
+              <Button asChild className="gap-1.5 sm:col-span-2">
+                <a href={j.apply_url} target="_blank" rel="noopener noreferrer">
+                  Open job posting{" "}
+                  <ExternalLink className="h-4 w-4" aria-hidden />
+                </a>
+              </Button>
             )}
-            <span>Saved {format(new Date(savedJob.created_at), "MMM d, yyyy")}</span>
-          </div>
-
-          {/* Contact Further: research shortlist flag + Claude research */}
-          <div className="flex flex-wrap items-center gap-2 rounded-md border border-amber-200 bg-amber-50/60 p-2.5 dark:border-amber-900/40 dark:bg-amber-950/20">
+            {savedJob.emailed_at ? (
+              <div className="flex items-center justify-between gap-2 rounded-md border px-3 text-sm">
+                <span className="flex items-center gap-1.5">
+                  <MailCheck className="h-4 w-4 text-emerald-600" aria-hidden />
+                  Emailed {format(new Date(savedJob.emailed_at), "MMM d")}
+                </span>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() =>
+                    toggleEmailed.mutate({
+                      savedJobId: savedJob.id,
+                      emailedAt: null,
+                    })
+                  }
+                >
+                  Undo
+                </Button>
+              </div>
+            ) : (
+              <Button
+                variant="outline"
+                className="justify-start gap-2"
+                onClick={composeEmail}
+              >
+                <Mail className="h-4 w-4" aria-hidden /> Write to the company
+              </Button>
+            )}
             <Button
-              variant={savedJob.flagged_for_research ? "default" : "outline"}
-              size="sm"
+              variant="outline"
+              className="justify-start gap-2"
+              onClick={researchWithClaude}
+              disabled={!fullListing && loadingDescription}
+            >
+              {copied ? (
+                <Check className="h-4 w-4" aria-hidden />
+              ) : (
+                <Sparkles className="h-4 w-4" aria-hidden />
+              )}
+              {copied
+                ? "Copied. Paste it in Claude"
+                : "Research it with Claude"}
+            </Button>
+            <Button
+              variant="outline"
+              className="justify-start gap-2"
+              aria-pressed={savedJob.flagged_for_research}
               onClick={() =>
                 toggleFlag.mutate({
                   savedJobId: savedJob.id,
@@ -156,89 +256,86 @@ export function JobDetailDialog({
                 })
               }
             >
-              <Search className="mr-1 h-4 w-4" />
-              {savedJob.flagged_for_research ? "In Contact Further" : "Add to Contact Further"}
+              <Search className="h-4 w-4" aria-hidden />
+              {savedJob.flagged_for_research
+                ? "Remove from Contact Further"
+                : "Add to Contact Further"}
             </Button>
-            <Button
-              variant="secondary"
-              size="sm"
-              onClick={researchWithClaude}
-              disabled={!fullListing && loadingDescription}
-            >
-              {copied ? <Check className="mr-1 h-4 w-4" /> : <Copy className="mr-1 h-4 w-4" />}
-              {copied ? "Copied — paste in Claude" : "🔍 Research + draft email (Claude)"}
+            <Button asChild variant="outline" className="justify-start gap-2">
+              <Link to={`/jobs/${savedJob.job_listing_id}`}>
+                <Maximize2 className="h-4 w-4" aria-hidden /> Open the full page
+              </Link>
             </Button>
-
-            {/* Outreach email tracking — the seamless send loop. */}
-            <div className="flex w-full flex-wrap items-center gap-2 border-t border-amber-200/70 pt-2 dark:border-amber-900/40">
-              {savedJob.emailed_at ? (
-                <>
-                  <Badge variant="secondary" className="gap-1">
-                    <MailCheck className="h-3.5 w-3.5 text-emerald-600" />
-                    Emailed {format(new Date(savedJob.emailed_at), "MMM d, yyyy")}
-                  </Badge>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => toggleEmailed.mutate({ savedJobId: savedJob.id, emailedAt: null })}
-                  >
-                    Undo
-                  </Button>
-                </>
-              ) : (
-                <>
-                  <Button variant="outline" size="sm" onClick={composeEmail}>
-                    <Mail className="mr-1 h-4 w-4" />
-                    Compose email
-                  </Button>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    onClick={() =>
-                      toggleEmailed.mutate({
-                        savedJobId: savedJob.id,
-                        emailedAt: new Date().toISOString(),
-                      })
-                    }
-                  >
-                    Mark as emailed
-                  </Button>
-                </>
-              )}
-            </div>
+            {!savedJob.emailed_at && (
+              <button
+                type="button"
+                onClick={() =>
+                  toggleEmailed.mutate({
+                    savedJobId: savedJob.id,
+                    emailedAt: new Date().toISOString(),
+                  })
+                }
+                className="justify-self-start text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground sm:col-span-2"
+              >
+                I already emailed them
+              </button>
+            )}
           </div>
+        </section>
 
-          <JobDocuments jobListingId={savedJob.job_listing_id} compact />
+        <JobDocuments jobListingId={savedJob.job_listing_id} compact />
 
-          {savedJob.notes && (
-            <div className="rounded-md border bg-muted/40 p-2.5">
-              <p className="mb-1 text-xs font-semibold text-muted-foreground">Your notes</p>
-              <p className="whitespace-pre-wrap">{savedJob.notes}</p>
-            </div>
-          )}
+        {savedJob.notes && (
+          <section className="space-y-2">
+            <SectionTitle>Your notes</SectionTitle>
+            <p className="whitespace-pre-wrap rounded-md bg-muted/50 p-3 text-sm">
+              {savedJob.notes}
+            </p>
+          </section>
+        )}
 
+        <section className="space-y-2">
+          <SectionTitle>Description</SectionTitle>
           {!fullListing && loadingDescription ? (
-            <p className="text-muted-foreground">Loading description…</p>
+            <p className="text-sm text-muted-foreground">Loading…</p>
           ) : j.description ? (
-            <div>
-              <p className="mb-1 text-xs font-semibold text-muted-foreground">Description</p>
-              <p className="whitespace-pre-wrap leading-relaxed text-foreground/90">
+            <>
+              <p
+                className={cn(
+                  "whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90",
+                  !showAll &&
+                    j.description.length > LONG_DESCRIPTION &&
+                    "max-h-40 overflow-hidden [mask-image:linear-gradient(to_bottom,black_55%,transparent)]",
+                )}
+              >
                 {j.description}
               </p>
-            </div>
+              {j.description.length > LONG_DESCRIPTION && (
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  aria-expanded={showAll}
+                  onClick={() => setShowAll((v) => !v)}
+                >
+                  {showAll ? "Show less" : "Read the full description"}
+                </Button>
+              )}
+            </>
           ) : (
-            <p className="text-muted-foreground">No description saved for this job.</p>
+            <p className="text-sm text-muted-foreground">
+              No description saved for this job.
+            </p>
           )}
-
-          {j.apply_url && (
-            <Button asChild className="w-full">
-              <a href={j.apply_url} target="_blank" rel="noopener noreferrer">
-                Open job posting <ExternalLink className="ml-1 h-4 w-4" />
-              </a>
-            </Button>
-          )}
-        </div>
+        </section>
       </DialogContent>
     </Dialog>
+  );
+}
+
+function SectionTitle({ children }: { children: React.ReactNode }) {
+  return (
+    <h3 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+      {children}
+    </h3>
   );
 }

@@ -47,6 +47,7 @@ from app.services.email_scan import (
     IMPORTANT_EVENTS,
     _stage_orders,
     card_action,
+    email_id_of,
     mail_link,
 )
 from app.services.saved_jobs import save_manual_job
@@ -95,6 +96,35 @@ async def list_pending(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEve
         .order_by(DetectedEvent.created_at.desc())
     )
     return list(rows)
+
+
+async def latest_by_job(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[tuple[DetectedEvent, int]]:
+    """For each saved job with emails: the email that best explains where its
+    card is (the newest one that moved it; failing that, the newest one about
+    it) and how many emails it has. Dismissed emails don't count."""
+    rows = await db.scalars(
+        select(DetectedEvent)
+        .where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.saved_job_id.is_not(None),
+            DetectedEvent.status != STATUS_DISMISSED,
+        )
+        .order_by(DetectedEvent.created_at.desc())
+    )
+    moved = (STATUS_APPLIED, STATUS_AUTO_APPLIED)
+    best: dict[uuid.UUID, DetectedEvent] = {}
+    counts: dict[uuid.UUID, int] = {}
+    for ev in rows:
+        job = ev.saved_job_id
+        counts[job] = counts.get(job, 0) + 1
+        held = best.get(job)
+        # Newest first, so the first seen wins, unless a later one moved the card
+        # and the one held didn't.
+        if held is None or (ev.status in moved and held.status not in moved):
+            best[job] = ev
+    return [(ev, counts[job]) for job, ev in best.items()]
 
 
 async def count_to_review(db: AsyncSession, user_id: uuid.UUID) -> int:
@@ -306,7 +336,16 @@ async def track_event(
     ev = await _get_event(db, user_id, event_id)
     if ev.status != STATUS_UNSAVED:
         raise HTTPException(status_code=409, detail="This item can't be added")
-    url = mail_link(provider, subject=ev.subject) or "https://mail.yahoo.com/"
+    url = (
+        mail_link(
+            provider,
+            subject=ev.subject,
+            email_id=email_id_of(ev.logical_key),
+            folder=ev.folder,
+            from_addr=ev.from_addr,
+        )
+        or "https://mail.yahoo.com/"
+    )
     sj = await save_manual_job(
         db, user_id, ManualJobCreate(url=url, title=title, company=company)
     )
