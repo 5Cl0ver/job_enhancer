@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "Job Enhancer — Job Catcher",
-  "version": "0.26.2",
+  "version": "0.27.0",
   "description": "Save jobs from any site to your Job Enhancer tracker — a side panel plus a one-click Save button on Indeed, LinkedIn & ZipRecruiter job pages.",
   "permissions": ["sidePanel", "storage", "scripting", "activeTab"],
   "host_permissions": ["http://*/*", "https://*/*"],
@@ -19,6 +19,29 @@
     {
       "matches": ["https://*.indeed.com/*", "https://*.linkedin.com/*", "https://*.ziprecruiter.com/*"],
       "js": ["dist/content.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://*/*"],
+      "exclude_matches": [
+        "https://*.indeed.com/*",
+        "https://*.linkedin.com/*",
+        "https://*.ziprecruiter.com/*",
+        "https://*.google.com/*",
+        "https://*.claude.ai/*",
+        "https://job-enhancer-xxj1.vercel.app/*",
+        "https://*.mail.yahoo.com/*",
+        "https://outlook.live.com/*",
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*",
+        "https://mail.proton.me/*"
+      ],
+      "js": ["dist/scoutpage.js"],
+      "run_at": "document_idle"
+    },
+    {
+      "matches": ["https://careers.google.com/*", "https://www.google.com/about/careers/*"],
+      "js": ["dist/scoutpage.js"],
       "run_at": "document_idle"
     },
     {

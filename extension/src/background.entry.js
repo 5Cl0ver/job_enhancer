@@ -160,22 +160,43 @@ async function checkSaved(job) {
 // Claude Scout: is a run open in the app? Asked only from job pages with a full
 // posting showing, and cached (60s when open, 15s when not) so normal browsing
 // costs at most a tiny request every few seconds of reading jobs.
-let _scoutRun = { at: 0, id: null };
+// `anySite`: a Google Jobs or Local companies run Claude has started, the only
+// time pages beyond the three job boards are copied.
+let _scoutRun = { at: 0, id: null, anySite: false };
 
-async function scoutRunOpen(token) {
-  const ttl = _scoutRun.id ? 60_000 : 15_000;
-  if (Date.now() - _scoutRun.at < ttl) return _scoutRun.id;
+async function scoutRunState(token) {
+  // Open and copying anywhere: 60s. Open but not yet started (it may start any
+  // moment), or none: re-ask sooner.
+  const ttl = _scoutRun.anySite ? 60_000 : _scoutRun.id ? 10_000 : 15_000;
+  if (Date.now() - _scoutRun.at < ttl) return _scoutRun;
   let id = null;
+  let anySite = false;
   try {
     const res = await fetchWithTimeout(`${cfg.API_BASE}/v1/scout/runs/active`, {
       headers: { Authorization: `Bearer ${token}` },
     });
-    if (res.ok) id = (await res.json()).run_id || null;
+    if (res.ok) {
+      const d = await res.json();
+      id = d.run_id || null;
+      anySite = !!d.any_site;
+    }
   } catch {
     id = null; // unreachable: try again after the short wait
   }
-  _scoutRun = { at: Date.now(), id };
-  return id;
+  _scoutRun = { at: Date.now(), id, anySite };
+  return _scoutRun;
+}
+
+async function scoutRunOpen(token) {
+  return (await scoutRunState(token)).id;
+}
+
+// Should a page on some other site look for a job to copy? Only while a run
+// that looks beyond the job boards is going.
+async function scoutAnySite() {
+  const token = await getValidToken();
+  if (!token) return { anySite: false };
+  return { anySite: (await scoutRunState(token)).anySite };
 }
 
 // Send the open posting, word for word, for the Scout run Claude is doing.
@@ -607,6 +628,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
+      } else if (msg.type === "scoutAnySite") {
+        sendResponse({ ok: true, ...(await scoutAnySite()) });
       } else if (msg.type === "scoutCapture") {
         sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });
       } else if (msg.type === "backfillJob") {

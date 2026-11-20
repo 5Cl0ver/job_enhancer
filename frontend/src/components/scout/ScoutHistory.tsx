@@ -1,14 +1,15 @@
 /**
  * Claude Scout → History: past runs, newest first. Open one to see every job it
- * reported and what happened to each.
+ * reported and what happened to each. Above them, the local companies checked.
  */
 import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { RunFindings } from "@/components/scout/RunFindings";
 import { RunReview, SavedNote } from "@/components/scout/RunReview";
+import { ScoutCompanies } from "@/components/scout/ScoutCompanies";
 import { useRun, useRuns, type ConfirmResult } from "@/hooks/useScout";
-import { lookedAt, runSummary, type Run } from "@/lib/scout";
+import { companiesLine, lookedAt, runSummary, type Run } from "@/lib/scout";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function ScoutHistory() {
@@ -19,11 +20,15 @@ export function ScoutHistory() {
   const [openId, setOpenId] = useState<string | null>(asked);
   // The list holds the latest runs only; a linked run older than that is
   // fetched on its own and shown first.
-  const older = asked && runs && !runs.some((r) => r.id === asked) ? asked : null;
+  const older =
+    asked && runs && !runs.some((r) => r.id === asked) ? asked : null;
   const { data: olderRun } = useRun(older);
 
   if (isLoading) return <Skeleton className="h-28" />;
-  if (isError) return <p className="text-sm text-destructive">Couldn't load past searches.</p>;
+  if (isError)
+    return (
+      <p className="text-sm text-destructive">Couldn't load past searches.</p>
+    );
   if (!runs?.length)
     return (
       <p className="rounded-lg border border-dashed p-6 text-center text-sm text-muted-foreground">
@@ -32,31 +37,45 @@ export function ScoutHistory() {
     );
 
   return (
-    <ul className="divide-y rounded-lg border">
-      {olderRun && (
-        <RunRow
-          key={olderRun.id}
-          run={olderRun}
-          open={openId === olderRun.id}
-          onToggle={() => setOpenId(openId === olderRun.id ? null : olderRun.id)}
-        />
-      )}
-      {runs.map((run) => (
-        <RunRow
-          key={run.id}
-          run={run}
-          open={openId === run.id}
-          onToggle={() => setOpenId(openId === run.id ? null : run.id)}
-        />
-      ))}
-    </ul>
+    <div className="space-y-3">
+      <ScoutCompanies />
+      <ul className="divide-y rounded-lg border">
+        {olderRun && (
+          <RunRow
+            key={olderRun.id}
+            run={olderRun}
+            open={openId === olderRun.id}
+            onToggle={() =>
+              setOpenId(openId === olderRun.id ? null : olderRun.id)
+            }
+          />
+        )}
+        {runs.map((run) => (
+          <RunRow
+            key={run.id}
+            run={run}
+            open={openId === run.id}
+            onToggle={() => setOpenId(openId === run.id ? null : run.id)}
+          />
+        ))}
+      </ul>
+    </div>
   );
 }
 
-function RunRow({ run, open, onToggle }: { run: Run; open: boolean; onToggle: () => void }) {
+function RunRow({
+  run,
+  open,
+  onToggle,
+}: {
+  run: Run;
+  open: boolean;
+  onToggle: () => void;
+}) {
   const { data: full, isLoading } = useRun(open ? run.id : null);
   const [saved, setSaved] = useState<ConfirmResult | null>(null);
   const why = lookedAt(full ?? run);
+  const checked = companiesLine((full ?? run).looked_at);
   const when = new Date(run.created_at).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -73,7 +92,10 @@ function RunRow({ run, open, onToggle }: { run: Run; open: boolean; onToggle: ()
         aria-expanded={open}
         className="flex w-full items-start gap-2 p-3 text-left hover:bg-muted/50"
       >
-        <Icon className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
+        <Icon
+          className="mt-0.5 h-4 w-4 shrink-0 text-muted-foreground"
+          aria-hidden
+        />
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{run.name}</span>
           <span className="block text-sm text-muted-foreground">
@@ -91,7 +113,12 @@ function RunRow({ run, open, onToggle }: { run: Run; open: boolean; onToggle: ()
           )}
           {/* Why it came back short, in numbers that add up. */}
           {why && <p className="text-sm text-muted-foreground">{why}</p>}
-          {saved && <SavedNote result={saved} onDismiss={() => setSaved(null)} />}
+          {checked && (
+            <p className="text-sm text-muted-foreground">{checked}</p>
+          )}
+          {saved && (
+            <SavedNote result={saved} onDismiss={() => setSaved(null)} />
+          )}
           {isLoading && <Skeleton className="h-16" />}
           {full && full.findings.length === 0 && (
             <p className="text-sm text-muted-foreground">No jobs reported.</p>

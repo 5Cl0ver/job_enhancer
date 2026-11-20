@@ -1,6 +1,11 @@
 """Claude Scout ORM models: saved searches, runs, what each run found, and the
 exact page copies the extension captured.
 
+A "Local companies" search has no job board: Claude finds businesses near the
+user on Google and checks each one's own careers page. A **company** row is
+the memory of which ones were checked, when, and what was there, so each run
+mostly visits new ones and only goes back to one after a week.
+
 The app is the agent's memory (research R8): Claude in Chrome keeps nothing
 between chats. A **mission** is a saved search setup; Start queues a **run**;
 every job a run reports becomes a **finding** (the dedupe memory, kept even when
@@ -29,7 +34,12 @@ from sqlalchemy.orm import Mapped, mapped_column
 
 from app.models import Base
 
-SOURCES = ("linkedin", "indeed", "ziprecruiter")
+SOURCES = ("linkedin", "indeed", "ziprecruiter", "google_jobs", "local_companies")
+# Searches that look around a place, so they need one.
+LOCAL = "local_companies"
+# Searches whose postings are on any site, not one job board: only while one of
+# these is running does the extension copy pages beyond the three boards.
+ANY_SITE_SOURCES = ("google_jobs", LOCAL)
 REMOTE_RULES = ("any", "remote_only", "no_remote")
 
 RUN_QUEUED = "queued"
@@ -45,6 +55,12 @@ NO_COPY = "no_copy"
 # A good fit waiting for the user to confirm it, and one they passed on.
 PICKED = "picked"
 SKIPPED = "skipped"
+
+# What a company's own careers page had when it was last checked.
+COMPANY_OPENINGS = "openings"
+COMPANY_NONE = "none"
+COMPANY_NO_CAREERS = "no_careers"
+COMPANY_RESULTS = (COMPANY_OPENINGS, COMPANY_NONE, COMPANY_NO_CAREERS)
 
 
 def _now_col() -> Mapped[datetime]:
@@ -203,4 +219,37 @@ class ScoutFinding(Base):
     __table_args__ = (
         Index("ix_scout_findings_user_job", "user_id", "company_key", "title_key"),
         Index("ix_scout_findings_user_url", "user_id", "url_key"),
+    )
+
+
+class ScoutCompany(Base):
+    """A local company a "Local companies" search checked: one row per user
+    and company website. Only names and links, never job text."""
+
+    __tablename__ = "scout_companies"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    # The website's domain ("brambleworks.example"), or the company's name key
+    # when it has no website.
+    key: Mapped[str] = mapped_column(String(255), nullable=False)
+    name: Mapped[str] = mapped_column(String(255), nullable=False)
+    website: Mapped[str | None] = mapped_column(String(500))
+    careers_url: Mapped[str | None] = mapped_column(String(2000))
+    # Null = due for a check on the next run (never checked, or "check next run").
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    times_checked: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_result: Mapped[str | None] = mapped_column(String(20))
+    # The user said never to check this one.
+    never_check: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    created_at: Mapped[datetime] = _now_col()
+
+    __table_args__ = (
+        UniqueConstraint("user_id", "key", name="uq_scout_company_user_key"),
     )

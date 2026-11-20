@@ -18,7 +18,11 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import { errorText } from "@/components/scout/errorText";
-import { FolderSelect, whereReady, type Where } from "@/components/scout/FolderSelect";
+import {
+  FolderSelect,
+  whereReady,
+  type Where,
+} from "@/components/scout/FolderSelect";
 import { RunFindings } from "@/components/scout/RunFindings";
 import { RunReview, SavedNote } from "@/components/scout/RunReview";
 import { useCollections, useCreateCollection } from "@/hooks/useSavedJobs";
@@ -34,12 +38,15 @@ import {
   useTracks,
 } from "@/hooks/useScout";
 import {
+  companiesLine,
   formatPay,
+  isBoard,
   isOpen,
   lookedAt,
   MAX_JOBS_PER_RUN,
   type Mission,
   type MissionInput,
+  needsPlace,
   parsePay,
   POSTED_WITHIN,
   postedLabel,
@@ -49,6 +56,7 @@ import {
   runSummary,
   SCOUT_LINE,
   type Source,
+  SOURCE_HINT,
   SOURCES,
   type Track,
   whereLabel,
@@ -204,7 +212,11 @@ function MissionCard({
         <p className="mt-1 text-xs text-muted-foreground">
           {details.join(" · ")}
         </p>
-        {into && <p className="mt-0.5 truncate text-xs text-muted-foreground">{into}</p>}
+        {into && (
+          <p className="mt-0.5 truncate text-xs text-muted-foreground">
+            {into}
+          </p>
+        )}
       </div>
       {start.isError && (
         <p className="text-xs text-destructive">
@@ -252,12 +264,16 @@ function FinishedRun({
   if (!run) return <Skeleton className="h-40" />;
   if (!run.needs_review) return null;
   const why = lookedAt(run);
+  const checked = companiesLine(run.looked_at);
   return (
     <section className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4 sm:p-5">
       <div className="min-w-0">
         <p className="font-medium">{run.name}</p>
         <p className="text-sm text-muted-foreground">{runSummary(run)}</p>
         {why && <p className="mt-1 text-sm text-muted-foreground">{why}</p>}
+        {checked && (
+          <p className="mt-1 text-sm text-muted-foreground">{checked}</p>
+        )}
         {run.note && (
           <p className="mt-1 text-sm">
             <span className="font-medium">Claude&apos;s note: </span>
@@ -307,6 +323,11 @@ function LiveRun({
             )}
             {runSummary(run)}
           </p>
+          {companiesLine(run.looked_at) && (
+            <p className="text-sm text-muted-foreground">
+              {companiesLine(run.looked_at)}
+            </p>
+          )}
         </div>
         {isOpen(run) && (
           <Button
@@ -341,8 +362,11 @@ function LiveRun({
           </div>
           <p className="text-xs text-muted-foreground">
             Keep Job Catcher on and signed in. It copies each job word for word
-            as Claude opens it. Searching LinkedIn this way is against its rules
-            for automated use, so keep searches small.
+            as Claude opens it.
+            {run.source === "linkedin" &&
+              " Searching LinkedIn this way is against its rules for automated use, so keep searches small."}
+            {run.source === "local_companies" &&
+              " Claude checks up to 15 companies' own sites, never a job board."}
           </p>
         </div>
       )}
@@ -427,6 +451,15 @@ function MissionForm({
   const track = tracks.find((t) => t.id === trackId);
   // "Within N miles" only means something around a place, for jobs you'd go to.
   const radiusApplies = location.trim() !== "" && remote !== "remote_only";
+  const local = needsPlace(source);
+  // Local companies are near you: "remote only" doesn't apply.
+  const remoteRules = local
+    ? REMOTE_RULES.filter((r) => r.value !== "remote_only")
+    : REMOTE_RULES;
+  const pickSource = (v: Source) => {
+    setSource(v);
+    if (needsPlace(v) && remote === "remote_only") setRemote("any");
+  };
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -434,6 +467,10 @@ function MissionForm({
     if (Number.isNaN(minPay))
       return setProblem("Minimum pay should look like 70K or 70000.");
     if (!trackId) return setProblem("Pick a resume type.");
+    if (local && !location.trim())
+      return setProblem(
+        "Add a city or area: Scout looks for companies near it.",
+      );
     if (!whereReady(where)) return setProblem("Name the new collection.");
     setProblem(null);
     let collectionId = where.collectionId;
@@ -444,18 +481,21 @@ function MissionForm({
         list.find((c) => c.name.toLowerCase() === name.toLowerCase());
       try {
         collectionId =
-          byName(collections)?.id ?? (await createCollection.mutateAsync({ name })).id;
+          byName(collections)?.id ??
+          (await createCollection.mutateAsync({ name })).id;
       } catch {
         // Made on an earlier try that then failed to save the search: use it.
         const fresh = await qc
           .fetchQuery({
             queryKey: ["collections"],
-            queryFn: () => api.get<{ id: string; name: string }[]>("/v1/collections/"),
+            queryFn: () =>
+              api.get<{ id: string; name: string }[]>("/v1/collections/"),
             staleTime: 0,
           })
           .catch(() => []);
         collectionId = byName(fresh)?.id ?? null;
-        if (!collectionId) return setProblem("Couldn't make that collection. Try another name.");
+        if (!collectionId)
+          return setProblem("Couldn't make that collection. Try another name.");
       }
     }
     const data: MissionInput & { id?: string } = {
@@ -496,7 +536,7 @@ function MissionForm({
 
       <div className="grid gap-4 sm:grid-cols-2">
         <Field label="Where to look">
-          <Select value={source} onValueChange={(v) => setSource(v as Source)}>
+          <Select value={source} onValueChange={(v) => pickSource(v as Source)}>
             <SelectTrigger aria-label="Where to look">
               <SelectValue />
             </SelectTrigger>
@@ -508,6 +548,11 @@ function MissionForm({
               ))}
             </SelectContent>
           </Select>
+          {SOURCE_HINT[source] && (
+            <p className="text-xs text-muted-foreground">
+              {SOURCE_HINT[source]}
+            </p>
+          )}
         </Field>
         <Field label="Resume type">
           <Select value={trackId} onValueChange={setTrackId}>
@@ -553,12 +598,16 @@ function MissionForm({
             </SelectContent>
           </Select>
         </Field>
-        <Field label="City or area" htmlFor="scout-location">
+        <Field
+          label={local ? "City or area (needed)" : "City or area"}
+          htmlFor="scout-location"
+        >
           <Input
             id="scout-location"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
             placeholder="e.g. Springfield, IL"
+            aria-required={local}
           />
         </Field>
         <Field label="How far around it">
@@ -574,7 +623,11 @@ function MissionForm({
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={ANY_DISTANCE}>
-                {radiusApplies ? "The job board decides" : "Add a city first"}
+                {!radiusApplies
+                  ? "Add a city first"
+                  : isBoard(source)
+                    ? "The job board decides"
+                    : "Near the city"}
               </SelectItem>
               {RADIUS_MILES.map((miles) => (
                 <SelectItem key={miles} value={String(miles)}>
@@ -590,7 +643,7 @@ function MissionForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {REMOTE_RULES.map((r) => (
+              {remoteRules.map((r) => (
                 <SelectItem key={r.value} value={r.value}>
                   {r.label}
                 </SelectItem>
@@ -630,7 +683,11 @@ function MissionForm({
         <FolderSelect
           value={where}
           onChange={setWhere}
-          ownLabel={track ? `A collection named “${track.name}”` : "A collection for this search"}
+          ownLabel={
+            track
+              ? `A collection named “${track.name}”`
+              : "A collection for this search"
+          }
         />
       </Field>
       <div className="flex items-start gap-3">

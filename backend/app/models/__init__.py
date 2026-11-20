@@ -28,6 +28,7 @@ from app.models.saved_job import SavedJob  # noqa: E402, F401
 from app.models.saved_search import SavedSearch  # noqa: E402, F401
 from app.models.scout import (  # noqa: E402, F401
     ScoutCapture,
+    ScoutCompany,
     ScoutFinding,
     ScoutMission,
     ScoutRun,
@@ -50,6 +51,7 @@ __all__ = [
     "GeneratedDocument",
     "SavedSearch",
     "ScoutCapture",
+    "ScoutCompany",
     "ScoutFinding",
     "ScoutMission",
     "ScoutRun",

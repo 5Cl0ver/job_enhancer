@@ -5,6 +5,7 @@ import pytest
 from app.services.scout_dedupe import (
     MAX_KEY,
     company_key,
+    is_job_site,
     posting_link,
     posting_problem,
     title_key,
@@ -103,3 +104,43 @@ class TestPostingProblem:
         assert posting_link("https://jobs.lever.co/vellacor/0b1c") == (
             "https://jobs.lever.co/vellacor/0b1c"
         )
+
+
+class TestJobSites:
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://www.indeed.com/cmp/Vellacor",
+            "https://uk.indeed.co.uk/viewjob?jk=1",
+            "https://www.glassdoor.com/Overview/Vellacor.htm",
+            "https://www.yelp.com/biz/brambleworks",
+            "https://www.google.ca/maps/place/Brambleworks",
+            "linkedin.com/company/vellacor",
+        ],
+    )
+    def test_boards_directories_and_review_sites(self, url):
+        assert is_job_site(url)
+
+    @pytest.mark.parametrize(
+        "url",
+        [
+            "https://brambleworks.example/careers",
+            "https://vellacor.wd5.myworkdayjobs.com/External",
+            "https://boards.greenhouse.io/quillstone/jobs/123",
+            "https://notindeed.example/jobs",
+        ],
+    )
+    def test_a_companys_own_pages_and_hiring_systems(self, url):
+        assert not is_job_site(url)
+
+
+def test_a_google_page_is_never_the_posting():
+    assert "Apply on" in posting_problem("https://www.google.com/search?q=x&udm=8")
+    assert "Apply on" in posting_problem("https://jobs.google.com/abc")
+
+
+def test_googles_own_jobs_are_postings():
+    url = "https://www.google.com/about/careers/applications/jobs/results/123-it-admin"
+    assert posting_problem(url) is None
+    assert not is_job_site(url)
+    assert posting_problem("https://careers.google.com/jobs/results/123/") is None

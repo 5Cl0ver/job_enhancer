@@ -14,6 +14,7 @@ const options = {
     background: "src/background.entry.js", // service worker (API/auth/backfill)
     autofill: "src/autofill.entry.js", // ATS application pages (Greenhouse/Lever)
     "sidepanel-sync": "src/sidepanel-sync.entry.js", // side panel's saved-jobs change check
+    scoutpage: "src/scoutpage.entry.js", // Claude Scout page copies on companies' own sites
   },
   bundle: true,
   format: "iife",

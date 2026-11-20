@@ -43,3 +43,117 @@ export const SCOUT_MAX_FAILS = 3;
 export function scoutDone(res) {
   return !!res?.active && !res.failed;
 }
+
+// ---- Company sites (Claude Scout's "Local companies" and "Google Jobs") ----
+// A company's own job page often has no JobPosting data, so the shared
+// extractor finds a title but no company or description. While a run is open,
+// fill those from the page itself: the site's name, and the page's main text
+// word for word. Only on a page that looks like a job, so ordinary browsing
+// isn't copied.
+
+// A careers page's path: a segment that starts /careers, /jobs, /job-details,
+// /JobDetails.aspx, /employment, /openings… (not "steve-jobs-biography").
+const JOBBY_PATH =
+  /(^|\/)(careers?|jobs?|job[-_]?details?|jobdetails|positions?|openings?|vacanc\w*|requisitions?|hiring|recruit\w*|employment|join-?us|opportunit\w*)([/._?=&-]|$)/i;
+// Hiring systems small companies use, and careers.* / jobs.* sites.
+const JOBBY_HOST =
+  /^(careers?|jobs?|apply|hire|recruiting)\.|(^|\.)(applytojob\.com|lever\.co|workable\.com|greenhouse\.io|myworkdayjobs\.com|icims\.com|paylocity\.com|bamboohr\.com|ultipro\.com|ukg\.net|breezy\.hr|recruitee\.com|smartrecruiters\.com|jobvite\.com|adp\.com|paycomonline\.net|dayforcehcm\.com|taleo\.net|governmentjobs\.com|schoolspring\.com)$/i;
+const APPLY_WORD = /\bapply\b/i;
+const POSTING_WORDS = [
+  /\bresponsibilities\b/i,
+  /\bqualifications\b/i,
+  /\brequirements\b/i,
+  /\bduties\b/i,
+  /\bwhat you.ll do\b/i,
+  /\bbenefits\b/i,
+];
+const BLOCK = new Set([
+  "P", "DIV", "LI", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6", "TR", "TD",
+  "TH", "TABLE", "SECTION", "ARTICLE", "BR", "DT", "DD", "DL", "BLOCKQUOTE", "PRE",
+]);
+const SKIP = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "TEMPLATE", "SVG", "NAV", "HEADER", "FOOTER", "FORM", "ASIDE", "BUTTON", "IFRAME"]);
+const MAX_TEXT = 30000;
+
+/** The page's text with line breaks between blocks (no layout needed). */
+export function pageText(root) {
+  const out = [];
+  const walk = (node) => {
+    if (node.nodeType === 3) {
+      out.push(node.nodeValue);
+      return;
+    }
+    if (node.nodeType !== 1) return;
+    const tag = node.tagName.toUpperCase();
+    if (SKIP.has(tag) || node.getAttribute?.("aria-hidden") === "true") return;
+    const block = BLOCK.has(tag);
+    if (block) out.push("\n");
+    for (const child of node.childNodes) walk(child);
+    if (block) out.push("\n");
+  };
+  walk(root);
+  return out
+    .join("")
+    .split("\n")
+    .map((line) => line.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("\n")
+    .slice(0, MAX_TEXT);
+}
+
+function meta(doc, selector) {
+  return (doc.querySelector(selector)?.getAttribute("content") || "").trim();
+}
+
+/** The company a site belongs to: its declared name, else its domain's. */
+export function siteName(doc, url, title = "") {
+  const named = meta(doc, 'meta[property="og:site_name"]') || meta(doc, 'meta[name="application-name"]');
+  if (named) return named;
+  // "IT Systems Administrator | Brambleworks": the part that isn't the job.
+  const parts = (doc.title || "").split(/\s+[|–—-]\s+/).map((p) => p.trim()).filter(Boolean);
+  const other = parts.filter((p) => p.toLowerCase() !== title.toLowerCase());
+  if (parts.length > 1 && other.length) return other[other.length - 1];
+  let host = "";
+  try {
+    host = new URL(url).hostname.replace(/^www\./, "");
+  } catch {
+    return "";
+  }
+  const label = host.split(".").slice(-2, -1)[0] || "";
+  return label ? label[0].toUpperCase() + label.slice(1) : "";
+}
+
+/** Does this page look like one job posting (not a homepage or article)? */
+export function looksLikePosting(url, text) {
+  let path = "";
+  let host = "";
+  try {
+    const u = new URL(url);
+    path = `${u.pathname}${u.search}`;
+    host = u.hostname.replace(/^www\./, "");
+  } catch {
+    return false;
+  }
+  if (JOBBY_HOST.test(host)) return true;
+  // Or a posting's shape: "apply" plus at least two posting headings.
+  const headings = POSTING_WORDS.filter((w) => w.test(text)).length;
+  return JOBBY_PATH.test(path) || (APPLY_WORD.test(text) && headings >= 2);
+}
+
+/**
+ * The extracted job, with its company and description filled from the page
+ * when the extractor found none. Unchanged when the page doesn't look like a
+ * posting or already had both.
+ */
+export function withPageFallback(doc, url, job) {
+  if (!job?.title || (job.company && job.description)) return job;
+  const main =
+    doc.querySelector("main, [role='main'], article, #content, .content, #main") || doc.body;
+  if (!main) return job;
+  const text = pageText(main);
+  if (!looksLikePosting(url, text)) return job;
+  return {
+    ...job,
+    company: job.company || siteName(doc, url, job.title),
+    description: job.description || text,
+  };
+}
