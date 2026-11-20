@@ -152,7 +152,7 @@ async def active_run(
     run = await runs.open_run(db, user.id)
     return ActiveRunOut(
         run_id=run.id if run else None,
-        any_site=bool(run and runs.copies_any_site(run)),
+        any_site=await runs.any_site_run(db, user.id) is not None,
     )
 
 

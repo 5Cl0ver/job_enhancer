@@ -134,6 +134,18 @@ describe("company sites (Local companies / Google Jobs)", () => {
     expect(looksLikePosting("https://bank.example/loans/apply", "")).toBe(false);
     expect(looksLikePosting("https://a.example/employee/portal", "")).toBe(false);
     expect(looksLikePosting("https://a.example/p", "Apply for a permit. Requirements: ID")).toBe(false);
+    expect(looksLikePosting("https://a.example/steve-jobs-biography", "")).toBe(false);
+    // Small companies' hiring systems and page names.
+    for (const url of [
+      "https://acme.applytojob.com/apply/AbC123/IT-Technician",
+      "https://jobs.lever.co/acme/0b1c2d3e-4f50-6789-abcd-ef0123456789",
+      "https://apply.workable.com/acme/j/ABC123/",
+      "https://acme.example/JobDetails.aspx?id=1",
+      "https://acme.example/job_details/12",
+      "https://careers.acme.example/123",
+    ]) {
+      expect(looksLikePosting(url, "")).toBe(true);
+    }
   });
 
   it("reads text with breaks between blocks", () => {

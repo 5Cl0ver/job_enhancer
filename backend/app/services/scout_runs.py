@@ -558,12 +558,20 @@ async def active_run_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | Non
 open_run = _open_run
 
 
-def copies_any_site(run: ScoutRun) -> bool:
-    """Pages beyond the three job boards are copied only while Claude is
-    running a search whose postings live anywhere (never a queued one)."""
-    return (
-        run.status == RUN_RUNNING
-        and (run.criteria or {}).get("source") in ANY_SITE_SOURCES
+async def any_site_run(db: AsyncSession, user_id: uuid.UUID) -> ScoutRun | None:
+    """The running search whose postings live on any site (Google Jobs, Local
+    companies), if any: only then are pages beyond the three job boards
+    copied. Never a queued one; an older run left running doesn't hide it."""
+    running = (
+        await db.scalars(
+            select(ScoutRun)
+            .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_RUNNING)
+            .order_by(ScoutRun.started_at.desc())
+        )
+    ).all()
+    return next(
+        (r for r in running if (r.criteria or {}).get("source") in ANY_SITE_SOURCES),
+        None,
     )
 
 
@@ -576,8 +584,10 @@ async def record_capture(db: AsyncSession, user_id: uuid.UUID, data: CaptureIn) 
         return False
     host = (urlsplit(data.url).hostname or "").lower()
     on_board = any(host == b or host.endswith(f".{b}") for b in BOARD_HOSTS)
-    if not on_board and not copies_any_site(run):
-        return False  # some other site, and no search that looks there
+    if not on_board:
+        run = await any_site_run(db, user_id)
+        if run is None:
+            return False  # some other site, and no search that looks there
     run_id = run.id
     values = data.model_dump()
     capture = await db.scalar(

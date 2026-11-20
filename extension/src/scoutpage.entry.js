@@ -4,10 +4,10 @@
 // word for word, the way content.entry.js does on Indeed / LinkedIn /
 // ZipRecruiter (which run that script instead of this one).
 //
-// Nothing is read until the background says a Google Jobs or Local companies
-// run is going (it asks the app at most every few seconds, cached for all
-// tabs), and nothing is sent from a page that doesn't look like a job (see
-// withPageFallback). The app checks the same again before keeping a copy.
+// The page is read here, in the browser. Only when it's a full job posting
+// (see withPageFallback) does the background get asked whether a Google Jobs or
+// Local companies run is going (cached for all tabs); only then is it sent. The
+// app checks the same again before keeping a copy.
 import { extractJob } from "./extract/index.js";
 import { SCOUT_MAX_FAILS, scoutDone, scoutPayload, withPageFallback } from "./scoutCapture.js";
 
@@ -49,20 +49,20 @@ function tick() {
   }
   if (inFlight || tries >= TRIES_PER_PAGE) return;
   tries += 1;
+  const job = withPageFallback(document, location.href, extractJob(document, location.href));
+  const payload = scoutPayload(job);
+  if (!payload || sent.has(payload.url)) return;
   inFlight = true;
   safeSend({ type: "scoutAnySite" })
-    .then((res) => (res?.anySite ? capture() : null))
+    .then((res) => (res?.anySite ? send(payload) : null))
     .catch(() => {})
     .finally(() => {
       inFlight = false;
     });
 }
 
-/** Read the open page and send it, if it's a full job posting. */
-function capture() {
-  const job = withPageFallback(document, location.href, extractJob(document, location.href));
-  const payload = scoutPayload(job);
-  if (!payload || sent.has(payload.url)) return null;
+/** Send a posting for the run, until the app has answered for it. */
+function send(payload) {
   const link = payload.url;
   return safeSend({ type: "scoutCapture", job: payload })
     .then((res) => {

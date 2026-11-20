@@ -653,3 +653,30 @@ class TestPageCopiesBeyondTheBoards:
         row.status = "running"
         await db_session.commit()
         assert (await client.get("/v1/scout/runs/active")).json()["any_site"] is True
+
+    async def test_an_old_run_left_running_doesnt_hide_a_local_one(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="pc3@test.dev")
+        user_id, _, old_run = await _setup(maker, "pc3@test.dev", source="linkedin")
+        await mcp_mod.get_scout_brief()  # left running
+        async with maker() as db:
+            track = await scout_tracks.create_track(
+                db, user_id, TrackCreate(name="Help Desk")
+            )
+            mission = await scout_runs.create_mission(
+                db,
+                user_id,
+                MissionCreate(
+                    source="local_companies",
+                    track_id=track.id,
+                    location="Springfield, IL",
+                ),
+            )
+            local_run = await scout_runs.queue_run(db, mission.id, user_id)
+            await db.commit()
+        await mcp_mod.get_scout_brief(str(local_run.id))
+        assert await self._capture(
+            maker, user_id, "https://brambleworks.example/careers/it-admin-1"
+        )
+        assert old_run != local_run.id

@@ -51,9 +51,13 @@ export function scoutDone(res) {
 // word for word. Only on a page that looks like a job, so ordinary browsing
 // isn't copied.
 
-// A careers page's path: /careers/…, /jobs/123, /job-openings, /employment.
+// A careers page's path: a segment that starts /careers, /jobs, /job-details,
+// /JobDetails.aspx, /employment, /openings… (not "steve-jobs-biography").
 const JOBBY_PATH =
-  /career|\bjobs?\b|job-|\bpositions?\b|openings?\b|vacanc|requisition|\bhiring\b|recruit|\bemployment\b|join-?us/i;
+  /(^|\/)(careers?|jobs?|job[-_]?details?|jobdetails|positions?|openings?|vacanc\w*|requisitions?|hiring|recruit\w*|employment|join-?us|opportunit\w*)([/._?=&-]|$)/i;
+// Hiring systems small companies use, and careers.* / jobs.* sites.
+const JOBBY_HOST =
+  /^(careers?|jobs?|apply|hire|recruiting)\.|(^|\.)(applytojob\.com|lever\.co|workable\.com|greenhouse\.io|myworkdayjobs\.com|icims\.com|paylocity\.com|bamboohr\.com|ultipro\.com|ukg\.net|breezy\.hr|recruitee\.com|smartrecruiters\.com|jobvite\.com|adp\.com|paycomonline\.net|dayforcehcm\.com|taleo\.net|governmentjobs\.com|schoolspring\.com)$/i;
 const APPLY_WORD = /\bapply\b/i;
 const POSTING_WORDS = [
   /\bresponsibilities\b/i,
@@ -121,12 +125,15 @@ export function siteName(doc, url, title = "") {
 /** Does this page look like one job posting (not a homepage or article)? */
 export function looksLikePosting(url, text) {
   let path = "";
+  let host = "";
   try {
     const u = new URL(url);
     path = `${u.pathname}${u.search}`;
+    host = u.hostname.replace(/^www\./, "");
   } catch {
     return false;
   }
+  if (JOBBY_HOST.test(host)) return true;
   // Or a posting's shape: "apply" plus at least two posting headings.
   const headings = POSTING_WORDS.filter((w) => w.test(text)).length;
   return JOBBY_PATH.test(path) || (APPLY_WORD.test(text) && headings >= 2);

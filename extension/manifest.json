@@ -40,6 +40,11 @@
       "run_at": "document_idle"
     },
     {
+      "matches": ["https://careers.google.com/*", "https://www.google.com/about/careers/*"],
+      "js": ["dist/scoutpage.js"],
+      "run_at": "document_idle"
+    },
+    {
       "matches": ["https://*.indeed.com/*"],
       "js": ["dist/bridge.js"],
       "run_at": "document_start",
