@@ -176,7 +176,13 @@ export function useRun(id: string | null) {
     queryKey: ["scout-run", id],
     queryFn: async () => {
       const run = await api.get<Run>(`/v1/scout/runs/${id}`);
-      if (run.counts.saved) qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+      // A job was saved since the last look: My Jobs and its collections (the
+      // run may have just made one) are out of date.
+      const before = qc.getQueryData<Run>(["scout-run", id])?.counts.saved ?? 0;
+      if (run.counts.saved !== before) {
+        qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+        qc.invalidateQueries({ queryKey: ["collections"] });
+      }
       return run;
     },
     enabled: !!id,

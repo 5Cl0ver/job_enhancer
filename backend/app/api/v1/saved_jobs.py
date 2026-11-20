@@ -7,6 +7,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
+from app.models.saved_job import ORIGIN_SEARCH
 from app.models.user import User
 from app.schemas.saved_job import (
     ApplicationSyncRequest,
@@ -14,6 +15,7 @@ from app.schemas.saved_job import (
     BackfillResult,
     JobSavedCheck,
     JobSavedResult,
+    JobSourceOut,
     ManualJobCreate,
     MarkAppliedRequest,
     MarkAppliedResult,
@@ -24,6 +26,7 @@ from app.schemas.saved_job import (
     SavedJobSummaryResponse,
     SavedJobUpdate,
 )
+from app.services import job_source
 from app.services import saved_jobs as svc
 
 router = APIRouter()
@@ -47,7 +50,13 @@ async def list_saved_jobs(
         is_archived,
         with_description=False,
     )
-    return [SavedJobListItem.model_validate(r) for r in rows]
+    fits = await svc.scout_fits(db, user.id)
+    out = []
+    for r in rows:
+        item = SavedJobListItem.model_validate(r)
+        item.scout = fits.get(r.id)
+        out.append(item)
+    return out
 
 
 @router.get("/summary", response_model=SavedJobSummaryResponse)
@@ -90,7 +99,7 @@ async def save_job(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
-    sj = await svc.save_job(db, user.id, data)
+    sj = await svc.save_job(db, user.id, data, origin=ORIGIN_SEARCH)
     await db.commit()
     return SavedJobSchema.model_validate(sj)
 
@@ -165,6 +174,17 @@ async def sync_applications(
     result = await svc.sync_applications(db, user.id, data.applications)
     await db.commit()
     return result
+
+
+@router.get("/{saved_job_id}/source", response_model=JobSourceOut)
+async def saved_job_source(
+    saved_job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobSourceOut:
+    """Where this job came from: its folder, and the Scout search or the email
+    that put it in My Jobs."""
+    return await job_source.job_source(db, user.id, saved_job_id)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobListItem)

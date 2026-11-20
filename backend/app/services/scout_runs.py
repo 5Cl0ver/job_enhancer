@@ -26,7 +26,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collection import Collection
 from app.models.job_listing import JobListing
-from app.models.saved_job import SavedJob
+from app.models.saved_job import ORIGIN_SCOUT, SavedJob
 from app.models.scout import (
     BELOW_BAR,
     DUPLICATE,
@@ -730,6 +730,7 @@ async def report_job(
                     f"Claude's fit score: {finding.fit_score}/10."
                 ),
             ),
+            origin=ORIGIN_SCOUT,
         )
         if sj.track_id is None:
             sj.track_id = run.track_id

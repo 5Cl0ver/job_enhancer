@@ -23,6 +23,7 @@ import {
 } from "@/components/ui/dialog";
 import { JobEmails } from "@/components/email/JobEmails";
 import { StagePicker } from "@/components/jobs/StagePicker";
+import { WhereFrom } from "@/components/jobs/WhereFrom";
 import {
   usePipelineStages,
   useToggleResearchFlag,
@@ -187,7 +188,8 @@ export function JobDetailDialog({
           </div>
         </DialogHeader>
 
-        {/* Why it's in that stage: the emails behind it, first. */}
+        {/* How it got here, then why it's in that stage: the emails behind it. */}
+        {open && <WhereFrom savedJob={savedJob} />}
         <JobEmails jobListingId={savedJob.job_listing_id} sayWhenNone />
 
         {/* What you can do with it. */}
@@ -197,7 +199,7 @@ export function JobDetailDialog({
             {j.apply_url && (
               <Button asChild className="gap-1.5 sm:col-span-2">
                 <a href={j.apply_url} target="_blank" rel="noopener noreferrer">
-                  Open job posting{" "}
+                  {savedJob.origin === "email" ? "Open the email" : "Open job posting"}{" "}
                   <ExternalLink className="h-4 w-4" aria-hidden />
                 </a>
               </Button>

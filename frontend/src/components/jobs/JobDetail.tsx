@@ -4,13 +4,14 @@ import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { MatchScore } from "@/components/jobs/MatchScore";
+import { OriginLabel } from "@/components/jobs/OriginLabel";
 import { JobDocuments } from "@/components/ai/JobDocuments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import { cn, formatSalary } from "@/lib/utils";
-import type { JobListing } from "@/types/api";
+import type { JobListing, SavedJob } from "@/types/api";
 
 interface JobDetailProps {
   job: JobListing;
@@ -22,6 +23,8 @@ interface JobDetailProps {
   /** The saved job's stage control: by the title on a computer, in the action
    * bar pinned to the bottom on a phone. */
   stage?: React.ReactNode;
+  /** The saved job, when it is one: says where it came from by the title. */
+  savedJob?: SavedJob | null;
 }
 
 /** Descriptions longer than this start folded on a phone. */
@@ -65,8 +68,11 @@ export function JobDetail({
   onGenerateDocuments,
   aside,
   stage,
+  savedJob,
 }: JobDetailProps) {
   const phone = useIsPhone();
+  // Made from an email: its link is that email, not a posting to apply on.
+  const fromEmail = savedJob?.origin === "email";
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
@@ -90,9 +96,13 @@ export function JobDetail({
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-4">
           <h1 className="min-w-0 break-words text-2xl font-bold leading-tight">{job.title}</h1>
-          <Badge variant="outline" className="shrink-0 capitalize">
-            {job.source}
-          </Badge>
+          {savedJob ? (
+            <OriginLabel savedJob={savedJob} className="mt-1.5 max-w-[45%] shrink-0" />
+          ) : (
+            <Badge variant="outline" className="shrink-0 capitalize">
+              {job.source}
+            </Badge>
+          )}
         </div>
 
         <div className="flex flex-wrap items-center gap-x-4 gap-y-2 text-sm text-muted-foreground">
@@ -135,11 +145,11 @@ export function JobDetail({
 
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
-        {!phone && <ApplyButton job={job} />}
+        {!phone && <ApplyButton job={job} fromEmail={fromEmail} />}
         {/* Always a link to the original posting (for now this is the same as
             Apply; once we capture a separate company-apply URL, Apply Now goes
             to the employer and this stays pointed at the source listing). */}
-        {job.apply_url && (
+        {job.apply_url && !fromEmail && (
           <Button variant="ghost" asChild>
             <a href={job.apply_url} target="_blank" rel="noopener noreferrer">
               View listing
@@ -194,7 +204,7 @@ export function JobDetail({
       {phone && (
         <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 flex items-center gap-2 border-t bg-background px-4 py-2">
           {stage}
-          <ApplyButton job={job} className="min-w-0 flex-1" />
+          <ApplyButton job={job} className="min-w-0 flex-1" fromEmail={fromEmail} />
         </div>
       )}
     </div>

@@ -31,7 +31,7 @@ from app.models.detected_event import (
     DetectedEvent,
 )
 from app.models.pipeline_stage import PipelineStage
-from app.models.saved_job import SavedJob
+from app.models.saved_job import ORIGIN_EMAIL, SavedJob
 from app.schemas.saved_job import ManualJobCreate
 from app.services.email_classify import (
     APPLIED,
@@ -368,7 +368,10 @@ async def track_event(
         or "https://mail.yahoo.com/"
     )
     sj = await save_manual_job(
-        db, user_id, ManualJobCreate(url=url, title=title, company=company)
+        db,
+        user_id,
+        ManualJobCreate(url=url, title=title, company=company),
+        origin=ORIGIN_EMAIL,
     )
     previous = sj.pipeline_stage_id
     if ev.target_stage:

@@ -5,7 +5,15 @@ import { createClient } from "@/lib/supabase/client";
 import type { SavedJob } from "@/types/api";
 
 /** Queries that display saved jobs and are refreshed on a remote change. */
-const SYNCED_KEYS = [["saved-jobs"], ["tracker"], ["analytics"], ["matches"]];
+// Collections too: a save from elsewhere (Claude Scout, Job Catcher) can make one.
+const SYNCED_KEYS = [
+  ["saved-jobs"],
+  ["tracker"],
+  ["analytics"],
+  ["matches"],
+  ["collections"],
+  ["job-source"],
+];
 /** Coalesce bursts (e.g. a bulk application import) into one refresh. */
 const DEBOUNCE_MS = 1500;
 

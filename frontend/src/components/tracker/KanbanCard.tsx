@@ -11,6 +11,7 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { EmailViewer } from "@/components/email/EmailViewer";
+import { OriginLabel } from "@/components/jobs/OriginLabel";
 import { JobDetailDialog } from "@/components/tracker/JobDetailDialog";
 import type { JobEmailLatest } from "@/hooks/useEmailAccount";
 import { useToggleResearchFlag } from "@/hooks/useTracker";
@@ -99,6 +100,9 @@ export function CardFace({
           </span>
         ))}
       </p>
+
+      {/* How it got into My Jobs (Claude Scout, an email…), when that's known. */}
+      <OriginLabel savedJob={savedJob} className="mt-1 flex max-w-full text-muted-foreground/80" />
 
       {(applied_at || emailed_at) && (
         <p className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-muted-foreground/80">

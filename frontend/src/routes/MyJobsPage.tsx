@@ -64,7 +64,15 @@ export default function MyJobsPage() {
 
   const choose = (v: View) => {
     setView(v);
-    setParams(v === "board" ? { view: "board" } : {}, { replace: true });
+    // Keep the rest of the address (?folder=, ?origin=): only the view changes.
+    setParams(
+      (p) => {
+        if (v === "board") p.set("view", "board");
+        else p.delete("view");
+        return p;
+      },
+      { replace: true },
+    );
   };
 
   return (

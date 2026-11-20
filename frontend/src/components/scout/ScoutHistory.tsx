@@ -3,6 +3,7 @@
  * reported and what happened to each.
  */
 import { useState } from "react";
+import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { RunFindings } from "@/components/scout/RunFindings";
 import { useRun, useRuns } from "@/hooks/useScout";
@@ -11,7 +12,9 @@ import { Skeleton } from "@/components/ui/skeleton";
 
 export function ScoutHistory() {
   const { data: runs, isLoading, isError } = useRuns();
-  const [openId, setOpenId] = useState<string | null>(null);
+  // `?run=<id>` opens that run: the link a saved job uses to show its search.
+  const [params] = useSearchParams();
+  const [openId, setOpenId] = useState<string | null>(params.get("run"));
 
   if (isLoading) return <Skeleton className="h-28" />;
   if (isError) return <p className="text-sm text-destructive">Couldn't load past searches.</p>;

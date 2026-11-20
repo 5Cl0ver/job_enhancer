@@ -115,6 +115,7 @@ async def test_save_job_tool_end_to_end(engine, monkeypatch):
     async with maker() as s:
         rows = (await s.scalars(select(SavedJob))).all()
         assert any(str(r.id) == out["job_id"] for r in rows)
+        assert [r.origin for r in rows] == ["claude"]
 
 
 async def _connected_user(engine, monkeypatch, email="claude@test.dev"):

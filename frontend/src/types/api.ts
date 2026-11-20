@@ -65,6 +65,10 @@ export interface SavedJob {
   pipeline_stage_id: string | null;
   /** The resume type (Claude Scout track) to apply with, or null. */
   track_id: string | null;
+  /** How it got into My Jobs (see lib/origin); null when that isn't known. */
+  origin?: string | null;
+  /** Claude Scout's fit score and the run that found it, on jobs Scout saved. */
+  scout?: { fit_score: number; run_id: string } | null;
   notes: string | null;
   applied_at: string | null;
   last_stage_change: string;

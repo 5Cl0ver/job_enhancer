@@ -15,7 +15,8 @@ from sqlalchemy.orm import defer, selectinload, with_expression
 
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
-from app.models.saved_job import SavedJob
+from app.models.saved_job import ORIGIN_EXTENSION, SavedJob
+from app.models.scout import SAVED, ScoutFinding
 from app.schemas.saved_job import (
     ApplicationSyncItem,
     ApplicationSyncOutcome,
@@ -23,6 +24,7 @@ from app.schemas.saved_job import (
     ManualJobCreate,
     SavedJobCreate,
     SavedJobUpdate,
+    ScoutFit,
 )
 from app.services.dedup import job_content_hash, normalize
 from app.services.scout_tracks import get_track
@@ -232,9 +234,13 @@ async def backfill_job_details(
 
 
 async def save_job(
-    db: AsyncSession, user_id: uuid.UUID, data: SavedJobCreate
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    data: SavedJobCreate,
+    *,
+    origin: str | None = None,
 ) -> SavedJob:
-    sj = SavedJob(id=uuid.uuid4(), user_id=user_id, **data.model_dump())
+    sj = SavedJob(id=uuid.uuid4(), user_id=user_id, origin=origin, **data.model_dump())
     db.add(sj)
     try:
         await db.flush()
@@ -255,13 +261,21 @@ async def save_job(
 
 
 async def save_manual_job(
-    db: AsyncSession, user_id: uuid.UUID, data: ManualJobCreate
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    data: ManualJobCreate,
+    *,
+    origin: str | None = None,
 ) -> SavedJob:
     """Save a job the user found on an external site (FR-004a).
 
     Creates a `JobListing` with source="manual" — or reuses an existing
     listing when the same title/company/location is already known — then
     saves it for the user like any searched job.
+
+    ``origin`` is how it got here (Scout, an email, Claude…); callers inside
+    the app pass it, otherwise it is what the request said (the app's form or
+    Job Catcher). A job the user already has keeps the origin it first had.
     """
     title_norm = normalize(data.title)
     company_norm = normalize(data.company)
@@ -343,7 +357,25 @@ async def save_manual_job(
             collection_id=data.collection_id,
             notes=data.notes,
         ),
+        origin=origin or data.origin,
     )
+
+
+async def scout_fits(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, ScoutFit]:
+    """Claude's fit score for each job Scout saved, by saved-job id (the newest
+    finding wins when a job was found twice)."""
+    rows = await db.execute(
+        select(ScoutFinding.saved_job_id, ScoutFinding.fit_score, ScoutFinding.run_id)
+        .where(
+            ScoutFinding.user_id == user_id,
+            ScoutFinding.saved_job_id.is_not(None),
+            ScoutFinding.outcome == SAVED,
+        )
+        .order_by(ScoutFinding.created_at)
+    )
+    return {
+        sj_id: ScoutFit(fit_score=fit, run_id=run_id) for sj_id, fit, run_id in rows
+    }
 
 
 async def mark_applied(
@@ -523,6 +555,7 @@ async def sync_applications(
                     company=item.company,
                     location=item.location or "Not specified",
                 ),
+                origin=ORIGIN_EXTENSION,
             )
         except HTTPException:
             # An unexpected exact-duplicate collision — treat as already tracked.

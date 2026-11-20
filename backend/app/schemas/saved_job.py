@@ -31,6 +31,9 @@ class ManualJobCreate(BaseModel):
     job_type: str | None = Field(default=None, max_length=50)
     collection_id: uuid.UUID | None = None
     notes: str | None = None
+    # Job Catcher says "extension"; the app's own form leaves it. Every other
+    # origin is set by the server, never taken from a request.
+    origin: Literal["manual", "extension"] = "manual"
 
     @field_validator("salary_min", "salary_max", mode="before")
     @classmethod
@@ -137,6 +140,13 @@ class SavedJobUpdate(BaseModel):
     emailed_at: datetime | None = None
 
 
+class ScoutFit(BaseModel):
+    """Claude Scout's score for a job it found, and the run that found it."""
+
+    fit_score: int
+    run_id: uuid.UUID
+
+
 class SavedJobBase(BaseModel):
     id: uuid.UUID
     user_id: uuid.UUID
@@ -144,6 +154,9 @@ class SavedJobBase(BaseModel):
     collection_id: uuid.UUID | None
     pipeline_stage_id: uuid.UUID | None
     track_id: uuid.UUID | None = None
+    # scout | email | extension | claude | search | manual; null = not known.
+    origin: str | None = None
+    scout: ScoutFit | None = None
     notes: str | None
     applied_at: datetime | None
     last_stage_change: datetime
@@ -187,3 +200,37 @@ class SavedJobListItem(SavedJobBase):
     """A saved job for lists and the board: listing preview, no description."""
 
     job_listing: JobListingSummarySchema
+
+
+class SourceFolder(BaseModel):
+    id: uuid.UUID
+    name: str
+
+
+class SourceScout(BaseModel):
+    run_id: uuid.UUID
+    finding_id: uuid.UUID
+    source: str
+    search_name: str
+    fit_score: int
+    why_fit: str
+    gaps: str
+    found_at: datetime
+
+
+class SourceEmail(BaseModel):
+    event_id: uuid.UUID
+    event_type: str
+    email_date: datetime | None
+    mail_link: str | None
+    mail_search_link: str | None
+
+
+class JobSourceOut(BaseModel):
+    """Where a saved job came from, for the job page's "Where this came from"."""
+
+    origin: str | None
+    saved_at: datetime
+    collection: SourceFolder | None = None
+    scout: SourceScout | None = None
+    email: SourceEmail | None = None
