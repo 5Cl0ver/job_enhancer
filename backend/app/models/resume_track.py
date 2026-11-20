@@ -48,6 +48,12 @@ class ResumeTrack(Base):
     )
     notes: Mapped[str | None] = mapped_column(Text)
     sort_order: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    # "scoped": a resume type the user made. "broad": the hidden one behind
+    # Scout's "Anything I'd be good at" search (at most one per user, never
+    # listed on the Resume types page).
+    kind: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="scoped", server_default="scoped"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

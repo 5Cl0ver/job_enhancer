@@ -211,11 +211,27 @@ export function whereLabel(
     : m.location;
 }
 
+/** The broad search's overrides: titles always searched, never searched, and
+ * words that skip a job. Empty lists = Claude decides on its own. */
+export interface Overrides {
+  always: string[];
+  never: string[];
+  avoid: string[];
+}
+
+export const NO_OVERRIDES: Overrides = { always: [], never: [], avoid: [] };
+
+/** What the search choice "Anything I'd be good at" is called. */
+export const BROAD_NAME = "Anything I'd be good at";
+
 export interface Mission {
   id: string;
   name: string;
   source: Source;
   track_id: string;
+  /** "Anything I'd be good at": Claude picks the job titles from the resume. */
+  broad?: boolean;
+  overrides?: Overrides | null;
   job_count: number;
   posted_within_days: number;
   min_pay: number | null;
@@ -239,7 +255,6 @@ export interface Mission {
 export type MissionInput = Pick<
   Mission,
   | "source"
-  | "track_id"
   | "job_count"
   | "posted_within_days"
   | "min_pay"
@@ -250,7 +265,13 @@ export type MissionInput = Pick<
   | "extra_instructions"
   | "collection_id"
   | "auto_save"
-> & { name?: string | null };
+> & {
+  name?: string | null;
+  /** Needed unless `broad`. */
+  track_id?: string;
+  broad?: boolean;
+  overrides?: Overrides | null;
+};
 
 export type Outcome =
   | "picked" // a good fit, waiting for the user to tick and save
@@ -279,6 +300,8 @@ export interface Finding {
   collection_name: string | null;
   /** The user can still put it in My Jobs (its page copy exists). */
   can_save: boolean;
+  /** Broad searches: the resume type Claude said this job is closest to. */
+  closest_track_name?: string | null;
   created_at: string;
 }
 
@@ -315,7 +338,38 @@ export interface Run {
   looked_at: Record<string, number> | null;
   /** What to change when a finished search came back short. */
   tip?: string | null;
+  /** "Anything I'd be good at": the titles this run searched, with good fits. */
+  broad?: boolean;
+  titles?: { title: string; good_fits: number }[];
   findings: Finding[];
+}
+
+/** A title a broad search has tried. */
+export interface TitleTried {
+  title: string;
+  runs: number;
+  good_fits: number;
+  last_tried_at: string | null;
+  /** Found nothing in 3 runs: left out for 2 weeks. */
+  resting: boolean;
+  always: boolean;
+  never: boolean;
+}
+
+/** Add a title to one override list (taking it out of the opposite one). */
+export function withTitle(
+  o: Overrides | null | undefined,
+  list: "always" | "never",
+  title: string,
+): Overrides {
+  const base = o ?? NO_OVERRIDES;
+  const other = list === "always" ? "never" : "always";
+  const same = (a: string) => a.toLowerCase() === title.toLowerCase();
+  return {
+    ...base,
+    [list]: base[list].some(same) ? base[list] : [...base[list], title],
+    [other]: base[other].filter((t) => !same(t)),
+  };
 }
 
 export function isOpen(run: Pick<Run, "status">): boolean {

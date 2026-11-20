@@ -45,7 +45,7 @@ function finding(id: string, title: string, company: string, over: Partial<Findi
 }
 
 const FINDINGS = [
-  finding("f1", "Systems Administrator", "Vellacor", {}),
+  finding("f1", "Systems Administrator", "Vellacor", { closest_track_name: "IT Admin" }),
   finding("f2", "IT Administrator", "Quillstone", { fit_score: 7 }),
   finding("f3", "Help Desk Lead", "Brambleworks", {
     outcome: "below_bar",
@@ -156,6 +156,10 @@ describe("the review after a Scout search", () => {
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Only two new ones this week")).toBeInTheDocument();
+    // A broad search's good fit says which resume type it's closest to.
+    expect(
+      screen.getByText((_, el) => el?.tagName === "P" && el.textContent === "Closest · IT Admin"),
+    ).toBeInTheDocument();
     // And what to change for more next time.
     expect(screen.getByText(/the search ran recently\. Give it a day\./)).toBeInTheDocument();
   });

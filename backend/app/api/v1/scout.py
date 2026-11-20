@@ -4,7 +4,7 @@ the connector (``app/mcp_server.py``), not these."""
 
 import uuid
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -24,6 +24,7 @@ from app.schemas.scout import (
     RunOut,
     SaveFindingIn,
     SaveFindingOut,
+    TitleTried,
     TrackCreate,
     TrackOut,
     TrackUpdate,
@@ -31,6 +32,7 @@ from app.schemas.scout import (
 from app.services import scout_companies as companies
 from app.services import scout_review as review
 from app.services import scout_runs as runs
+from app.services import scout_titles as titles_svc
 from app.services import scout_tracks as svc
 
 router = APIRouter()
@@ -110,6 +112,24 @@ async def update_mission(
     await db.commit()
     await db.refresh(mission)
     return (await runs.missions_out(db, user.id, [mission]))[0]
+
+
+@router.get("/missions/{mission_id}/titles", response_model=list[TitleTried])
+async def mission_titles(
+    mission_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[TitleTried]:
+    """The titles an "Anything I'd be good at" search has tried, and how each
+    did. 404 for any other search."""
+    mission = await runs.get_mission(db, mission_id, user.id)
+    track = await svc.get_track(db, mission.track_id, user.id, allow_broad=True)
+    if track.kind != svc.BROAD:
+        raise HTTPException(status_code=404, detail="Search not found")
+    return [
+        TitleTried(**t)
+        for t in await titles_svc.tried(db, mission.id, mission.overrides)
+    ]
 
 
 @router.delete("/missions/{mission_id}", status_code=204)

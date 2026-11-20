@@ -11,6 +11,10 @@ The app is the memory and the planner; each chat with Claude stays small
 - ``report_job`` takes a link plus Claude's opinion. The job saved is the exact
   page copy the Job Catcher extension captured (``record_capture``); nothing in
   it comes from Claude (research R9).
+- An "Anything I'd be good at" search (spec 009) has no resume type's titles:
+  Claude reads the resume (``get_master_profile``), picks the titles and sends
+  them to ``set_search_titles``; the app builds the links and remembers how
+  each title did (``scout_titles``).
 - A "Local companies" search has no job board: ``check_companies`` says which
   of the businesses a Google search listed to visit (``scout_companies``), and
   ``company_checked`` records what each one's careers page had.
@@ -32,6 +36,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collection import Collection
 from app.models.job_listing import JobListing
+from app.models.resume import Resume
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
 from app.models.scout import (
@@ -64,11 +69,13 @@ from app.schemas.scout import (
     RunCounts,
     RunFolder,
     RunOut,
+    RunTitle,
     place_problem,
 )
 from app.services import collections as col_svc
 from app.services import scout_companies as companies
 from app.services import scout_review as review
+from app.services import scout_titles as titles_svc
 from app.services.scout_dedupe import (
     BOARD_HOSTS,
     company_key,
@@ -78,9 +85,9 @@ from app.services.scout_dedupe import (
     url_key,
 )
 from app.services.scout_review import SOURCE_LABEL
-from app.services.scout_tracks import get_track
+from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.5"
+PLAYBOOK_VERSION = "2026.11.6"
 PLAYBOOK = (Path(__file__).parent.parent / "scout" / "playbook.md").read_text(
     encoding="utf-8"
 )
@@ -90,6 +97,9 @@ SOURCE_STEPS = {
     source: (_SCOUT_DIR / f"{source}.md").read_text(encoding="utf-8")
     for source in ("google_jobs", LOCAL)
 }
+# The extra steps for an "Anything I'd be good at" search.
+BROAD_STEPS = (_SCOUT_DIR / "broad.md").read_text(encoding="utf-8")
+NO_RESUME = "Upload your resume first: AI Apply → Your Resume."
 RUBRIC = {
     "skills": 4,
     "experience": 2,
@@ -154,10 +164,14 @@ async def get_mission(
 async def create_mission(
     db: AsyncSession, user_id: uuid.UUID, data: MissionCreate
 ) -> ScoutMission:
-    track = await get_track(db, data.track_id, user_id)
+    if data.broad:
+        track = await broad_track(db, user_id)
+    else:
+        track = await get_track(db, data.track_id, user_id)
     if data.collection_id is not None:
         await col_svc.get_collection(db, data.collection_id, user_id)
-    values = data.model_dump()
+    values = data.model_dump(exclude={"broad"})
+    values["track_id"] = track.id
     values["name"] = values["name"] or mission_name(
         data.source, track.name, data.job_count, data.posted_within_days
     )
@@ -172,11 +186,16 @@ async def update_mission(
 ) -> ScoutMission:
     mission = await get_mission(db, mission_id, user_id)
     updates = data.model_dump(exclude_unset=True)
-    if updates.get("track_id") is not None:
+    broad = updates.pop("broad", None)
+    if broad:
+        updates["track_id"] = (await broad_track(db, user_id)).id
+    elif updates.get("track_id") is not None:
         await get_track(db, updates["track_id"], user_id)
     if updates.get("collection_id") is not None:
         await col_svc.get_collection(db, updates["collection_id"], user_id)
-    old_track = await get_track(db, mission.track_id, user_id)
+    old_track = await get_track(db, mission.track_id, user_id, allow_broad=True)
+    if broad is False and old_track.kind == BROAD and not updates.get("track_id"):
+        raise HTTPException(status_code=422, detail="Choose a resume type.")
     auto_named = mission.name == mission_name(
         mission.source, old_track.name, mission.job_count, mission.posted_within_days
     )
@@ -187,6 +206,7 @@ async def update_mission(
             "radius_miles",
             "extra_instructions",
             "collection_id",
+            "overrides",
         ):
             continue  # required fields: null means "leave as is"
         setattr(mission, key, value)
@@ -195,7 +215,7 @@ async def update_mission(
         raise HTTPException(status_code=422, detail=problem)
     renamed = "name" in updates and updates["name"]
     if not renamed and (auto_named or "name" in updates):
-        track = await get_track(db, mission.track_id, user_id)
+        track = await get_track(db, mission.track_id, user_id, allow_broad=True)
         mission.name = mission_name(
             mission.source, track.name, mission.job_count, mission.posted_within_days
         )
@@ -222,22 +242,25 @@ async def missions_out(
                 )
             ).all()
         )
-    tracks = dict(
-        (
+    tracks = {
+        tid: (name, kind)
+        for tid, name, kind in (
             await db.execute(
-                select(ResumeTrack.id, ResumeTrack.name).where(
+                select(ResumeTrack.id, ResumeTrack.name, ResumeTrack.kind).where(
                     ResumeTrack.user_id == user_id
                 )
             )
         ).all()
-    )
+    }
     out = []
     for m in missions:
         item = MissionOut.model_validate(m)
+        name, kind = tracks.get(m.track_id, ("", SCOPED))
+        item.broad = kind == BROAD
         if m.collection_id not in names:  # the chosen collection is gone
             item.collection_id = None
         item.collection_name = names.get(m.collection_id) or review.default_folder_name(
-            {"track": {"name": tracks.get(m.track_id, "")}}
+            {"track": {"name": name}, "broad": item.broad}
         )
         out.append(item)
     return out
@@ -257,6 +280,8 @@ def search_titles(c: dict) -> list[str]:
     """The titles one search asks for. A resume type with more than
     ``TITLES_PER_SEARCH`` takes turns: each run (``round``) asks for the next
     ones, so runs don't all see the same results."""
+    if c.get("broad"):  # Claude's own, set with set_search_titles
+        return list(c.get("search_titles") or [])
     titles = list(c["track"]["titles"] or [])
     if len(titles) <= TITLES_PER_SEARCH:
         return titles or [c["track"]["name"]]
@@ -351,6 +376,11 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
             + (f", or {widen}." if widen else ".")
         )
     if s.get("title_passed", 0) * 2 >= rows:
+        if c.get("broad"):
+            return (
+                "Most job titles didn't fit you. The next run tries other titles; "
+                "add Never titles to rule some out for good."
+            )
         return (
             "Most job titles didn't fit the resume type. Add the titles you want "
             "to the resume type so the search asks for them."
@@ -395,9 +425,14 @@ def company_searches(c: dict) -> list[str]:
     radius = c.get("radius_miles")
     near = f"within {radius} miles of {location}" if radius else f"near {location}"
     n = int(c.get("round") or 0)
-    roles = [f"{track['name']} companies"] + [
-        f"companies that hire {t}" for t in titles
-    ]
+    if c.get("broad"):  # the titles Claude chose for this run
+        roles = [f"companies that hire {t}" for t in search_titles(c)] or [
+            "largest employers"
+        ]
+    else:
+        roles = [f"{track['name']} companies"] + [
+            f"companies that hire {t}" for t in titles
+        ]
     kinds = len(EMPLOYER_KINDS)
     queries = [
         roles[n % len(roles)],
@@ -414,7 +449,14 @@ async def queue_run(
     db: AsyncSession, mission_id: uuid.UUID, user_id: uuid.UUID
 ) -> ScoutRun:
     mission = await get_mission(db, mission_id, user_id)
-    track = await get_track(db, mission.track_id, user_id)
+    track = await get_track(db, mission.track_id, user_id, allow_broad=True)
+    broad = track.kind == BROAD
+    if broad and not await resume_ready(db, user_id):
+        raise HTTPException(status_code=422, detail=NO_RESUME)
+    overrides = titles_svc.overrides({"overrides": mission.overrides})
+    skip = dict(track.skip_rules or {})
+    if broad:
+        skip["exclude"] = list(skip.get("exclude") or []) + overrides["avoid"]
     criteria = {
         "name": mission.name,
         "source": mission.source,
@@ -439,10 +481,14 @@ async def queue_run(
             "name": track.name,
             "titles": list(track.target_titles or []),
             "skills": list(track.key_skills or []),
-            "skip": dict(track.skip_rules or {}),
+            "skip": skip,
             "notes": track.notes,
         },
     }
+    if broad:
+        # Claude picks the titles; the user's overrides as they were at Start.
+        criteria["broad"] = True
+        criteria["overrides"] = overrides
     run = ScoutRun(
         id=uuid.uuid4(),
         user_id=user_id,
@@ -530,6 +576,9 @@ async def runs_out(
     if not runs:
         return []
     counts = await _counts(db, [r.id for r in runs])
+    fits_by_title = await _fits_by_title(
+        db, [r.id for r in runs if (r.criteria or {}).get("broad")]
+    )
     findings: dict[uuid.UUID, list[FindingOut]] = {}
     folders: dict[uuid.UUID, RunFolder] = {}
     if with_findings:
@@ -561,8 +610,23 @@ async def runs_out(
                     .distinct()
                 )
             )
+        closest = {f.closest_track_id for f, *_ in rows if f.closest_track_id}
+        track_names = (
+            dict(
+                (
+                    await db.execute(
+                        select(ResumeTrack.id, ResumeTrack.name).where(
+                            ResumeTrack.id.in_(closest)
+                        )
+                    )
+                ).all()
+            )
+            if closest
+            else {}
+        )
         for f, listing_id, collection_id, collection_name in rows:
             item = FindingOut.model_validate(f)
+            item.closest_track_name = track_names.get(f.closest_track_id)
             item.job_listing_id = listing_id
             item.collection_id, item.collection_name = collection_id, collection_name
             item.can_save = f.outcome in review.SAVEABLE and f.url_key in copied
@@ -595,10 +659,33 @@ async def runs_out(
                     else None
                 ),
                 tip=run_tip(r, counts.get(r.id, {})),
+                broad=bool(c.get("broad")),
+                titles=[
+                    RunTitle(title=t, good_fits=fits_by_title.get((r.id, t), 0))
+                    for t in c.get("search_titles") or []
+                ],
                 findings=findings.get(r.id, []),
             )
         )
     return out
+
+
+async def _fits_by_title(
+    db: AsyncSession, run_ids: list[uuid.UUID]
+) -> dict[tuple[uuid.UUID, str], int]:
+    """Good fits per searched title, for broad runs' History."""
+    if not run_ids:
+        return {}
+    rows = await db.execute(
+        select(ScoutFinding.run_id, ScoutFinding.search_title, func.count())
+        .where(
+            ScoutFinding.run_id.in_(run_ids),
+            ScoutFinding.search_title.is_not(None),
+            ScoutFinding.outcome.in_((PICKED, SAVED, SKIPPED)),
+        )
+        .group_by(ScoutFinding.run_id, ScoutFinding.search_title)
+    )
+    return {(rid, title): n for rid, title, n in rows.all()}
 
 
 async def _open_run(db: AsyncSession, user_id: uuid.UUID) -> ScoutRun | None:
@@ -744,12 +831,39 @@ def _saving_note(criteria: dict) -> str:
     )
 
 
+async def resume_ready(db: AsyncSession, user_id: uuid.UUID) -> bool:
+    """The user has an active resume with text Claude can read."""
+    return (
+        await db.scalar(
+            select(Resume.id)
+            .where(
+                Resume.user_id == user_id,
+                Resume.is_active.is_(True),
+                func.length(func.trim(func.coalesce(Resume.extracted_text, ""))) > 0,
+            )
+            .limit(1)
+        )
+    ) is not None
+
+
+async def _resume_types(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
+    """The user's resume types, short, so Claude can say which one a job is
+    closest to."""
+    rows = await db.execute(
+        select(ResumeTrack.name, ResumeTrack.target_titles)
+        .where(ResumeTrack.user_id == user_id, ResumeTrack.kind == SCOPED)
+        .order_by(ResumeTrack.sort_order, ResumeTrack.created_at)
+    )
+    return [{"name": n, "titles": list(t or [])[:4]} for n, t in rows.all()]
+
+
 async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dict:
     run = await _run_for_agent(db, user_id, run_id, start=True)
     c = run.criteria
     progress = await _progress(db, run)
     local = c["source"] == LOCAL
-    extra: dict = {}
+    ready = await resume_ready(db, user_id)
+    extra: dict = {"resume_ready": ready}
     if c["source"] in SOURCE_STEPS:
         extra["source_steps"] = SOURCE_STEPS[c["source"]]
         extra["posted_within_days"] = c["posted_within_days"]
@@ -764,13 +878,38 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
             if extra["recheck"]
             else "Open"
         ) + " the first start URL and send the companies it lists to check_companies."
+    broad = bool(c.get("broad"))
+    choosing = broad and not c.get("search_titles")
+    if broad:
+        ov = titles_svc.overrides(c)
+        extra.update(
+            broad=True,
+            broad_steps=BROAD_STEPS,
+            max_titles=titles_svc.MAX_TITLES,
+            titles_tried=await titles_svc.for_brief(db, run),
+            always=ov["always"],
+            never=ov["never"],
+            avoid=ov["avoid"],
+            resume_types=await _resume_types(db, user_id),
+        )
+    if choosing:
+        first = (
+            "Call get_master_profile, choose up to "
+            f"{titles_svc.MAX_TITLES} job titles the user would be good at (see "
+            "broad_steps), then call set_search_titles: it gives you the start URLs."
+        )
+    elif ready:
+        first = (
+            "Call get_master_profile once and score every job against the resume. "
+            f"Then {first[0].lower()}{first[1:]}"
+        )
     return {
         "run_id": str(run.id),
         "playbook": PLAYBOOK,
         "playbook_version": run.playbook_version,
         "source": c["source"],
         **extra,
-        "start_urls": start_urls(c),
+        "start_urls": [] if choosing else start_urls(c),
         "track": c["track"],
         "min_pay": c.get("min_pay"),
         "min_fit": c["min_fit"],
@@ -1056,6 +1195,25 @@ def _pay_note(capture: ScoutCapture, min_pay: int | None) -> str | None:
     return f"Pay listed up to ${yearly:,}, under your ${min_pay:,} minimum"
 
 
+async def _closest_track(
+    db: AsyncSession, user_id: uuid.UUID, name: str
+) -> uuid.UUID | None:
+    """The user's resume type with this name (any case or spacing), or None."""
+    wanted = " ".join(str(name or "").split()).lower()
+    if not wanted:
+        return None
+    for tid, tname in (
+        await db.execute(
+            select(ResumeTrack.id, ResumeTrack.name).where(
+                ResumeTrack.user_id == user_id, ResumeTrack.kind == SCOPED
+            )
+        )
+    ).all():
+        if " ".join(tname.split()).lower() == wanted:
+            return tid
+    return None
+
+
 async def report_job(
     db: AsyncSession,
     user_id: uuid.UUID,
@@ -1064,6 +1222,7 @@ async def report_job(
     fit_score: int,
     why_fit: str,
     gaps: str,
+    resume_type: str = "",
 ) -> dict:
     run = await _run_for_agent(db, user_id, run_id)
     if not 0 <= int(fit_score) <= 10:
@@ -1110,6 +1269,8 @@ async def report_job(
     finding.fit_score = int(fit_score)
     finding.why_fit = (why_fit or "")[:600]
     finding.gaps = (gaps or "")[:600]
+    if c.get("broad"):
+        finding.closest_track_id = await _closest_track(db, user_id, resume_type)
 
     capture = await db.scalar(
         select(ScoutCapture)
@@ -1165,7 +1326,7 @@ async def report_job(
             user_id,
             finding,
             source=c["source"],
-            track_id=run.track_id,
+            track_id=review.job_track(run, finding),
             folder_id=folder.id,
             capture=capture,
         )
@@ -1173,6 +1334,8 @@ async def report_job(
         # A good fit: kept for the user to tick and save (the review step).
         finding.outcome = PICKED
         finding.app_note = None
+    if c.get("broad") and finding.outcome in _KEPT:
+        await titles_svc.credit_fit(db, run, finding)
     await db.flush()
     progress = await _progress(db, run)
     return {
@@ -1254,3 +1417,50 @@ async def company_checked(
     if progress["done"]:
         out["next"] = "Target reached: call finish_scout_run."
     return {**out, "progress": progress}
+
+
+async def set_search_titles(
+    db: AsyncSession, user_id: uuid.UUID, run_id: str | None, titles: list
+) -> dict:
+    """An "Anything I'd be good at" run: the titles Claude chose. The app keeps
+    the user's overrides, leaves out titles resting after finding nothing, and
+    builds the search links with the user's own filters."""
+    run = await _run_for_agent(db, user_id, run_id)
+    c = run.criteria
+    if not c.get("broad"):
+        raise ValueError(
+            "This search uses its resume type's titles: open the brief's start_urls."
+        )
+    progress = await _progress(db, run)
+    first = (
+        "Open the first start URL and send the companies it lists to check_companies."
+        if c["source"] == LOCAL
+        else "Open the start URL and send the first page of rows to check_jobs."
+    )
+    stats = run.stats or {}
+    started = stats.get("rows") or stats.get("_companies")
+    if c.get("search_titles") and started:
+        return {
+            "titles": c["search_titles"],
+            "dropped": [],
+            "start_urls": start_urls(c),
+            "note": "This run's titles are set: results are already being read.",
+            "progress": progress,
+            "next": "Carry on with the results you have.",
+        }
+    if not isinstance(titles, list):
+        titles = []
+    kept, dropped = await titles_svc.choose(db, run, titles)
+    if not kept:
+        why = ", ".join(f"{d['title']}: {d['why']}" for d in dropped) or "none sent"
+        raise ValueError(f"None of these can be searched ({why}). Choose other titles.")
+    run.criteria = {**c, "search_titles": kept}
+    await titles_svc.record_runs(db, run, kept)
+    await db.flush()
+    return {
+        "titles": kept,
+        "dropped": dropped,
+        "start_urls": start_urls(run.criteria),
+        "progress": progress,
+        "next": first,
+    }

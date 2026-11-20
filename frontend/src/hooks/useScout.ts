@@ -9,7 +9,9 @@ import {
   isOpen,
   type Mission,
   type MissionInput,
+  type Overrides,
   type Run,
+  type TitleTried,
   type Track,
   type TrackInput,
 } from "@/lib/scout";
@@ -135,6 +137,31 @@ export function useSaveMission() {
         ? api.patch<Mission>(`/v1/scout/missions/${id}`, data)
         : api.post<Mission>("/v1/scout/missions", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scout-missions"] }),
+  });
+}
+
+/** Change only a broad search's overrides (pin, block, the settings lists). */
+export function useUpdateOverrides() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, overrides }: { id: string; overrides: Overrides }) =>
+      api.patch<Mission>(`/v1/scout/missions/${id}`, { overrides }),
+    // Wait for the fresh search, so the next tap builds on these overrides.
+    onSuccess: (_m, { id }) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["scout-missions"] }),
+        qc.invalidateQueries({ queryKey: ["scout-titles", id] }),
+      ]),
+  });
+}
+
+/** The titles an "Anything I'd be good at" search has tried. */
+export function useMissionTitles(missionId: string | null) {
+  return useQuery({
+    queryKey: ["scout-titles", missionId],
+    queryFn: () =>
+      api.get<TitleTried[]>(`/v1/scout/missions/${missionId}/titles`),
+    enabled: !!missionId,
   });
 }
 

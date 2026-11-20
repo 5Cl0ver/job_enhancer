@@ -229,6 +229,12 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
           No job titles yet — add a few.
         </p>
       )}
+      {t.key_skills.length === 0 && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">
+          No skills listed. Add a few, or Claude scores from your uploaded
+          resume only.
+        </p>
+      )}
       {/* The resume for this type: see it, or put one here without opening Edit. */}
       <input
         ref={fileInput}
