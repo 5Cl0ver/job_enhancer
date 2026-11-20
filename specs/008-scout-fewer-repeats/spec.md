@@ -61,9 +61,11 @@ rows again. Every run also used the same search words.
 
 - **FR-001**: `check_jobs` rows take `"fits"`; rows with `"fits": false` are
   kept in `scout_passes` (user, resume type, company/title/link keys only, never
-  job text) and count as seen for 30 days.
+  job text) and are skipped as titles that didn't fit for 30 days, or until
+  the resume type's titles, skills or skip rules change.
 - **FR-002**: `check_jobs` returns `pages_read` and `next_page_url`; a run
-  reads at most 4 pages.
+  reads at most 4 pages. A page with nothing new (empty, or only rows from
+  earlier pages) means the results ran out: Claude is told to finish.
 - **FR-003**: Runs of one search take turns with the resume type's titles, 4 at
   a time.
 - **FR-004**: A run shows "titles didn't fit" in its numbers and a one-line tip
