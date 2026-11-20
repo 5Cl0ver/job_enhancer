@@ -12,9 +12,9 @@ c. For each company check_companies returns in "visit": open its website and
    find its Careers / Jobs / Join us / Employment page (often in the menu or
    the footer). It may run on a hiring system (Workday, Greenhouse, Paylocity,
    UKG, iCIMS…): that's still the company's own page.
-d. Read its openings as rows ({"company", "title", "url"}), send them to
-   check_jobs, open the ones it returns that fit, and report_job each one as
-   usual, while the posting is open.
+d. Read its openings as rows ({"company", "title", "url", "fits"}), send them
+   to check_jobs, open the ones it returns, and report_job each one as usual,
+   while the posting is open.
 e. Then call company_checked with the company's website and what you found:
    "openings", "none", or "no_careers" (plus the careers page link, if any).
 f. Stop when report_job says done, or check_companies says the company limit

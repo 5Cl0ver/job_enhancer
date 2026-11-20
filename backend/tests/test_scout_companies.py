@@ -680,3 +680,24 @@ class TestPageCopiesBeyondTheBoards:
             maker, user_id, "https://brambleworks.example/careers/it-admin-1"
         )
         assert old_run != local_run.id
+
+
+@pytest.mark.asyncio
+async def test_each_companys_openings_arent_counted_as_results_pages(
+    engine, monkeypatch
+):
+    """A run reads at most 4 pages of a board's results; a Local companies run
+    checks many companies' openings and is never told it's out of pages."""
+    maker = await _connected_user(engine, monkeypatch, email="lpages@test.dev")
+    _, _, run_id = await _setup(maker, "lpages@test.dev", job_count=10)
+    brief = await mcp_mod.get_scout_brief()
+    assert "max_pages" not in brief
+    for n in range(6):
+        row = {
+            "company": f"Brambleworks {n}",
+            "title": "IT Systems Administrator",
+            "url": f"https://brambleworks{n}.example/careers/it-admin",
+        }
+        out = await mcp_mod.check_jobs(str(run_id), [row])
+        assert out["open"] == [0] and "next_page_url" not in out
+        assert "company_checked" in out["next"] and "last" not in out["next"]

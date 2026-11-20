@@ -76,6 +76,7 @@ const RUN: Run = {
   needs_review: true,
   folder: { id: null, name: "IT Admin" },
   looked_at: { rows: 24, in_tracker: 2, seen_before: 9, excluded: 4 },
+  tip: "Most of these jobs were already seen: the search ran recently. Give it a day.",
   findings: FINDINGS,
 };
 const TRACK = {
@@ -150,11 +151,13 @@ describe("the review after a Scout search", () => {
     renderStart();
     expect(
       await screen.findByText(
-        "Asked for 5, found 2. Looked at 24 postings: 9 seen in earlier searches · 4 skipped by title · " +
+        "Asked for 5, found 2. Looked at 24 postings: 9 seen in earlier searches · 4 had a word you skip · " +
           "2 already in My Jobs · 1 below your bar · 1 you already had · 1 couldn't be copied · 4 not opened.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("Only two new ones this week")).toBeInTheDocument();
+    // And what to change for more next time.
+    expect(screen.getByText(/the search ran recently\. Give it a day\./)).toBeInTheDocument();
   });
 
   it("saves exactly what is ticked with one press and says where it went", async () => {

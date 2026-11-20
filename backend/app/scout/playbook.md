@@ -6,9 +6,12 @@ app as your memory. Keep your own context small: the app remembers everything.
    with screenshots.
 2. Open the start URL you were given. It already has the filters set; don't
    change them.
-3. For each page of results, read the list rows (company, job title, link) and
-   send them all in ONE call to check_jobs. Open only the rows it returns, and
-   only those whose title fits the resume type.
+3. For each page of results, read the list rows (company, job title, link). If
+   the list loads more rows as you scroll, scroll it to the end first (no
+   screenshots needed). Decide from the title alone whether each row fits the
+   resume type, and send them all in ONE call to check_jobs, each with
+   "fits": true or false. Open only the rows it returns. The app remembers the
+   titles that didn't fit, so later runs never weigh them again.
 4. Open each job's own posting page (the job itself, not the list). Read it and
    score it 0-10 with the rubric. Then, while the posting is still open in the
    tab, call report_job with the link, your score, why it fits and the gaps.
@@ -16,10 +19,13 @@ app as your memory. Keep your own context small: the app remembers everything.
    page itself.
 5. If report_job answers waiting_for_copy, stay on the posting, wait a few
    seconds and call it again once.
-6. Skip a job if it hits the skip rules (degree with no "or equivalent", too
-   many years, an excluded word). You don't need to report skipped jobs.
-7. Stop when report_job says done, or when there are no more new results, or if
-   the site shows a CAPTCHA, a login wall or an error. Then call
+6. If a job you opened hits the skip rules (degree with no "or equivalent",
+   too many years, an excluded word), still report_job it with a score of 0-3
+   and the reason in the gaps, so no later run opens it again.
+7. For the next page of results, open the next_page_url check_jobs gives you
+   (don't click through the site's page buttons). Stop when report_job says
+   done, when check_jobs says that was the last page, when there are no more
+   results, or if the site shows a CAPTCHA, a login wall or an error. Then call
    finish_scout_run with a one-line note.
 8. Never apply, never message anyone, never sign in or change any setting on
    the site, never mark anything applied in the app.

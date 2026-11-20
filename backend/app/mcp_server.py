@@ -492,9 +492,12 @@ async def get_scout_brief(run_id: str | None = None) -> dict:
 @mcp.tool
 async def check_jobs(run_id: str, rows: list[dict]) -> dict:
     """Which jobs on this results page are new? Send every row of ONE page at
-    once (up to 30), each as {"company", "title", "url"} as shown in the list.
-    Returns the positions (0-based) worth opening; the rest are already in the
-    user's tracker, were found by an earlier run, or hit an excluded word."""
+    once (up to 30), each as {"company", "title", "url", "fits"} as shown in
+    the list, where "fits" is false when the title alone doesn't fit the resume
+    type (the app remembers those, so no later run weighs them again). Returns
+    the positions (0-based) worth opening; the rest are already in the user's
+    tracker, were seen by an earlier run, hit an excluded word or didn't fit.
+    Also returns next_page_url: open it for the next page of results."""
     async with _session_user() as (db, user):
         out = await scout_svc.check_jobs(db, user.id, run_id, rows)
         await db.commit()

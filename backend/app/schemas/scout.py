@@ -355,6 +355,8 @@ class RunOut(BaseModel):
     folder: RunFolder | None = None
     # The result rows Claude checked, and why some were passed over.
     looked_at: dict[str, int] | None = None
+    # What to change when a finished search came back short.
+    tip: str | None = None
     findings: list[FindingOut] = Field(default_factory=list)
 
 

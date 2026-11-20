@@ -7,15 +7,16 @@ copy the extension captured. Invented companies throughout.
 
 import json
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
-from sqlalchemy import select
+from sqlalchemy import func, select
 
 import app.mcp_server as mcp_mod
 from app.models.collection import Collection
 from app.models.job_listing import JobListing
 from app.models.saved_job import SavedJob
-from app.models.scout import ScoutFinding, ScoutRun
+from app.models.scout import ScoutFinding, ScoutPass, ScoutRun
 from app.models.user import User
 from app.schemas.scout import CaptureIn, MissionCreate, TrackCreate
 from app.services import job_source, scout_runs, scout_tracks
@@ -33,7 +34,14 @@ JOB_URL = "https://www.linkedin.com/jobs/view/4012345678/?trk=public_jobs"
 
 
 async def _setup(
-    maker, email, *, exclude=(), min_pay=None, job_count=2, auto_save=False
+    maker,
+    email,
+    *,
+    exclude=(),
+    min_pay=None,
+    job_count=2,
+    auto_save=False,
+    track_name="IT Admin",
 ):
     async with maker() as db:
         user = await db.scalar(select(User).where(User.email == email))
@@ -41,7 +49,7 @@ async def _setup(
             db,
             user.id,
             TrackCreate(
-                name="IT Admin",
+                name=track_name,
                 target_titles=["IT Systems Administrator", "Jira Administrator"],
                 key_skills=["Microsoft 365", "Entra ID"],
                 skip_rules={"exclude": list(exclude)},
@@ -152,7 +160,12 @@ class TestCheckJobs:
         ]
         out = await mcp_mod.check_jobs(str(run_id), rows)
         assert out["open"] == [1]
-        assert out["skipped"] == {"in_tracker": 1, "seen_before": 0, "excluded": 1}
+        assert out["skipped"] == {
+            "in_tracker": 1,
+            "seen_before": 0,
+            "excluded": 1,
+            "title_passed": 0,
+        }
 
     async def test_too_many_rows_is_refused(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="many@test.dev")
@@ -346,3 +359,151 @@ async def test_only_the_brief_starts_a_queued_run(engine, monkeypatch):
     async with maker() as db:
         run = await db.get(ScoutRun, run_id)
         assert run.status == "queued"
+
+
+ROWS = [
+    {
+        "company": "Brambleworks",
+        "title": "IT Systems Administrator",
+        "url": "https://www.linkedin.com/jobs/view/4000000001/",
+        "fits": True,
+    },
+    {
+        "company": "Quillstone",
+        "title": "Registered Nurse",
+        "url": "https://www.linkedin.com/jobs/view/4000000002/",
+        "fits": False,
+    },
+    {"company": "Vellacor", "title": "Forklift Operator", "fits": "false"},
+]
+
+
+async def _finish(maker, run_id):
+    await mcp_mod.finish_scout_run(str(run_id), "")
+
+
+@pytest.mark.asyncio
+class TestTitlesThatDontFit:
+    """The repeats fix: rows Claude passes over by title are remembered, so the
+    next run doesn't weigh the same rows again."""
+
+    async def test_passed_rows_are_skipped_by_the_next_run(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="pass@test.dev")
+        user_id, track_id, run_id = await _setup(maker, "pass@test.dev")
+        await mcp_mod.get_scout_brief()
+        out = await mcp_mod.check_jobs(str(run_id), ROWS)
+        assert out["open"] == [0]
+        assert out["skipped"]["title_passed"] == 2
+        async with maker() as db:
+            passes = (await db.scalars(select(ScoutPass))).all()
+            assert {p.title_key for p in passes} == {
+                "registered nurse",
+                "forklift operator",
+            }
+            assert all(p.track_id == track_id for p in passes)
+        await _finish(maker, run_id)
+
+        _, _, second = await _setup_second_run(maker, "pass@test.dev")
+        await mcp_mod.get_scout_brief(str(second))
+        # The same jobs again, Claude now leaving "fits" out: still skipped.
+        again = [{k: v for k, v in r.items() if k != "fits"} for r in ROWS]
+        out = await mcp_mod.check_jobs(str(second), again)
+        assert out["open"] == [0]
+        assert out["skipped"]["seen_before"] == 2
+        assert out["skipped"]["title_passed"] == 0
+
+    async def test_a_reposted_job_is_still_known_by_company_and_title(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="repost@test.dev")
+        _, _, run_id = await _setup(maker, "repost@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), ROWS[1:2])
+        await _finish(maker, run_id)
+        _, _, second = await _setup_second_run(maker, "repost@test.dev")
+        await mcp_mod.get_scout_brief(str(second))
+        moved = {**ROWS[1], "url": "https://www.linkedin.com/jobs/view/4999999999/"}
+        moved.pop("fits")
+        out = await mcp_mod.check_jobs(str(second), [moved])
+        assert out["open"] == []
+
+    async def test_another_resume_type_still_weighs_them(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="types@test.dev")
+        _, _, run_id = await _setup(maker, "types@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), ROWS)
+        await _finish(maker, run_id)
+        # A second resume type, with its own search.
+        _, _, other = await _setup(maker, "types@test.dev", track_name="Help Desk")
+        await mcp_mod.get_scout_brief(str(other))
+        again = [{k: v for k, v in r.items() if k != "fits"} for r in ROWS]
+        out = await mcp_mod.check_jobs(str(other), again)
+        assert out["open"] == [0, 1, 2]
+
+    async def test_passes_are_forgotten_after_30_days(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="old@test.dev")
+        _, _, run_id = await _setup(maker, "old@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), ROWS[1:2])
+        await _finish(maker, run_id)
+        async with maker() as db:
+            for p in (await db.scalars(select(ScoutPass))).all():
+                p.created_at = datetime.now(UTC) - timedelta(days=31)
+            await db.commit()
+        _, _, second = await _setup_second_run(maker, "old@test.dev")
+        await mcp_mod.get_scout_brief(str(second))
+        row = {k: v for k, v in ROWS[1].items() if k != "fits"}
+        assert (await mcp_mod.check_jobs(str(second), [row]))["open"] == [0]
+        # Passing on it again clears the old one and keeps the new one.
+        await mcp_mod.check_jobs(str(second), [ROWS[1], ROWS[2]])
+        async with maker() as db:
+            passes = (await db.scalars(select(ScoutPass))).all()
+            assert len(passes) == 2
+            assert all(
+                p.created_at.replace(tzinfo=UTC) > datetime.now(UTC) - timedelta(days=1)
+                for p in passes
+            )
+
+    async def test_the_page_says_how_many_titles_didnt_fit(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="count@test.dev")
+        user_id, _, run_id = await _setup(maker, "count@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), ROWS)
+        await mcp_mod.check_jobs(str(run_id), ROWS)  # the same page twice
+        async with maker() as db:
+            stats = (await db.get(ScoutRun, run_id)).stats
+            assert stats["rows"] == 3 and stats["title_passed"] == 2
+            assert (await db.scalar(select(func.count()).select_from(ScoutPass))) == 2
+
+
+def _page(n):
+    return [
+        {
+            "company": f"Brambleworks {n}-{i}",
+            "title": "IT Systems Administrator",
+            "url": f"https://www.linkedin.com/jobs/view/{4100000000 + n * 100 + i}/",
+        }
+        for i in range(3)
+    ]
+
+
+@pytest.mark.asyncio
+class TestPages:
+    async def test_hands_out_the_next_page_up_to_four(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="pages@test.dev")
+        _, _, run_id = await _setup(maker, "pages@test.dev", job_count=10)
+        brief = await mcp_mod.get_scout_brief()
+        assert brief["max_pages"] == 4
+        out = await mcp_mod.check_jobs(str(run_id), _page(0))
+        assert out["pages_read"] == 1
+        assert out["next_page_url"] == brief["start_urls"][0] + "&start=25"
+        assert "next_page_url (page 2 of 4)" in out["next"]
+        # The same page sent again isn't a new page.
+        out = await mcp_mod.check_jobs(str(run_id), _page(0))
+        assert out["pages_read"] == 1 and out["next_page_url"].endswith("&start=25")
+        for n in (1, 2):
+            out = await mcp_mod.check_jobs(str(run_id), _page(n))
+        assert out["next_page_url"].endswith("&start=75")
+        out = await mcp_mod.check_jobs(str(run_id), _page(3))
+        assert out["pages_read"] == 4 and "next_page_url" not in out
+        assert "finish_scout_run" in out["next"] and "last" in out["next"]
