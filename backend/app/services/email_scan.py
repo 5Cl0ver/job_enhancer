@@ -46,7 +46,7 @@ from app.services.email_classify import (
     classify,
     stage_for_event,
 )
-from app.services.email_job_names import job_names
+from app.services.email_job_names import clean_role, is_sender_person, job_names
 from app.services.email_match import (
     FUZZY_COMPANY,
     NONE,
@@ -546,6 +546,10 @@ async def detect_events(
             company, title = job_names(msg.subject, msg.from_addr, msg.classify_text)
             if tmpl is not None:  # the template's names are exact
                 company, title = tmpl.company or company, tmpl.title or title
+            # Never a sentence for a title, never the sender for the company.
+            title = clean_role(title) if title else None
+            if is_sender_person(company, msg.from_addr):
+                company = None
             names = {
                 "job_company": job["company"] if job else company,
                 "job_title": job["title"] if job else title,

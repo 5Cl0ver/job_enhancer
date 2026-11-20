@@ -17,6 +17,7 @@ from app.schemas.saved_job import (
     JobSavedCheck,
     JobSavedResult,
     JobSourceOut,
+    ListingRename,
     ManualJobCreate,
     MarkAppliedRequest,
     MarkAppliedResult,
@@ -52,10 +53,12 @@ async def list_saved_jobs(
         with_description=False,
     )
     fits = await svc.scout_fits(db, user.id)
+    doubtful = await svc.doubtful_names(db, user.id)
     out = []
     for r in rows:
         item = SavedJobListItem.model_validate(r)
         item.scout = fits.get(r.id)
+        item.name_doubtful = r.id in doubtful
         out.append(item)
     return out
 
@@ -193,6 +196,21 @@ async def saved_job_source(
     """Where this job came from: its folder, and the Scout search or the email
     that put it in My Jobs."""
     return await job_source.job_source(db, user.id, saved_job_id)
+
+
+@router.patch("/{saved_job_id}/listing", response_model=SavedJobListItem)
+async def rename_listing(
+    saved_job_id: uuid.UUID,
+    data: ListingRename,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SavedJobListItem:
+    """Fix a saved job's title, company, place or link. Only this user's job
+    changes; a listing someone else saved is copied first. The answer's
+    ``job_listing_id`` is the job's new page when it was copied."""
+    sj = await svc.rename_listing(db, user.id, saved_job_id, data)
+    await db.commit()
+    return SavedJobListItem.model_validate(sj)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobListItem)

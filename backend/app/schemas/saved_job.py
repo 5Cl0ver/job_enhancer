@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.job import JobListingSchema, JobListingSummarySchema
 
@@ -126,6 +126,37 @@ class ApplicationSyncResult(BaseModel):
     outcomes: list[ApplicationSyncOutcome] = Field(default_factory=list)
 
 
+class ListingRename(BaseModel):
+    """Fix a saved job's name, place or link. Only what's sent changes."""
+
+    title: str | None = Field(None, min_length=1, max_length=500)
+    company: str | None = Field(None, min_length=1, max_length=255)
+    location: str | None = Field(None, max_length=255)
+    apply_url: str | None = Field(None, min_length=8, max_length=2000)
+
+    @field_validator("title", "company", "location")
+    @classmethod
+    def _tidy(cls, v: str | None) -> str | None:
+        return " ".join(v.split()) if v is not None else None
+
+    @field_validator("apply_url")
+    @classmethod
+    def _http_only(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith(("http://", "https://")):
+            raise ValueError("The link must start with http:// or https://")
+        return v
+
+    @model_validator(mode="after")
+    def _something(self):
+        if not any(
+            v for v in (self.title, self.company, self.location, self.apply_url)
+        ):
+            raise ValueError("Send at least one of title, company, place or link.")
+        if self.title == "" or self.company == "":
+            raise ValueError("The title and company can't be empty.")
+        return self
+
+
 class SavedJobUpdate(BaseModel):
     collection_id: uuid.UUID | None = None
     pipeline_stage_id: uuid.UUID | None = None
@@ -157,6 +188,9 @@ class SavedJobBase(BaseModel):
     # scout | email | extension | claude | search | manual; null = not known.
     origin: str | None = None
     scout: ScoutFit | None = None
+    # Made from an email, and its name may be wrong (a sentence for a title,
+    # the sender's own name for the company): the app asks the user to check.
+    name_doubtful: bool = False
     notes: str | None
     applied_at: datetime | None
     last_stage_change: datetime

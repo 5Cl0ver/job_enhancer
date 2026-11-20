@@ -9,7 +9,14 @@ still aren't kept.
 import pytest
 
 from app.api.v1.email import category_of
-from app.services.email_job_names import company_name, job_names, role_name
+from app.services.email_job_names import (
+    clean_role,
+    company_name,
+    is_sender_person,
+    job_names,
+    role_doubtful,
+    role_name,
+)
 from app.services.email_scan import EmailMessage, detect_events
 from tests.services.test_email_scan import _make_account, _make_saved_job
 
@@ -187,3 +194,77 @@ class TestScanKeepsUnsavedUpdates:
         first = await detect_events(db_session, acct, msgs)
         again = await detect_events(db_session, acct, msgs)
         assert len(first.unsaved) == 1 and again.unsaved == []
+
+
+class TestNamesThatAreNotNames:
+    """The first real email-made job had a sentence for a title and the
+    recruiter's own name for the company. Invented names, same shapes."""
+
+    @pytest.mark.parametrize(
+        "raw,expected",
+        [
+            (
+                "next phase of our recruitment process in the Productivity "
+                "Platform Engineer",
+                "Productivity Platform Engineer",
+            ),
+            (
+                "the next step of the hiring process for the Data Analyst",
+                "Data Analyst",
+            ),
+            ("the position of Support Engineer", "Support Engineer"),
+            ("QA Automation Engineer role at Lumenhollow", "QA Automation Engineer"),
+            (
+                "Senior Site Reliability Engineer (Remote)",
+                "Senior Site Reliability Engineer (Remote)",
+            ),
+            # Still a sentence once the lead-in is gone: no title at all.
+            ("we would like to invite you to an interview", None),
+            ("thank you for your interest", None),
+            (
+                "Platform Engineer for our new office in the north of the city near the river",
+                None,
+            ),
+        ],
+    )
+    def test_role(self, raw, expected):
+        assert clean_role(raw) == expected
+
+    def test_a_subject_that_names_the_sender_is_not_the_company(self):
+        sender = "Nancy Karnas <nancy.karnas@vellacor.example>"
+        company, role = job_names(
+            "Interview with Nancy Karnas",
+            sender,
+            "We'd like to move you to the next phase of our recruitment process "
+            "for the Platform Engineer role.",
+        )
+        assert company == "Vellacor"
+        assert role == "Platform Engineer"
+
+    @pytest.mark.parametrize(
+        "name,sender,person",
+        [
+            ("Nancy Karnas", "Nancy Karnas <nancy.karnas@vellacor.example>", True),
+            ("Nancy Karnas", "Nancy Karnas <nkarnas@vellacor.example>", True),
+            # A company's two-word name, sent from a team mailbox.
+            ("Tidelock Systems", "Tidelock Systems <jobs@tidelock.example>", False),
+            ("Tidelock Systems", "x@mailhost.example", False),
+            ("Vellacor", "Vellacor <hr@vellacor.example>", False),
+            ("Nancy Karnas", "Vellacor Careers <careers@vellacor.example>", False),
+        ],
+    )
+    def test_who_is_a_person(self, name, sender, person):
+        assert is_sender_person(name, sender) is person
+
+    @pytest.mark.parametrize(
+        "title,doubtful",
+        [
+            ("Platform Engineer", False),
+            ("IT Systems Administrator II", False),
+            ("next phase of our recruitment process", True),
+            ("We are hiring", True),
+            ("", True),
+        ],
+    )
+    def test_doubtful_titles(self, title, doubtful):
+        assert role_doubtful(title) is doubtful
