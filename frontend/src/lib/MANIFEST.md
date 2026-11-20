@@ -10,6 +10,7 @@ Shared utilities and external-service clients.
 | `boardFilter.ts` | Pure board logic: search by title/company (`matchesSearch`), what a column draws (`columnView`: one page, matches first), which column a job belongs in (`stageFor`), marking hits (`highlightParts`). |
 | `jobFilters.ts` | Pure My Jobs list logic shared by the desktop and phone lists: `filterJobs` (search, place, pay incl. hourly→yearly, type, applied, remote, where from), `filtersSet`, `jobTypesIn`, `stageCounts`. |
 | `origin.ts` | Pure: how a saved job got into My Jobs. `ORIGIN_LABEL`, `originText` (adds Scout's fit score), `originsIn` (filter choices), and the links between pages (`folderLink`, `runLink`). |
+| `researchPrompt.ts` | Pure: `buildResearchPrompt(listing)`, the text "Research it with Claude" copies. |
 | `stageStyle.ts` | `stageTone(name)`: one colour per kind of stage (chip + dot classes), matched on the stage's name so custom stages fit. |
 | `text.ts` | `plainText`: turns HTML entities left in captured titles (`&amp;`) back into characters; output is plain text. |
 | `openFile.ts` | `openOwnFile(path)`: open one of the user's own files (a resume) in a new tab; fetched with the sign-in token, since a plain link can't send it. |

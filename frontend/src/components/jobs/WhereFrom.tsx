@@ -59,7 +59,7 @@ export function WhereFrom({ savedJob }: { savedJob: SavedJob }) {
         {scout && (
           <Link
             to={runLink(scout.run_id)}
-            className="font-medium text-primary underline-offset-2 hover:underline"
+            className="inline-flex items-center font-medium text-primary underline-offset-2 hover:underline pointer-coarse:min-h-11"
           >
             See the search that found it
           </Link>
@@ -72,7 +72,7 @@ export function WhereFrom({ savedJob }: { savedJob: SavedJob }) {
         {folder && (
           <Link
             to={folderLink(folder.id)}
-            className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            className="inline-flex min-w-0 items-center gap-1.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline pointer-coarse:min-h-11"
           >
             <Folder className="h-3.5 w-3.5 shrink-0" aria-hidden />
             <span className="truncate">
