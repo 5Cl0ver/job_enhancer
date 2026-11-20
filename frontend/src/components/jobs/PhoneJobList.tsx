@@ -10,6 +10,7 @@ import { BookmarkX, Mail, Search, SlidersHorizontal, X } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { OriginLabel } from "@/components/jobs/OriginLabel";
+import { NameCheckLine } from "@/components/jobs/RenameJob";
 import { CountBadge } from "@/components/layout/PhoneNav";
 import { Button } from "@/components/ui/button";
 import {
@@ -97,6 +98,7 @@ function JobRow({
           <p className="truncate font-medium leading-snug">{j.title}</p>
           <p className="truncate text-sm text-muted-foreground">{where}</p>
           <OriginLabel savedJob={savedJob} className="flex max-w-full" />
+          <NameCheckLine savedJob={savedJob} />
         </div>
         {hasEmail && (
           <Mail className="h-4 w-4 shrink-0 text-primary" aria-label="Has an email" />

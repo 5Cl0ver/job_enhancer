@@ -12,6 +12,7 @@ from app.models.job_listing import JobListing
 from app.models.resume import Resume
 from app.models.user import User
 from app.schemas.job import JobListingSchema, JobSearchResponse, MatchResponse
+from app.services import saved_jobs as sj_svc
 from app.services.job_search import aggregate_and_deduplicate
 from app.services.match import match_resume
 
@@ -55,14 +56,18 @@ async def search_jobs(
 @router.get("/{job_id}", response_model=JobListingSchema)
 async def get_job(
     job_id: uuid.UUID,
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> JobListingSchema:
-    """Fetch a single job listing by ID."""
+    """Fetch a single job listing by ID, under the name this user gave it if
+    they saved it and fixed its name."""
     listing = await db.scalar(select(JobListing).where(JobListing.id == job_id))
     if not listing:
         raise HTTPException(status_code=404, detail="Job not found")
-    return JobListingSchema.model_validate(listing)
+    out = JobListingSchema.model_validate(listing)
+    for field, value in (await sj_svc.own_names(db, user.id, job_id)).items():
+        setattr(out, field, value)
+    return out
 
 
 @router.get("/{job_id}/match", response_model=MatchResponse)

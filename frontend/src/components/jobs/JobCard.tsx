@@ -2,6 +2,7 @@ import { Link } from "react-router-dom";
 import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2, Check, Undo2, Mail } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { OriginLabel } from "@/components/jobs/OriginLabel";
+import { NameCheckLine } from "@/components/jobs/RenameJob";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -79,6 +80,7 @@ export function JobCard({
               <Building2 className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{job.company}</span>
             </div>
+            {savedJob && <NameCheckLine savedJob={savedJob} />}
           </div>
           <div className="flex shrink-0 flex-col items-end gap-1">
             {applied && (

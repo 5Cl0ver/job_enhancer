@@ -65,6 +65,13 @@ class SavedJob(Base):
     # How the job got here (see ORIGINS). Null = saved before this was recorded
     # and the app can't tell, so nothing is shown rather than a guess.
     origin: Mapped[str | None] = mapped_column(String(12))
+    # The user's own corrections to the job's name, place and link, shown in
+    # place of the shared listing's (which is never edited for one user). Any
+    # of them set also means the user has checked the name.
+    custom_title: Mapped[str | None] = mapped_column(String(500))
+    custom_company: Mapped[str | None] = mapped_column(String(255))
+    custom_location: Mapped[str | None] = mapped_column(String(255))
+    custom_apply_url: Mapped[str | None] = mapped_column(Text)
     notes: Mapped[str | None] = mapped_column(Text)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_stage_change: Mapped[datetime] = mapped_column(

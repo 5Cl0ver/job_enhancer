@@ -19,7 +19,7 @@ from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
 from urllib.parse import quote
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -46,7 +46,7 @@ from app.services.email_classify import (
     classify,
     stage_for_event,
 )
-from app.services.email_job_names import job_names
+from app.services.email_job_names import clean_role, is_sender_person, job_names
 from app.services.email_match import (
     FUZZY_COMPANY,
     NONE,
@@ -242,8 +242,10 @@ async def _candidate_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
                 SavedJob.job_listing_id,
                 SavedJob.pipeline_stage_id,
                 SavedJob.created_at,
-                JobListing.company,
-                JobListing.title,
+                func.coalesce(SavedJob.custom_company, JobListing.company).label(
+                    "company"
+                ),
+                func.coalesce(SavedJob.custom_title, JobListing.title).label("title"),
                 JobListing.apply_url,
                 JobListing.external_id,
             )
@@ -544,8 +546,15 @@ async def detect_events(
         names = {}
         if unsaved or contact:
             company, title = job_names(msg.subject, msg.from_addr, msg.classify_text)
+            # Never the sender for the company (a template's company is exact).
+            if is_sender_person(company, msg.from_addr):
+                company = None
             if tmpl is not None:  # the template's names are exact
                 company, title = tmpl.company or company, tmpl.title or title
+            # Never a sentence for a title; a template's own title only loses a
+            # lead-in.
+            if title:
+                title = clean_role(title, strict=tmpl is None or not tmpl.title)
             names = {
                 "job_company": job["company"] if job else company,
                 "job_title": job["title"] if job else title,

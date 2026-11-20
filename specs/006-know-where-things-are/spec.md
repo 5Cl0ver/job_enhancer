@@ -132,8 +132,8 @@ sentence, or whose company looks like a person, says "Check this job's name".
   saved and says so.
 - Auto-save is on and the user is also looking at the review → saved findings
   show as saved; nothing is offered twice.
-- A renamed job matches another saved job → the rename is refused with "You
-  already have this job saved".
+- A renamed job's new name matches another saved job → allowed: the name is
+  the user's own label, and the two jobs stay separate.
 
 ## Requirements
 

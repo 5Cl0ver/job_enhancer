@@ -299,10 +299,10 @@ async def export_data(
             {
                 "id": str(sj.id),
                 "job_listing": {
-                    "title": sj.job_listing.title,
-                    "company": sj.job_listing.company,
-                    "location": sj.job_listing.location,
-                    "apply_url": sj.job_listing.apply_url,
+                    "title": sj.custom_title or sj.job_listing.title,
+                    "company": sj.custom_company or sj.job_listing.company,
+                    "location": sj.custom_location or sj.job_listing.location,
+                    "apply_url": sj.custom_apply_url or sj.job_listing.apply_url,
                     "source": sj.job_listing.source,
                 },
                 "notes": sj.notes,

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.job import JobListingSchema, JobListingSummarySchema
 
@@ -126,6 +126,38 @@ class ApplicationSyncResult(BaseModel):
     outcomes: list[ApplicationSyncOutcome] = Field(default_factory=list)
 
 
+class ListingRename(BaseModel):
+    """Fix (or confirm) a saved job's name, place or link, for this user only.
+    Only what's sent changes."""
+
+    title: str | None = Field(None, min_length=1, max_length=500)
+    company: str | None = Field(None, min_length=1, max_length=255)
+    location: str | None = Field(None, max_length=255)
+    apply_url: str | None = Field(None, min_length=8, max_length=2000)
+
+    @field_validator("title", "company", "location")
+    @classmethod
+    def _tidy(cls, v: str | None) -> str | None:
+        return " ".join(v.split()) if v is not None else None
+
+    @field_validator("apply_url")
+    @classmethod
+    def _http_only(cls, v: str | None) -> str | None:
+        if v is not None and not v.startswith(("http://", "https://")):
+            raise ValueError("The link must start with http:// or https://")
+        return v
+
+    @model_validator(mode="after")
+    def _something(self):
+        if not any(
+            v for v in (self.title, self.company, self.location, self.apply_url)
+        ):
+            raise ValueError("Send at least one of title, company, place or link.")
+        if self.title == "" or self.company == "":
+            raise ValueError("The title and company can't be empty.")
+        return self
+
+
 class SavedJobUpdate(BaseModel):
     collection_id: uuid.UUID | None = None
     pipeline_stage_id: uuid.UUID | None = None
@@ -157,6 +189,17 @@ class SavedJobBase(BaseModel):
     # scout | email | extension | claude | search | manual; null = not known.
     origin: str | None = None
     scout: ScoutFit | None = None
+    # Made from an email, and its name may be wrong (a sentence for a title,
+    # the sender's own name for the company): the app asks the user to check.
+    name_doubtful: bool = False
+    # The user's own name for the job; folded into ``job_listing`` below, so
+    # every client shows it without knowing it exists.
+    custom_title: str | None = Field(None, exclude=True)
+    custom_company: str | None = Field(None, exclude=True)
+    custom_location: str | None = Field(None, exclude=True)
+    custom_apply_url: str | None = Field(None, exclude=True)
+    # The user has fixed or confirmed this job's name.
+    renamed: bool = False
     notes: str | None
     applied_at: datetime | None
     last_stage_change: datetime
@@ -169,10 +212,31 @@ class SavedJobBase(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _own_names(item):
+    """Show the user's own name, place and link in place of the listing's."""
+    own = {
+        "title": item.custom_title,
+        "company": item.custom_company,
+        "location": item.custom_location,
+        "apply_url": item.custom_apply_url,
+    }
+    item.renamed = any(v is not None for v in own.values())
+    listing = getattr(item, "job_listing", None)
+    if listing is not None:
+        for field, value in own.items():
+            if value:
+                setattr(listing, field, value)
+    return item
+
+
 class SavedJobSchema(SavedJobBase):
     """A saved job with its listing's full description."""
 
     job_listing: JobListingSchema
+
+    @model_validator(mode="after")
+    def _names(self):
+        return _own_names(self)
 
 
 class SavedJobSummary(BaseModel):
@@ -200,6 +264,10 @@ class SavedJobListItem(SavedJobBase):
     """A saved job for lists and the board: listing preview, no description."""
 
     job_listing: JobListingSummarySchema
+
+    @model_validator(mode="after")
+    def _names(self):
+        return _own_names(self)
 
 
 class SourceFolder(BaseModel):

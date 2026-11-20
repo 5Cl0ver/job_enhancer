@@ -57,6 +57,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `SearchResults.tsx` | `useJobSearch` → grid of `JobCard` + pagination |
 | `JobCard.tsx` | Job card: title, company, salary, apply/save; a saved job shows where it came from (`OriginLabel`), a search result its feed |
 | `JobActions.tsx` | What you can do with a saved job, identical in the board's pop-up, the list's pop-up and the job's page: write to the company, research it with Claude, Contact Further |
+| `RenameJob.tsx` | Fix a saved job's title, company, place or link (`RenameButton`, a sheet on a phone); `NameCheck` / `NameCheckLine` flag a name read from an email that may be wrong |
 | `OriginLabel.tsx` | Where a saved job came from, as an icon and a few words ("Claude Scout · fit 8/10", "From an email"); nothing when unknown |
 | `WhereFrom.tsx` | "Where this came from" on the job page and pop-up: origin, Claude's why/gaps and a link to the Scout search, the email it was made from, and its collection |
 | `SavedJobsBody.tsx` | My Jobs list on a computer: folders, filter bar, card grid drawn 30 at a time |
