@@ -261,3 +261,81 @@ class TestDoubtfulNames:
     async def test_a_typed_in_job_is_never_flagged(self, client: AsyncClient):
         job = await _manual(client)
         assert await _flags(client) == {job["id"]: False}
+
+
+@pytest.mark.asyncio
+class TestOwnNameIsUsed:
+    """Everything that recognises a job for the user knows it by their name."""
+
+    async def test_applying_on_the_employers_page_finds_the_renamed_job(
+        self, client: AsyncClient
+    ):
+        job = await _manual(client)
+        await _rename(client, job, title="Platform Engineer", company="Vellacor")
+        r = await client.post(
+            "/v1/saved-jobs/mark-applied",
+            json={"title": "Platform Engineer", "company": "Vellacor"},
+        )
+        assert r.status_code == 200 and r.json()["matched"] is True
+        (listed,) = (await client.get("/v1/saved-jobs/")).json()
+        assert listed["applied_at"] is not None
+
+    async def test_a_board_sync_doesnt_import_a_renamed_job_twice(
+        self, client: AsyncClient
+    ):
+        job = await _manual(client)
+        await _rename(client, job, title="Platform Engineer", company="Vellacor")
+        r = await client.post(
+            "/v1/saved-jobs/sync-applications",
+            json={
+                "applications": [
+                    {
+                        "title": "Platform Engineer",
+                        "company": "Vellacor",
+                        "stage": "Applied",
+                    }
+                ]
+            },
+        )
+        assert r.json()["imported"] == 0 and r.json()["updated"] == 1
+        assert len((await client.get("/v1/saved-jobs/")).json()) == 1
+
+    async def test_scout_knows_a_renamed_job_is_already_tracked(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        from app.services.scout_dedupe import company_key, title_key
+        from app.services.scout_runs import _seen_jobs
+
+        job = await _manual(client)
+        await _rename(client, job, title="Platform Engineer", company="Vellacor")
+        pair = (company_key("Vellacor"), title_key("Platform Engineer"))
+        seen = await _seen_jobs(db_session, test_user.id, {pair}, set())
+        assert seen == {pair: "in_tracker"}
+
+    async def test_ai_documents_use_the_users_name(self, client: AsyncClient):
+        from unittest.mock import AsyncMock, patch
+
+        job = await _manual(client)
+        await _rename(client, job, title="Platform Engineer", company="Vellacor")
+        with patch(
+            "app.api.v1.ai.resume_parser.parse_resume",
+            new=AsyncMock(return_value="Jane Dev — Python, Kubernetes"),
+        ):
+            resume = (
+                await client.post(
+                    "/v1/ai/resumes",
+                    files={"file": ("resume.pdf", b"%PDF-1.4 fake", "application/pdf")},
+                )
+            ).json()
+        r = await client.post(
+            "/v1/ai/prompt",
+            json={
+                "resume_id": resume["id"],
+                "document_type": "cover_letter",
+                "job_listing_id": job["job_listing_id"],
+            },
+        )
+        assert r.status_code == 200, r.text
+        prompt = r.json()["prompt"]
+        assert "Platform Engineer" in prompt and "Vellacor" in prompt
+        assert "Nancy Karnas" not in prompt

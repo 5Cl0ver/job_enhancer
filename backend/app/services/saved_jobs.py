@@ -503,6 +503,15 @@ async def mark_applied(
                 JobListing.company_normalized == company_norm,
             ).limit(1)
         )
+    if sj is None:
+        # The names the user gave a job (a fixed email-made job is known by
+        # those on the employer's page, not by the email's wording).
+        for own, title_own, company_own in await _renamed(db, user_id):
+            if company_own == company_norm and (
+                not title_norm or title_own == title_norm
+            ):
+                sj = own
+                break
     if sj is None and company_norm:
         # Company-only fallback: prefer a job not already applied, newest first.
         sj = await db.scalar(
@@ -526,6 +535,36 @@ async def mark_applied(
         sj.last_stage_change = now
     await db.flush()
     return True
+
+
+async def _renamed(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[tuple[SavedJob, str, str]]:
+    """The user's renamed jobs under their own (normalized) title and company."""
+    rows = (
+        await db.scalars(
+            select(SavedJob)
+            .options(
+                selectinload(SavedJob.job_listing).options(
+                    defer(JobListing.description)
+                )
+            )
+            .where(
+                SavedJob.user_id == user_id,
+                (SavedJob.custom_title.is_not(None))
+                | (SavedJob.custom_company.is_not(None)),
+            )
+        )
+    ).all()
+    return [
+        (
+            sj,
+            normalize(sj.custom_title or sj.job_listing.title or ""),
+            normalize(sj.custom_company or sj.job_listing.company or ""),
+        )
+        for sj in rows
+        if sj.job_listing is not None
+    ]
 
 
 def _best_saved_match(
@@ -603,6 +642,9 @@ async def sync_applications(
         for sj in saved
         if sj.job_listing is not None
     ]
+
+    # A job the user renamed is also known by its own names.
+    candidates += await _renamed(db, user_id)
 
     result = ApplicationSyncResult()
     now = datetime.now(UTC)

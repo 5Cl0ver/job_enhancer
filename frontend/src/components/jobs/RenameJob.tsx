@@ -40,14 +40,20 @@ function RenameForm({ savedJob, onDone }: { savedJob: SavedJob; onDone: () => vo
     if (url && !/^https?:\/\//i.test(url))
       return setProblem("The link should start with http:// or https://");
     setProblem(null);
+    // Only what changed becomes the user's own: the rest keeps following the
+    // posting. Saving with nothing changed confirms the name as it is.
+    const changes: { title?: string; company?: string; location?: string; apply_url?: string } =
+      {};
+    if (title.trim() !== j.title) changes.title = title.trim();
+    if (company.trim() !== j.company) changes.company = company.trim();
+    const place = location.trim() || "Not specified";
+    if (place !== j.location) changes.location = place;
+    if (url && url !== j.apply_url) changes.apply_url = url;
+    const body = Object.keys(changes).length
+      ? changes
+      : { title: title.trim(), company: company.trim() };
     rename
-      .mutateAsync({
-        id: savedJob.id,
-        title: title.trim(),
-        company: company.trim(),
-        location: location.trim() || "Not specified",
-        ...(url && url !== j.apply_url ? { apply_url: url } : {}),
-      })
+      .mutateAsync({ id: savedJob.id, ...body })
       .then(() => onDone())
       // Shown in the form (rename.error), which stays open to try again.
       .catch(() => {});

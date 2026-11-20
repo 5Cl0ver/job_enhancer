@@ -143,6 +143,12 @@ def is_sender_person(name: str | None, from_addr: str) -> bool:
         return False
     if is_platform_sender(address):
         return False
+    # "Morgan Stanley <morgan@morganstanley.com>": the domain is the name, so
+    # it's the company writing.
+    squashed = re.sub(r"[^a-z]", "", name.lower())
+    domain_label = re.sub(r"[^a-z]", "", company_from_sender(address).lower())
+    if domain_label and domain_label == squashed:
+        return False
     parts = [p.lower() for p in name.split()]
     first, last = parts[0], parts[-1]
     local = address.split("@")[0].lower()
@@ -166,6 +172,12 @@ def _org_display_name(from_addr: str) -> str | None:
     return _tidy(name)
 
 
+def _subject_name(subject: str) -> str | None:
+    """The name a subject gives after "application to", "interview with"…."""
+    m = _SUBJECT_COMPANY.search(subject or "")
+    return _tidy(m.group(1)) if m else None
+
+
 def company_name(subject: str, from_addr: str) -> str | None:
     """The employer an email is from/about, or None."""
     m = _SUBJECT_COMPANY.search(subject or "")
@@ -178,22 +190,33 @@ def company_name(subject: str, from_addr: str) -> str | None:
     return _tidy(label[:1].upper() + label[1:]) if label else None
 
 
-def role_name(subject: str, text: str, company: str | None = None) -> str | None:
-    """The role an email names ('Support Engineer'), or None."""
+def role_name(
+    subject: str,
+    text: str,
+    company: str | None = None,
+    *,
+    not_roles: tuple[str, ...] = (),
+) -> str | None:
+    """The role an email names ('Support Engineer'), or None. ``not_roles``
+    are names known not to be roles (the company, or the sender's own name
+    that a subject gave in its place)."""
+    avoid = [n.lower() for n in (company, *not_roles) if n]
     m = _SUBJECT_ROLE.search((subject or "").strip())
     candidates = [m.group(1)] if m else []
     candidates += [r.group(1) for r in _ROLE_PHRASE.finditer(f"{subject}\n{text}")]
     candidates += [r.group(1) for r in _PROCESS_ROLE.finditer(f"{subject}\n{text}")]
     for raw in candidates:
         role = clean_role(raw)
-        if role and (not company or role.lower() != company.lower()):
-            # A "role" that is really "Acme" or "Acme for the …" is no role.
-            if company and role.lower().startswith(company.lower()):
-                continue
+        # A "role" that is really "Acme", "Acme for the …" or the person who
+        # wrote is no role.
+        if role and not any(role.lower().startswith(n) for n in avoid):
             return role
     return None
 
 
 def job_names(subject: str, from_addr: str, text: str) -> tuple[str | None, str | None]:
     company = company_name(subject, from_addr)
-    return company, role_name(subject, text, company)
+    named = _subject_name(subject)
+    return company, role_name(
+        subject, text, company, not_roles=(named,) if named else ()
+    )

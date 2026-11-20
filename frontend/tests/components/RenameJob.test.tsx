@@ -77,10 +77,10 @@ describe("fixing a job's name", () => {
     await user.clear(company);
     await user.type(company, "Vellacor");
     await user.click(within(form).getByRole("button", { name: "Save" }));
+    // Only what changed: the place stays the posting's own.
     expect(patch).toHaveBeenCalledWith("/v1/saved-jobs/s1/listing", {
       title: "Platform Engineer",
       company: "Vellacor",
-      location: "Not specified",
     });
   });
 

@@ -249,6 +249,22 @@ class TestNamesThatAreNotNames:
         )
         assert (company, role) == ("Wells Fargo", "Data Analyst")
 
+    def test_the_senders_name_is_not_the_role_either(self):
+        company, role = job_names(
+            "Your application to Sarah Chen",
+            "Sarah Chen <sarah.chen@brightwave.example>",
+            "Thanks for applying for the Platform Engineer role.",
+        )
+        assert (company, role) == ("Brightwave", "Platform Engineer")
+
+    def test_a_company_writing_from_its_own_domain_is_not_a_person(self):
+        company, role = job_names(
+            "Your application to Morgan Stanley",
+            "Morgan Stanley <morgan@morganstanley.example>",
+            "Thanks for applying for the Data Analyst position.",
+        )
+        assert (company, role) == ("Morgan Stanley", "Data Analyst")
+
     def test_a_subject_that_names_the_sender_is_not_the_company(self):
         sender = "Nancy Karnas <nancy.karnas@vellacor.example>"
         company, role = job_names(
