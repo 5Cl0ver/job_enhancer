@@ -42,6 +42,7 @@ import {
   useToggleResearchFlag,
   useUpdateStage,
 } from "@/hooks/useTracker";
+import { useJobEmailLatest } from "@/hooks/useEmailAccount";
 import { useProfile } from "@/hooks/useProfile";
 import { matchesSearch, searchWords, stageFor } from "@/lib/boardFilter";
 import { cn } from "@/lib/utils";
@@ -118,7 +119,7 @@ function ResearchMiniCard({ savedJob }: { savedJob: SavedJob }) {
     <>
       <div
         onClick={() => setOpen(true)}
-        className="cursor-pointer rounded-md border bg-card p-2.5 shadow-sm transition-shadow hover:border-amber-300 hover:shadow-md"
+        className="cursor-pointer rounded-xl border bg-card p-3 shadow-xs transition-shadow hover:border-amber-400/60 hover:shadow-md"
       >
         <div className="flex items-start justify-between gap-1">
           <p className="line-clamp-2 text-sm font-medium leading-tight">{j.title}</p>
@@ -156,31 +157,21 @@ function ResearchColumn({ jobs }: { jobs: SavedJob[] }) {
     <div
       ref={setNodeRef}
       className={cn(
-        "flex min-h-0 w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-lg transition-shadow sm:w-64",
-        isOver && "ring-2 ring-amber-400",
+        "flex min-h-0 w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-xl bg-amber-500/10 transition-colors sm:w-72",
+        isOver && "bg-amber-500/20 ring-2 ring-amber-400/70",
       )}
     >
-      <div className="rounded-t-lg border border-amber-200 bg-amber-50 px-3 py-2 dark:border-amber-900 dark:bg-amber-950/30">
-        <div className="flex items-center justify-between">
-          <span className="flex items-center gap-1 text-sm font-semibold text-amber-800 dark:text-amber-300">
-            <Search className="h-3.5 w-3.5" /> Contact Further
-          </span>
-          <span className="rounded-full bg-background px-1.5 py-0.5 text-xs font-medium">
-            {jobs.length}
-          </span>
-        </div>
+      <div className="flex items-center gap-2 px-3 pb-2 pt-3">
+        <Search className="h-3.5 w-3.5 text-amber-600 dark:text-amber-400" aria-hidden />
+        <span className="text-sm font-semibold">Contact Further</span>
+        <span className="text-xs font-medium tabular-nums text-muted-foreground">{jobs.length}</span>
       </div>
-      <div
-        className={cn(
-          "flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-lg border border-t-0 border-amber-200 bg-amber-50/40 p-2 transition-colors dark:border-amber-900 dark:bg-amber-950/20",
-          isOver && "bg-amber-100/70 dark:bg-amber-900/30",
-        )}
-      >
+      <div className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2">
         {jobs.map((sj) => (
           <ResearchMiniCard key={sj.id} savedJob={sj} />
         ))}
         {jobs.length === 0 && (
-          <p className="py-4 text-center text-xs text-amber-700/70 dark:text-amber-500/70">
+          <p className="py-4 text-center text-xs text-muted-foreground">
             Drop a job here to research the company
           </p>
         )}
@@ -193,7 +184,7 @@ function BoardSkeleton() {
   return (
     <div className="flex min-h-0 flex-1 gap-3 overflow-hidden" aria-busy aria-label="Loading your jobs">
       {[5, 3, 4, 2].map((cards, i) => (
-        <div key={i} className="flex w-64 shrink-0 flex-col gap-2">
+        <div key={i} className="flex w-72 shrink-0 flex-col gap-2">
           <Skeleton className="h-10 w-full" />
           {Array.from({ length: cards }, (_, n) => (
             <Skeleton key={n} className="h-24 w-full" />
@@ -209,6 +200,7 @@ export function KanbanBoard() {
   const jobsQuery = useKanbanJobs();
   const stages = stagesQuery.data ?? [];
   const savedJobs = jobsQuery.data ?? [];
+  const { data: emails } = useJobEmailLatest();
   const { data: profile } = useProfile();
   // Use the user's real follow-up cadence (Settings), not a hardcoded 7 days.
   const followUpDays = profile?.follow_up_days ?? DEFAULT_FOLLOW_UP_DAYS;
@@ -444,6 +436,7 @@ export function KanbanBoard() {
               words={words}
               hits={hits?.get(stage.id) ?? null}
               pulseId={pulseId}
+              emails={emails}
               onMoveJob={move}
               canMoveLeft={i > 0}
               canMoveRight={i < normalStages.length - 1}

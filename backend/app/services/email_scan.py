@@ -15,7 +15,7 @@ import hashlib
 import logging
 import uuid
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
 from urllib.parse import quote
 
@@ -153,25 +153,84 @@ class DetectResult:
 _MAX_CONSIDERED = 40
 
 
-def mail_link(provider: str, message_id: str = "", subject: str = "") -> str | None:
+# Yahoo and AOL run the same web mail. Its address for one message is the
+# folder's MAILBOXID and the message's EMAILID, the ids their IMAP server gives
+# out (RFC 8474 OBJECTID). The inbox is always mailbox 1.
+_YAHOO_HOSTS = {"yahoo": "mail.yahoo.com", "aol": "mail.aol.com"}
+_EARLIEST_EMAIL = datetime(2000, 1, 1, tzinfo=UTC)
+_INBOX_MAILBOX_ID = "1"
+_EMAILID_PREFIX = "emailid:"
+
+
+def sent_at(date: datetime | None, now: datetime | None = None) -> datetime | None:
+    """An email's Date header as a time worth storing: in UTC, and believable.
+    A header with no time zone is read as UTC. A date before 2000 or after
+    tomorrow is forged or broken (and can overflow the database), so it is
+    dropped; the page then says when the email was found instead."""
+    if date is None:
+        return None
+    try:
+        utc = (date if date.tzinfo else date.replace(tzinfo=UTC)).astimezone(UTC)
+    except (OverflowError, ValueError):
+        return None
+    latest = (now or datetime.now(tz=UTC)) + timedelta(days=1)
+    return utc if _EARLIEST_EMAIL <= utc <= latest else None
+
+
+def email_id_of(logical: str | None) -> str:
+    """The server's own id for an email, from a stored ``logical_key``
+    ("emailid:…"); "" when the key was built another way."""
+    if logical and logical.startswith(_EMAILID_PREFIX):
+        return logical[len(_EMAILID_PREFIX) :]
+    return ""
+
+
+def mail_search_link(
+    provider: str, subject: str = "", from_addr: str = ""
+) -> str | None:
+    """A webmail search that should land on this email: its subject plus, where
+    it helps, its sender (many job emails share a subject). None for a provider
+    with no usable search address."""
+    subj = (subject or "").strip()
+    sender = parseaddr(from_addr or "")[1]
+    if provider == "gmail":
+        terms = " ".join(t for t in (f"from:{sender}" if sender else "", subj) if t)
+        return (
+            f"https://mail.google.com/mail/u/0/#search/{quote(terms)}"
+            if terms
+            else None
+        )
+    if provider in _YAHOO_HOSTS:
+        terms = " ".join(t for t in (subj, sender) if t)
+        if terms:
+            return f"https://{_YAHOO_HOSTS[provider]}/d/search/keyword={quote(terms)}"
+    return None
+
+
+def mail_link(
+    provider: str,
+    message_id: str = "",
+    subject: str = "",
+    *,
+    email_id: str = "",
+    folder: str = "",
+    from_addr: str = "",
+) -> str | None:
     """A link that takes the user to this email in their webmail.
 
-    Gmail can open the *exact* message (search by RFC822 Message-ID); otherwise
-    we fall back to a subject search, which lands the user on the right message
-    in Gmail or Yahoo. Providers without a usable web search URL return None and
-    the UI just shows sender/subject/date.
+    The exact message when we can name it: Gmail by its RFC822 Message-ID,
+    Yahoo/AOL by the server's EMAILID for mail in the inbox. Otherwise a search
+    (``mail_search_link``). Providers with neither return None and the UI just
+    shows sender/subject/date.
     """
     mid = (message_id or "").strip().strip("<>")
-    subj = (subject or "").strip()
-    if provider == "gmail":
-        if mid:
-            return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid)}"
-        if subj:
-            return f"https://mail.google.com/mail/u/0/#search/{quote(subj)}"
-    elif provider in ("yahoo", "aol"):
-        if subj:
-            return f"https://mail.yahoo.com/d/search/keyword={quote(subj)}"
-    return None
+    if provider == "gmail" and mid:
+        return f"https://mail.google.com/mail/u/0/#search/rfc822msgid:{quote(mid)}"
+    if provider in _YAHOO_HOSTS and email_id and folder.upper() == "INBOX":
+        host = _YAHOO_HOSTS[provider]
+        message = quote(email_id, safe="")
+        return f"https://{host}/d/folders/{_INBOX_MAILBOX_ID}/messages/{message}"
+    return mail_search_link(provider, subject, from_addr)
 
 
 async def _candidate_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
@@ -449,6 +508,7 @@ async def detect_events(
             "message_uid": msg.uid,
             "logical_key": key,
             "match_evidence": match.evidence or None,
+            "email_date": sent_at(msg.date),
         }
 
         # A forward card move WITH a confident match becomes a pending update.

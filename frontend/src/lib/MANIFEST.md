@@ -11,6 +11,7 @@ Shared utilities and external-service clients.
 | `jobFilters.ts` | Pure My Jobs list logic shared by the desktop and phone lists: `filterJobs` (search, place, pay incl. hourly→yearly, type, applied, remote), `filtersSet`, `jobTypesIn`, `stageCounts`. |
 | `stageStyle.ts` | `stageTone(name)`: one colour per kind of stage (chip + dot classes), matched on the stage's name so custom stages fit. |
 | `text.ts` | `plainText`: turns HTML entities left in captured titles (`&amp;`) back into characters; output is plain text. |
+| `openFile.ts` | `openOwnFile(path)`: open one of the user's own files (a resume) in a new tab; fetched with the sign-in token, since a plain link can't send it. |
 | `prefs.ts` | Layout choices remembered on this device (`localStorage`): `readPref` / `writePref`. |
 | `utils.ts` | `cn()` — classname merge (clsx + tailwind-merge), used by shadcn/ui components. |
 

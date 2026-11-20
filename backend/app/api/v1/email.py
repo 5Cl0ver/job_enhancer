@@ -39,6 +39,7 @@ from app.schemas.email_account import (
     EmailMessageOut,
     EmailSettingsRequest,
     FolderSyncOut,
+    JobEmailLatestOut,
     MatchCandidateOut,
     ProviderInfoOut,
     ResolveEventRequest,
@@ -55,7 +56,9 @@ from app.services.email_scan import (
     IMPORTANT_EVENTS,
     _candidate_jobs,
     detect_events,
+    email_id_of,
     mail_link,
+    mail_search_link,
 )
 from app.utils import crypto
 
@@ -113,7 +116,14 @@ async def _events_out(
             if d.company and not d.company[0].isalnum():
                 d.company = None  # a leftover like ".io" stored by an older scan
         d.stage_missing = bool(e.target_stage) and e.target_stage not in stage_names
-        d.mail_link = mail_link(provider, subject=e.subject)
+        d.mail_link = mail_link(
+            provider,
+            subject=e.subject,
+            email_id=email_id_of(e.logical_key),
+            folder=e.folder,
+            from_addr=e.from_addr,
+        )
+        d.mail_search_link = mail_search_link(provider, e.subject, e.from_addr)
         if e.status in (STATUS_REVIEW, STATUS_HIDDEN):
             d.review_reason = (
                 "unsure" if e.event_type == UNSURE else e.match_evidence or "no_match"
@@ -401,8 +411,50 @@ async def view_event_email(
         from_addr=viewed.from_addr,
         date=viewed.date,
         text=viewed.text,
-        mail_link=mail_link(account.provider, subject=viewed.subject),
+        mail_link=mail_link(
+            account.provider,
+            subject=viewed.subject,
+            email_id=email_id_of(ev.logical_key),
+            folder=ev.folder,
+            from_addr=viewed.from_addr,
+        ),
+        mail_search_link=mail_search_link(
+            account.provider, viewed.subject, viewed.from_addr
+        ),
     )
+
+
+@router.get("/job-emails/latest", response_model=list[JobEmailLatestOut])
+async def job_emails_latest(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[JobEmailLatestOut]:
+    """For every saved job with emails, the one that explains where its card
+    sits — so the board can show "moved here by an email" on each card without
+    a request per card."""
+    account = await svc.get_account(db, user.id)
+    provider = account.provider if account else ""
+    return [
+        JobEmailLatestOut(
+            saved_job_id=ev.saved_job_id,
+            event_id=ev.id,
+            event_type=ev.event_type,
+            status=ev.status,
+            target_stage=ev.target_stage,
+            email_date=ev.email_date,
+            created_at=ev.created_at,
+            mail_link=mail_link(
+                provider,
+                subject=ev.subject,
+                email_id=email_id_of(ev.logical_key),
+                folder=ev.folder,
+                from_addr=ev.from_addr,
+            ),
+            mail_search_link=mail_search_link(provider, ev.subject, ev.from_addr),
+            count=count,
+        )
+        for ev, count in await email_review.latest_by_job(db, user.id)
+    ]
 
 
 @router.get("/job-emails", response_model=list[DetectedEventOut])

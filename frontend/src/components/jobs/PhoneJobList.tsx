@@ -6,7 +6,7 @@
  */
 import { useMemo, useState } from "react";
 import { Link } from "react-router-dom";
-import { BookmarkX, Search, SlidersHorizontal, X } from "lucide-react";
+import { BookmarkX, Mail, Search, SlidersHorizontal, X } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
 import { CountBadge } from "@/components/layout/PhoneNav";
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useJobEmailLatest } from "@/hooks/useEmailAccount";
 import { useCollections, useSavedJobs } from "@/hooks/useSavedJobs";
 import { useShowMore } from "@/hooks/useShowMore";
 import { usePipelineStages } from "@/hooks/useTracker";
@@ -71,7 +72,16 @@ function Chip({
   );
 }
 
-function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string | null }) {
+function JobRow({
+  savedJob,
+  stageName,
+  hasEmail,
+}: {
+  savedJob: SavedJob;
+  stageName: string | null;
+  /** An email is behind this job's stage; its page shows it first. */
+  hasEmail: boolean;
+}) {
   const j = savedJob.job_listing;
   const where = [j.company, j.is_remote ? "Remote" : j.location].filter(Boolean).join(" · ");
   return (
@@ -84,6 +94,9 @@ function JobRow({ savedJob, stageName }: { savedJob: SavedJob; stageName: string
           <p className="truncate font-medium leading-snug">{j.title}</p>
           <p className="truncate text-sm text-muted-foreground">{where}</p>
         </div>
+        {hasEmail && (
+          <Mail className="h-4 w-4 shrink-0 text-primary" aria-label="Has an email" />
+        )}
         {j.is_expired ? (
           <span className="shrink-0 rounded-full bg-destructive/15 px-2 py-0.5 text-xs font-medium text-destructive">
             Expired
@@ -110,6 +123,7 @@ export function PhoneJobList() {
   const jobsQuery = useSavedJobs({ collectionId: folder ?? undefined });
   const { data: stages = [] } = usePipelineStages();
   const { data: collections = [] } = useCollections();
+  const { data: emails } = useJobEmailLatest();
   const [filters, setFilters] = useState<JobFilters>(NO_FILTERS);
   const [stage, setStage] = useState(() => readPref("jobsStage") ?? ALL);
   const [sheetOpen, setSheetOpen] = useState(false);
@@ -246,6 +260,7 @@ export function PhoneJobList() {
               <JobRow
                 key={sj.id}
                 savedJob={sj}
+                hasEmail={emails?.has(sj.id) ?? false}
                 // The stage is in the chip above when one is chosen.
                 stageName={
                   active === ALL ? (stageNames.get(sj.pipeline_stage_id ?? "") ?? null) : null

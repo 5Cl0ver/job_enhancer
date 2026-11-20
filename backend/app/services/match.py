@@ -12,8 +12,10 @@ import re
 from dataclasses import dataclass, field
 
 # Curated skills vocabulary (canonical, lowercase). Multi-word entries are
-# matched as phrases. Scoped to the roles this app targets (full-stack /
-# web-dev) plus general engineering practice + soft skills.
+# matched as phrases. Covers the roles this app is used for: software / web
+# development, IT administration and identity, business and systems analysis,
+# plus general engineering practice and soft skills. Only terms that mean a
+# skill wherever they appear ("microsoft teams", not "teams").
 SKILLS: list[str] = [
     # Languages
     "python",
@@ -103,6 +105,62 @@ SKILLS: list[str] = [
     "etl",
     "spark",
     "data integration",
+    # IT administration / systems / identity
+    "powershell",
+    "active directory",
+    "entra id",
+    "microsoft 365",
+    "intune",
+    "sccm",
+    "group policy",
+    "exchange online",
+    "sharepoint",
+    "microsoft teams",
+    "windows server",
+    "vmware",
+    "hyper-v",
+    "dns",
+    "dhcp",
+    "vpn",
+    "tcp/ip",
+    "firewalls",
+    "okta",
+    "sso",
+    "saml",
+    "mfa",
+    "iam",
+    "mdm",
+    "jamf",
+    "patch management",
+    "disaster recovery",
+    "help desk",
+    "itil",
+    "servicenow",
+    "jira",
+    "confluence",
+    "zendesk",
+    "google workspace",
+    "macos",
+    "ansible",
+    "automation",
+    "scripting",
+    "splunk",
+    # Business / systems analysis
+    "business analysis",
+    "requirements gathering",
+    "user stories",
+    "process mapping",
+    "process improvement",
+    "stakeholder management",
+    "uat",
+    "power bi",
+    "tableau",
+    "visio",
+    "salesforce",
+    "erp",
+    "crm",
+    "data visualization",
+    "project management",
     # Practice
     "agile",
     "scrum",
@@ -145,7 +203,36 @@ _EQUIVALENTS: dict[str, list[str]] = {
     "node.js": ["nodejs", "node js"],
     "next.js": ["nextjs", "next js"],
     "ci/cd": ["ci cd", "continuous integration"],
+    "microsoft 365": ["office 365", "m365", "o365"],
+    "entra id": ["azure ad", "azure active directory", "microsoft entra"],
+    "sccm": ["mecm", "configuration manager"],
+    "exchange online": ["microsoft exchange", "exchange server"],
+    "microsoft teams": ["ms teams"],
+    "firewalls": ["firewall"],
+    "sso": ["single sign-on", "single sign on"],
+    "mfa": ["multi-factor authentication", "multifactor authentication", "2fa"],
+    "iam": ["identity and access management", "identity management"],
+    "mdm": ["mobile device management"],
+    "help desk": ["helpdesk", "service desk"],
+    "servicenow": ["service now"],
+    "uat": ["user acceptance testing"],
+    "erp": ["enterprise resource planning"],
 }
+
+# General strengths, not the "key skills for this kind of role" a resume type
+# lists; left out when suggesting skills from a resume.
+_SOFT: frozenset[str] = frozenset(
+    {
+        "communication",
+        "leadership",
+        "collaboration",
+        "problem solving",
+        "mentoring",
+        "cross-functional",
+        "documentation",
+        "troubleshooting",
+    }
+)
 
 
 def _pattern(term: str) -> re.Pattern[str]:
@@ -173,6 +260,44 @@ def extract_keywords(description: str) -> list[str]:
             seen.add(canonical)
             found.append(skill)
     return found
+
+
+def skills_in_resume(resume_text: str, limit: int = 20) -> list[str]:
+    """The known skills a resume names, written the way the resume writes them
+    ("PowerShell", "Azure AD") and in the order it first mentions them, which
+    is roughly the order its author cares about. For pre-filling a resume
+    type's key skills."""
+    # Every place each skill (or another name for it) appears.
+    spans: list[tuple[int, int, str]] = [
+        (m.start(), m.end(), skill)
+        for skill in SKILLS
+        if skill not in _SOFT
+        for term in (skill, *_EQUIVALENTS.get(skill, []))
+        for m in _pattern(term).finditer(resume_text)
+    ]
+
+    # "Azure" inside "Azure AD" is the longer skill's mention, not its own.
+    def inside_another(a: tuple[int, int, str]) -> bool:
+        return any(
+            b[2] != a[2]
+            and b[0] <= a[0]
+            and a[1] <= b[1]
+            and (b[1] - b[0]) > (a[1] - a[0])
+            for b in spans
+        )
+
+    first: dict[str, tuple[int, int]] = {}
+    for span in sorted(spans):
+        if span[2] not in first and not inside_another(span):
+            first[span[2]] = (span[0], span[1])
+    found: list[str] = []
+    seen: set[str] = set()
+    for begin, finish in sorted(first.values()):
+        written = " ".join(resume_text[begin:finish].split())
+        if written.lower() not in seen:
+            seen.add(written.lower())
+            found.append(written)
+    return found[:limit]
 
 
 @dataclass

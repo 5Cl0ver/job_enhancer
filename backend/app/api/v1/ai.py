@@ -3,6 +3,7 @@
 import re
 import uuid
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -35,15 +36,20 @@ from app.schemas.resume import (
     ManualDocumentCreate,
     PromptResponse,
     ResumeSchema,
+    ResumeSkills,
     WorkExperienceEntry,
     WorkHistoryResponse,
 )
 from app.services import ai_service, resume_parser
+from app.services.match import skills_in_resume
 from app.utils.rate_limit import rate_limit_key
 
 _limiter = Limiter(key_func=rate_limit_key)
 
 router = APIRouter()
+
+# A resume type holds up to 30 skills; suggest a list worth reading.
+MAX_SUGGESTED_SKILLS = 20
 
 _ALLOWED_MIME_TYPES = {
     "application/pdf",
@@ -130,6 +136,61 @@ async def download_active_resume_file(
             # The extension needs these to rebuild the File object.
             "X-Resume-Filename": resume.filename,
         },
+    )
+
+
+def _inline(filename: str) -> str:
+    """A Content-Disposition that shows the file in the tab under its own name.
+    Headers are latin-1 only, so the name goes twice (RFC 6266): a plain-ASCII
+    stand-in every browser accepts, and the real name percent-encoded."""
+    plain = re.sub(r'[^\x20-\x7e]|["\\]', "", filename).strip() or "resume"
+    return f"inline; filename=\"{plain}\"; filename*=UTF-8''{quote(filename, safe='')}"
+
+
+async def _own_resume(db: AsyncSession, user: User, resume_id: uuid.UUID) -> Resume:
+    resume = await db.scalar(
+        select(Resume).where(Resume.id == resume_id, Resume.user_id == user.id)
+    )
+    if not resume:
+        raise HTTPException(status_code=404, detail="Resume not found")
+    return resume
+
+
+@router.get("/resumes/{resume_id}/file")
+async def view_resume_file(
+    resume_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> StreamingResponse:
+    """One of the user's resumes, to look at in the browser: which file is
+    this, before attaching it to a resume type."""
+    import io
+
+    resume = await _own_resume(db, user, resume_id)
+    if not resume.file_data:
+        raise HTTPException(
+            status_code=404,
+            detail="This resume's file wasn't kept. Upload it again to view it.",
+        )
+    return StreamingResponse(
+        io.BytesIO(resume.file_data),
+        media_type=resume.mime_type,
+        headers={"Content-Disposition": _inline(resume.filename)},
+    )
+
+
+@router.get("/resumes/{resume_id}/skills", response_model=ResumeSkills)
+async def resume_skills(
+    resume_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ResumeSkills:
+    """The known skills named in a resume, to pre-fill a resume type's "key
+    skills" so the user edits a list instead of typing one. Read off the text
+    by the same word list the match score uses; no AI."""
+    resume = await _own_resume(db, user, resume_id)
+    return ResumeSkills(
+        skills=skills_in_resume(resume.extracted_text or "", MAX_SUGGESTED_SKILLS)
     )
 
 

@@ -199,3 +199,52 @@ export function scanIsDone(r: ScanResult): boolean {
   if (r.interrupted || (r.carried_over ?? 0) > 0) return false;
   return (r.folders ?? []).every((f) => f.status === "complete" && f.carried_over === 0);
 }
+
+/** The name of the mail site a link goes to, for the button that opens it. */
+export function mailName(link: string): string {
+  if (link.includes("mail.google.")) return "Gmail";
+  if (link.includes("mail.aol.")) return "AOL Mail";
+  if (link.includes("mail.yahoo.")) return "Yahoo Mail";
+  return "your mail";
+}
+
+const EMAIL_LABEL: Record<string, string> = {
+  interview: "Interview email",
+  assessment: "Assessment email",
+  offer: "Offer email",
+  rejected: "Rejection email",
+  applied: "Confirmation email",
+  recruiter: "Recruiter email",
+};
+
+/** A few words for an email on a job's card ("Interview email"). */
+export function emailLabel(eventType: string): string {
+  return EMAIL_LABEL[eventType] ?? "Email";
+}
+
+const clock = (d: Date) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+/** A moment as a person says it: "Today 9:14 AM", "Yesterday 4:02 PM",
+ * "Mon 9:14 AM" within a week, then "Nov 12". Days are calendar days. */
+export function whenText(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const dayOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((dayOf(now) - dayOf(d)) / 86_400_000);
+  if (days <= 0) return `Today ${clock(d)}`;
+  if (days === 1) return `Yesterday ${clock(d)}`;
+  if (days < 7) return `${d.toLocaleDateString([], { weekday: "short" })} ${clock(d)}`;
+  return d.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/** When an email arrived. Emails recorded before the app kept their date only
+ * have the time a scan found them, and say so. */
+export function emailWhen(
+  ev: { email_date?: string | null; created_at: string },
+  now: Date = new Date(),
+): string {
+  return ev.email_date ? whenText(ev.email_date, now) : `Found ${whenText(ev.created_at, now)}`;
+}

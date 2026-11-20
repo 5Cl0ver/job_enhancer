@@ -1,12 +1,15 @@
 /**
  * Shows one detected email, fetched read-only from the user's mailbox when the
- * dialog opens. The text is plain (the server never sends email HTML), so it is
- * rendered as text — nothing in an email can run or load here. When it can't
- * be opened (moved, deleted), a link searches for it in the user's webmail.
+ * dialog opens: a quick read without leaving the app. The text is plain (the
+ * server never sends email HTML), so it is rendered as text — nothing in an
+ * email can run or load here. To use the email's links, "Open in Yahoo Mail"
+ * goes to the message itself in the user's own mail; if that doesn't land on
+ * it, there's a search for it.
  */
 import { ExternalLink, Loader2, Mail } from "lucide-react";
 import { ApiError } from "@/lib/api";
 import { useEmailMessage } from "@/hooks/useEmailAccount";
+import { mailName } from "@/lib/emailUpdates";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,14 +19,42 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 
+/** The way out to the user's own mail: the message itself, and a search for it
+ * in case the direct link doesn't land. */
+function MailLinks({ link, search }: { link?: string | null; search?: string | null }) {
+  if (!link && !search) return null;
+  const main = link ?? search!;
+  return (
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-2">
+      <Button asChild size="sm" className="gap-1.5">
+        <a href={main} target="_blank" rel="noreferrer">
+          Open in {mailName(main)} <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+        </a>
+      </Button>
+      {link && search && search !== link && (
+        <a
+          href={search}
+          target="_blank"
+          rel="noreferrer"
+          className="text-sm text-muted-foreground underline underline-offset-2 hover:text-foreground"
+        >
+          Didn&apos;t open it? Search for it
+        </a>
+      )}
+    </div>
+  );
+}
+
 export function EmailViewer({
   eventId,
   mailLink,
+  searchLink,
   onClose,
 }: {
   eventId: string | null;
-  /** Searches the user's webmail for this email, when it can't be opened here. */
+  /** The email in the user's webmail, known before the email itself loads. */
   mailLink?: string | null;
+  searchLink?: string | null;
   onClose: () => void;
 }) {
   const { data, isLoading, isError, error } = useEmailMessage(eventId);
@@ -57,13 +88,7 @@ export function EmailViewer({
                   ? error.message
                   : "Couldn't open this email. Try again."}
             </p>
-            {mailLink && (
-              <Button asChild variant="outline" size="sm" className="w-fit gap-1.5">
-                <a href={mailLink} target="_blank" rel="noreferrer">
-                  Search for it in your mail <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                </a>
-              </Button>
-            )}
+            <MailLinks link={mailLink} search={searchLink} />
           </div>
         )}
         {data && (
@@ -71,13 +96,10 @@ export function EmailViewer({
             <div className="max-h-[55vh] overflow-y-auto whitespace-pre-wrap break-words rounded-md bg-muted/40 p-3 text-sm leading-relaxed">
               {data.text || "(This email has no readable text — it may be images only.)"}
             </div>
-            {data.mail_link && (
-              <Button asChild variant="outline" size="sm" className="w-fit gap-1.5">
-                <a href={data.mail_link} target="_blank" rel="noreferrer">
-                  Open in your mail <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                </a>
-              </Button>
-            )}
+            <MailLinks
+              link={data.mail_link ?? mailLink}
+              search={data.mail_search_link ?? searchLink}
+            />
           </>
         )}
       </DialogContent>

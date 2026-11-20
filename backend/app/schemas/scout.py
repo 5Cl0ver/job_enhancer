@@ -131,6 +131,10 @@ POSTED_WITHIN = (1, 3, 7, 14, 30)
 MAX_JOBS_PER_RUN = 10
 
 
+# "Within N miles" of the search's city. The three boards all take these.
+Radius = Literal[5, 10, 25, 50, 100]
+
+
 class MissionCreate(BaseModel):
     source: Source
     track_id: uuid.UUID
@@ -139,6 +143,7 @@ class MissionCreate(BaseModel):
     posted_within_days: int = 7
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     location: str | None = Field(None, max_length=120)
+    radius_miles: Radius | None = None
     remote: Remote = "any"
     min_fit: int = Field(6, ge=0, le=10)
     extra_instructions: str | None = Field(None, max_length=1000)
@@ -166,6 +171,7 @@ class MissionUpdate(BaseModel):
     posted_within_days: int | None = None
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     location: str | None = Field(None, max_length=120)
+    radius_miles: Radius | None = None
     remote: Remote | None = None
     min_fit: int | None = Field(None, ge=0, le=10)
     extra_instructions: str | None = Field(None, max_length=1000)
@@ -190,6 +196,7 @@ class MissionOut(BaseModel):
     posted_within_days: int
     min_pay: int | None
     location: str | None
+    radius_miles: int | None = None
     remote: str
     min_fit: int
     extra_instructions: str | None

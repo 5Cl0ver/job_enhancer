@@ -103,20 +103,35 @@ updates found, cards moved.
 events (Render's free proxy buffers and drops idle streams); a real job queue
 (paid).
 
-## R7. Opening the actual email
+## R7. Opening the actual email (revised 2026-11-19)
 
-**Decision**: the in-app viewer stays the primary "View email" (it shows the
-exact message, read-only). The webmail button keeps Gmail's exact-message link
-and changes Yahoo/AOL to a search for `from:<sender> subject:"<subject>"`.
+**Decision**: two ways in, from wherever a job's email is shown (its card, its
+page, Email updates). **View email** is the quick read in the app (plain text,
+read-only). **Open in Yahoo Mail / Gmail** goes to the message itself in the
+user's own mail, where its links can be used. A search for the email sits
+beside it in case the direct link doesn't land.
 
-**Rationale**: Yahoo documents `From:` and `Subject:` search prefixes
-([Yahoo help](https://help.yahoo.com/kb/att/new-mail-for-desktop/search-messages-yahoo-mail-sln28811.html))
-but no URL that opens one message. Subject-only search returns many
-"Thank you for applying" mails; adding the sender usually leaves one.
+- Gmail: the message by its RFC822 Message-ID (unchanged).
+- Yahoo/AOL: `https://mail.yahoo.com/d/folders/1/messages/<EMAILID>` for mail
+  in the inbox. `EMAILID` is the id Yahoo's IMAP server gives each message
+  (RFC 8474 OBJECTID); the app already stores it as the email's `logical_key`.
+  The inbox is mailbox `1` in both the IMAP ids and the web address.
+- Anything else (spam folder, no server id): a keyword search for the subject
+  plus the sender's address.
 
-**To verify on a real Yahoo account** (quickstart step): that the
-`/d/search/keyword=` route accepts the prefixes. If not, fall back to
-`"<subject>" <sender-domain>` as plain keywords.
+**Rationale**: the user needs the real email to prepare (links, attachments),
+not just its text, and a subject-only search lists every "Thank you for
+applying". Yahoo's developer documentation shows the ids
+([Yahoo sender docs](https://senders.yahooinc.com/developer/documentation/):
+`EMAILID (AHv3_…) … MAILBOXID (1)`); the web address format is not documented.
+
+**Not verified**: that Yahoo's web and phone mail open that address on the
+message. It was built from the documented ids and the address the web mail
+shows, and could not be tried without the user's account. The search link is
+kept next to it for that reason; the user's first tap on live is the test.
+
+**Alternative**: storing each folder's MAILBOXID so mail outside the inbox gets
+an exact link too. Worth doing once the inbox link is confirmed to work.
 
 ## R8. First-run guidance
 
