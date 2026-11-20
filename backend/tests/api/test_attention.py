@@ -82,7 +82,12 @@ class TestAttention:
     async def test_nothing_waiting(self, client: AsyncClient):
         r = await client.get("/v1/attention")
         assert r.status_code == 200, r.text
-        assert r.json() == {"tasks_open": 0, "tasks_overdue": 0, "email_review": 0}
+        assert r.json() == {
+            "tasks_open": 0,
+            "tasks_overdue": 0,
+            "email_review": 0,
+            "scout_review": 0,
+        }
 
     async def test_counts_only_updates_that_need_the_user(
         self, client: AsyncClient, db_session, test_user

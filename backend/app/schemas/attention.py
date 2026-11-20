@@ -11,3 +11,5 @@ class AttentionOut(BaseModel):
     tasks_overdue: int = 0
     # Email updates waiting for a click or an answer.
     email_review: int = 0
+    # Jobs Claude Scout picked that are waiting to be ticked and saved.
+    scout_review: int = 0

@@ -85,7 +85,8 @@ A `collection_id` that isn't the user's is a 404.
   "findings": [
     { "id": "…", "outcome": "picked", "title": "…", "company": "…", "url": "…",
       "fit_score": 8, "why_fit": "…", "gaps": "…", "app_note": null,
-      "can_save": true, "saved_job_id": null }
+      "can_save": true, "saved_job_id": null,
+      "collection_id": null, "collection_name": null }
   ]
 }
 ```
@@ -135,9 +136,9 @@ Same four tools, same sizes. Wording changes only:
 
 | Tool | Change |
 |---|---|
-| `get_scout_brief` | Playbook line: "Good fits are kept for the user to confirm in the app. Never say a job was saved." With `auto_save` on: "Good fits are saved straight to the user's folder." |
-| `report_job` | `outcome` may be `picked`. `saved` in the progress counts picks + saved, so the target is reached the same way. `next` unchanged. |
-| `finish_scout_run` | Reply: "N kept for the user to review" (or "N saved" with `auto_save`). |
+| `get_scout_brief` | New `saving` line: "Good fits are kept in the app for the user to tick and save. You never save a job yourself…" With `auto_save` on: "Good fits are saved straight into the user's collection." Playbook 2026.11.3 adds one step saying the same. |
+| `report_job` | `outcome` may be `picked`. The progress key is now `kept` (picks + saved), not `saved`, so nothing in a reply reads as "saved" when it wasn't; the target is reached the same way. `next` unchanged. |
+| `finish_scout_run` | `next` gives the sentence to say: "N jobs are waiting in Job Enhancer (Find Jobs > Claude Scout) for them to tick and save. Don't say anything was saved." (or "N jobs were saved to My Jobs" with `auto_save`). |
 | `check_jobs` | `picked` and `skipped` count as seen. |
 
 `save_job` (chat, outside Scout) is unchanged apart from stamping

@@ -5,7 +5,9 @@ import {
   fitBand,
   formatPay,
   isOpen,
+  lookedAt,
   parsePay,
+  reviewTicks,
   runSummary,
   splitLines,
   splitList,
@@ -63,16 +65,81 @@ describe("scout runs", () => {
   });
 
   it("summarises a run in one line", () => {
-    const counts = { saved: 2, below_bar: 1, duplicate: 1, waiting_for_copy: 0, no_copy: 0 };
+    const counts = {
+      picked: 1,
+      saved: 1,
+      skipped: 0,
+      below_bar: 1,
+      duplicate: 1,
+      waiting_for_copy: 0,
+      no_copy: 0,
+    };
     expect(runSummary({ status: "queued", counts, target: 5 })).toBe(
       "Waiting for Claude to start",
     );
-    expect(runSummary({ status: "running", counts, target: 5 })).toBe(
-      "Searching · 2 of 5 saved · 2 passed over",
+    // Good fits count as found whether or not they've been confirmed yet;
+    // one the user passed on doesn't (Claude keeps looking).
+    expect(runSummary({ status: "running", counts: { ...counts, skipped: 3 }, target: 5 })).toBe(
+      "Searching · 2 of 5 found · 2 passed over",
     );
-    expect(runSummary({ status: "done", counts: { ...counts, below_bar: 0, duplicate: 0 }, target: 5 })).toBe(
-      "Done · 2 saved",
+    expect(runSummary({ status: "done", counts, target: 5 })).toBe(
+      "Done · 1 waiting for you · 1 saved · 2 passed over",
     );
+    expect(
+      runSummary({
+        status: "stopped",
+        counts: { ...counts, picked: 0, saved: 2, below_bar: 0, duplicate: 0 },
+        target: 5,
+      }),
+    ).toBe("Stopped · 2 saved");
+  });
+
+  it("says why a finished search came back short, and the numbers add up", () => {
+    const counts = {
+      picked: 2,
+      saved: 0,
+      skipped: 0,
+      below_bar: 3,
+      duplicate: 0,
+      waiting_for_copy: 0,
+      no_copy: 1,
+    };
+    const looked_at = { rows: 24, in_tracker: 2, seen_before: 9, excluded: 4 };
+    const line = lookedAt({ status: "done", counts, target: 5, looked_at });
+    expect(line).toBe(
+      "Asked for 5, found 2. Looked at 24 postings: 9 seen in earlier searches · " +
+        "4 skipped by title · 2 already in My Jobs · 3 below your bar · " +
+        "1 couldn't be copied · 3 not opened.",
+    );
+    const numbers = [...line!.split("postings:")[1].matchAll(/(\d+) /g)].map((m) => Number(m[1]));
+    expect(numbers.reduce((a, b) => a + b, 0) + 2).toBe(24);
+    // Nothing to explain while it runs, or when it found what was asked.
+    expect(lookedAt({ status: "running", counts, target: 5, looked_at })).toBeNull();
+    expect(lookedAt({ status: "done", counts, target: 2, looked_at })).toBeNull();
+    // A job reported without the results-page check: the numbers still add up.
+    expect(
+      lookedAt({ status: "done", counts, target: 5, looked_at: { rows: 3 } }),
+    ).toBe("Asked for 5, found 2. Looked at 6 postings: 3 below your bar · 1 couldn't be copied.");
+    // A run from before the counts were kept still says what it can.
+    expect(lookedAt({ status: "done", counts, target: 5, looked_at: null })).toBe(
+      "Asked for 5, found 2. 3 below your bar · 1 couldn't be copied.",
+    );
+  });
+
+  it("ticks good fits by default and follows the user's changes", () => {
+    const findings = [
+      { id: "a", outcome: "picked" as const, can_save: true },
+      { id: "b", outcome: "below_bar" as const, can_save: true },
+      { id: "c", outcome: "picked" as const, can_save: false },
+      { id: "d", outcome: "duplicate" as const, can_save: false },
+    ];
+    expect([...reviewTicks(findings, new Map())]).toEqual(["a"]);
+    const changed = new Map([
+      ["a", false],
+      ["b", true],
+      ["c", true], // can't be saved: never ticked
+    ]);
+    expect([...reviewTicks(findings, changed)]).toEqual(["b"]);
   });
 
   it("knows which runs are still open", () => {
