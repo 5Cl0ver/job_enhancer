@@ -36,6 +36,15 @@ export function originsIn(jobs: Pick<SavedJob, "origin">[]): Origin[] {
   return ORIGINS.filter((o) => seen.has(o));
 }
 
+/** The filter's choices: the origins in the list, plus the one chosen even if
+ * this list has none of it (so the picker never shows a different answer from
+ * the one in force). */
+export function originChoices(jobs: Pick<SavedJob, "origin">[], chosen: string): Origin[] {
+  const seen = new Set<string | null | undefined>(jobs.map((sj) => sj.origin));
+  seen.add(chosen);
+  return ORIGINS.filter((o) => seen.has(o));
+}
+
 /** My Jobs opened on one collection: the link other pages use. */
 export function folderLink(collectionId: string): string {
   return `/jobs?folder=${encodeURIComponent(collectionId)}`;

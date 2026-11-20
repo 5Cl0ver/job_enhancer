@@ -56,18 +56,16 @@ async def _scout(
 async def _email(
     db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID
 ) -> SourceEmail | None:
-    """The email the job was made from: the first one the user added it from."""
+    """The email the job was made from: the earliest one tied to it."""
     ev = await db.scalar(
         select(DetectedEvent)
         .where(
             DetectedEvent.user_id == user_id,
             DetectedEvent.saved_job_id == saved_job_id,
         )
-        .order_by(
-            DetectedEvent.applied_at.is_(None),
-            DetectedEvent.applied_at,
-            DetectedEvent.created_at,
-        )
+        # The email it was made from was found before the job existed; any
+        # other email on the job was matched to it later.
+        .order_by(DetectedEvent.created_at)
         .limit(1)
     )
     if ev is None:

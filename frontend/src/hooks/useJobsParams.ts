@@ -4,13 +4,16 @@
  */
 import { useCallback } from "react";
 import { useSearchParams } from "react-router-dom";
+import { ORIGINS, type Origin } from "@/lib/origin";
 
 export const ANY_ORIGIN = "all";
 
 export function useJobsParams() {
   const [params, setParams] = useSearchParams();
   const folder = params.get("folder");
-  const origin = params.get("origin") ?? ANY_ORIGIN;
+  // An origin the app doesn't know (a stale or mistyped link) filters nothing.
+  const asked = params.get("origin");
+  const origin = ORIGINS.includes(asked as Origin) ? (asked as Origin) : ANY_ORIGIN;
 
   const put = useCallback(
     (key: "folder" | "origin", value: string | null) =>
@@ -30,5 +33,20 @@ export function useJobsParams() {
     [put],
   );
 
-  return { folder, origin, setFolder, setOrigin };
+  // Both at once. Two separate changes in one tick would each start from the
+  // same old address, and the second would put back what the first removed.
+  const clear = useCallback(
+    () =>
+      setParams(
+        (p) => {
+          p.delete("folder");
+          p.delete("origin");
+          return p;
+        },
+        { replace: true },
+      ),
+    [setParams],
+  );
+
+  return { folder, origin, setFolder, setOrigin, clear };
 }

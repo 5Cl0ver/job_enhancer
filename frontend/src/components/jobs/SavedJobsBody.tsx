@@ -16,7 +16,7 @@ import {
   type AppliedFilter,
   type JobFilters,
 } from "@/lib/jobFilters";
-import { ORIGIN_LABEL, originsIn } from "@/lib/origin";
+import { ORIGIN_LABEL, originChoices } from "@/lib/origin";
 
 const inputCls =
   "h-9 rounded-md border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
@@ -40,7 +40,7 @@ export function SavedJobsBody() {
   const filters = useMemo(() => ({ ...typed, origin }), [typed, origin]);
   const set = (patch: Partial<JobFilters>) => setTyped((f) => ({ ...f, ...patch }));
   const { q, loc, minPay, jobType, applied, remoteOnly } = filters;
-  const origins = useMemo(() => originsIn(savedJobs), [savedJobs]);
+  const origins = useMemo(() => originChoices(savedJobs, origin), [savedJobs, origin]);
 
   // Job-type choices come from what's actually in the list.
   const jobTypes = useMemo(() => jobTypesIn(savedJobs), [savedJobs]);
@@ -104,7 +104,7 @@ export function SavedJobsBody() {
             <option value="not">Not applied</option>
             <option value="applied">Applied</option>
           </select>
-          {(origins.length > 0 || origin !== ANY_ORIGIN) && (
+          {origins.length > 0 && (
             <select
               className={inputCls}
               aria-label="Where from"

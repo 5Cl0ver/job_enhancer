@@ -10,6 +10,7 @@ import uuid
 from tests.test_migration_email_sync import (
     _alembic,
     _cols,
+    _event,
     _ok,
     legacy_db,  # noqa: F401 — fixture
 )
@@ -82,6 +83,11 @@ class TestSavedJobOriginMigration:
             "gmail": _job(
                 con, _listing(con, "manual", "https://mail.google.com/mail/u/0/")
             ),
+            # A webmail link with no email update behind it (another person's
+            # save of the same shared listing): not labelled.
+            "mail_no_event": _job(
+                con, _listing(con, "manual", "https://mail.yahoo.com/d/search/x")
+            ),
             "search": _job(con, _listing(con, "adzuna", board)),
             "typed": _job(con, _listing(con, "manual", board)),
             # A posting whose address merely mentions a mail site is not an email.
@@ -92,6 +98,8 @@ class TestSavedJobOriginMigration:
         }
         _finding(con, run, user, jobs["scout"], "saved")
         _finding(con, run, user, jobs["passed"], "duplicate")
+        for name in ("yahoo", "gmail"):
+            _event(con, f"uid-{name}", saved_job_id=jobs[name], status="applied")
         con.commit()
         con.close()
         return jobs
@@ -109,6 +117,7 @@ class TestSavedJobOriginMigration:
         # Already in My Jobs when Scout came across it: Scout didn't save it.
         assert got[jobs["passed"]] is None
         assert got[jobs["typed"]] is None
+        assert got[jobs["mail_no_event"]] is None
         assert got[jobs["lookalike"]] is None
 
     def test_round_trip(self, scout_db):  # noqa: F811

@@ -6,7 +6,7 @@ ones the data can place are labelled:
 
 - scout:  a Claude Scout finding points at the job.
 - email:  the job's link is the user's webmail (only "Add to My Jobs" on an
-          email update writes such a link).
+          email update writes such a link) and an email update points at it.
 - search: the listing came from a job-board feed, not from a person.
 
 Everything else stays null and shows no label, rather than a guess (a typed-in
@@ -41,6 +41,8 @@ def upgrade() -> None:
     mail = " OR ".join(f"apply_url LIKE 'https://{h}/%'" for h in _MAIL_HOSTS)
     op.execute(
         "UPDATE saved_jobs SET origin = 'email' WHERE origin IS NULL "
+        "AND id IN ("
+        "SELECT saved_job_id FROM detected_events WHERE saved_job_id IS NOT NULL) "
         "AND job_listing_id IN ("
         f"SELECT id FROM job_listings WHERE source = 'manual' AND ({mail}))"
     )

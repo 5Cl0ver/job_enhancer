@@ -14,7 +14,12 @@ export function ScoutHistory() {
   const { data: runs, isLoading, isError } = useRuns();
   // `?run=<id>` opens that run: the link a saved job uses to show its search.
   const [params] = useSearchParams();
-  const [openId, setOpenId] = useState<string | null>(params.get("run"));
+  const asked = params.get("run");
+  const [openId, setOpenId] = useState<string | null>(asked);
+  // The list holds the latest runs only; a linked run older than that is
+  // fetched on its own and shown first.
+  const older = asked && runs && !runs.some((r) => r.id === asked) ? asked : null;
+  const { data: olderRun } = useRun(older);
 
   if (isLoading) return <Skeleton className="h-28" />;
   if (isError) return <p className="text-sm text-destructive">Couldn't load past searches.</p>;
@@ -27,6 +32,14 @@ export function ScoutHistory() {
 
   return (
     <ul className="divide-y rounded-lg border">
+      {olderRun && (
+        <RunRow
+          key={olderRun.id}
+          run={olderRun}
+          open={openId === olderRun.id}
+          onToggle={() => setOpenId(openId === olderRun.id ? null : olderRun.id)}
+        />
+      )}
       {runs.map((run) => (
         <RunRow
           key={run.id}

@@ -1,4 +1,3 @@
-import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { LayoutList, Columns3 } from "lucide-react";
 import { AddJobDialog } from "@/components/jobs/AddJobDialog";
@@ -59,11 +58,12 @@ function ViewToggle({
  */
 export default function MyJobsPage() {
   const [params, setParams] = useSearchParams();
-  const [view, setView] = useState<View>(params.get("view") === "board" ? "board" : "list");
+  // Read from the address every time (not kept in state), so a link to
+  // `/jobs?folder=…` from the board's job pop-up really leaves the board.
+  const view: View = params.get("view") === "board" ? "board" : "list";
   const phone = useIsPhone();
 
   const choose = (v: View) => {
-    setView(v);
     // Keep the rest of the address (?folder=, ?origin=): only the view changes.
     setParams(
       (p) => {

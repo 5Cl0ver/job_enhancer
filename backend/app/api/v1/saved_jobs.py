@@ -2,12 +2,13 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
-from app.models.saved_job import ORIGIN_SEARCH
+from app.models.job_listing import JobListing
+from app.models.saved_job import ORIGIN_EXTENSION
 from app.models.user import User
 from app.schemas.saved_job import (
     ApplicationSyncRequest,
@@ -99,7 +100,8 @@ async def save_job(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
-    sj = await svc.save_job(db, user.id, data, origin=ORIGIN_SEARCH)
+    listing = await db.get(JobListing, data.job_listing_id)
+    sj = await svc.save_job(db, user.id, data, origin=svc.listing_origin(listing))
     await db.commit()
     return SavedJobSchema.model_validate(sj)
 
@@ -107,11 +109,17 @@ async def save_job(
 @router.post("/manual", response_model=SavedJobSchema, status_code=201)
 async def save_manual_job(
     data: ManualJobCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
     """Add a job found on an external site by URL + details (FR-004a)."""
-    sj = await svc.save_manual_job(db, user.id, data)
+    # Job Catcher builds from before it sent ``origin`` are told apart by where
+    # the request comes from: only an extension has a chrome-extension origin.
+    from_extension = request.headers.get("origin", "").startswith("chrome-extension://")
+    sj = await svc.save_manual_job(
+        db, user.id, data, origin=ORIGIN_EXTENSION if from_extension else None
+    )
     await db.commit()
     return SavedJobSchema.model_validate(sj)
 

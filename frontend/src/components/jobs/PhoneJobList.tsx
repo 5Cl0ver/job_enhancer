@@ -37,7 +37,7 @@ import {
   type AppliedFilter,
   type JobFilters,
 } from "@/lib/jobFilters";
-import { ORIGIN_LABEL, originsIn } from "@/lib/origin";
+import { ORIGIN_LABEL, originChoices } from "@/lib/origin";
 import { readPref, writePref } from "@/lib/prefs";
 import { stageTone } from "@/lib/stageStyle";
 import { cn } from "@/lib/utils";
@@ -125,7 +125,7 @@ function JobRow({
 export function PhoneJobList() {
   // The collection and "where from" live in the address, so other pages can
   // link here.
-  const { folder: asked, origin, setFolder, setOrigin } = useJobsParams();
+  const { folder: asked, origin, setFolder, setOrigin, clear } = useJobsParams();
   const collectionsQuery = useCollections();
   const collections = collectionsQuery.data ?? [];
   // A link to a collection that's gone shows everything, not an empty page.
@@ -150,7 +150,7 @@ export function PhoneJobList() {
   );
   const stageNames = useMemo(() => new Map(stages.map((s) => [s.id, s.name])), [stages]);
   const jobTypes = useMemo(() => jobTypesIn(jobs), [jobs]);
-  const origins = useMemo(() => originsIn(jobs), [jobs]);
+  const origins = useMemo(() => originChoices(jobs, origin), [jobs, origin]);
 
   const set = (patch: Partial<JobFilters>) => setTyped((f) => ({ ...f, ...patch }));
   const chooseStage = (id: string) => {
@@ -160,8 +160,7 @@ export function PhoneJobList() {
   const setCount = filtersSet(filters) + Number(folder !== null);
   const clearAll = () => {
     setTyped(NO_FILTERS);
-    setFolder(null);
-    setOrigin(ANY_ORIGIN);
+    clear();
   };
 
   if (jobsQuery.isError && jobsQuery.data === undefined) {
@@ -317,7 +316,7 @@ export function PhoneJobList() {
                 ))}
               </select>
             </label>
-            {(origins.length > 0 || origin !== ANY_ORIGIN) && (
+            {origins.length > 0 && (
               <label className="block space-y-1 text-sm font-medium">
                 Where from
                 <select

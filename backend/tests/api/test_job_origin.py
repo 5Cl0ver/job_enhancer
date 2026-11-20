@@ -43,6 +43,45 @@ class TestOrigin:
         )
         assert caught.status_code == 201 and caught.json()["origin"] == "extension"
 
+    async def test_an_older_job_catcher_is_known_by_where_it_calls_from(
+        self, client: AsyncClient
+    ):
+        r = await client.post(
+            "/v1/saved-jobs/manual",
+            json=MANUAL,
+            headers={"Origin": "chrome-extension://abcdefghijklmnop"},
+        )
+        assert r.status_code == 201 and r.json()["origin"] == "extension"
+
+    async def test_saving_a_listing_again_keeps_what_it_is(
+        self, client: AsyncClient, db_session: AsyncSession
+    ):
+        """Remove then Save on a job's page names only the listing: a person-made
+        one must not come back labelled as a job-board result."""
+        typed = (await client.post("/v1/saved-jobs/manual", json=MANUAL)).json()
+        from_mail = (
+            await client.post(
+                "/v1/saved-jobs/manual",
+                json={
+                    **MANUAL,
+                    "title": "Data Engineer",
+                    "url": "https://mail.yahoo.com/d/folders/1/messages/abc",
+                },
+            )
+        ).json()
+        for job in (typed, from_mail):
+            assert (
+                await client.delete(f"/v1/saved-jobs/{job['id']}")
+            ).status_code == 204
+        again = await client.post(
+            "/v1/saved-jobs/", json={"job_listing_id": typed["job_listing_id"]}
+        )
+        assert again.status_code == 201 and again.json()["origin"] is None
+        mail_again = await client.post(
+            "/v1/saved-jobs/", json={"job_listing_id": from_mail["job_listing_id"]}
+        )
+        assert mail_again.json()["origin"] == "email"
+
     @pytest.mark.parametrize("claimed", ["scout", "email", "claude", "search", ""])
     async def test_a_request_cannot_claim_a_server_origin(
         self, client: AsyncClient, claimed

@@ -4,7 +4,7 @@ import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from urllib.parse import quote_plus
+from urllib.parse import quote_plus, urlparse
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
@@ -15,7 +15,12 @@ from sqlalchemy.orm import defer, selectinload, with_expression
 
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
-from app.models.saved_job import ORIGIN_EXTENSION, SavedJob
+from app.models.saved_job import (
+    ORIGIN_EMAIL,
+    ORIGIN_EXTENSION,
+    ORIGIN_SEARCH,
+    SavedJob,
+)
 from app.models.scout import SAVED, ScoutFinding
 from app.schemas.saved_job import (
     ApplicationSyncItem,
@@ -231,6 +236,23 @@ async def backfill_job_details(
     if updated:
         await db.flush()
     return updated
+
+
+# Webmail sites: only "Add to My Jobs" on an email update gives a job such a link.
+MAIL_HOSTS = ("mail.yahoo.com", "mail.aol.com", "mail.google.com")
+
+
+def listing_origin(listing: JobListing | None) -> str | None:
+    """What a listing itself says about where a job came from, for a save that
+    names only the listing (the app's Save button): a job-board feed's listing
+    is a search result; one whose link is the user's webmail was made from an
+    email. A person-made listing otherwise doesn't say, so: unknown."""
+    if listing is None:
+        return None
+    if listing.source != "manual":
+        return ORIGIN_SEARCH
+    host = (urlparse(listing.apply_url or "").hostname or "").lower()
+    return ORIGIN_EMAIL if host in MAIL_HOSTS else None
 
 
 async def save_job(
