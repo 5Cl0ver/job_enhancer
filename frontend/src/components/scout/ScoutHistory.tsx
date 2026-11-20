@@ -10,6 +10,7 @@ import { RunReview, SavedNote } from "@/components/scout/RunReview";
 import { ScoutCompanies } from "@/components/scout/ScoutCompanies";
 import { useRun, useRuns, type ConfirmResult } from "@/hooks/useScout";
 import { RunTip } from "@/components/scout/RunTip";
+import { RunTitles } from "@/components/scout/RunTitles";
 import { companiesLine, lookedAt, runSummary, type Run } from "@/lib/scout";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -118,6 +119,7 @@ function RunRow({
           {checked && (
             <p className="text-sm text-muted-foreground">{checked}</p>
           )}
+          {full?.broad && <RunTitles run={full} />}
           {saved && (
             <SavedNote result={saved} onDismiss={() => setSaved(null)} />
           )}

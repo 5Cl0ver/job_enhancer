@@ -93,6 +93,14 @@ describe("Resume types", () => {
     ).toBeInTheDocument();
   });
 
+  it("flags a type with no skills listed", async () => {
+    serve([TRACK, { ...TRACK, id: "t2", name: "Help Desk", key_skills: [] }]);
+    renderWithQuery(<ResumeTypes />);
+    expect(await screen.findByText("Help Desk")).toBeInTheDocument();
+    // Only the type without skills says so.
+    expect(screen.getAllByText(/No skills listed/)).toHaveLength(1);
+  });
+
   it("uploads a resume from the card, attaches it and fills in the skills", async () => {
     const user = userEvent.setup();
     const blank = { ...TRACK, key_skills: [] };

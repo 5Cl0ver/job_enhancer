@@ -149,9 +149,27 @@ def place_problem(source: str, location: str | None, remote: str) -> str | None:
     return None
 
 
+class Overrides(BaseModel):
+    """A broad search's overrides: titles always searched, titles never
+    searched, and words that skip a job without opening it."""
+
+    always: list[str] = Field(default_factory=list)
+    never: list[str] = Field(default_factory=list)
+    avoid: list[str] = Field(default_factory=list)
+
+    @field_validator("always", "never", "avoid")
+    @classmethod
+    def _lists(cls, v: list[str]) -> list[str]:
+        return _clean_list(v, 20, 80)
+
+
 class MissionCreate(BaseModel):
     source: Source
-    track_id: uuid.UUID
+    # Required unless ``broad``: then the search uses the user's hidden
+    # "Anything I'd be good at" track and Claude chooses the titles.
+    track_id: uuid.UUID | None = None
+    broad: bool = False
+    overrides: Overrides | None = None
     name: str | None = Field(None, max_length=80)  # blank = made from the rest
     job_count: int = Field(5, ge=1, le=MAX_JOBS_PER_RUN)
     posted_within_days: int = 7
@@ -185,12 +203,16 @@ class MissionCreate(BaseModel):
         problem = place_problem(self.source, self.location, self.remote)
         if problem:
             raise ValueError(problem)
+        if not self.broad and self.track_id is None:
+            raise ValueError("Choose a resume type, or Anything I'd be good at.")
         return self
 
 
 class MissionUpdate(BaseModel):
     source: Source | None = None
     track_id: uuid.UUID | None = None
+    broad: bool | None = None
+    overrides: Overrides | None = None
     name: str | None = Field(None, max_length=80)
     job_count: int | None = Field(None, ge=1, le=MAX_JOBS_PER_RUN)
     posted_within_days: int | None = None
@@ -219,6 +241,9 @@ class MissionOut(BaseModel):
     name: str
     source: str
     track_id: uuid.UUID
+    # "Anything I'd be good at": Claude chooses the titles.
+    broad: bool = False
+    overrides: Overrides | None = None
     job_count: int
     posted_within_days: int
     min_pay: int | None
@@ -321,6 +346,8 @@ class FindingOut(BaseModel):
     collection_name: str | None = None
     # The user can still put it in My Jobs (its page copy exists).
     can_save: bool = False
+    # Broad searches: the resume type Claude said this job is closest to.
+    closest_track_name: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -334,6 +361,24 @@ class RunCounts(BaseModel):
     duplicate: int = 0
     waiting_for_copy: int = 0
     no_copy: int = 0
+
+
+class RunTitle(BaseModel):
+    title: str
+    good_fits: int = 0
+
+
+class TitleTried(BaseModel):
+    """A title a broad search has tried, for its settings."""
+
+    title: str
+    runs: int
+    good_fits: int
+    last_tried_at: datetime | None
+    # Found nothing in 3 runs: left out for 2 weeks (never an Always title).
+    resting: bool
+    always: bool
+    never: bool
 
 
 class RunOut(BaseModel):
@@ -357,6 +402,9 @@ class RunOut(BaseModel):
     looked_at: dict[str, int] | None = None
     # What to change when a finished search came back short.
     tip: str | None = None
+    # "Anything I'd be good at": the titles this run searched, with good fits.
+    broad: bool = False
+    titles: list["RunTitle"] = Field(default_factory=list)
     findings: list[FindingOut] = Field(default_factory=list)
 
 

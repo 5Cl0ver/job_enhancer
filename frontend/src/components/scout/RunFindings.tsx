@@ -71,6 +71,11 @@ function FindingRow({ finding: f }: { finding: Finding }) {
         {f.company && <p className="text-sm text-muted-foreground">{f.company}</p>}
       </div>
       {f.app_note && <p className="text-xs text-muted-foreground">{f.app_note}</p>}
+      {f.closest_track_name && (
+        <p className="text-xs text-muted-foreground">
+          Closest resume type: {f.closest_track_name}
+        </p>
+      )}
       {(f.why_fit || f.gaps) && (
         <div className="space-y-0.5 text-xs">
           {f.why_fit && (
