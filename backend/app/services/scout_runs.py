@@ -26,53 +26,50 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collection import Collection
 from app.models.job_listing import JobListing
-from app.models.saved_job import ORIGIN_SCOUT, SavedJob
+from app.models.resume_track import ResumeTrack
+from app.models.saved_job import SavedJob
 from app.models.scout import (
     BELOW_BAR,
     DUPLICATE,
     NO_COPY,
+    PICKED,
     RUN_DONE,
     RUN_QUEUED,
     RUN_RUNNING,
     RUN_STOPPED,
     SAVED,
+    SKIPPED,
     WAITING,
     ScoutCapture,
     ScoutFinding,
     ScoutMission,
     ScoutRun,
 )
-from app.schemas.collection import CollectionCreate
-from app.schemas.saved_job import ManualJobCreate
 from app.schemas.scout import (
     CaptureIn,
     FindingOut,
     MissionCreate,
+    MissionOut,
     MissionUpdate,
     RunCounts,
+    RunFolder,
     RunOut,
 )
 from app.services import collections as col_svc
-from app.services import saved_jobs as sj_svc
+from app.services import scout_review as review
 from app.services.scout_dedupe import (
     company_key,
-    posting_link,
     posting_problem,
     title_key,
     url_key,
 )
+from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import get_track
 
-PLAYBOOK_VERSION = "2026.11.2"
+PLAYBOOK_VERSION = "2026.11.3"
 PLAYBOOK = (Path(__file__).parent.parent / "scout" / "playbook.md").read_text(
     encoding="utf-8"
 )
-SCOUT_FOLDER = "Scout"
-SOURCE_LABEL = {
-    "linkedin": "LinkedIn",
-    "indeed": "Indeed",
-    "ziprecruiter": "ZipRecruiter",
-}
 RUBRIC = {
     "skills": 4,
     "experience": 2,
@@ -82,9 +79,12 @@ RUBRIC = {
 }
 MAX_ROWS_PER_CHECK = 30
 HOURS_PER_YEAR = 2080
-# Findings that count as "seen": a job the user has decided on, or that Claude
-# already judged. A job with no page copy isn't seen; it can be found again.
-_SEEN = (SAVED, BELOW_BAR, DUPLICATE)
+# Findings that count as "seen": a job the user has decided on or has waiting
+# to decide, or that Claude already judged. A job with no page copy isn't seen;
+# it can be found again.
+_SEEN = (SAVED, PICKED, SKIPPED, BELOW_BAR, DUPLICATE)
+# What counts toward a run's target: good fits, confirmed yet or not.
+_KEPT = (SAVED, PICKED)
 
 
 def _now() -> datetime:
@@ -131,6 +131,8 @@ async def create_mission(
     db: AsyncSession, user_id: uuid.UUID, data: MissionCreate
 ) -> ScoutMission:
     track = await get_track(db, data.track_id, user_id)
+    if data.collection_id is not None:
+        await col_svc.get_collection(db, data.collection_id, user_id)
     values = data.model_dump()
     values["name"] = values["name"] or mission_name(
         data.source, track.name, data.job_count, data.posted_within_days
@@ -148,6 +150,8 @@ async def update_mission(
     updates = data.model_dump(exclude_unset=True)
     if updates.get("track_id") is not None:
         await get_track(db, updates["track_id"], user_id)
+    if updates.get("collection_id") is not None:
+        await col_svc.get_collection(db, updates["collection_id"], user_id)
     old_track = await get_track(db, mission.track_id, user_id)
     auto_named = mission.name == mission_name(
         mission.source, old_track.name, mission.job_count, mission.posted_within_days
@@ -158,6 +162,7 @@ async def update_mission(
             "location",
             "radius_miles",
             "extra_instructions",
+            "collection_id",
         ):
             continue  # required fields: null means "leave as is"
         setattr(mission, key, value)
@@ -169,6 +174,46 @@ async def update_mission(
         )
     await db.flush()
     return mission
+
+
+async def missions_out(
+    db: AsyncSession, user_id: uuid.UUID, missions: Sequence[ScoutMission]
+) -> list[MissionOut]:
+    """Searches for the page, each with the name of the collection its jobs go
+    into: the one chosen, or the one named after its resume type."""
+    if not missions:
+        return []
+    chosen = [m.collection_id for m in missions if m.collection_id]
+    names: dict = {}
+    if chosen:
+        names = dict(
+            (
+                await db.execute(
+                    select(Collection.id, Collection.name).where(
+                        Collection.user_id == user_id, Collection.id.in_(chosen)
+                    )
+                )
+            ).all()
+        )
+    tracks = dict(
+        (
+            await db.execute(
+                select(ResumeTrack.id, ResumeTrack.name).where(
+                    ResumeTrack.user_id == user_id
+                )
+            )
+        ).all()
+    )
+    out = []
+    for m in missions:
+        item = MissionOut.model_validate(m)
+        if m.collection_id not in names:  # the chosen collection is gone
+            item.collection_id = None
+        item.collection_name = names.get(m.collection_id) or review.default_folder_name(
+            {"track": {"name": tracks.get(m.track_id, "")}}
+        )
+        out.append(item)
+    return out
 
 
 async def delete_mission(
@@ -236,6 +281,9 @@ async def queue_run(
         "remote": mission.remote,
         "min_fit": mission.min_fit,
         "extra_instructions": mission.extra_instructions,
+        # Where good fits go, and whether the user confirms them first.
+        "collection_id": str(mission.collection_id) if mission.collection_id else None,
+        "auto_save": bool(mission.auto_save),
         "track": {
             "name": track.name,
             "titles": list(track.target_titles or []),
@@ -311,22 +359,48 @@ async def runs_out(
         return []
     counts = await _counts(db, [r.id for r in runs])
     findings: dict[uuid.UUID, list[FindingOut]] = {}
+    folders: dict[uuid.UUID, RunFolder] = {}
     if with_findings:
         rows = (
             await db.execute(
-                select(ScoutFinding, SavedJob.job_listing_id)
+                select(
+                    ScoutFinding,
+                    SavedJob.job_listing_id,
+                    Collection.id,
+                    Collection.name,
+                )
                 .outerjoin(SavedJob, SavedJob.id == ScoutFinding.saved_job_id)
+                .outerjoin(Collection, Collection.id == SavedJob.collection_id)
                 .where(ScoutFinding.run_id.in_([r.id for r in runs]))
                 .order_by(ScoutFinding.fit_score.desc(), ScoutFinding.created_at)
             )
         ).all()
-        for f, listing_id in rows:
+        # A finding can still be saved only while its page copy exists.
+        keys = {f.url_key for f, *_ in rows if f.outcome in review.SAVEABLE}
+        copied: set[str] = set()
+        if keys:
+            copied = set(
+                await db.scalars(
+                    select(ScoutCapture.url_key)
+                    .where(
+                        ScoutCapture.user_id.in_({r.user_id for r in runs}),
+                        ScoutCapture.url_key.in_(keys),
+                    )
+                    .distinct()
+                )
+            )
+        for f, listing_id, collection_id, collection_name in rows:
             item = FindingOut.model_validate(f)
             item.job_listing_id = listing_id
+            item.collection_id, item.collection_name = collection_id, collection_name
+            item.can_save = f.outcome in review.SAVEABLE and f.url_key in copied
             findings.setdefault(f.run_id, []).append(item)
+        for r in runs:
+            folders[r.id] = await review.peek_folder(db, r.user_id, r.criteria or {})
     out = []
     for r in runs:
         c = r.criteria or {}
+        run_counts = RunCounts(**counts.get(r.id, {}))
         out.append(
             RunOut(
                 id=r.id,
@@ -340,7 +414,10 @@ async def runs_out(
                 created_at=r.created_at,
                 started_at=r.started_at,
                 finished_at=r.finished_at,
-                counts=RunCounts(**counts.get(r.id, {})),
+                counts=run_counts,
+                needs_review=run_counts.picked > 0,
+                folder=folders.get(r.id),
+                looked_at=r.stats,
                 findings=findings.get(r.id, []),
             )
         )
@@ -434,11 +511,11 @@ async def _run_for_agent(
     return run
 
 
-async def _saved_count(db: AsyncSession, run_id: uuid.UUID) -> int:
+async def _kept_count(db: AsyncSession, run_id: uuid.UUID) -> int:
     return (
         await db.scalar(
             select(func.count()).where(
-                ScoutFinding.run_id == run_id, ScoutFinding.outcome == SAVED
+                ScoutFinding.run_id == run_id, ScoutFinding.outcome.in_(_KEPT)
             )
         )
         or 0
@@ -446,9 +523,21 @@ async def _saved_count(db: AsyncSession, run_id: uuid.UUID) -> int:
 
 
 async def _progress(db: AsyncSession, run: ScoutRun) -> dict:
-    saved = await _saved_count(db, run.id)
+    """How far the run is toward its target. "kept" = good fits found, whether
+    the user has confirmed them yet or not."""
+    kept = await _kept_count(db, run.id)
     target = run.criteria["job_count"]
-    return {"saved": saved, "target": target, "done": saved >= target}
+    return {"kept": kept, "target": target, "done": kept >= target}
+
+
+def _saving_note(criteria: dict) -> str:
+    """One line for Claude on what happens to a good fit."""
+    if criteria.get("auto_save"):
+        return "Good fits are saved straight into the user's collection."
+    return (
+        "Good fits are kept in the app for the user to tick and save. You never "
+        "save a job yourself, so never tell the user a job was saved."
+    )
 
 
 async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dict:
@@ -466,6 +555,7 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
         "min_fit": c["min_fit"],
         "rubric": RUBRIC,
         "extra_instructions": c.get("extra_instructions"),
+        "saving": _saving_note(c),
         "progress": progress,
         "next": (
             "Target reached: call finish_scout_run."
@@ -561,6 +651,14 @@ async def check_jobs(
             skipped["excluded"] += 1
         else:
             open_rows.append(i)
+    # So the page can say why a search came back short: "looked at 24, 9 seen
+    # before, 4 skipped by title". Counts only, added up across pages.
+    stats = dict(run.stats or {})
+    stats["rows"] = stats.get("rows", 0) + len(rows)
+    for why, n in skipped.items():
+        stats[why] = stats.get(why, 0) + n
+    run.stats = stats
+    await db.flush()
     progress = await _progress(db, run)
     return {
         "open": open_rows,
@@ -572,32 +670,6 @@ async def check_jobs(
             else "None new on this page: go to the next page of results."
         ),
     }
-
-
-async def _find_scout_folder(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | None:
-    return await db.scalar(
-        select(Collection.id).where(
-            Collection.user_id == user_id,
-            func.lower(Collection.name) == SCOUT_FOLDER.lower(),
-        )
-    )
-
-
-async def _scout_folder(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID:
-    folder = await _find_scout_folder(db, user_id)
-    if folder is not None:
-        return folder
-    try:
-        async with db.begin_nested():  # another save may make it at the same time
-            col = await col_svc.create_collection(
-                db, user_id, CollectionCreate(name=SCOUT_FOLDER)
-            )
-        return col.id
-    except HTTPException:
-        folder = await _find_scout_folder(db, user_id)
-        if folder is None:
-            raise
-        return folder
 
 
 def _pay_note(capture: ScoutCapture, min_pay: int | None) -> str | None:
@@ -708,35 +780,21 @@ async def report_job(
     elif finding.fit_score < c["min_fit"]:
         finding.outcome = BELOW_BAR
         finding.app_note = f"Fit under your minimum of {c['min_fit']}"
-    else:
-        sj = await sj_svc.save_manual_job(
+    elif c.get("auto_save"):
+        folder = await review.resolve_folder(db, user_id, c)
+        await review.save_finding_job(
             db,
             user_id,
-            ManualJobCreate(
-                url=posting_link(capture.url),
-                title=capture.title,
-                company=capture.company,
-                location=capture.location or "Not specified",
-                is_remote=capture.is_remote,
-                description=capture.description,
-                salary_min=capture.salary_min,
-                salary_max=capture.salary_max,
-                salary_period=capture.salary_period,
-                job_type=capture.job_type,
-                collection_id=await _scout_folder(db, user_id),
-                notes=(
-                    "Found by Claude Scout on "
-                    f"{SOURCE_LABEL.get(c['source'], c['source'])}. "
-                    f"Claude's fit score: {finding.fit_score}/10."
-                ),
-            ),
-            origin=ORIGIN_SCOUT,
+            finding,
+            source=c["source"],
+            track_id=run.track_id,
+            folder_id=folder.id,
+            capture=capture,
         )
-        if sj.track_id is None:
-            sj.track_id = run.track_id
-        finding.outcome = SAVED
+    else:
+        # A good fit: kept for the user to tick and save (the review step).
+        finding.outcome = PICKED
         finding.app_note = None
-        finding.saved_job_id = sj.id
     await db.flush()
     progress = await _progress(db, run)
     return {
@@ -765,13 +823,25 @@ async def finish_run(
             ScoutRun.user_id == user_id, ScoutRun.status == RUN_QUEUED
         )
     )
+    picked, saved = counts.get(PICKED, 0), counts.get(SAVED, 0)
+    if picked:
+        tell = (
+            f"{picked} job{'s are' if picked != 1 else ' is'} waiting in Job "
+            "Enhancer (Find Jobs > Claude Scout) for them to tick and save. "
+            "Don't say anything was saved."
+        )
+    elif saved:
+        tell = f"{saved} job{'s were' if saved != 1 else ' was'} saved to My Jobs."
+    else:
+        tell = "nothing new fit this time."
     return {
         "status": RUN_DONE,
         "counts": RunCounts(**counts).model_dump(),
-        "next": (
-            "Another run is queued: start a NEW chat and say the same line, so this "
-            "chat's history doesn't carry over."
+        "next": f"All done. Tell the user: {tell}"
+        + (
+            " Another run is queued: start a NEW chat and say the same line, so "
+            "this chat's history doesn't carry over."
             if waiting
-            else "All done. Tell the user how many jobs were saved."
+            else ""
         ),
     }

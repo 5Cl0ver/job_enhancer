@@ -1,5 +1,5 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -57,6 +57,9 @@ const MISSION = {
   remote: "any",
   min_fit: 6,
   extra_instructions: null,
+  collection_id: null,
+  auto_save: false,
+  collection_name: "IT Admin",
   last_run_at: null,
   created_at: "2026-11-18T00:00:00Z",
 };
@@ -107,6 +110,8 @@ describe("Claude Scout start", () => {
     expect(await screen.findByText(MISSION.name)).toBeInTheDocument();
     // Pay falls back to the resume type's minimum.
     expect(screen.getByText(/5 jobs · last 7 days · \$70K\+ · fit 6\+/)).toBeInTheDocument();
+    // And where its jobs will go.
+    expect(screen.getByText("Saves into IT Admin")).toBeInTheDocument();
   });
 
   it("Start queues a run and shows the one line to tell Claude", async () => {
@@ -179,7 +184,7 @@ describe("Claude Scout start", () => {
     });
     renderStart();
 
-    expect(await screen.findByText("Searching · 1 of 5 saved · 1 passed over")).toBeInTheDocument();
+    expect(await screen.findByText("Searching · 1 of 5 found · 1 passed over")).toBeInTheDocument();
     const saved = screen.getByRole("link", { name: "IT Systems Administrator" });
     expect(saved).toHaveAttribute("href", "/jobs/l1");
     expect(screen.getByText("Runs Microsoft 365 daily")).toBeInTheDocument();
@@ -188,6 +193,35 @@ describe("Claude Scout start", () => {
     expect(manual).toHaveAttribute("href", "https://www.linkedin.com/jobs/view/2");
     // Claude has started, so the line to say is no longer shown.
     expect(screen.queryByText(SCOUT_LINE)).toBeNull();
+  });
+
+  it("a new search chooses its collection and whether to ask first", async () => {
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [MISSION],
+      "/v1/collections/": [
+        { id: "c9", name: "Shortlist", is_default: false, created_at: "2026-11-01T00:00:00Z" },
+      ],
+    });
+    post.mockResolvedValue(MISSION);
+    const user = userEvent.setup();
+    renderStart();
+    await user.click(await screen.findByRole("button", { name: /New search/ }));
+    const form = await screen.findByRole("dialog");
+    // Pre-filled: its own collection, named after the resume type, and it asks.
+    const into = within(form).getByRole("combobox", { name: "Save into" });
+    expect(into).toHaveTextContent("A collection named “IT Admin”");
+    const ask = within(form).getByRole("switch", { name: "Save good fits without asking" });
+    expect(ask).not.toBeChecked();
+
+    await user.click(into);
+    await user.click(await screen.findByRole("option", { name: "Shortlist" }));
+    await user.click(ask);
+    await user.click(within(form).getByRole("button", { name: "Save search" }));
+    expect(post).toHaveBeenCalledWith(
+      "/v1/scout/missions",
+      expect.objectContaining({ collection_id: "c9", auto_save: true, track_id: "t1" }),
+    );
   });
 
   it("asks a new user to set up resume types first", async () => {

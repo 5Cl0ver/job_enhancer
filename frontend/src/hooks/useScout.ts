@@ -178,10 +178,14 @@ export function useRun(id: string | null) {
       const run = await api.get<Run>(`/v1/scout/runs/${id}`);
       // A job was saved since the last look: My Jobs and its collections (the
       // run may have just made one) are out of date.
-      const before = qc.getQueryData<Run>(["scout-run", id])?.counts.saved ?? 0;
-      if (run.counts.saved !== before) {
+      const was = qc.getQueryData<Run>(["scout-run", id])?.counts;
+      if (run.counts.saved !== (was?.saved ?? 0)) {
         qc.invalidateQueries({ queryKey: ["saved-jobs"] });
         qc.invalidateQueries({ queryKey: ["collections"] });
+      }
+      // A new good fit is waiting: the count on Find Jobs is out of date.
+      if ((run.counts.picked ?? 0) !== (was?.picked ?? 0)) {
+        qc.invalidateQueries({ queryKey: ["email-events", "attention"] });
       }
       return run;
     },
@@ -199,5 +203,61 @@ export function useStopRun() {
       qc.invalidateQueries({ queryKey: ["scout-runs"] });
       qc.setQueryData(["scout-run", run.id], run);
     },
+  });
+}
+
+// ---------------------------------------------------------------------------
+// The review: the user ticks what to keep and where, then one button saves
+// ---------------------------------------------------------------------------
+
+export interface ConfirmResult {
+  saved: { finding_id: string; saved_job_id: string | null }[];
+  already: { finding_id: string; saved_job_id: string | null }[];
+  failed: { finding_id: string; reason: string }[];
+  folder: { id: string | null; name: string };
+}
+
+interface WhereBody {
+  collection_id?: string;
+  new_collection_name?: string;
+}
+
+/** Everything a save from Scout touches: the run, My Jobs, the collections
+ * (one may have just been made) and the count on Find Jobs. */
+function afterScoutSave(qc: ReturnType<typeof useQueryClient>) {
+  for (const queryKey of [
+    ["scout-run"],
+    ["scout-runs"],
+    ["saved-jobs"],
+    ["collections"],
+    ["tracker"],
+    ["email-events", "attention"],
+  ]) {
+    qc.invalidateQueries({ queryKey });
+  }
+}
+
+/** Save the ticked findings of a run; picks left unticked are kept in History. */
+export function useConfirmRun() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ runId, ...body }: { runId: string; finding_ids: string[] } & WhereBody) =>
+      api.post<ConfirmResult>(`/v1/scout/runs/${runId}/confirm`, body),
+    onSuccess: () => afterScoutSave(qc),
+  });
+}
+
+/** Save one finding later, from History. */
+export function useSaveFinding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ findingId, ...body }: { findingId: string } & WhereBody) =>
+      api.post<{
+        finding_id: string;
+        saved_job_id: string | null;
+        already: boolean;
+        folder: { id: string | null; name: string };
+      }>(`/v1/scout/findings/${findingId}/save`, body),
+    onSuccess: () => afterScoutSave(qc),
   });
 }

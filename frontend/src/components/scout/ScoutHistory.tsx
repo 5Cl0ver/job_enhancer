@@ -6,8 +6,9 @@ import { useState } from "react";
 import { useSearchParams } from "react-router-dom";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { RunFindings } from "@/components/scout/RunFindings";
-import { useRun, useRuns } from "@/hooks/useScout";
-import { runSummary, type Run } from "@/lib/scout";
+import { RunReview, SavedNote } from "@/components/scout/RunReview";
+import { useRun, useRuns, type ConfirmResult } from "@/hooks/useScout";
+import { lookedAt, runSummary, type Run } from "@/lib/scout";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function ScoutHistory() {
@@ -54,6 +55,8 @@ export function ScoutHistory() {
 
 function RunRow({ run, open, onToggle }: { run: Run; open: boolean; onToggle: () => void }) {
   const { data: full, isLoading } = useRun(open ? run.id : null);
+  const [saved, setSaved] = useState<ConfirmResult | null>(null);
+  const why = lookedAt(full ?? run);
   const when = new Date(run.created_at).toLocaleString(undefined, {
     month: "short",
     day: "numeric",
@@ -86,11 +89,20 @@ function RunRow({ run, open, onToggle }: { run: Run; open: boolean; onToggle: ()
               {run.note}
             </p>
           )}
+          {/* Why it came back short, in numbers that add up. */}
+          {why && <p className="text-sm text-muted-foreground">{why}</p>}
+          {saved && <SavedNote result={saved} onDismiss={() => setSaved(null)} />}
           {isLoading && <Skeleton className="h-16" />}
           {full && full.findings.length === 0 && (
             <p className="text-sm text-muted-foreground">No jobs reported.</p>
           )}
-          {full && full.findings.length > 0 && <RunFindings findings={full.findings} />}
+          {full &&
+            full.findings.length > 0 &&
+            (full.needs_review ? (
+              <RunReview run={full} onSaved={setSaved} />
+            ) : (
+              <RunFindings findings={full.findings} />
+            ))}
         </div>
       )}
     </li>

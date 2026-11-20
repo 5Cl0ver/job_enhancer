@@ -88,7 +88,16 @@ const TAB =
 const PILL =
   "relative flex h-7 w-14 items-center justify-center rounded-full transition-colors group-active:bg-accent";
 
-export function TabBar({ emailCount, isAdmin }: { emailCount: number; isAdmin: boolean }) {
+export function TabBar({
+  emailCount,
+  scoutCount = 0,
+  isAdmin,
+}: {
+  emailCount: number;
+  /** Claude Scout's picks waiting on Find Jobs. */
+  scoutCount?: number;
+  isAdmin: boolean;
+}) {
   const { pathname } = useLocation();
   const [moreOpen, setMoreOpen] = useState(false);
   const more = allowed(MORE, isAdmin);
@@ -116,6 +125,9 @@ export function TabBar({ emailCount, isAdmin }: { emailCount: number; isAdmin: b
                   <item.icon className="h-5 w-5" aria-hidden />
                   {item.to === "/email-updates" && (
                     <CountBadge count={emailCount} className="absolute -top-1 right-0" />
+                  )}
+                  {item.to === "/search" && (
+                    <CountBadge count={scoutCount} className="absolute -top-1 right-0" />
                   )}
                 </span>
                 <span className="truncate">{item.short ?? item.label}</span>

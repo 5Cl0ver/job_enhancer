@@ -32,7 +32,9 @@ POSTING = (
 JOB_URL = "https://www.linkedin.com/jobs/view/4012345678/?trk=public_jobs"
 
 
-async def _setup(maker, email, *, exclude=(), min_pay=None, job_count=2):
+async def _setup(
+    maker, email, *, exclude=(), min_pay=None, job_count=2, auto_save=False
+):
     async with maker() as db:
         user = await db.scalar(select(User).where(User.email == email))
         track = await scout_tracks.create_track(
@@ -54,6 +56,7 @@ async def _setup(maker, email, *, exclude=(), min_pay=None, job_count=2):
                 track_id=track.id,
                 job_count=job_count,
                 location="Springfield, IL",
+                auto_save=auto_save,
             ),
         )
         run = await scout_runs.queue_run(db, mission.id, user.id)
@@ -111,7 +114,9 @@ class TestBrief:
         url = out["start_urls"][0]
         assert url.startswith("https://www.linkedin.com/jobs/search/?")
         assert "f_TPR=r604800" in url and "sortBy=DD" in url
-        assert out["progress"] == {"saved": 0, "target": 2, "done": False}
+        assert out["progress"] == {"kept": 0, "target": 2, "done": False}
+        # Claude is told it doesn't save: the user confirms in the app.
+        assert "for the user to tick and save" in out["saving"]
         async with maker() as db:
             assert (await db.get(ScoutRun, run_id)).status == "running"
 
@@ -163,15 +168,16 @@ class TestReportJob:
     async def test_saves_the_exact_page_copy_with_the_resume_type(
         self, engine, monkeypatch
     ):
+        """A search set to save without asking: the job goes straight in."""
         maker = await _connected_user(engine, monkeypatch, email="save@test.dev")
-        user_id, track_id, run_id = await _setup(maker, "save@test.dev")
+        user_id, track_id, run_id = await _setup(maker, "save@test.dev", auto_save=True)
         await mcp_mod.get_scout_brief()
         assert await _capture(maker, user_id)
         out = await mcp_mod.report_job(
             str(run_id), JOB_URL, 8, "Runs M365 and Entra daily", "No Intune cert"
         )
         assert out["outcome"] == "saved"
-        assert out["saved"] == 1 and out["done"] is False
+        assert out["kept"] == 1 and out["done"] is False
         async with maker() as db:
             sj = await db.scalar(select(SavedJob).where(SavedJob.track_id == track_id))
             listing = await db.get(JobListing, sj.job_listing_id)
@@ -179,7 +185,7 @@ class TestReportJob:
             assert listing.company == "Brambleworks, Inc."
             assert listing.apply_url == "https://www.linkedin.com/jobs/view/4012345678"
             folder = await db.get(Collection, sj.collection_id)
-            assert folder.name == "Scout"
+            assert folder.name == "IT Admin"  # named after the resume type
             finding = await db.scalar(select(ScoutFinding))
             assert finding.why_fit == "Runs M365 and Entra daily"
             assert finding.saved_job_id == sj.id
@@ -188,7 +194,7 @@ class TestReportJob:
             fits = await sj_svc.scout_fits(db, user_id)
             assert (fits[sj.id].fit_score, fits[sj.id].run_id) == (8, run_id)
             src = await job_source.job_source(db, user_id, sj.id)
-            assert src.collection.name == "Scout" and src.email is None
+            assert src.collection.name == "IT Admin" and src.email is None
             assert (src.scout.run_id, src.scout.fit_score) == (run_id, 8)
             assert (
                 src.scout.source == "linkedin" and "IT Admin" in src.scout.search_name
@@ -208,14 +214,14 @@ class TestReportJob:
         async with maker() as db:
             assert (await db.scalars(select(SavedJob))).all() == []
 
-    async def test_copy_arriving_late_still_saves(self, engine, monkeypatch):
+    async def test_copy_arriving_late_still_counts(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="late@test.dev")
         user_id, _, run_id = await _setup(maker, "late@test.dev")
         await mcp_mod.get_scout_brief()
         await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "none")
         await _capture(maker, user_id)
         out = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "none")
-        assert out["outcome"] == "saved"
+        assert out["outcome"] == "picked"
 
     async def test_search_page_link_is_rejected(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="link@test.dev")
@@ -250,7 +256,7 @@ class TestReportJob:
 
     async def test_next_run_never_saves_the_same_job_again(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="again@test.dev")
-        user_id, _, run_id = await _setup(maker, "again@test.dev")
+        user_id, _, run_id = await _setup(maker, "again@test.dev", auto_save=True)
         await mcp_mod.get_scout_brief()
         await _capture(maker, user_id)
         await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "")
@@ -275,9 +281,13 @@ class TestReportJob:
         await mcp_mod.get_scout_brief()
         await _capture(maker, user_id)
         out = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "")
+        assert out["outcome"] == "picked"  # a good fit, kept for the user
         assert out["done"] is True and "finish_scout_run" in out["next"]
         fin = await mcp_mod.finish_scout_run(str(run_id), "1 strong match")
-        assert fin["counts"]["saved"] == 1
+        assert fin["counts"]["picked"] == 1 and fin["counts"]["saved"] == 0
+        assert "1 job is waiting" in fin["next"]
+        async with maker() as db:
+            assert (await db.scalars(select(SavedJob))).all() == []
         with pytest.raises(ValueError, match="done"):
             await mcp_mod.report_job(str(run_id), JOB_URL, 8, "", "")
 
@@ -310,7 +320,7 @@ async def test_copy_made_before_claude_starts_still_counts(engine, monkeypatch):
     assert await _capture(maker, user_id) is True
     await mcp_mod.get_scout_brief()
     out = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "")
-    assert out["outcome"] == "saved"
+    assert out["outcome"] == "picked"
 
 
 @pytest.mark.asyncio
@@ -322,7 +332,7 @@ async def test_copy_filed_under_another_open_run_is_still_found(engine, monkeypa
     await mcp_mod.get_scout_brief(str(first))
     assert await _capture(maker, user_id) is True
     out = await mcp_mod.report_job(str(second), JOB_URL, 8, "fits", "")
-    assert out["outcome"] == "saved"
+    assert out["outcome"] == "picked"
 
 
 @pytest.mark.asyncio

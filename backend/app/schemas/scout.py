@@ -147,6 +147,10 @@ class MissionCreate(BaseModel):
     remote: Remote = "any"
     min_fit: int = Field(6, ge=0, le=10)
     extra_instructions: str | None = Field(None, max_length=1000)
+    # Where good fits are saved; null = a collection named after the resume type.
+    collection_id: uuid.UUID | None = None
+    # Save good fits without asking first.
+    auto_save: bool = False
 
     @field_validator("posted_within_days")
     @classmethod
@@ -175,6 +179,8 @@ class MissionUpdate(BaseModel):
     remote: Remote | None = None
     min_fit: int | None = Field(None, ge=0, le=10)
     extra_instructions: str | None = Field(None, max_length=1000)
+    collection_id: uuid.UUID | None = None
+    auto_save: bool | None = None
 
     @field_validator("posted_within_days")
     @classmethod
@@ -200,10 +206,76 @@ class MissionOut(BaseModel):
     remote: str
     min_fit: int
     extra_instructions: str | None
+    collection_id: uuid.UUID | None = None
+    auto_save: bool = False
+    # The collection good fits go into: the one chosen, or the name the one for
+    # this resume type has (or will get the first time something is saved).
+    collection_name: str = ""
     last_run_at: datetime | None
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class RunFolder(BaseModel):
+    """A collection jobs go into. ``id`` is null while it doesn't exist yet (it
+    is made the first time something is saved into it)."""
+
+    id: uuid.UUID | None
+    name: str
+
+
+class _Where(BaseModel):
+    """Which collection to save into: one of the user's, or a new one by name.
+    Neither = the search's own."""
+
+    collection_id: uuid.UUID | None = None
+    new_collection_name: str | None = Field(None, max_length=100)
+
+    @field_validator("new_collection_name")
+    @classmethod
+    def _tidy_name(cls, v: str | None) -> str | None:
+        return (" ".join(v.split()) or None) if v is not None else None
+
+    @model_validator(mode="after")
+    def _one_place(self):
+        if self.collection_id is not None and self.new_collection_name:
+            raise ValueError("Choose a collection or name a new one, not both.")
+        return self
+
+
+class ConfirmIn(_Where):
+    """The user's answer to a run's review: the findings they ticked."""
+
+    finding_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+
+
+class SaveFindingIn(_Where):
+    pass
+
+
+class FindingSaved(BaseModel):
+    finding_id: uuid.UUID
+    saved_job_id: uuid.UUID | None
+
+
+class FindingFailed(BaseModel):
+    finding_id: uuid.UUID
+    reason: str
+
+
+class ConfirmOut(BaseModel):
+    saved: list[FindingSaved] = Field(default_factory=list)
+    already: list[FindingSaved] = Field(default_factory=list)
+    failed: list[FindingFailed] = Field(default_factory=list)
+    folder: RunFolder
+
+
+class SaveFindingOut(BaseModel):
+    finding_id: uuid.UUID
+    saved_job_id: uuid.UUID | None
+    already: bool = False
+    folder: RunFolder
 
 
 class FindingOut(BaseModel):
@@ -219,13 +291,20 @@ class FindingOut(BaseModel):
     app_note: str | None
     saved_job_id: uuid.UUID | None
     job_listing_id: uuid.UUID | None = None  # for the "open job" link
+    # The collection a saved finding's job is in.
+    collection_id: uuid.UUID | None = None
+    collection_name: str | None = None
+    # The user can still put it in My Jobs (its page copy exists).
+    can_save: bool = False
     created_at: datetime
 
     model_config = {"from_attributes": True}
 
 
 class RunCounts(BaseModel):
+    picked: int = 0
     saved: int = 0
+    skipped: int = 0
     below_bar: int = 0
     duplicate: int = 0
     waiting_for_copy: int = 0
@@ -245,6 +324,12 @@ class RunOut(BaseModel):
     started_at: datetime | None
     finished_at: datetime | None
     counts: RunCounts
+    # Picks are waiting for the user to tick and save.
+    needs_review: bool = False
+    # Where a confirm would save by default (single-run view only).
+    folder: RunFolder | None = None
+    # The result rows Claude checked, and why some were passed over.
+    looked_at: dict[str, int] | None = None
     findings: list[FindingOut] = Field(default_factory=list)
 
 
