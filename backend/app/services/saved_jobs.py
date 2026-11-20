@@ -13,6 +13,7 @@ from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload, with_expression
 
+from app.models.detected_event import DetectedEvent
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import (
@@ -26,12 +27,14 @@ from app.schemas.saved_job import (
     ApplicationSyncItem,
     ApplicationSyncOutcome,
     ApplicationSyncResult,
+    ListingRename,
     ManualJobCreate,
     SavedJobCreate,
     SavedJobUpdate,
     ScoutFit,
 )
 from app.services.dedup import job_content_hash, normalize
+from app.services.email_job_names import is_sender_person, role_doubtful
 from app.services.scout_tracks import get_track
 
 # Same thresholds the dedup service uses, so "is this the job I saved?" is judged
@@ -400,6 +403,80 @@ async def scout_fits(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, Sc
     }
 
 
+async def doubtful_names(db: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
+    """The user's email-made jobs whose name may be wrong (a title that reads
+    like a sentence, or a company that is the person who sent the email) and
+    that the user hasn't fixed or confirmed yet."""
+    jobs = (
+        await db.execute(
+            select(SavedJob.id, JobListing.title, JobListing.company)
+            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .where(
+                SavedJob.user_id == user_id,
+                SavedJob.origin == ORIGIN_EMAIL,
+                SavedJob.custom_title.is_(None),
+                SavedJob.custom_company.is_(None),
+            )
+        )
+    ).all()
+    if not jobs:
+        return set()
+    senders: dict[uuid.UUID, list[str]] = {}
+    for sj_id, from_addr in await db.execute(
+        select(DetectedEvent.saved_job_id, DetectedEvent.from_addr).where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.saved_job_id.in_([r.id for r in jobs]),
+        )
+    ):
+        senders.setdefault(sj_id, []).append(from_addr or "")
+    return {
+        r.id
+        for r in jobs
+        if role_doubtful(r.title, strict=False)
+        or any(is_sender_person(r.company, a) for a in senders.get(r.id, []))
+    }
+
+
+async def rename_listing(
+    db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, data: ListingRename
+) -> SavedJob:
+    """Fix or confirm a saved job's title, company, place or link. Kept on the
+    user's saved job and shown in place of the listing's own: the shared
+    listing is never edited, so nobody else's job, search results or the
+    extension's "already saved" check change."""
+    sj = await get_saved_job(db, saved_job_id, user_id, with_description=False)
+    if data.title is not None:
+        sj.custom_title = data.title
+    if data.company is not None:
+        sj.custom_company = data.company
+    if data.location is not None:
+        sj.custom_location = data.location or None
+    if data.apply_url is not None:
+        sj.custom_apply_url = data.apply_url
+    await db.flush()
+    return sj
+
+
+async def own_names(
+    db: AsyncSession, user_id: uuid.UUID, listing_id: uuid.UUID
+) -> dict[str, str]:
+    """The user's own name, place and link for a listing they saved, if any."""
+    row = (
+        await db.execute(
+            select(
+                SavedJob.custom_title,
+                SavedJob.custom_company,
+                SavedJob.custom_location,
+                SavedJob.custom_apply_url,
+            ).where(SavedJob.user_id == user_id, SavedJob.job_listing_id == listing_id)
+        )
+    ).first()
+    if row is None:
+        return {}
+    names = dict(zip(("title", "company", "location", "apply_url"), row, strict=True))
+    return {k: v for k, v in names.items() if v}
+
+
 async def mark_applied(
     db: AsyncSession, user_id: uuid.UUID, title: str, company: str
 ) -> bool:
@@ -426,6 +503,15 @@ async def mark_applied(
                 JobListing.company_normalized == company_norm,
             ).limit(1)
         )
+    if sj is None:
+        # The names the user gave a job (a fixed email-made job is known by
+        # those on the employer's page, not by the email's wording).
+        for own, title_own, company_own in await _renamed(db, user_id):
+            if company_own == company_norm and (
+                not title_norm or title_own == title_norm
+            ):
+                sj = own
+                break
     if sj is None and company_norm:
         # Company-only fallback: prefer a job not already applied, newest first.
         sj = await db.scalar(
@@ -449,6 +535,36 @@ async def mark_applied(
         sj.last_stage_change = now
     await db.flush()
     return True
+
+
+async def _renamed(
+    db: AsyncSession, user_id: uuid.UUID
+) -> list[tuple[SavedJob, str, str]]:
+    """The user's renamed jobs under their own (normalized) title and company."""
+    rows = (
+        await db.scalars(
+            select(SavedJob)
+            .options(
+                selectinload(SavedJob.job_listing).options(
+                    defer(JobListing.description)
+                )
+            )
+            .where(
+                SavedJob.user_id == user_id,
+                (SavedJob.custom_title.is_not(None))
+                | (SavedJob.custom_company.is_not(None)),
+            )
+        )
+    ).all()
+    return [
+        (
+            sj,
+            normalize(sj.custom_title or sj.job_listing.title or ""),
+            normalize(sj.custom_company or sj.job_listing.company or ""),
+        )
+        for sj in rows
+        if sj.job_listing is not None
+    ]
 
 
 def _best_saved_match(
@@ -526,6 +642,9 @@ async def sync_applications(
         for sj in saved
         if sj.job_listing is not None
     ]
+
+    # A job the user renamed is also known by its own names.
+    candidates += await _renamed(db, user_id)
 
     result = ApplicationSyncResult()
     now = datetime.now(UTC)

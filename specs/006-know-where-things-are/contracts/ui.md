@@ -49,8 +49,9 @@ The main button: **Apply Now** for jobs with a posting link; **Open the email**
 for email-made jobs (their link is the email, not a posting).
 
 **Rename** (pencil by the title): a small form with Title, Company, Place,
-Link. Save is the only primary button. A 409 shows "You already have this job
-saved" inline.
+Link. Save is the only primary button; errors show inline and the form stays
+open. The job keeps its page. An email-made job whose name may be wrong shows
+an amber note with **Fix the name** and **Looks right**.
 
 ## 4. Search form: Save into
 

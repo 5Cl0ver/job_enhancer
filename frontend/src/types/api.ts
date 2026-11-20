@@ -69,6 +69,11 @@ export interface SavedJob {
   origin?: string | null;
   /** Claude Scout's fit score and the run that found it, on jobs Scout saved. */
   scout?: { fit_score: number; run_id: string } | null;
+  /** Made from an email, and its name may be wrong: ask the user to check. */
+  name_doubtful?: boolean;
+  /** The user has fixed or confirmed this job's name (shown in place of the
+   * posting's own). */
+  renamed?: boolean;
   notes: string | null;
   applied_at: string | null;
   last_stage_change: string;

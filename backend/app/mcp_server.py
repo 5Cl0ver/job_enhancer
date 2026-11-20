@@ -146,9 +146,9 @@ def _job_summary(
     j = sj.job_listing
     return {
         "job_id": str(sj.id),
-        "title": j.title,
-        "company": j.company,
-        "location": j.location,
+        "title": sj.custom_title or j.title,
+        "company": sj.custom_company or j.company,
+        "location": sj.custom_location or j.location,
         "stage": stage_name,
         "collection": collection_name,
         "applied_at": _iso(sj.applied_at),
@@ -167,7 +167,7 @@ def _job_detail(
         "salary_min": j.salary_min,
         "salary_max": j.salary_max,
         "is_remote": j.is_remote,
-        "apply_url": j.apply_url,
+        "apply_url": sj.custom_apply_url or j.apply_url,
         "notes": sj.notes,
         "saved_at": _iso(sj.created_at),
     }

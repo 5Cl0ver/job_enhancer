@@ -623,6 +623,21 @@ async def _seen_jobs(
         for company, t in tracked:
             if (company_key(company), t) in pairs:
                 seen[(company_key(company), t)] = "in_tracker"
+        # A job the user renamed is in the tracker under its own name too.
+        renamed = (
+            await db.execute(
+                select(
+                    func.coalesce(SavedJob.custom_company, JobListing.company),
+                    SavedJob.custom_title,
+                )
+                .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+                .where(SavedJob.user_id == user_id, SavedJob.custom_title.is_not(None))
+            )
+        ).all()
+        for company, own_title in renamed:
+            pair = (company_key(company), title_key(own_title))
+            if pair in pairs:
+                seen[pair] = "in_tracker"
     conditions = []
     if titles:
         conditions.append(ScoutFinding.title_key.in_(titles))

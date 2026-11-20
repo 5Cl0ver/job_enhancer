@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -50,6 +50,7 @@ from app.services import email_accounts as svc
 from app.services import email_review, email_sync, email_sync_state, email_view
 from app.services.email_classify import UNSURE
 from app.services.email_imap import ImapAuthError
+from app.services.email_job_names import clean_role, is_sender_person
 from app.services.email_prefilter import company_tokens
 from app.services.email_providers import detect_provider
 from app.services.email_scan import (
@@ -87,8 +88,10 @@ async def _events_out(
                 SavedJob.id,
                 SavedJob.job_listing_id,
                 SavedJob.is_archived,
-                JobListing.company,
-                JobListing.title,
+                func.coalesce(SavedJob.custom_company, JobListing.company).label(
+                    "company"
+                ),
+                func.coalesce(SavedJob.custom_title, JobListing.title).label("title"),
                 PipelineStage.name.label("stage"),
             )
             .join(JobListing, SavedJob.job_listing_id == JobListing.id)
@@ -115,6 +118,11 @@ async def _events_out(
             d.company, d.title = e.job_company, e.job_title
             if d.company and not d.company[0].isalnum():
                 d.company = None  # a leftover like ".io" stored by an older scan
+            # An older scan may have kept a sentence or the sender's own name:
+            # better to ask the user than to show those.
+            if is_sender_person(d.company, e.from_addr):
+                d.company = None
+            d.title = clean_role(d.title, strict=False) if d.title else None
         d.stage_missing = bool(e.target_stage) and e.target_stage not in stage_names
         d.mail_link = mail_link(
             provider,

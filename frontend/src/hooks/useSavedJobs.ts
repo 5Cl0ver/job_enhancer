@@ -94,6 +94,28 @@ export function useSaveJob() {
   });
 }
 
+/** Fix or confirm a saved job's title, company, place or link (kept on this
+ * user's saved job; the posting itself never changes). */
+export function useRenameJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...data
+    }: {
+      id: string;
+      title?: string;
+      company?: string;
+      location?: string;
+      apply_url?: string;
+    }) => api.patch<SavedJob>(`/v1/saved-jobs/${id}/listing`, data),
+    onSuccess: () => {
+      for (const queryKey of [["saved-jobs"], ["tracker"], ["jobs"], ["job-source"], ["job-emails"]])
+        qc.invalidateQueries({ queryKey });
+    },
+  });
+}
+
 export interface JobSource {
   origin: string | null;
   saved_at: string;

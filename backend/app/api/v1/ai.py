@@ -41,6 +41,7 @@ from app.schemas.resume import (
     WorkHistoryResponse,
 )
 from app.services import ai_service, resume_parser
+from app.services import saved_jobs as sj_svc
 from app.services.match import skills_in_resume
 from app.utils.rate_limit import rate_limit_key
 
@@ -236,9 +237,11 @@ async def _load_resume_and_job(
             select(JobListing).where(JobListing.id == job_listing_id)
         )
         if listing:
-            job_description = listing.description or listing.title
-            job_title = listing.title
-            company = listing.company
+            # The user's own name for the job, if they fixed it.
+            own = await sj_svc.own_names(db, user.id, listing.id)
+            job_title = own.get("title") or listing.title
+            company = own.get("company") or listing.company
+            job_description = listing.description or job_title
     return resume, job_description, job_title, company
 
 

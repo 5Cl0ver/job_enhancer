@@ -4,6 +4,7 @@ import { useSavedJobId, useSaveJob, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { JobDetail } from "@/components/jobs/JobDetail";
 import { JobEmails } from "@/components/email/JobEmails";
 import { JobActions } from "@/components/jobs/JobActions";
+import { NameCheck, RenameButton } from "@/components/jobs/RenameJob";
 import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { JobResumeType } from "@/components/scout/JobResumeType";
 import { StagePicker } from "@/components/jobs/StagePicker";
@@ -67,7 +68,13 @@ export function JobDetailPage() {
             isSaved ? (
               <>
                 {/* First: where this job stands, and the emails that explain it. */}
-                {savedJob && <StageSince savedJob={savedJob} />}
+                {savedJob && <NameCheck savedJob={savedJob} />}
+                {savedJob && (
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <StageSince savedJob={savedJob} />
+                    <RenameButton savedJob={savedJob} />
+                  </div>
+                )}
                 {savedJob && <WhereFrom savedJob={savedJob} />}
                 <JobEmails jobListingId={id} sayWhenNone />
                 {/* The same actions the board's pop-up has. */}

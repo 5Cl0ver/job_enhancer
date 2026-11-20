@@ -96,14 +96,25 @@ single biggest reason the user thought saving was broken.
 
 ## R6. Renaming without touching anyone else's data
 
-**Decision**: `PATCH /v1/saved-jobs/{id}/listing`. If the listing is a manual
-one only this user has saved, edit it in place. Otherwise copy it into a new
-manual listing for this user, point the saved job at the copy, and edit that.
-A rename that would duplicate another of the user's saved jobs is refused.
+**Decision**: the user's corrections live on their own saved job
+(`saved_jobs.custom_title`, `custom_company`, `custom_location`,
+`custom_apply_url`) and are shown in place of the listing's wherever that user
+sees the job: lists, board, job page (`GET /jobs/{id}` overlays them for the
+user who saved it), email matching, Claude's connector and the data export.
+The shared `job_listings` row is never edited.
 
-**Rationale**: `job_listings` is a shared pool keyed by title, company and
-place; `save_manual_job` already follows the "never mutate a listing another
-user relies on" rule, and this applies the same rule to edits.
+**Rationale**: `job_listings` is a shared pool keyed by a unique hash of
+title, company and place, read by job search, duplicate checks and the
+extension's "already saved?" lookup. A first version edited the listing in
+place or copied it; review showed that crashed on an unchanged name (two rows
+with one hash), put one user's wording into everyone's search results, and
+made the extension lose track of the renamed job. An override per user has
+none of those problems and needs no conflict rules: two of a user's jobs may
+even end up with the same name.
+
+**Also**: any override set means the user has checked the name, so the "Check
+this job's name" flag clears, including through "Looks right", which saves
+the name as it is.
 
 ## R7. Keeping lists fresh and pages connected
 

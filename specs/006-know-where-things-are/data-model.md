@@ -95,17 +95,25 @@ request (id, or a new name → created) → the run's `collection_id` if it stil
 exists → the user's folder named after the run's resume type (created if
 missing) → the "Scout" folder (only when the run has no resume type).
 
-## Job names (no schema)
+## `saved_jobs` (changed again, step 3)
 
-Renaming edits `job_listings.title / company / location / apply_url`. A listing
-is edited in place only when `source = 'manual'` and no other user's saved job
-points at it; otherwise it is copied to a new manual listing first and
-`saved_jobs.job_listing_id` is repointed. The listing's dedup keys are
-recomputed, and a collision with another of the user's saved jobs is a 409.
+Migration `e2f3a4b5c6d8_saved_job_own_names`: four nullable columns.
 
-A name is **doubtful** (computed, not stored) when the title starts lower-case,
-is longer than eight words or contains a sentence verb pattern, or when the
-company looks like a person's name. Only checked for `origin = 'email'`.
+| Column | Type | Notes |
+|---|---|---|
+| `custom_title` | `varchar(500)` null | The user's own title for the job |
+| `custom_company` | `varchar(255)` null | |
+| `custom_location` | `varchar(255)` null | |
+| `custom_apply_url` | `text` null | http(s) only |
+
+Shown in place of the listing's values for that user only; the listing is
+never edited (research R6). Any of them set = the user has checked the name.
+
+A name is **doubtful** (computed, not stored) for an email-made job with no
+override when the title's first word is all lower case or it talks to the
+reader ("we", "your", "invited"…), or when the company is the person who sent
+one of the job's emails (their name, at a personal address that isn't a
+hiring system's).
 
 ## Client state
 

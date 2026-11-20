@@ -824,18 +824,23 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
       }
     >
       {editing && (
+        <p className="mt-2 text-xs text-muted-foreground">
+          The email didn&apos;t say clearly. Check the company and the job title.
+        </p>
+      )}
+      {editing && (
         <div className="mt-2 grid gap-2 sm:grid-cols-2">
           <input
             aria-label="Company"
-            placeholder="Company"
-            className="h-8 rounded-md border bg-background px-2 text-sm"
+            placeholder="Company, e.g. Vellacor"
+            className="h-8 rounded-md border bg-background px-2 text-sm pointer-coarse:h-11 pointer-coarse:text-base"
             value={company}
             onChange={(e) => setCompany(e.target.value)}
           />
           <input
             aria-label="Job title"
-            placeholder="Job title"
-            className="h-8 rounded-md border bg-background px-2 text-sm"
+            placeholder="Job title, e.g. Platform Engineer"
+            className="h-8 rounded-md border bg-background px-2 text-sm pointer-coarse:h-11 pointer-coarse:text-base"
             value={title}
             onChange={(e) => setTitle(e.target.value)}
           />
