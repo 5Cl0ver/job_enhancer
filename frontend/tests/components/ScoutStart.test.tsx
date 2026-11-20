@@ -321,6 +321,64 @@ describe("Claude Scout start", () => {
     ).toBeInTheDocument();
   });
 
+  it("an Anything I'd be good at search lets Claude pick the titles, with overrides", async () => {
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [MISSION],
+      "/v1/ai/resumes": [{ id: "cv", is_active: true }],
+    });
+    post.mockResolvedValue({ ...MISSION, broad: true });
+    const user = userEvent.setup();
+    renderStart();
+    await user.click(await screen.findByRole("button", { name: /New search/ }));
+    const form = await screen.findByRole("dialog");
+    await user.click(within(form).getByRole("combobox", { name: "Resume type" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Anything I'd be good at" }),
+    );
+    expect(within(form).getByText(/Claude reads your resume and picks/)).toBeInTheDocument();
+    expect(within(form).getByRole("combobox", { name: "Save into" })).toHaveTextContent(
+      "A collection named “Claude's picks”",
+    );
+    // Step in: one title never searched, one word to skip (Enter adds it).
+    await user.type(within(form).getByLabelText("Never search"), "Help Desk Technician");
+    await user.click(within(form).getByRole("button", { name: "Add to Never search" }));
+    await user.type(
+      within(form).getByLabelText("Skip jobs with these words"),
+      "sales, call center{Enter}",
+    );
+    expect(within(form).getByText("call center")).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Remove call center" }));
+    await user.click(within(form).getByRole("button", { name: "Save search" }));
+    expect(post).toHaveBeenCalledWith(
+      "/v1/scout/missions",
+      expect.objectContaining({
+        broad: true,
+        overrides: { always: [], never: ["Help Desk Technician"], avoid: ["sales"] },
+      }),
+    );
+    expect(post.mock.calls[0][1]).not.toHaveProperty("track_id");
+  });
+
+  it("says to upload a resume when there isn't one", async () => {
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [MISSION],
+      "/v1/ai/resumes": [],
+    });
+    const user = userEvent.setup();
+    renderStart();
+    const link = await screen.findByRole("link", { name: "Upload your resume" });
+    expect(link).toHaveAttribute("href", "/ai-apply");
+    await user.click(screen.getByRole("button", { name: /New search/ }));
+    const form = await screen.findByRole("dialog");
+    await user.click(within(form).getByRole("combobox", { name: "Resume type" }));
+    await user.click(
+      await screen.findByRole("option", { name: "Anything I'd be good at" }),
+    );
+    expect(within(form).getByText(/this search can't start/)).toBeInTheDocument();
+  });
+
   it("asks a new user to set up resume types first", async () => {
     serve({ "/v1/scout/tracks": [], "/v1/scout/missions": [] });
     renderStart();

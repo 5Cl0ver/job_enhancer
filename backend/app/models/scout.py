@@ -6,6 +6,13 @@ user on Google and checks each one's own careers page. A **company** row is
 the memory of which ones were checked, when, and what was there, so each run
 mostly visits new ones and only goes back to one after a week.
 
+A **pass** is a results row Claude passed over because its title didn't fit
+the resume type: kept for a while so later runs don't weigh the same row again.
+
+A broad search ("Anything I'd be good at") lets Claude choose which job titles
+to search from the user's resume; a **title** row remembers, per search, how
+each title did, so later runs keep the ones that work and try new ones.
+
 The app is the agent's memory (research R8): Claude in Chrome keeps nothing
 between chats. A **mission** is a saved search setup; Start queues a **run**;
 every job a run reports becomes a **finding** (the dedupe memory, kept even when
@@ -114,6 +121,9 @@ class ScoutMission(Base):
     auto_save: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # A broad search's overrides: {"always": [...], "never": [...], "avoid": [...]}.
+    # Null or empty = Claude decides on its own.
+    overrides: Mapped[dict | None] = mapped_column(JSON)
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now_col()
 
@@ -218,6 +228,12 @@ class ScoutFinding(Base):
     # The app's own reason when it set the outcome (e.g. pay under the minimum).
     app_note: Mapped[str | None] = mapped_column(String(200))
     outcome: Mapped[str] = mapped_column(String(20), nullable=False)
+    # Broad searches: the searched title this good fit is credited to, and the
+    # user's resume type Claude said it's closest to.
+    search_title: Mapped[str | None] = mapped_column(String(200))
+    closest_track_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("resume_tracks.id", ondelete="SET NULL")
+    )
     created_at: Mapped[datetime] = _now_col()
 
     __table_args__ = (
@@ -284,4 +300,35 @@ class ScoutPass(Base):
     __table_args__ = (
         Index("ix_scout_passes_track_title", "track_id", "title_key"),
         Index("ix_scout_passes_track_url", "track_id", "url_key"),
+    )
+
+
+class ScoutTitle(Base):
+    """A job title a broad search tried: how many runs searched it and how many
+    good fits it found. Titles only, never job text."""
+
+    __tablename__ = "scout_titles"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    mission_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scout_missions.id", ondelete="CASCADE"),
+        nullable=False,
+    )
+    title: Mapped[str] = mapped_column(String(200), nullable=False)
+    title_key: Mapped[str] = mapped_column(String(200), nullable=False)
+    runs: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    good_fits: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
+    last_tried_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = _now_col()
+
+    __table_args__ = (
+        UniqueConstraint("mission_id", "title_key", name="uq_scout_title_mission_key"),
     )

@@ -3,6 +3,10 @@
 A user keeps at most ``MAX_TRACKS``; names are unique per user (any case). An
 attached resume must be one of the user's own uploads. Deleting a track leaves
 its jobs saved, just untagged.
+
+Each user also has at most one hidden **broad** track, behind Scout's
+"Anything I'd be good at" search (spec 009): never listed, never counted toward
+the limit, and the page can't change or delete it.
 """
 
 import uuid
@@ -18,27 +22,60 @@ from app.models.saved_job import SavedJob
 from app.models.scout import ScoutPass
 from app.schemas.scout import MAX_TRACKS, TrackCreate, TrackOut, TrackUpdate
 
+SCOPED, BROAD = "scoped", "broad"
+BROAD_NAME = "Anything I'd be good at"
+
 
 async def list_tracks(db: AsyncSession, user_id: uuid.UUID) -> Sequence[ResumeTrack]:
+    """The user's own resume types (never the hidden broad one)."""
     return (
         await db.scalars(
             select(ResumeTrack)
-            .where(ResumeTrack.user_id == user_id)
+            .where(ResumeTrack.user_id == user_id, ResumeTrack.kind == SCOPED)
             .order_by(ResumeTrack.sort_order, ResumeTrack.created_at)
         )
     ).all()
 
 
 async def get_track(
-    db: AsyncSession, track_id: uuid.UUID, user_id: uuid.UUID
+    db: AsyncSession,
+    track_id: uuid.UUID,
+    user_id: uuid.UUID,
+    *,
+    allow_broad: bool = False,
 ) -> ResumeTrack:
+    """One of the user's resume types. The hidden broad one only when asked
+    for (a search's own track); to the page it doesn't exist."""
+    query = select(ResumeTrack).where(
+        ResumeTrack.id == track_id, ResumeTrack.user_id == user_id
+    )
+    if not allow_broad:
+        query = query.where(ResumeTrack.kind == SCOPED)
+    track = await db.scalar(query)
+    if track is None:
+        raise HTTPException(status_code=404, detail="Resume type not found")
+    return track
+
+
+async def broad_track(db: AsyncSession, user_id: uuid.UUID) -> ResumeTrack:
+    """The user's hidden "Anything I'd be good at" track, made on first use."""
     track = await db.scalar(
         select(ResumeTrack).where(
-            ResumeTrack.id == track_id, ResumeTrack.user_id == user_id
+            ResumeTrack.user_id == user_id, ResumeTrack.kind == BROAD
         )
     )
     if track is None:
-        raise HTTPException(status_code=404, detail="Resume type not found")
+        track = ResumeTrack(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            name=BROAD_NAME,
+            target_titles=[],
+            key_skills=[],
+            skip_rules={},
+            kind=BROAD,
+        )
+        db.add(track)
+        await db.flush()
     return track
 
 
@@ -60,8 +97,14 @@ async def _check_name(
     name: str,
     except_id: uuid.UUID | None = None,
 ) -> None:
+    if name.lower() == BROAD_NAME.lower():
+        raise HTTPException(
+            status_code=422,
+            detail=f"“{BROAD_NAME}” is Scout's own search. Choose another name.",
+        )
     query = select(ResumeTrack.id).where(
         ResumeTrack.user_id == user_id,
+        ResumeTrack.kind == SCOPED,
         func.lower(ResumeTrack.name) == name.lower(),
     )
     if except_id is not None:
@@ -76,7 +119,9 @@ async def create_track(
     db: AsyncSession, user_id: uuid.UUID, data: TrackCreate
 ) -> ResumeTrack:
     count = await db.scalar(
-        select(func.count(ResumeTrack.id)).where(ResumeTrack.user_id == user_id)
+        select(func.count(ResumeTrack.id)).where(
+            ResumeTrack.user_id == user_id, ResumeTrack.kind == SCOPED
+        )
     )
     if (count or 0) >= MAX_TRACKS:
         raise HTTPException(

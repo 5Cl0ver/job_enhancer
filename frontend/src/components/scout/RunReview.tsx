@@ -143,6 +143,12 @@ function Row({
           </p>
         )}
         {f.can_save && f.app_note && <p className="text-xs text-amber-600 dark:text-amber-400">{f.app_note}</p>}
+        {f.closest_track_name && (
+          <p className="text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">Closest · </span>
+            {f.closest_track_name}
+          </p>
+        )}
         {f.why_fit && (
           <p className="line-clamp-2 text-xs text-muted-foreground">
             <span className="font-medium text-foreground">Why · </span>

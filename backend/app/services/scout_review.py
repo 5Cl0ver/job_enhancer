@@ -93,9 +93,15 @@ async def make_folder(db: AsyncSession, user_id: uuid.UUID, name: str) -> Collec
         return folder
 
 
+BROAD_FOLDER = "Claude's picks"
+
+
 def default_folder_name(criteria: dict) -> str:
     """A search with no collection chosen saves into one named after its resume
-    type ("IT Admin"), so different kinds of role don't pile into one place."""
+    type ("IT Admin"), so different kinds of role don't pile into one place. An
+    "Anything I'd be good at" search saves into "Claude's picks"."""
+    if (criteria or {}).get("broad"):
+        return BROAD_FOLDER
     name = ((criteria or {}).get("track") or {}).get("name") or ""
     return " ".join(str(name).split())[:100] or SCOUT_FOLDER
 
@@ -166,6 +172,15 @@ async def _capture(
         .order_by(ScoutCapture.captured_at.desc())
         .limit(1)
     )
+
+
+def job_track(run: ScoutRun, finding: ScoutFinding) -> uuid.UUID | None:
+    """The resume type a saved job is tagged with: the search's own, or for an
+    "Anything I'd be good at" search the one Claude said is closest (never the
+    hidden broad one)."""
+    if (run.criteria or {}).get("broad"):
+        return finding.closest_track_id
+    return run.track_id
 
 
 async def save_finding_job(
@@ -278,7 +293,7 @@ async def confirm_run(
             user_id,
             f,
             source=f.source,
-            track_id=run.track_id,
+            track_id=job_track(run, f),
             folder_id=folder.id,
             capture=capture,
         )
@@ -339,7 +354,7 @@ async def save_one(
         user_id,
         finding,
         source=finding.source,
-        track_id=run.track_id,
+        track_id=job_track(run, finding),
         folder_id=folder.id,
         capture=capture,
     )

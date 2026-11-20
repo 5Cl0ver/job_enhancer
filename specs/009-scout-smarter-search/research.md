@@ -133,7 +133,7 @@ Each decision below was checked against the code as it stands after 008
 ## R10. No resume
 
 - **Decision**: `queue_run` returns 422 for a broad mission when the user has
-  no active resume with text ("Upload your resume first: Profile → Resumes").
+  no active resume with text ("Upload your resume first: AI Apply → Your Resume").
   Scoped runs carry on, with `resume_ready: false` in the brief. The playbook
   then says to score against the resume type alone. The Start page shows a
   note with a link.

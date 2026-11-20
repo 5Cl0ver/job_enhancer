@@ -482,7 +482,10 @@ async def get_scout_brief(run_id: str | None = None) -> dict:
     the user says "do my next Job Scout run". Leave run_id empty: the app picks
     the run that's waiting. Returns the short playbook to follow, the resume type
     to look for, a ready-made search URL with the filters already set, and the
-    progress so far. A fresh chat on a half-done run carries on where it was."""
+    progress so far. If resume_ready, call get_master_profile once and score
+    against the resume. An "Anything I'd be good at" search (broad) has no start
+    URL yet: choose titles and call set_search_titles. A fresh chat on a
+    half-done run carries on where it was."""
     async with _session_user() as (db, user):
         out = await scout_svc.brief(db, user.id, run_id)
         await db.commit()
@@ -505,8 +508,26 @@ async def check_jobs(run_id: str, rows: list[dict]) -> dict:
 
 
 @mcp.tool
+async def set_search_titles(run_id: str, titles: list[str]) -> dict:
+    """ "Anything I'd be good at" searches only. Send the job titles you chose
+    from the user's resume (up to 8 are searched). The app adds the user's
+    Always titles first, leaves out Never titles and titles resting after
+    finding nothing, and answers with the start_urls to open (filters already
+    set) and any titles it left out, with why."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.set_search_titles(db, user.id, run_id, titles)
+        await db.commit()
+        return out
+
+
+@mcp.tool
 async def report_job(
-    run_id: str, url: str, fit_score: int, why_fit: str, gaps: str
+    run_id: str,
+    url: str,
+    fit_score: int,
+    why_fit: str,
+    gaps: str,
+    resume_type: str = "",
 ) -> dict:
     """Report one job while its posting page is OPEN in the tab. Send only the
     posting's link, your 0-10 fit score (the playbook's rubric), why it fits and
@@ -514,10 +535,11 @@ async def report_job(
     the exact posting from the page itself. Answers with the outcome (picked =
     a good fit, kept for the user to confirm; saved; below_bar; duplicate;
     waiting_for_copy; no_copy; rejected_link), the progress, and what to do
-    next."""
+    next. On an "Anything I'd be good at" search, also pass resume_type: the
+    name of the user's resume type this job is closest to ("" for none)."""
     async with _session_user() as (db, user):
         out = await scout_svc.report_job(
-            db, user.id, run_id, url, fit_score, why_fit, gaps
+            db, user.id, run_id, url, fit_score, why_fit, gaps, resume_type
         )
         await db.commit()
         return out

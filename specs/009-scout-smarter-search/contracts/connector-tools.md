@@ -47,8 +47,8 @@ The answer:
 }
 ```
 
-- The possible `why` values are `never_search`, `resting`, `duplicate` and
-  `over_the_limit`.
+- The possible `why` values are `never_search`, `resting` and
+  `over_the_limit`. A title sent twice is searched once.
 - Called again after a results page was checked, it returns the run's current
   titles and links with `"note": "This run's titles are set."`.
 - If every title is dropped and there are no Always titles, it returns a

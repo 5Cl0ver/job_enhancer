@@ -27,7 +27,7 @@ The request body adds:
 ## POST /missions/{id}/runs (changed)
 
 - A broad mission with no active resume text returns 422, with detail
-  "Upload your resume first: Profile → Resumes."
+  "Upload your resume first: AI Apply → Your Resume."
 
 ## GET /missions/{id}/titles (new)
 

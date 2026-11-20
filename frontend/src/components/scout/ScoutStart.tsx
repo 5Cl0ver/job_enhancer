@@ -6,6 +6,7 @@
  */
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
+import { Link } from "react-router-dom";
 import {
   Bot,
   Check,
@@ -23,9 +24,11 @@ import {
   whereReady,
   type Where,
 } from "@/components/scout/FolderSelect";
+import { BroadOverrides } from "@/components/scout/BroadOverrides";
 import { RunFindings } from "@/components/scout/RunFindings";
 import { RunReview, SavedNote } from "@/components/scout/RunReview";
 import { RunTip } from "@/components/scout/RunTip";
+import { useResumes } from "@/hooks/useAI";
 import { useCollections, useCreateCollection } from "@/hooks/useSavedJobs";
 import {
   type ConfirmResult,
@@ -39,6 +42,7 @@ import {
   useTracks,
 } from "@/hooks/useScout";
 import {
+  BROAD_NAME,
   companiesLine,
   formatPay,
   isBoard,
@@ -48,6 +52,8 @@ import {
   type Mission,
   type MissionInput,
   needsPlace,
+  NO_OVERRIDES,
+  type Overrides,
   parsePay,
   POSTED_WITHIN,
   postedLabel,
@@ -86,6 +92,9 @@ import { Textarea } from "@/components/ui/textarea";
 
 export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
   const { data: tracks } = useTracks();
+  const { data: resumes } = useResumes();
+  // Claude scores against the uploaded resume: without one, scores are rougher.
+  const noResume = !!resumes && !resumes.some((r) => r.is_active);
   const { data: missions, isLoading, isError } = useMissions();
   const { data: runs } = useRuns();
   const [editing, setEditing] = useState<Mission | "new" | null>(null);
@@ -127,6 +136,18 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
               jobs; the app remembers every job it has seen, so nothing comes
               back twice.
             </p>
+            {noResume && (
+              <p className="text-sm text-amber-700 dark:text-amber-400">
+                Claude scores each job against your resume.{" "}
+                <Link
+                  to="/ai-apply"
+                  className="font-medium underline underline-offset-2"
+                >
+                  Upload your resume
+                </Link>{" "}
+                for better scores.
+              </p>
+            )}
           </div>
           {!!missions?.length && (
             <Button
@@ -174,6 +195,7 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
       <MissionEditor
         mission={editing === "new" ? null : editing}
         tracks={tracks ?? []}
+        noResume={noResume}
         open={editing !== null}
         onClose={() => setEditing(null)}
       />
@@ -387,11 +409,13 @@ function LiveRun({
 function MissionEditor({
   mission,
   tracks,
+  noResume,
   open,
   onClose,
 }: {
   mission: Mission | null;
   tracks: Track[];
+  noResume: boolean;
   open: boolean;
   onClose: () => void;
 }) {
@@ -403,6 +427,7 @@ function MissionEditor({
             key={mission?.id ?? "new"}
             mission={mission}
             tracks={tracks}
+            noResume={noResume}
             onDone={onClose}
           />
         )}
@@ -412,21 +437,29 @@ function MissionEditor({
 }
 
 const ANY_DISTANCE = "any";
+// The resume-type choice that lets Claude pick the titles.
+const BROAD = "broad";
 
 function MissionForm({
   mission,
   tracks,
+  noResume,
   onDone,
 }: {
   mission: Mission | null;
   tracks: Track[];
+  noResume: boolean;
   onDone: () => void;
 }) {
   const save = useSaveMission();
   const del = useDeleteMission();
   const [source, setSource] = useState<Source>(mission?.source ?? "linkedin");
+  const [broad, setBroad] = useState(mission?.broad ?? false);
   const [trackId, setTrackId] = useState(
-    mission?.track_id ?? tracks[0]?.id ?? "",
+    mission && !mission.broad ? mission.track_id : (tracks[0]?.id ?? ""),
+  );
+  const [overrides, setOverrides] = useState<Overrides>(
+    mission?.overrides ?? NO_OVERRIDES,
   );
   const [count, setCount] = useState(String(mission?.job_count ?? 5));
   const [days, setDays] = useState(String(mission?.posted_within_days ?? 7));
@@ -450,7 +483,7 @@ function MissionForm({
   const createCollection = useCreateCollection();
   const qc = useQueryClient();
   const [problem, setProblem] = useState<string | null>(null);
-  const track = tracks.find((t) => t.id === trackId);
+  const track = broad ? undefined : tracks.find((t) => t.id === trackId);
   // "Within N miles" only means something around a place, for jobs you'd go to.
   const radiusApplies = location.trim() !== "" && remote !== "remote_only";
   const local = needsPlace(source);
@@ -468,7 +501,7 @@ function MissionForm({
     const minPay = parsePay(pay);
     if (Number.isNaN(minPay))
       return setProblem("Minimum pay should look like 70K or 70000.");
-    if (!trackId) return setProblem("Pick a resume type.");
+    if (!broad && !trackId) return setProblem("Pick a resume type.");
     if (local && !location.trim())
       return setProblem(
         "Add a city or area: Scout looks for companies near it.",
@@ -503,7 +536,7 @@ function MissionForm({
     const data: MissionInput & { id?: string } = {
       id: mission?.id,
       source,
-      track_id: trackId,
+      ...(broad ? { broad: true, overrides } : { broad: false, track_id: trackId }),
       job_count: Number(count),
       posted_within_days: Number(days),
       location: location.trim() || null,
@@ -557,11 +590,18 @@ function MissionForm({
           )}
         </Field>
         <Field label="Resume type">
-          <Select value={trackId} onValueChange={setTrackId}>
+          <Select
+            value={broad ? BROAD : trackId}
+            onValueChange={(v) => {
+              setBroad(v === BROAD);
+              if (v !== BROAD) setTrackId(v);
+            }}
+          >
             <SelectTrigger aria-label="Resume type">
               <SelectValue placeholder="Pick one" />
             </SelectTrigger>
             <SelectContent>
+              <SelectItem value={BROAD}>{BROAD_NAME}</SelectItem>
               {tracks.map((t) => (
                 <SelectItem key={t.id} value={t.id}>
                   {t.name}
@@ -569,6 +609,17 @@ function MissionForm({
               ))}
             </SelectContent>
           </Select>
+          {broad && (
+            <p className="text-xs text-muted-foreground">
+              Claude reads your resume and picks the job titles to search,
+              including ones you might not think of.
+            </p>
+          )}
+          {broad && noResume && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              Upload your resume first (AI Apply), or this search can't start.
+            </p>
+          )}
         </Field>
         <Field label="How many jobs">
           <Select value={count} onValueChange={setCount}>
@@ -681,14 +732,23 @@ function MissionForm({
           </Select>
         </Field>
       </div>
+      {broad && (
+        <BroadOverrides
+          value={overrides}
+          onChange={setOverrides}
+          missionId={mission?.broad ? mission.id : null}
+        />
+      )}
       <Field label="Save into">
         <FolderSelect
           value={where}
           onChange={setWhere}
           ownLabel={
-            track
-              ? `A collection named “${track.name}”`
-              : "A collection for this search"
+            broad
+              ? "A collection named “Claude's picks”"
+              : track
+                ? `A collection named “${track.name}”`
+                : "A collection for this search"
           }
         />
       </Field>
