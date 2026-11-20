@@ -9,8 +9,9 @@ hire more), so a run doesn't redo last week's work but still catches new
 listings. A company the user said never to check is never handed out.
 
 A company is handed out (and counted as checked) the moment the app says to
-visit it, so a second chat on the same run never visits it twice. Claude then
-says what was there with ``checked``.
+visit it. Claude then says what was there with ``checked``. One handed out but
+not reported yet (the chat ran out) is handed out again to the next chat on
+the same run, without counting twice; one reported is never visited twice.
 
 Functions Claude reaches through the connector raise ``ValueError`` with a
 message Claude can act on; the page's REST functions raise ``HTTPException``.
@@ -53,6 +54,12 @@ _SHARED_HOSTS = (
     "square.site",
     "webflow.io",
     "github.io",
+    "herokuapp.com",
+    "blogspot.com",
+    "azurewebsites.net",
+    "netlify.app",
+    "vercel.app",
+    "pages.dev",
 )
 _SECOND_LEVEL = ("co", "com", "org", "net", "gov", "edu", "ac")
 
@@ -79,6 +86,10 @@ def site_key(website: str | None) -> str | None:
     labels = host.split(".")
     if len(labels) < 2 or not all(labels):
         return None
+    # Towns, counties and school districts: springfield.il.us,
+    # district186.k12.il.us. The whole name is the place.
+    if labels[-1] == "us" and len(labels) >= 3 and len(labels[-2]) == 2:
+        return host
     base = ".".join(labels[-2:])
     if len(labels) >= 3 and len(labels[-1]) == 2 and labels[-2] in _SECOND_LEVEL:
         base = ".".join(labels[-3:])  # brambleworks.co.uk
@@ -94,9 +105,14 @@ def _key(name: str, website: str | None) -> str | None:
     return f"name:{name_key}"[:255] if name_key else None
 
 
-def _http(url: str | None) -> str | None:
+def _http(url: str | None, limit: int = 2000) -> str | None:
     url = (url or "").strip()
-    return url[:2000] if url.lower().startswith(("http://", "https://")) else None
+    return url[:limit] if url.lower().startswith(("http://", "https://")) else None
+
+
+def _website(website: str, key: str) -> str:
+    """The link kept for a company (its column holds 500 characters)."""
+    return _http(_as_link(website), 500) or f"https://{key}"[:500]
 
 
 def _due(company: ScoutCompany, now: datetime) -> bool:
@@ -112,6 +128,11 @@ def _due(company: ScoutCompany, now: datetime) -> bool:
 
 def _stats(run: ScoutRun) -> dict:
     return dict(run.stats or {})
+
+
+def _reported(stats: dict) -> set[str]:
+    """Companies this run has already had a report back on."""
+    return set(stats.get("_done", []))
 
 
 def counts(run: ScoutRun) -> dict:
@@ -165,8 +186,10 @@ async def rechecks(db: AsyncSession, user_id: uuid.UUID, run: ScoutRun) -> list[
     Picked once per run: asking again (a new chat) hands back the same ones."""
     stats = _stats(run)
     if "_recheck" in stats:
-        known = await _by_keys(db, user_id, set(stats["_recheck"]))
-        return [_brief_row(known[k]) for k in stats["_recheck"] if k in known]
+        # A later chat on the same run: only the ones not reported back yet.
+        left = [k for k in stats["_recheck"] if k not in _reported(stats)]
+        known = await _by_keys(db, user_id, set(left))
+        return [_brief_row(known[k]) for k in left if k in known]
     cutoff = _now() - timedelta(days=RECHECK_DAYS)
     due = (
         await db.scalars(
@@ -199,6 +222,13 @@ async def rechecks(db: AsyncSession, user_id: uuid.UUID, run: ScoutRun) -> list[
     return [_brief_row(c) for c in due]
 
 
+def _visit_row(i: int, company: ScoutCompany) -> dict:
+    row: dict = {"i": i}
+    if company.careers_url:
+        row["careers_url"] = company.careers_url
+    return row
+
+
 async def check(
     db: AsyncSession, user_id: uuid.UUID, run: ScoutRun, companies: list[dict]
 ) -> dict:
@@ -212,8 +242,11 @@ async def check(
         raise ValueError(f"Send at most {MAX_COMPANIES_PER_CHECK} companies per call.")
     stats = _stats(run)
     handed = set(stats.get("_companies", []))
+    reported = _reported(stats)
     keyed: list[tuple[int, str, str | None, str | None]] = []
     for i, row in enumerate(companies):
+        if not isinstance(row, dict):
+            row = {}  # counted as having no website
         name = " ".join(str(row.get("name") or "").split())[:255]
         website = str(row.get("website") or "").strip() or None
         keyed.append((i, name, website, _key(name, website) if website else None))
@@ -232,8 +265,12 @@ async def check(
             skip("no_website")
         elif is_job_site(_as_link(website)):
             skip("job_site")
-        elif key in seen_now or key in handed:
+        elif key in seen_now or key in reported:
             skip("checked_this_run")
+        elif key in handed and company is not None:
+            # Handed out earlier in this run but never reported (a new chat):
+            # visit it now, without counting it again.
+            visit.append(_visit_row(i, company))
         elif company is not None and company.never_check:
             skip("skipped_by_you")
         elif company is not None and not _due(company, now):
@@ -252,7 +289,7 @@ async def check(
                     user_id=user_id,
                     key=key,
                     name=name or key,
-                    website=_http(_as_link(website)),
+                    website=_website(website, key),
                     times_checked=0,
                     never_check=False,
                 )
@@ -262,10 +299,7 @@ async def check(
                 company.name = name
             _hand_out(run, stats, company, recheck=recheck)
             handed.add(key)
-            row = {"i": i}
-            if company.careers_url:
-                row["careers_url"] = company.careers_url
-            visit.append(row)
+            visit.append(_visit_row(i, company))
         if key:
             seen_now.add(key)
     await db.flush()
@@ -294,10 +328,16 @@ async def checked(
     name: str = "",
 ) -> dict:
     """Claude says what a company's site had."""
+    if (run.criteria or {}).get("source") != LOCAL:
+        raise ValueError("company_checked is only for a Local companies search.")
     if result not in COMPANY_RESULTS:
         raise ValueError(f"result must be one of: {', '.join(COMPANY_RESULTS)}.")
+    stats = _stats(run)
     key = _key(name, website)
-    company = (await _by_keys(db, user_id, {key})).get(key) if key else None
+    handed = set(stats.get("_companies", []))
+    company = (
+        (await _by_keys(db, user_id, {key})).get(key) if key and key in handed else None
+    )
     if company is None:
         raise ValueError(
             "That company wasn't handed out in this search. Send it to "
@@ -309,13 +349,15 @@ async def checked(
         company.careers_url = None
     elif link and not is_job_site(link):
         company.careers_url = link
-    stats = _stats(run)
+    stats["_done"] = sorted(_reported(stats) | {key})
     opened = set(stats.get("_openings", []))
-    if result == COMPANY_OPENINGS and key not in opened:
+    if result == COMPANY_OPENINGS:
         opened.add(key)
-        stats["_openings"] = sorted(opened)
-        stats["companies_with_openings"] = len(opened)
-        run.stats = stats
+    else:
+        opened.discard(key)  # a corrected report
+    stats["_openings"] = sorted(opened)
+    stats["companies_with_openings"] = len(opened)
+    run.stats = stats
     await db.flush()
     full = counts(run)["checked"] >= MAX_COMPANIES_PER_RUN
     return {

@@ -137,3 +137,10 @@ class TestJobSites:
 def test_a_google_page_is_never_the_posting():
     assert "Apply on" in posting_problem("https://www.google.com/search?q=x&udm=8")
     assert "Apply on" in posting_problem("https://jobs.google.com/abc")
+
+
+def test_googles_own_jobs_are_postings():
+    url = "https://www.google.com/about/careers/applications/jobs/results/123-it-admin"
+    assert posting_problem(url) is None
+    assert not is_job_site(url)
+    assert posting_problem("https://careers.google.com/jobs/results/123/") is None

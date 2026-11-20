@@ -22,7 +22,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
@@ -33,6 +33,7 @@ from app.models.job_listing import JobListing
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
 from app.models.scout import (
+    ANY_SITE_SOURCES,
     BELOW_BAR,
     DUPLICATE,
     LOCAL,
@@ -65,6 +66,7 @@ from app.services import collections as col_svc
 from app.services import scout_companies as companies
 from app.services import scout_review as review
 from app.services.scout_dedupe import (
+    BOARD_HOSTS,
     company_key,
     is_job_site,
     posting_problem,
@@ -553,13 +555,30 @@ async def active_run_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | Non
     return run.id if run else None
 
 
+open_run = _open_run
+
+
+def copies_any_site(run: ScoutRun) -> bool:
+    """Pages beyond the three job boards are copied only while Claude is
+    running a search whose postings live anywhere (never a queued one)."""
+    return (
+        run.status == RUN_RUNNING
+        and (run.criteria or {}).get("source") in ANY_SITE_SOURCES
+    )
+
+
 async def record_capture(db: AsyncSession, user_id: uuid.UUID, data: CaptureIn) -> bool:
     """Keep the extension's exact copy of a posting for the open run. Returns
     False (nothing stored) when no run is open or the link isn't a posting."""
-    run_id = await active_run_id(db, user_id)
+    run = await _open_run(db, user_id)
     key = url_key(data.url)
-    if run_id is None or key is None or posting_problem(data.url):
+    if run is None or key is None or posting_problem(data.url):
         return False
+    host = (urlsplit(data.url).hostname or "").lower()
+    on_board = any(host == b or host.endswith(f".{b}") for b in BOARD_HOSTS)
+    if not on_board and not copies_any_site(run):
+        return False  # some other site, and no search that looks there
+    run_id = run.id
     values = data.model_dump()
     capture = await db.scalar(
         select(ScoutCapture).where(

@@ -51,9 +51,18 @@ export function scoutDone(res) {
 // word for word. Only on a page that looks like a job, so ordinary browsing
 // isn't copied.
 
-const JOBBY_PATH = /career|job|position|opening|employ|vacanc|requisition|apply|hiring|recruit|join-?us/i;
-const APPLY_WORD = /\bapply\b|\bapplication\b/i;
-const POSTING_WORD = /\b(responsibilities|qualifications|requirements|duties|what you.ll do)\b/i;
+// A careers page's path: /careers/…, /jobs/123, /job-openings, /employment.
+const JOBBY_PATH =
+  /career|\bjobs?\b|job-|\bpositions?\b|openings?\b|vacanc|requisition|\bhiring\b|recruit|\bemployment\b|join-?us/i;
+const APPLY_WORD = /\bapply\b/i;
+const POSTING_WORDS = [
+  /\bresponsibilities\b/i,
+  /\bqualifications\b/i,
+  /\brequirements\b/i,
+  /\bduties\b/i,
+  /\bwhat you.ll do\b/i,
+  /\bbenefits\b/i,
+];
 const BLOCK = new Set([
   "P", "DIV", "LI", "UL", "OL", "H1", "H2", "H3", "H4", "H5", "H6", "TR", "TD",
   "TH", "TABLE", "SECTION", "ARTICLE", "BR", "DT", "DD", "DL", "BLOCKQUOTE", "PRE",
@@ -118,7 +127,9 @@ export function looksLikePosting(url, text) {
   } catch {
     return false;
   }
-  return JOBBY_PATH.test(path) || (APPLY_WORD.test(text) && POSTING_WORD.test(text));
+  // Or a posting's shape: "apply" plus at least two posting headings.
+  const headings = POSTING_WORDS.filter((w) => w.test(text)).length;
+  return JOBBY_PATH.test(path) || (APPLY_WORD.test(text) && headings >= 2);
 }
 
 /**

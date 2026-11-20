@@ -37,6 +37,9 @@ from app.models import Base
 SOURCES = ("linkedin", "indeed", "ziprecruiter", "google_jobs", "local_companies")
 # Searches that look around a place, so they need one.
 LOCAL = "local_companies"
+# Searches whose postings are on any site, not one job board: only while one of
+# these is running does the extension copy pages beyond the three boards.
+ANY_SITE_SOURCES = ("google_jobs", LOCAL)
 REMOTE_RULES = ("any", "remote_only", "no_remote")
 
 RUN_QUEUED = "queued"

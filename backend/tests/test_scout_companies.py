@@ -92,6 +92,11 @@ class TestSiteKey:
             ("https://careers.brambleworks.example", "brambleworks.example"),
             ("https://www.quillstone.co.uk/", "quillstone.co.uk"),
             ("https://vellacor.wixsite.com/home", "vellacor.wixsite.com"),
+            ("https://vellacor.herokuapp.com/", "vellacor.herokuapp.com"),
+            # Towns, counties and school districts are each their own place.
+            ("https://www.springfield.il.us/jobs", "springfield.il.us"),
+            ("https://district186.k12.il.us/", "district186.k12.il.us"),
+            ("https://co.sangamon.il.us", "co.sangamon.il.us"),
             ("", None),
             ("not a site", None),
         ],
@@ -292,7 +297,7 @@ class TestCheckCompanies:
         assert again["companies"]["checked"] == MAX_RECHECKS_PER_RUN
         # The re-check slots are used up: other due companies wait for next time.
         out = await mcp_mod.check_companies(
-            str(run_id), [_co("Old 4", "old4.example"), _co("New", "new.example")]
+            str(run_id), [_co("Old 0", "old0.example"), _co("New", "new.example")]
         )
         assert [v["i"] for v in out["visit"]] == [1]
 
@@ -505,3 +510,146 @@ class TestCompaniesPage:
             f"/v1/scout/companies/{uuid.uuid4()}", json={"never_check": True}
         )
         assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestReviewFixes:
+    async def test_a_new_chat_gets_back_companies_not_reported_yet(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="nc@test.dev")
+        _, _, run_id = await _setup(maker, "nc@test.dev")
+        await mcp_mod.get_scout_brief()
+        page = [_co("A", "a.example"), _co("B", "b.example")]
+        await mcp_mod.check_companies(str(run_id), page)
+        await mcp_mod.company_checked(str(run_id), "a.example", "none")
+        # The first chat ran out before B. The next one sees the same page.
+        out = await mcp_mod.check_companies(str(run_id), page)
+        assert [v["i"] for v in out["visit"]] == [1]
+        assert out["skipped"] == {"checked_this_run": 1}
+        assert out["companies"]["checked"] == 2  # not counted twice
+
+    async def test_a_new_chat_only_rechecks_what_wasnt_reported(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="nr@test.dev")
+        user_id, _, run_id = await _setup(maker, "nr@test.dev")
+        await _company(maker, user_id, "Old A", "olda.example", days_ago=9)
+        await _company(maker, user_id, "Old B", "oldb.example", days_ago=8)
+        first = await mcp_mod.get_scout_brief()
+        assert len(first["recheck"]) == 2
+        await mcp_mod.company_checked(str(run_id), "olda.example", "none")
+        again = await mcp_mod.get_scout_brief()
+        assert [c["name"] for c in again["recheck"]] == ["Old B"]
+
+    async def test_only_a_company_this_run_handed_out_can_be_reported(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="ho@test.dev")
+        user_id, _, run_id = await _setup(maker, "ho@test.dev")
+        await _company(maker, user_id, "Fresh", "fresh.example", days_ago=1)
+        await mcp_mod.get_scout_brief()
+        with pytest.raises(ValueError, match="check_companies first"):
+            await mcp_mod.company_checked(str(run_id), "fresh.example", "openings")
+
+    async def test_a_corrected_report_counts_once(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="cr@test.dev")
+        _, _, run_id = await _setup(maker, "cr@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_companies(str(run_id), [_co("A", "a.example")])
+        await mcp_mod.company_checked(str(run_id), "a.example", "openings")
+        await mcp_mod.company_checked(str(run_id), "a.example", "none")
+        async with maker() as db:
+            run = await db.get(ScoutRun, run_id)
+        assert run.stats["companies_with_openings"] == 0
+
+    async def test_odd_rows_and_long_links_dont_break_it(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="od@test.dev")
+        user_id, _, run_id = await _setup(maker, "od@test.dev")
+        await mcp_mod.get_scout_brief()
+        long_site = "https://www.vellacor.example/?" + "utm=x&" * 200
+        out = await mcp_mod.check_companies(
+            str(run_id),
+            ["Brambleworks", {"name": "Vellacor", "website": long_site}],
+        )
+        assert [v["i"] for v in out["visit"]] == [1]
+        assert out["skipped"] == {"no_website": 1}
+        async with maker() as db:
+            company = await db.scalar(
+                select(ScoutCompany).where(ScoutCompany.user_id == user_id)
+            )
+        assert len(company.website) <= 500
+
+    async def test_company_checked_is_only_for_a_local_search(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="ol@test.dev")
+        _, _, run_id = await _setup(maker, "ol@test.dev", source="google_jobs")
+        await mcp_mod.get_scout_brief()
+        with pytest.raises(ValueError, match="only for a Local companies search"):
+            await mcp_mod.company_checked(str(run_id), "a.example", "none")
+
+
+@pytest.mark.asyncio
+class TestPageCopiesBeyondTheBoards:
+    """Job Catcher copies pages on other sites only while a Google Jobs or
+    Local companies search is running, so ordinary browsing is never kept."""
+
+    async def _capture(self, maker, user_id, url):
+        async with maker() as db:
+            stored = await scout_runs.record_capture(
+                db,
+                user_id,
+                CaptureIn(
+                    url=url,
+                    title="IT Systems Administrator",
+                    company="Brambleworks",
+                    description=POSTING * 2,
+                ),
+            )
+            await db.commit()
+            return stored
+
+    async def test_only_while_a_local_or_google_search_is_running(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="pc1@test.dev")
+        user_id, _, _ = await _setup(maker, "pc1@test.dev")
+        url = "https://brambleworks.example/careers/it-admin-1"
+        # Queued: Claude hasn't started, nothing is copied.
+        assert not await self._capture(maker, user_id, url)
+        await mcp_mod.get_scout_brief()
+        assert await self._capture(maker, user_id, url)
+
+    async def test_never_during_a_job_board_search(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="pc2@test.dev")
+        user_id, _, _ = await _setup(maker, "pc2@test.dev", source="linkedin")
+        await mcp_mod.get_scout_brief()
+        assert not await self._capture(
+            maker, user_id, "https://brambleworks.example/careers/it-admin-1"
+        )
+        assert await self._capture(
+            maker, user_id, "https://www.linkedin.com/jobs/view/4012345678/"
+        )
+
+    async def test_the_extension_is_told(self, client: AsyncClient, db_session):
+        track = (
+            await client.post("/v1/scout/tracks", json={"name": "IT Admin"})
+        ).json()
+        mission = (
+            await client.post(
+                "/v1/scout/missions",
+                json={
+                    "source": "local_companies",
+                    "track_id": track["id"],
+                    "location": "Springfield, IL",
+                },
+            )
+        ).json()
+        run = (await client.post(f"/v1/scout/missions/{mission['id']}/runs")).json()
+        active = (await client.get("/v1/scout/runs/active")).json()
+        assert active == {"run_id": run["id"], "any_site": False}
+        row = await db_session.get(ScoutRun, uuid.UUID(run["id"]))
+        row.status = "running"
+        await db_session.commit()
+        assert (await client.get("/v1/scout/runs/active")).json()["any_site"] is True

@@ -149,7 +149,11 @@ async def active_run(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> ActiveRunOut:
-    return ActiveRunOut(run_id=await runs.active_run_id(db, user.id))
+    run = await runs.open_run(db, user.id)
+    return ActiveRunOut(
+        run_id=run.id if run else None,
+        any_site=bool(run and runs.copies_any_site(run)),
+    )
 
 
 @router.get("/runs/{run_id}", response_model=RunOut)

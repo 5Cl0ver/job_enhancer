@@ -362,6 +362,9 @@ class ActiveRunOut(BaseModel):
     """For the extension: is a run open, so job pages should be captured?"""
 
     run_id: uuid.UUID | None
+    # Copy job pages on any site, not only the three job boards: a Google Jobs
+    # or Local companies run that Claude has started.
+    any_site: bool = False
 
 
 class CaptureIn(BaseModel):

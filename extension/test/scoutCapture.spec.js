@@ -124,8 +124,16 @@ describe("company sites (Local companies / Google Jobs)", () => {
 
   it("tells a posting from other pages", () => {
     expect(looksLikePosting("https://a.example/careers/123", "")).toBe(true);
-    expect(looksLikePosting("https://a.example/p?id=9", "Apply now. Responsibilities: …")).toBe(true);
+    expect(looksLikePosting("https://a.example/jobs/123", "")).toBe(true);
+    expect(looksLikePosting("https://a.example/employment", "")).toBe(true);
+    expect(
+      looksLikePosting("https://a.example/p?id=9", "Apply now. Responsibilities: … Qualifications: …"),
+    ).toBe(true);
     expect(looksLikePosting("https://a.example/blog/news", "Read our news")).toBe(false);
+    // Not a job: a loan form, a staff portal, one stray "requirements".
+    expect(looksLikePosting("https://bank.example/loans/apply", "")).toBe(false);
+    expect(looksLikePosting("https://a.example/employee/portal", "")).toBe(false);
+    expect(looksLikePosting("https://a.example/p", "Apply for a permit. Requirements: ID")).toBe(false);
   });
 
   it("reads text with breaks between blocks", () => {

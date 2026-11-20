@@ -92,6 +92,13 @@ def _url_key(url: str) -> str | None:
     return f"{host}{path}" + (f"?{urlencode(kept)}" if kept else "")
 
 
+# The three job boards Scout searches directly (their pages are always copied
+# while a run is open).
+BOARD_HOSTS = ("linkedin.com", "indeed.com", "ziprecruiter.com")
+
+# Google's own jobs, on its careers site: a real posting, not a Google page.
+_GOOGLE_CAREERS = re.compile(r"^(?:careers\.google\.com|google\.com/about/careers)")
+
 # Job boards, and the directories and review sites a Google search for local
 # businesses also lists. A "Local companies" search uses none of them: only
 # each company's own site (or the hiring system its careers page runs on).
@@ -143,7 +150,10 @@ JOB_SITES = (
 
 def is_job_site(url: str) -> bool:
     """A job board, directory or review site: not a company's own site."""
-    host = _host(url if "//" in (url or "") else f"https://{url}")
+    link = url if "//" in (url or "") else f"https://{url}"
+    host = _host(link)
+    if _GOOGLE_CAREERS.match(f"{host}{urlsplit(link).path}"):
+        return False
     return bool(host) and (
         any(host == d or host.endswith(f".{d}") for d in JOB_SITES)
         # indeed.co.uk, google.ca …
@@ -177,7 +187,9 @@ def posting_problem(url: str) -> str | None:
     )
     if zip_search:
         return "That's a ZipRecruiter search page. Open the job and send its link."
-    if ".google." in f".{host}":  # google.com, google.ca, jobs.google.com
+    # google.com, google.ca, jobs.google.com… (not Google's own careers site)
+    google_careers = _GOOGLE_CAREERS.match(f"{host}{path}")
+    if ".google." in f".{host}" and not google_careers:
         return (
             "That's a Google page. Open the job's own page (its \"Apply on\" "
             "link, the company's own site first) and send that link."

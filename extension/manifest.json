@@ -27,7 +27,14 @@
         "https://*.indeed.com/*",
         "https://*.linkedin.com/*",
         "https://*.ziprecruiter.com/*",
-        "https://*.google.com/*"
+        "https://*.google.com/*",
+        "https://*.claude.ai/*",
+        "https://job-enhancer-xxj1.vercel.app/*",
+        "https://*.mail.yahoo.com/*",
+        "https://outlook.live.com/*",
+        "https://outlook.office.com/*",
+        "https://outlook.office365.com/*",
+        "https://mail.proton.me/*"
       ],
       "js": ["dist/scoutpage.js"],
       "run_at": "document_idle"

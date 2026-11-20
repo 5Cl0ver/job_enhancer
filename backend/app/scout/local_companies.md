@@ -1,5 +1,6 @@
 This is a LOCAL COMPANIES search: no job boards at all. You look for jobs on
-the companies' own websites.
+the companies' own websites. These steps replace playbook steps 2 and 3; the
+rest of the playbook holds.
 
 a. If the brief lists "recheck" companies, visit those first: open the
    careers_url if one is given, else the website, and look at their openings.
