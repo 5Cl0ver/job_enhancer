@@ -35,10 +35,12 @@ from app.models.scout import (
     ScoutRun,
 )
 from app.schemas.scout import CompanyOut, CompanyUpdate
+from app.services import scout_instructions as instr
 from app.services.scout_dedupe import company_key, is_job_site
 
 RECHECK_DAYS = 7
-MAX_COMPANIES_PER_RUN = 15
+# The default; each run uses its own (the user can change it, spec 010).
+MAX_COMPANIES_PER_RUN = instr.LIMITS["companies"]
 MAX_RECHECKS_PER_RUN = 3
 MAX_COMPANIES_PER_CHECK = 20
 
@@ -138,7 +140,10 @@ def _reported(stats: dict) -> set[str]:
 def counts(run: ScoutRun) -> dict:
     """How many companies this run has checked, against its limit."""
     stats = run.stats or {}
-    return {"checked": stats.get("companies", 0), "limit": MAX_COMPANIES_PER_RUN}
+    return {
+        "checked": stats.get("companies", 0),
+        "limit": instr.limit(run.criteria, "companies"),
+    }
 
 
 def _hand_out(
@@ -275,7 +280,7 @@ async def check(
             skip("skipped_by_you")
         elif company is not None and not _due(company, now):
             skip("checked_recently")
-        elif len(handed) >= MAX_COMPANIES_PER_RUN:
+        elif len(handed) >= instr.limit(run.criteria, "companies"):
             skip("over_the_limit")
         elif company is not None and (
             stats.get("companies_rechecked", 0) >= MAX_RECHECKS_PER_RUN
@@ -303,7 +308,7 @@ async def check(
         if key:
             seen_now.add(key)
     await db.flush()
-    full = len(handed) >= MAX_COMPANIES_PER_RUN
+    full = len(handed) >= instr.limit(run.criteria, "companies")
     if visit:
         nxt = (
             'Visit each company in "visit" in turn: find its careers page, send '
@@ -359,7 +364,9 @@ async def checked(
     stats["companies_with_openings"] = len(opened)
     run.stats = stats
     await db.flush()
-    full = counts(run)["checked"] >= MAX_COMPANIES_PER_RUN
+    # Full once every company the run may check has been reported (not just
+    # handed out: Claude may still have some to visit).
+    full = len(_reported(run.stats)) >= instr.limit(run.criteria, "companies")
     return {
         "recorded": result,
         "companies": counts(run),

@@ -18,9 +18,14 @@ from app.schemas.scout import (
     CompanyUpdate,
     ConfirmIn,
     ConfirmOut,
+    InstructionSave,
+    InstructionSection,
+    InstructionsOut,
+    InstructionVersionOut,
     MissionCreate,
     MissionOut,
     MissionUpdate,
+    RunEventOut,
     RunOut,
     SaveFindingIn,
     SaveFindingOut,
@@ -30,6 +35,8 @@ from app.schemas.scout import (
     TrackUpdate,
 )
 from app.services import scout_companies as companies
+from app.services import scout_instructions as instr
+from app.services import scout_log
 from app.services import scout_review as review
 from app.services import scout_runs as runs
 from app.services import scout_titles as titles_svc
@@ -259,3 +266,96 @@ async def update_company(
     out = await companies.update_company(db, user.id, company_id, data)
     await db.commit()
     return out
+
+
+# --------------------------------------------------------------------------- #
+# The Instructions page and the run log (spec 010)
+# --------------------------------------------------------------------------- #
+@router.get("/instructions", response_model=InstructionsOut)
+async def instructions(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstructionsOut:
+    """Everything Claude Scout tells Claude: the user's own versions where they
+    edited, the originals elsewhere, and the parts that are locked."""
+    from app import mcp_server  # the tools' own descriptions, as Claude sees them
+
+    sections = await instr.sections(db, user.id)
+    weights = next(s["current"] for s in sections if s["key"] == "rubric")
+    return InstructionsOut(
+        sections=[InstructionSection(**s) for s in sections],
+        rubric_text=instr.rubric_text(weights),
+        locked_rules=instr.RULES,
+        connector_note=mcp_server.mcp.instructions or "",
+        tools=mcp_server.scout_tool_descriptions(),
+        fixed_limits=[{"label": k, "value": v} for k, v in instr.FIXED_LIMITS],
+    )
+
+
+@router.put("/instructions/{key}", response_model=InstructionSection)
+async def save_instruction(
+    key: str,
+    data: InstructionSave,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstructionSection:
+    out = await instr.save(db, user.id, key, data.text, data.values)
+    await db.commit()
+    return InstructionSection(**out)
+
+
+@router.post("/instructions/{key}/reset", response_model=InstructionSection)
+async def reset_instruction(
+    key: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstructionSection:
+    out = await instr.reset(db, user.id, key)
+    await db.commit()
+    return InstructionSection(**out)
+
+
+@router.get("/instructions/{key}/history", response_model=list[InstructionVersionOut])
+async def instruction_history(
+    key: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[InstructionVersionOut]:
+    return [InstructionVersionOut(**v) for v in await instr.history(db, user.id, key)]
+
+
+@router.post(
+    "/instructions/{key}/restore/{version_id}", response_model=InstructionSection
+)
+async def restore_instruction(
+    key: str,
+    version_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> InstructionSection:
+    out = await instr.restore(db, user.id, key, version_id)
+    await db.commit()
+    return InstructionSection(**out)
+
+
+@router.get("/missions/{mission_id}/preview")
+async def preview_mission(
+    mission_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """What Claude would be given if this search started now. It only reads:
+    nothing is created or marked."""
+    return await runs.preview(db, user.id, mission_id)
+
+
+@router.get("/runs/{run_id}/log", response_model=list[RunEventOut])
+async def run_log(
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[RunEventOut]:
+    return [
+        RunEventOut.model_validate(e)
+        for e in await scout_log.events(db, user.id, run_id)
+    ]

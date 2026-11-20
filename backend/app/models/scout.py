@@ -9,6 +9,9 @@ mostly visits new ones and only goes back to one after a week.
 A **pass** is a results row Claude passed over because its title didn't fit
 the resume type: kept for a while so later runs don't weigh the same row again.
 
+An **instruction version** is a user's edit of what Claude is told (spec 010);
+a **run event** is one connector call in a run's log.
+
 A broad search ("Anything I'd be good at") lets Claude choose which job titles
 to search from the user's resume; a **title** row remembers, per search, how
 each title did, so later runs keep the ones that work and try new ones.
@@ -332,3 +335,51 @@ class ScoutTitle(Base):
     __table_args__ = (
         UniqueConstraint("mission_id", "title_key", name="uq_scout_title_mission_key"),
     )
+
+
+class ScoutInstructionVersion(Base):
+    """One saved version of one part of what Claude Scout tells Claude, for one
+    user (spec 010). The latest per key is current; a null body is a reset to
+    the original."""
+
+    __tablename__ = "scout_instruction_versions"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    key: Mapped[str] = mapped_column(String(20), nullable=False)
+    body: Mapped[str | None] = mapped_column(Text)
+    # The original this edit was made from (to say when the original changed).
+    base_hash: Mapped[str | None] = mapped_column(String(16))
+    created_at: Mapped[datetime] = _now_col()
+
+    __table_args__ = (
+        Index("ix_scout_instruction_versions_user_key", "user_id", "key", "created_at"),
+    )
+
+
+class ScoutRunEvent(Base):
+    """One connector call during a run: what Claude sent and what the app
+    answered, trimmed (spec 010). Never the resume or the instruction texts."""
+
+    __tablename__ = "scout_run_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
+    )
+    user_id: Mapped[uuid.UUID] = _user_col()
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scout_runs.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+    tool: Mapped[str] = mapped_column(String(40), nullable=False)
+    summary: Mapped[str] = mapped_column(String(300), nullable=False, default="")
+    request: Mapped[dict | None] = mapped_column(JSON)
+    response: Mapped[dict | None] = mapped_column(JSON)
+    ok: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
+    created_at: Mapped[datetime] = _now_col()
