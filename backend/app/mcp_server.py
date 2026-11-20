@@ -32,7 +32,7 @@ from app.models.application_profile import ApplicationProfile
 from app.models.custom_answer import CustomAnswer
 from app.models.generated_document import GeneratedDocument
 from app.models.resume import Resume
-from app.models.saved_job import SavedJob
+from app.models.saved_job import ORIGIN_CLAUDE, SavedJob
 from app.models.user import User
 from app.schemas.saved_job import ManualJobCreate
 from app.services import collections as col_svc
@@ -341,7 +341,7 @@ async def save_job(
             collection_id=col.id if col else None,
             notes=notes,
         )
-        sj = await sj_svc.save_manual_job(db, user.id, data)
+        sj = await sj_svc.save_manual_job(db, user.id, data, origin=ORIGIN_CLAUDE)
         # save_manual_job returns an already-saved job untouched, so the folder on
         # ManualJobCreate only lands on a genuinely new row. Naming a collection is
         # an explicit instruction — honor it either way rather than dropping it.

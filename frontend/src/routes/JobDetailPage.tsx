@@ -3,6 +3,7 @@ import { useJob } from "@/hooks/useJobs";
 import { useSavedJobId, useSaveJob, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { JobDetail } from "@/components/jobs/JobDetail";
 import { JobEmails } from "@/components/email/JobEmails";
+import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { JobResumeType } from "@/components/scout/JobResumeType";
 import { StagePicker } from "@/components/jobs/StagePicker";
 import { Skeleton } from "@/components/ui/skeleton";
@@ -66,12 +67,14 @@ export function JobDetailPage() {
               <>
                 {/* First: where this job stands, and the emails that explain it. */}
                 {savedJob && <StageSince savedJob={savedJob} />}
+                {savedJob && <WhereFrom savedJob={savedJob} />}
                 <JobEmails jobListingId={id} sayWhenNone />
                 <JobResumeType jobListingId={id} />
               </>
             ) : null
           }
           stage={savedJob ? <StagePicker savedJob={savedJob} /> : null}
+          savedJob={savedJob}
         />
       )}
     </div>

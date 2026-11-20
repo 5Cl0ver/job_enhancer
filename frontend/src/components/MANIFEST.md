@@ -53,7 +53,9 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `SearchBar.tsx` | Query + location inputs → URL params |
 | `SearchFilters.tsx` | Remote/type/salary/experience filters → URL params |
 | `SearchResults.tsx` | `useJobSearch` → grid of `JobCard` + pagination |
-| `JobCard.tsx` | Job card: title, company, salary, source, apply/save |
+| `JobCard.tsx` | Job card: title, company, salary, apply/save; a saved job shows where it came from (`OriginLabel`), a search result its feed |
+| `OriginLabel.tsx` | Where a saved job came from, as an icon and a few words ("Claude Scout · fit 8/10", "From an email"); nothing when unknown |
+| `WhereFrom.tsx` | "Where this came from" on the job page and pop-up: origin, Claude's why/gaps and a link to the Scout search, the email it was made from, and its collection |
 | `SavedJobsBody.tsx` | My Jobs list on a computer: folders, filter bar, card grid drawn 30 at a time |
 | `StagePicker.tsx` | A saved job's stage as a coloured pill you can change (the board's move, from the job page; pinned at the bottom on a phone) |
 | `PhoneJobList.tsx` | My Jobs list on a phone: rows (about ten a screen), stage chips with counts (remembered per device), search, filters in a bottom sheet, 30 rows at a time |

@@ -4,7 +4,8 @@ import { CollectionSidebar } from "@/components/jobs/CollectionSidebar";
 import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useSavedJobs, useUnsaveJob } from "@/hooks/useSavedJobs";
+import { ANY_ORIGIN, useJobsParams } from "@/hooks/useJobsParams";
+import { useCollections, useSavedJobs, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { useShowMore } from "@/hooks/useShowMore";
 import {
   NO_FILTERS,
@@ -15,6 +16,7 @@ import {
   type AppliedFilter,
   type JobFilters,
 } from "@/lib/jobFilters";
+import { ORIGIN_LABEL, originChoices } from "@/lib/origin";
 
 const inputCls =
   "h-9 rounded-md border bg-background px-3 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring";
@@ -22,15 +24,23 @@ const inputCls =
 /** The saved-jobs list on a computer (folders + filters + card grid): the
  *  "List" view of My Jobs. A phone gets PhoneJobList instead. */
 export function SavedJobsBody() {
-  const [selectedCollection, setSelectedCollection] = useState<string | null>(null);
+  // The collection and "where from" live in the address, so other pages can
+  // link here ("In IT Admin", "2 saved to My Jobs › IT Admin").
+  const { folder, origin, setFolder, setOrigin } = useJobsParams();
+  const { data: collections } = useCollections();
+  // A link to a collection that's gone shows everything, not an empty page.
+  const selectedCollection =
+    folder && (!collections || collections.some((c) => c.id === folder)) ? folder : null;
   const { data: savedJobs = [], isLoading, isError } = useSavedJobs({
     collectionId: selectedCollection ?? undefined,
   });
   const unsaveJob = useUnsaveJob();
 
-  const [filters, setFilters] = useState<JobFilters>(NO_FILTERS);
-  const set = (patch: Partial<JobFilters>) => setFilters((f) => ({ ...f, ...patch }));
+  const [typed, setTyped] = useState<JobFilters>(NO_FILTERS);
+  const filters = useMemo(() => ({ ...typed, origin }), [typed, origin]);
+  const set = (patch: Partial<JobFilters>) => setTyped((f) => ({ ...f, ...patch }));
   const { q, loc, minPay, jobType, applied, remoteOnly } = filters;
+  const origins = useMemo(() => originChoices(savedJobs, origin), [savedJobs, origin]);
 
   // Job-type choices come from what's actually in the list.
   const jobTypes = useMemo(() => jobTypesIn(savedJobs), [savedJobs]);
@@ -41,11 +51,14 @@ export function SavedJobsBody() {
   );
 
   const activeFilters = !!q || filtersSet(filters) > 0;
-  const clearFilters = () => setFilters(NO_FILTERS);
+  const clearFilters = () => {
+    setTyped(NO_FILTERS);
+    setOrigin(ANY_ORIGIN);
+  };
 
   return (
     <div className="flex flex-col gap-4 md:flex-row md:gap-6">
-      <CollectionSidebar selectedId={selectedCollection} onSelect={setSelectedCollection} />
+      <CollectionSidebar selectedId={selectedCollection} onSelect={setFolder} />
 
       <main className="min-w-0 flex-1">
         {/* Filter bar */}
@@ -91,6 +104,21 @@ export function SavedJobsBody() {
             <option value="not">Not applied</option>
             <option value="applied">Applied</option>
           </select>
+          {origins.length > 0 && (
+            <select
+              className={inputCls}
+              aria-label="Where from"
+              value={origin}
+              onChange={(e) => setOrigin(e.target.value)}
+            >
+              <option value={ANY_ORIGIN}>From anywhere</option>
+              {origins.map((o) => (
+                <option key={o} value={o}>
+                  {ORIGIN_LABEL[o]}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             onClick={() => set({ remoteOnly: !remoteOnly })}
@@ -154,6 +182,7 @@ export function SavedJobsBody() {
                   isSaved
                   applied={!!sj.applied_at}
                   savedJobId={sj.id}
+                  savedJob={sj}
                   onSave={() => unsaveJob.mutate(sj.id)}
                 />
               ))}

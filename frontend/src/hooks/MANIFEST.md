@@ -7,7 +7,7 @@ optimistic updates where useful.
 | File | Exported hooks | Backend endpoint(s) |
 |---|---|---|
 | `useJobs.ts` | `useJobSearch`, `useJob` | `GET /v1/jobs` |
-| `useSavedJobs.ts` | `useCollections`, `useCreateCollection`, `useDeleteCollection`, `useSavedJobs`, `useSavedJobId`, `useSaveJob`, `useUpdateSavedJob`, `useUnsaveJob` | `/v1/collections`, `/v1/saved-jobs` |
+| `useSavedJobs.ts` | `useCollections`, `useCreateCollection`, `useDeleteCollection`, `useSavedJobs`, `useSavedJobId`, `useSaveJob`, `useJobSource` (where a job came from), `useUpdateSavedJob`, `useUnsaveJob` | `/v1/collections`, `/v1/saved-jobs` |
 | `useTracker.ts` | `usePipelineStages`, `useKanbanJobs`, `useMoveJobStage`, `useCreateStage`, `useDeleteStage` | `/v1/pipeline-stages` |
 | `useSavedSearches.ts` | `useSavedSearches`, `useCreateSavedSearch`, `useDeleteSavedSearch`, `useNewMatches`, `useMarkMatchesSeen` | `/v1/saved-searches` |
 | `useAnalytics.ts` | `useAnalyticsSummary` | `GET /v1/analytics/summary` |
@@ -16,6 +16,7 @@ optimistic updates where useful.
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |
 | `useAttention.ts` | `useAttention` (counts for the nav badges; refreshed each minute and after any email action) | `GET /v1/attention` |
 | `useIsPhone.ts` | `useIsPhone` (screen under 768px) — for places where phone and desktop are different components | — |
+| `useJobsParams.ts` | `useJobsParams`: My Jobs' collection and "where from" kept in the address (`?folder=`, `?origin=`) so other pages can link to them | — |
 | `useShowMore.ts` | `useShowMore` (draw a long list 30 at a time; loads the next page as its button scrolls into view) | — |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every

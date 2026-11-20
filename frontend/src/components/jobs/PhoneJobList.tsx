@@ -9,6 +9,7 @@ import { Link } from "react-router-dom";
 import { BookmarkX, Mail, Search, SlidersHorizontal, X } from "lucide-react";
 import { EmptyState } from "@/components/common/EmptyState";
 import { ErrorState } from "@/components/common/ErrorState";
+import { OriginLabel } from "@/components/jobs/OriginLabel";
 import { CountBadge } from "@/components/layout/PhoneNav";
 import { Button } from "@/components/ui/button";
 import {
@@ -22,6 +23,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useJobEmailLatest } from "@/hooks/useEmailAccount";
+import { ANY_ORIGIN, useJobsParams } from "@/hooks/useJobsParams";
 import { useCollections, useSavedJobs } from "@/hooks/useSavedJobs";
 import { useShowMore } from "@/hooks/useShowMore";
 import { usePipelineStages } from "@/hooks/useTracker";
@@ -35,6 +37,7 @@ import {
   type AppliedFilter,
   type JobFilters,
 } from "@/lib/jobFilters";
+import { ORIGIN_LABEL, originChoices } from "@/lib/origin";
 import { readPref, writePref } from "@/lib/prefs";
 import { stageTone } from "@/lib/stageStyle";
 import { cn } from "@/lib/utils";
@@ -93,6 +96,7 @@ function JobRow({
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium leading-snug">{j.title}</p>
           <p className="truncate text-sm text-muted-foreground">{where}</p>
+          <OriginLabel savedJob={savedJob} className="flex max-w-full" />
         </div>
         {hasEmail && (
           <Mail className="h-4 w-4 shrink-0 text-primary" aria-label="Has an email" />
@@ -119,12 +123,19 @@ function JobRow({
 }
 
 export function PhoneJobList() {
-  const [folder, setFolder] = useState<string | null>(null);
+  // The collection and "where from" live in the address, so other pages can
+  // link here.
+  const { folder: asked, origin, setFolder, setOrigin, clear } = useJobsParams();
+  const collectionsQuery = useCollections();
+  const collections = collectionsQuery.data ?? [];
+  // A link to a collection that's gone shows everything, not an empty page.
+  const folder =
+    asked && (!collectionsQuery.data || collections.some((c) => c.id === asked)) ? asked : null;
   const jobsQuery = useSavedJobs({ collectionId: folder ?? undefined });
   const { data: stages = [] } = usePipelineStages();
-  const { data: collections = [] } = useCollections();
   const { data: emails } = useJobEmailLatest();
-  const [filters, setFilters] = useState<JobFilters>(NO_FILTERS);
+  const [typed, setTyped] = useState<JobFilters>(NO_FILTERS);
+  const filters = useMemo(() => ({ ...typed, origin }), [typed, origin]);
   const [stage, setStage] = useState(() => readPref("jobsStage") ?? ALL);
   const [sheetOpen, setSheetOpen] = useState(false);
 
@@ -139,16 +150,17 @@ export function PhoneJobList() {
   );
   const stageNames = useMemo(() => new Map(stages.map((s) => [s.id, s.name])), [stages]);
   const jobTypes = useMemo(() => jobTypesIn(jobs), [jobs]);
+  const origins = useMemo(() => originChoices(jobs, origin), [jobs, origin]);
 
-  const set = (patch: Partial<JobFilters>) => setFilters((f) => ({ ...f, ...patch }));
+  const set = (patch: Partial<JobFilters>) => setTyped((f) => ({ ...f, ...patch }));
   const chooseStage = (id: string) => {
     setStage(id);
     writePref("jobsStage", id === ALL ? null : id);
   };
   const setCount = filtersSet(filters) + Number(folder !== null);
   const clearAll = () => {
-    setFilters(NO_FILTERS);
-    setFolder(null);
+    setTyped(NO_FILTERS);
+    clear();
   };
 
   if (jobsQuery.isError && jobsQuery.data === undefined) {
@@ -290,7 +302,7 @@ export function PhoneJobList() {
           </DialogHeader>
           <div className="space-y-3">
             <label className="block space-y-1 text-sm font-medium">
-              Folder
+              Collection
               <select
                 className={FIELD}
                 value={folder ?? ""}
@@ -304,6 +316,23 @@ export function PhoneJobList() {
                 ))}
               </select>
             </label>
+            {origins.length > 0 && (
+              <label className="block space-y-1 text-sm font-medium">
+                Where from
+                <select
+                  className={FIELD}
+                  value={origin}
+                  onChange={(e) => setOrigin(e.target.value)}
+                >
+                  <option value={ANY_ORIGIN}>Anywhere</option>
+                  {origins.map((o) => (
+                    <option key={o} value={o}>
+                      {ORIGIN_LABEL[o]}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            )}
             <label className="block space-y-1 text-sm font-medium">
               Place
               <input

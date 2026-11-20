@@ -19,6 +19,9 @@ const MIN_AWAY_MS = 3_000;
 interface ApplyButtonProps extends Pick<ButtonProps, "size" | "variant"> {
   job: JobListing;
   className?: string;
+  /** The job was made from an email, so its link is that email, not a posting:
+   * the button says so and doesn't ask "Did you apply?" afterwards. */
+  fromEmail?: boolean;
 }
 
 /**
@@ -27,7 +30,7 @@ interface ApplyButtonProps extends Pick<ButtonProps, "size" | "variant"> {
  * one click saves the job (if needed) and moves it to Applied.
  * Status is NEVER changed without confirmation.
  */
-export function ApplyButton({ job, className, size, variant }: ApplyButtonProps) {
+export function ApplyButton({ job, className, size, variant, fromEmail }: ApplyButtonProps) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const clickedAt = useRef<number | null>(null);
 
@@ -75,9 +78,9 @@ export function ApplyButton({ job, className, size, variant }: ApplyButtonProps)
           href={job.apply_url}
           target="_blank"
           rel="noopener noreferrer"
-          onClick={handleApplyClick}
+          onClick={fromEmail ? undefined : handleApplyClick}
         >
-          Apply Now
+          {fromEmail ? "Open the email" : "Apply Now"}
           <ExternalLink className="ml-1.5 h-3.5 w-3.5" aria-hidden />
         </a>
       </Button>

@@ -16,6 +16,8 @@ export interface JobFilters {
   jobType: string;
   applied: AppliedFilter;
   remoteOnly: boolean;
+  /** Where the job came from (lib/origin), or "all". */
+  origin: string;
 }
 
 export const NO_FILTERS: JobFilters = {
@@ -25,6 +27,7 @@ export const NO_FILTERS: JobFilters = {
   jobType: "all",
   applied: "all",
   remoteOnly: false,
+  origin: "all",
 };
 
 export const PAY_OPTIONS = [
@@ -45,6 +48,7 @@ export function filterJobs(jobs: SavedJob[], f: JobFilters): SavedJob[] {
     const j = sj.job_listing;
     if (q && !`${j.title} ${j.company}`.toLowerCase().includes(q)) return false;
     if (f.remoteOnly && !j.is_remote) return false;
+    if (f.origin !== "all" && sj.origin !== f.origin) return false;
     if (f.applied === "applied" && !sj.applied_at) return false;
     if (f.applied === "not" && sj.applied_at) return false;
     if (f.minPay > 0) {
@@ -66,7 +70,8 @@ export function filtersSet(f: JobFilters): number {
     Number(f.minPay > 0) +
     Number(f.jobType !== "all") +
     Number(f.applied !== "all") +
-    Number(f.remoteOnly)
+    Number(f.remoteOnly) +
+    Number(f.origin !== "all")
   );
 }
 
