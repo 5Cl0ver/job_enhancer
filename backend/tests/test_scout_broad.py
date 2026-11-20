@@ -135,6 +135,28 @@ class TestBroadTrack:
             for i in range(7):  # 1 + 7 = the limit of 8 the user can make
                 await scout_tracks.create_track(db, user_id, TrackCreate(name=f"T{i}"))
 
+    async def test_a_type_already_named_like_it_keeps_its_name(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="b4@test.dev")
+        async with maker() as db:
+            user = await db.scalar(select(User).where(User.email == "b4@test.dev"))
+            # Made before the name was reserved.
+            db.add(
+                ResumeTrack(
+                    id=uuid.uuid4(),
+                    user_id=user.id,
+                    name="Anything I'd be good at",
+                    target_titles=[],
+                    key_skills=[],
+                    skip_rules={},
+                )
+            )
+            await db.flush()
+            broad = await scout_tracks.broad_track(db, user.id)
+            assert broad.kind == "broad"
+            assert broad.name == "Anything I'd be good at (Scout)"
+
     async def test_needs_a_resume_type_unless_broad(self):
         with pytest.raises(ValidationError, match="Choose a resume type"):
             MissionCreate(source="linkedin")
@@ -218,10 +240,24 @@ class TestClaudeChoosesTheTitles:
         assert out["titles"] == TITLES[1:] and "set" in out["note"]
         async with maker() as db:
             rows = (await db.scalars(select(ScoutTitle))).all()
-            # Each title counted once for this run, however often it was set.
+            # Each title searched counts once for this run, however often it was
+            # set; the one swapped out before any results doesn't count.
             assert sorted((r.title, r.runs) for r in rows) == sorted(
-                (t, 1) for t in TITLES
+                [(TITLES[0], 0), (TITLES[1], 1), (TITLES[2], 1)]
             )
+
+    async def test_local_titles_are_fixed_once_companies_are_handed_out(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="c8@test.dev")
+        _, _, run_id = await _broad(maker, "c8@test.dev", source="local_companies")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.set_search_titles(str(run_id), TITLES[:1])
+        await mcp_mod.check_companies(
+            str(run_id), [{"name": "Brambleworks", "website": "brambleworks.example"}]
+        )
+        out = await mcp_mod.set_search_titles(str(run_id), TITLES[1:])
+        assert out["titles"] == TITLES[:1] and "set" in out["note"]
 
     async def test_only_broad_searches_take_titles(self, engine, monkeypatch):
         from tests.test_mcp_scout import _setup
@@ -272,20 +308,20 @@ class TestGoodFits:
                 == "Microsoft 365 Administrator"
             )
             assert found["Payroll Clerk"].closest_track_id is None
-            # No words in common: the first title gets it.
-            assert found["Payroll Clerk"].search_title == TITLES[0]
+            # No words in common: no title gets the credit.
+            assert found["Payroll Clerk"].search_title is None
             # Below the bar: no credit.
             assert found["Access Analyst"].search_title is None
             fits = {
                 r.title: r.good_fits
                 for r in (await db.scalars(select(ScoutTitle))).all()
             }
-            assert fits == {TITLES[0]: 1, TITLES[1]: 1, TITLES[2]: 0}
+            assert fits == {TITLES[0]: 0, TITLES[1]: 1, TITLES[2]: 0}
             run = await db.get(ScoutRun, run_id)
             (out,) = await scout_runs.runs_out(db, [run], with_findings=True)
             assert out.broad is True
             assert [(t.title, t.good_fits) for t in out.titles] == [
-                (TITLES[0], 1),
+                (TITLES[0], 0),
                 (TITLES[1], 1),
                 (TITLES[2], 0),
             ]
@@ -316,7 +352,7 @@ class TestGoodFits:
     def test_best_title_counts_words_in_common(self):
         assert best_title("Sr. Identity & Access Analyst", TITLES) == TITLES[2]
         assert best_title("Systems Administrator II", TITLES) == TITLES[0]
-        assert best_title("", TITLES) == TITLES[0]
+        assert best_title("Payroll Clerk", TITLES) is None
         assert best_title("Anything", []) is None
 
 

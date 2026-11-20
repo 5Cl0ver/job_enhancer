@@ -146,10 +146,12 @@ export function useUpdateOverrides() {
   return useMutation({
     mutationFn: ({ id, overrides }: { id: string; overrides: Overrides }) =>
       api.patch<Mission>(`/v1/scout/missions/${id}`, { overrides }),
-    onSuccess: (_m, { id }) => {
-      qc.invalidateQueries({ queryKey: ["scout-missions"] });
-      qc.invalidateQueries({ queryKey: ["scout-titles", id] });
-    },
+    // Wait for the fresh search, so the next tap builds on these overrides.
+    onSuccess: (_m, { id }) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["scout-missions"] }),
+        qc.invalidateQueries({ queryKey: ["scout-titles", id] }),
+      ]),
   });
 }
 

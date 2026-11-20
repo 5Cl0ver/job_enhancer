@@ -82,9 +82,9 @@ Each decision below was checked against the code as it stands after 008
 - **Decision**: When a finding becomes a good fit (picked or saved) on a broad
   run, the app gives it the searched title with the most words in common with
   the posting's title (normalised words; ties go to the earlier title). With no
-  words in common it gets the first title. This is stored on
-  `scout_findings.search_title` and counts as a good fit for that title in the
-  memory.
+  words in common, no title gets the credit, so an unrelated fit can't keep a
+  title from resting. This is stored on `scout_findings.search_title` and
+  counts as a good fit for that title in the memory.
 - **Rationale**: The rule is predictable and testable, and costs Claude
   nothing extra. It's good enough to steer which titles are kept.
 - **Alternatives**: ask Claude in `report_job` (one more thing for Claude to

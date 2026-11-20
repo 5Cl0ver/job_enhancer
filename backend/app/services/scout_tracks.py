@@ -65,10 +65,18 @@ async def broad_track(db: AsyncSession, user_id: uuid.UUID) -> ResumeTrack:
         )
     )
     if track is None:
+        # Names are unique per user: one made before this name was reserved
+        # keeps it, and the hidden one takes a variant.
+        taken = await db.scalar(
+            select(ResumeTrack.id).where(
+                ResumeTrack.user_id == user_id,
+                func.lower(ResumeTrack.name) == BROAD_NAME.lower(),
+            )
+        )
         track = ResumeTrack(
             id=uuid.uuid4(),
             user_id=user_id,
-            name=BROAD_NAME,
+            name=f"{BROAD_NAME} (Scout)" if taken else BROAD_NAME,
             target_titles=[],
             key_skills=[],
             skip_rules={},

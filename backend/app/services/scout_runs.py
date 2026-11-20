@@ -1437,7 +1437,9 @@ async def set_search_titles(
         if c["source"] == LOCAL
         else "Open the start URL and send the first page of rows to check_jobs."
     )
-    if c.get("search_titles") and (run.stats or {}).get("rows"):
+    stats = run.stats or {}
+    started = stats.get("rows") or stats.get("_companies")
+    if c.get("search_titles") and started:
         return {
             "titles": c["search_titles"],
             "dropped": [],

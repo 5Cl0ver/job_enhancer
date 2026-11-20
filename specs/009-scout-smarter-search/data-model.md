@@ -77,7 +77,8 @@ One row per broad search and title tried.
 ## Rules (validation)
 
 - `set_search_titles` input:
-  - 1–20 strings of up to 120 characters; blank or non-text entries are
+  - 1–20 strings, each cut to 80 characters (the override lists' limit,
+    so any title can be pinned or blocked); blank or non-text entries are
     ignored.
   - The result is Always titles first, then Claude's in order, minus Never,
     resting and duplicates (by `title_key`), capped at 8.

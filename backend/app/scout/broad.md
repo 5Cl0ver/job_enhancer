@@ -13,5 +13,7 @@ b. Choose up to max_titles job titles the user would be genuinely good at:
    - never: don't choose these. avoid: skip jobs with these words.
 c. Call set_search_titles with your titles. It answers with the start_urls to
    open (and any titles it left out, with why). Then follow the playbook.
-d. When you report_job a job, also pass resume_type: the name of the user's
+d. In check_jobs, "fits" means the user would be good at that job going by
+   their resume (this search has no resume type of its own).
+e. When you report_job a job, also pass resume_type: the name of the user's
    resume type (from resume_types) this job is closest to, or "" for none.

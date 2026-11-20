@@ -31,7 +31,8 @@ def key(title: str) -> str:
 
 
 def _tidy(title) -> str:
-    return " ".join(str(title).split())[:120] if isinstance(title, str) else ""
+    # As long as an override list allows, so any title can be pinned or blocked.
+    return " ".join(str(title).split())[:80] if isinstance(title, str) else ""
 
 
 def overrides(criteria: dict) -> dict[str, list[str]]:
@@ -104,6 +105,11 @@ async def record_runs(db: AsyncSession, run: ScoutRun, titles: list[str]) -> Non
     counted = set((run.criteria or {}).get("titles_counted") or [])
     rows = {r.title_key: r for r in await _rows(db, run.mission_id)}
     now = _now()
+    # Titles set earlier in this run and now swapped out were never searched.
+    for k in counted - {key(t) for t in titles}:
+        if k in rows and rows[k].runs > 0:
+            rows[k].runs -= 1
+        counted.discard(k)
     for title in titles:
         k = key(title)
         if k in counted:
@@ -129,11 +135,10 @@ async def record_runs(db: AsyncSession, run: ScoutRun, titles: list[str]) -> Non
 
 def best_title(job_title: str, titles: list[str]) -> str | None:
     """The searched title with the most words in common with the job's title
-    (ties: the earlier one; none in common: the first)."""
-    if not titles:
-        return None
+    (ties: the earlier one). None when no title shares a word with it: no
+    title gets credit it may not have earned."""
     words = set(title_key(job_title).split())
-    best, best_n = titles[0], 0
+    best, best_n = None, 0
     for t in titles:
         n = len(words & set(title_key(t).split()))
         if n > best_n:
@@ -147,6 +152,8 @@ async def credit_fit(db: AsyncSession, run: ScoutRun, finding: ScoutFinding) -> 
     if finding.search_title or not titles:
         return
     title = best_title(finding.title, titles)
+    if title is None:
+        return
     finding.search_title = title[:200]
     if run.mission_id is None:
         return

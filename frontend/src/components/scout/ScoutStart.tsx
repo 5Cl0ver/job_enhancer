@@ -104,7 +104,7 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
   // What the last save did; kept here so it outlives the review it came from.
   const [saved, setSaved] = useState<ConfirmResult | null>(null);
 
-  if (tracks && tracks.length === 0)
+  if (tracks?.length === 0 && missions?.length === 0)
     return (
       <div className="rounded-lg border border-dashed p-5 text-center sm:p-8">
         <Bot className="mx-auto h-6 w-6 text-primary" aria-hidden />
@@ -113,9 +113,19 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
           Each search looks for one kind of role, so Scout needs to know which
           ones you go after.
         </p>
-        <Button className="mt-4" onClick={onSetUpTypes}>
-          Set up resume types
-        </Button>
+        <div className="mt-4 flex flex-col items-center gap-2 sm:flex-row sm:justify-center">
+          <Button onClick={onSetUpTypes}>Set up resume types</Button>
+          <Button variant="outline" onClick={() => setEditing("new")}>
+            Or let Claude pick from your resume
+          </Button>
+        </div>
+        <MissionEditor
+          mission={editing === "new" ? null : editing}
+          tracks={[]}
+          noResume={noResume}
+          open={editing !== null}
+          onClose={() => setEditing(null)}
+        />
       </div>
     );
 
@@ -454,7 +464,8 @@ function MissionForm({
   const save = useSaveMission();
   const del = useDeleteMission();
   const [source, setSource] = useState<Source>(mission?.source ?? "linkedin");
-  const [broad, setBroad] = useState(mission?.broad ?? false);
+  // With no resume types yet, the only search there is: Claude picks.
+  const [broad, setBroad] = useState(mission?.broad ?? tracks.length === 0);
   const [trackId, setTrackId] = useState(
     mission && !mission.broad ? mission.track_id : (tracks[0]?.id ?? ""),
   );

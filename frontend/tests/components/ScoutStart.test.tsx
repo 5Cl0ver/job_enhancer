@@ -386,4 +386,38 @@ describe("Claude Scout start", () => {
       await screen.findByRole("button", { name: /set up resume types/i }),
     ).toBeInTheDocument();
   });
+
+  it("with no resume types yet, Claude can still pick from the resume", async () => {
+    serve({
+      "/v1/scout/tracks": [],
+      "/v1/scout/missions": [],
+      "/v1/ai/resumes": [{ id: "cv", is_active: true }],
+    });
+    post.mockResolvedValue({ ...MISSION, broad: true });
+    const user = userEvent.setup();
+    renderStart();
+    await user.click(
+      await screen.findByRole("button", { name: "Or let Claude pick from your resume" }),
+    );
+    const form = await screen.findByRole("dialog");
+    expect(within(form).getByRole("combobox", { name: "Resume type" })).toHaveTextContent(
+      "Anything I'd be good at",
+    );
+    await user.click(within(form).getByRole("button", { name: "Save search" }));
+    expect(post).toHaveBeenCalledWith(
+      "/v1/scout/missions",
+      expect.objectContaining({ broad: true }),
+    );
+  });
+
+  it("someone with only broad searches still sees them", async () => {
+    serve({
+      "/v1/scout/tracks": [],
+      "/v1/scout/missions": [{ ...MISSION, broad: true, name: "LinkedIn · Anything I'd be good at" }],
+    });
+    renderStart();
+    expect(
+      await screen.findByText("LinkedIn · Anything I'd be good at"),
+    ).toBeInTheDocument();
+  });
 });

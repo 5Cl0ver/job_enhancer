@@ -115,7 +115,7 @@ function ListEditor({
                   type="button"
                   onClick={() => onChange(items.filter((i) => i !== item))}
                   aria-label={`Remove ${item}`}
-                  className="rounded p-0.5 hover:bg-muted pointer-coarse:p-1.5"
+                  className="grid place-items-center rounded p-0.5 hover:bg-muted pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                 >
                   <X className="h-3 w-3" aria-hidden />
                 </button>
