@@ -18,7 +18,7 @@ from app.models.job_listing import JobListing
 from app.models.saved_job import SavedJob
 from app.models.scout import ScoutFinding, ScoutPass, ScoutRun
 from app.models.user import User
-from app.schemas.scout import CaptureIn, MissionCreate, TrackCreate
+from app.schemas.scout import CaptureIn, MissionCreate, TrackCreate, TrackUpdate
 from app.services import job_source, scout_runs, scout_tracks
 from app.services import saved_jobs as sj_svc
 from tests.test_mcp_server import _connected_user
@@ -409,8 +409,12 @@ class TestTitlesThatDontFit:
         again = [{k: v for k, v in r.items() if k != "fits"} for r in ROWS]
         out = await mcp_mod.check_jobs(str(second), again)
         assert out["open"] == [0]
-        assert out["skipped"]["seen_before"] == 2
-        assert out["skipped"]["title_passed"] == 0
+        # Counted as titles that didn't fit (so the tip points at the titles),
+        # not stored a second time.
+        assert out["skipped"]["title_passed"] == 2
+        assert out["skipped"]["seen_before"] == 0
+        async with maker() as db:
+            assert (await db.scalar(select(func.count()).select_from(ScoutPass))) == 2
 
     async def test_a_reposted_job_is_still_known_by_company_and_title(
         self, engine, monkeypatch
@@ -507,3 +511,44 @@ class TestPages:
         out = await mcp_mod.check_jobs(str(run_id), _page(3))
         assert out["pages_read"] == 4 and "next_page_url" not in out
         assert "finish_scout_run" in out["next"] and "last" in out["next"]
+
+    async def test_past_the_last_page_says_there_are_no_more(self, engine, monkeypatch):
+        """Boards show an empty page, or earlier rows again, past their last
+        page: Claude is told to finish, not handed the same link again."""
+        maker = await _connected_user(engine, monkeypatch, email="end@test.dev")
+        _, _, run_id = await _setup(maker, "end@test.dev", job_count=10)
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_jobs(str(run_id), _page(0))
+        await mcp_mod.check_jobs(str(run_id), _page(1))
+        for rows in ([], _page(0)[:2] + _page(1)[:1]):
+            out = await mcp_mod.check_jobs(str(run_id), rows)
+            assert "next_page_url" not in out and out["pages_read"] == 2
+            assert "no more results" in out["next"]
+            assert "finish_scout_run" in out["next"]
+        # The last page sent again (a new chat picking up) still goes on.
+        out = await mcp_mod.check_jobs(str(run_id), _page(1))
+        assert out["next_page_url"].endswith("&start=50")
+
+
+@pytest.mark.asyncio
+async def test_changing_the_resume_types_titles_weighs_them_again(engine, monkeypatch):
+    maker = await _connected_user(engine, monkeypatch, email="retitle@test.dev")
+    user_id, track_id, run_id = await _setup(maker, "retitle@test.dev")
+    await mcp_mod.get_scout_brief()
+    await mcp_mod.check_jobs(str(run_id), ROWS)
+    async with maker() as db:
+        # Renaming alone keeps them; new titles clear them.
+        await scout_tracks.update_track(
+            db, track_id, user_id, TrackUpdate(name="IT Admin 2")
+        )
+        assert (await db.scalar(select(func.count()).select_from(ScoutPass))) == 2
+        await scout_tracks.update_track(
+            db,
+            track_id,
+            user_id,
+            TrackUpdate(
+                target_titles=["IT Systems Administrator", "Forklift Operator"]
+            ),
+        )
+        await db.commit()
+        assert (await db.scalar(select(func.count()).select_from(ScoutPass))) == 0

@@ -9,12 +9,13 @@ import uuid
 from collections.abc import Sequence
 
 from fastapi import HTTPException
-from sqlalchemy import func, select, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.resume import Resume
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
+from app.models.scout import ScoutPass
 from app.schemas.scout import MAX_TRACKS, TrackCreate, TrackOut, TrackUpdate
 
 
@@ -110,6 +111,7 @@ async def update_track(
         await _check_name(db, user_id, updates["name"], except_id=track.id)
     if "resume_id" in updates:
         await _check_resume(db, updates["resume_id"], user_id)
+    fit_before = (track.target_titles, track.key_skills, track.skip_rules)
     for key, value in updates.items():
         if value is None and key in (
             "name",
@@ -119,6 +121,10 @@ async def update_track(
         ):
             continue  # required fields: null means "leave as is"
         setattr(track, key, value)
+    # Titles Claude passed over were judged against the old titles and skills:
+    # weigh them again from the next run.
+    if (track.target_titles, track.key_skills, track.skip_rules) != fit_before:
+        await db.execute(delete(ScoutPass).where(ScoutPass.track_id == track.id))
     await db.flush()
     return track
 

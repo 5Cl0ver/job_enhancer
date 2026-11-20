@@ -101,6 +101,11 @@ class TestTip:
             '"Last 3 days" or pick a bigger radius.'
         )
 
+    def test_not_ran_out_when_stopped_or_from_before_pages_were_counted(self):
+        stats = {"rows": 6, "pages": 1}
+        assert run_tip(_run("stopped", stats), {"picked": 1}) is None
+        assert run_tip(_run(stats={"rows": 6}), {"picked": 1}) is None
+
     def test_read_every_page_and_nothing_stands_out_no_tip(self):
         assert run_tip(_run(stats={"rows": 100, "pages": 4}), {}) is None
 

@@ -7,9 +7,9 @@ app as your memory. Keep your own context small: the app remembers everything.
 2. Open the start URL you were given. It already has the filters set; don't
    change them.
 3. For each page of results, read the list rows (company, job title, link). If
-   the list loads more rows as you scroll, scroll it to the end first (no
+   the list loads more rows as you scroll, scroll it to load them first (no
    screenshots needed). Decide from the title alone whether each row fits the
-   resume type, and send them all in ONE call to check_jobs, each with
+   resume type, and send them in ONE call to check_jobs (up to 30), each with
    "fits": true or false. Open only the rows it returns. The app remembers the
    titles that didn't fit, so later runs never weigh them again.
 4. Open each job's own posting page (the job itself, not the list). Read it and
