@@ -68,11 +68,11 @@ export function JobDetailPage() {
             isSaved ? (
               <>
                 {/* First: where this job stands, and the emails that explain it. */}
-                {savedJob && <NameCheck savedJob={savedJob} followPage />}
+                {savedJob && <NameCheck savedJob={savedJob} />}
                 {savedJob && (
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <StageSince savedJob={savedJob} />
-                    <RenameButton savedJob={savedJob} followPage />
+                    <RenameButton savedJob={savedJob} />
                   </div>
                 )}
                 {savedJob && <WhereFrom savedJob={savedJob} />}

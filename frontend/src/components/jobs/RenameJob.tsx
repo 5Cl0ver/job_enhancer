@@ -1,10 +1,10 @@
 /**
- * Fix a saved job's name: title, company, place and link. Only this user's job
- * changes. When the app read the name from an email and it looks wrong, a
- * short amber note says so and opens the same form.
+ * Fix a saved job's name: title, company, place and link. Kept on the user's
+ * own saved job (the shared listing is never changed). When the app read the
+ * name from an email and it looks wrong, a short amber note says so, with
+ * "Fix the name" and "Looks right".
  */
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
 import { AlertTriangle, Loader2, Pencil } from "lucide-react";
 import { errorText } from "@/components/scout/errorText";
 import { Button } from "@/components/ui/button";
@@ -21,18 +21,9 @@ import { Label } from "@/components/ui/label";
 import { useRenameJob } from "@/hooks/useSavedJobs";
 import type { SavedJob } from "@/types/api";
 
-function RenameForm({
-  savedJob,
-  onDone,
-  followPage,
-}: {
-  savedJob: SavedJob;
-  onDone: () => void;
-  followPage: boolean;
-}) {
+function RenameForm({ savedJob, onDone }: { savedJob: SavedJob; onDone: () => void }) {
   const j = savedJob.job_listing;
   const rename = useRenameJob();
-  const navigate = useNavigate();
   const fromEmail = savedJob.origin === "email";
   const [title, setTitle] = useState(j.title);
   const [company, setCompany] = useState(j.company);
@@ -57,12 +48,7 @@ function RenameForm({
         location: location.trim() || "Not specified",
         ...(url && url !== j.apply_url ? { apply_url: url } : {}),
       })
-      .then((sj) => {
-        onDone();
-        // Copied to a listing of its own: its page moved too.
-        if (followPage && sj.job_listing_id !== savedJob.job_listing_id)
-          navigate(`/jobs/${sj.job_listing_id}`, { replace: true });
-      })
+      .then(() => onDone())
       // Shown in the form (rename.error), which stays open to try again.
       .catch(() => {});
   };
@@ -74,7 +60,7 @@ function RenameForm({
         <DialogDescription>
           {fromEmail
             ? "The app read these from an email. Change anything that's wrong."
-            : "Only your copy of this job changes."}
+            : "Only your copy of this job changes; the posting stays as it is."}
         </DialogDescription>
       </DialogHeader>
       <div className="space-y-3">
@@ -111,6 +97,7 @@ function RenameForm({
           </div>
           <div className="space-y-1.5">
             <Label htmlFor="rename-link">{fromEmail ? "Posting link (optional)" : "Link"}</Label>
+            {/* An empty link changes nothing: say so rather than ignore it quietly. */}
             <Input
               id="rename-link"
               // Not type="url": the browser's own check would block the form
@@ -120,6 +107,9 @@ function RenameForm({
               onChange={(e) => setLink(e.target.value)}
               placeholder="https://"
             />
+            {!fromEmail && !link.trim() && (
+              <p className="text-xs text-muted-foreground">Empty keeps the current link.</p>
+            )}
           </div>
         </div>
       </div>
@@ -146,23 +136,16 @@ export function RenameJob({
   savedJob,
   open,
   onOpenChange,
-  followPage = false,
 }: {
   savedJob: SavedJob;
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  /** On the job's own page: go to its new page if the job was copied. */
-  followPage?: boolean;
 }) {
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="sm:max-w-md">
         {open && (
-          <RenameForm
-            savedJob={savedJob}
-            onDone={() => onOpenChange(false)}
-            followPage={followPage}
-          />
+          <RenameForm savedJob={savedJob} onDone={() => onOpenChange(false)} />
         )}
       </DialogContent>
     </Dialog>
@@ -170,13 +153,7 @@ export function RenameJob({
 }
 
 /** A small pencil button that opens the form. */
-export function RenameButton({
-  savedJob,
-  followPage = false,
-}: {
-  savedJob: SavedJob;
-  followPage?: boolean;
-}) {
+export function RenameButton({ savedJob }: { savedJob: SavedJob }) {
   const [open, setOpen] = useState(false);
   return (
     <>
@@ -190,41 +167,38 @@ export function RenameButton({
         <Pencil className="h-3.5 w-3.5" aria-hidden />
         Rename
       </Button>
-      <RenameJob
-        savedJob={savedJob}
-        open={open}
-        onOpenChange={setOpen}
-        followPage={followPage}
-      />
+      <RenameJob savedJob={savedJob} open={open} onOpenChange={setOpen} />
     </>
   );
 }
 
 /** "Check this job's name": shown where a job's name may be wrong. */
-export function NameCheck({
-  savedJob,
-  followPage = false,
-}: {
-  savedJob: SavedJob;
-  followPage?: boolean;
-}) {
+export function NameCheck({ savedJob }: { savedJob: SavedJob }) {
   const [open, setOpen] = useState(false);
+  const confirm = useRenameJob();
   if (!savedJob.name_doubtful) return null;
+  const j = savedJob.job_listing;
   return (
     <div className="flex flex-wrap items-center gap-x-3 gap-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm">
       <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600 dark:text-amber-400" aria-hidden />
       <p className="min-w-0 flex-1">
         This name was read from an email and may be wrong.
       </p>
-      <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
-        Fix the name
-      </Button>
-      <RenameJob
-        savedJob={savedJob}
-        open={open}
-        onOpenChange={setOpen}
-        followPage={followPage}
-      />
+      <div className="flex gap-2">
+        {/* The name is right after all: keep it, and stop asking. */}
+        <Button
+          size="sm"
+          variant="ghost"
+          disabled={confirm.isPending}
+          onClick={() => confirm.mutate({ id: savedJob.id, title: j.title, company: j.company })}
+        >
+          Looks right
+        </Button>
+        <Button size="sm" variant="outline" onClick={() => setOpen(true)}>
+          Fix the name
+        </Button>
+      </div>
+      <RenameJob savedJob={savedJob} open={open} onOpenChange={setOpen} />
     </div>
   );
 }

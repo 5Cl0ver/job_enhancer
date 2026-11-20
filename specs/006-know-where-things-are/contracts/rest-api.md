@@ -57,12 +57,13 @@ null. 404 if the job isn't the user's.
 ```
 
 All fields optional; at least one required. Title 1–500, company 1–255,
-`apply_url` must be http(s). Returns the updated `SavedJobOut`.
+`apply_url` must be http(s). Saves the user's own name for the job (an
+override on their saved job; the shared listing never changes) and returns the
+updated `SavedJobOut`, whose `job_listing` already shows the new name and
+`renamed: true`. Sending the current name confirms it and clears
+`name_doubtful`. 404 for another user's job.
 
-- Edits in place when the listing is manual and only this user has it;
-  otherwise copies the listing first ([data-model.md](../data-model.md)).
-- **409** `"You already have this job saved."` when the new name matches another
-  of the user's saved jobs.
+`GET /jobs/{id}` shows the same override to the user who saved it.
 
 ## Scout
 

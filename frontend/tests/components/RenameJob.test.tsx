@@ -1,7 +1,7 @@
 import { MutationCache, QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { MemoryRouter, Route, Routes, useLocation } from "react-router-dom";
+import { MemoryRouter } from "react-router-dom";
 import { describe, expect, it, vi } from "vitest";
 
 const patch = vi.fn();
@@ -43,10 +43,6 @@ const JOB = {
   },
 } as unknown as SavedJob;
 
-function Where() {
-  return <p data-testid="where">{useLocation().pathname}</p>;
-}
-
 function show(ui: React.ReactNode) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false }, mutations: { retry: false } },
@@ -55,19 +51,7 @@ function show(ui: React.ReactNode) {
   });
   return render(
     <QueryClientProvider client={client}>
-      <MemoryRouter initialEntries={["/jobs/l1"]}>
-        <Routes>
-          <Route
-            path="*"
-            element={
-              <>
-                {ui}
-                <Where />
-              </>
-            }
-          />
-        </Routes>
-      </MemoryRouter>
+      <MemoryRouter>{ui}</MemoryRouter>
     </QueryClientProvider>,
   );
 }
@@ -100,26 +84,38 @@ describe("fixing a job's name", () => {
     });
   });
 
-  it("moves to the job's new page when it was copied", async () => {
-    patch.mockResolvedValue({ ...JOB, job_listing_id: "l2" });
-    const user = userEvent.setup();
-    show(<RenameButton savedJob={{ ...JOB, origin: "manual" }} followPage />);
-    await user.click(screen.getByRole("button", { name: "Rename" }));
-    const form = await screen.findByRole("dialog");
-    expect(within(form).getByLabelText("Link")).toHaveValue(JOB.job_listing.apply_url);
-    await user.click(within(form).getByRole("button", { name: "Save" }));
-    expect(await screen.findByTestId("where")).toHaveTextContent("/jobs/l2");
+  it("'Looks right' keeps the name and stops asking", async () => {
+    patch.mockResolvedValue({ ...JOB, name_doubtful: false, renamed: true });
+    show(<NameCheck savedJob={JOB} />);
+    await userEvent.click(screen.getByRole("button", { name: "Looks right" }));
+    expect(patch).toHaveBeenCalledWith("/v1/saved-jobs/s1/listing", {
+      title: JOB.job_listing.title,
+      company: JOB.job_listing.company,
+    });
   });
 
-  it("says so when the new name is a job already saved, and keeps the form", async () => {
+  it("keeps the current link when the link is left empty, and says so", async () => {
+    patch.mockResolvedValue(JOB);
+    show(<RenameButton savedJob={{ ...JOB, origin: "manual" }} />);
+    await userEvent.click(screen.getByRole("button", { name: "Rename" }));
+    const form = await screen.findByRole("dialog");
+    const link = within(form).getByLabelText("Link");
+    expect(link).toHaveValue(JOB.job_listing.apply_url);
+    await userEvent.clear(link);
+    expect(within(form).getByText("Empty keeps the current link.")).toBeInTheDocument();
+    await userEvent.click(within(form).getByRole("button", { name: "Save" }));
+    expect(patch.mock.calls.at(-1)?.[1]).not.toHaveProperty("apply_url");
+  });
+
+  it("says so when saving fails, and keeps the form", async () => {
     patch.mockRejectedValue(
-      new ApiError(409, JSON.stringify({ detail: "You already have this job saved." })),
+      new ApiError(422, JSON.stringify({ detail: "The link must start with http:// or https://" })),
     );
     show(<RenameJob savedJob={JOB} open onOpenChange={() => {}} />);
     const form = await screen.findByRole("dialog");
     await userEvent.click(within(form).getByRole("button", { name: "Save" }));
     expect(await within(form).findByRole("alert")).toHaveTextContent(
-      "You already have this job saved.",
+      "The link must start with http:// or https://",
     );
   });
 
@@ -146,6 +142,6 @@ describe("fixing a job's name", () => {
         <NameCheckLine savedJob={{ name_doubtful: false }} />
       </>,
     );
-    expect(container.textContent).toBe("/jobs/l1");
+    expect(container.textContent).toBe("");
   });
 });

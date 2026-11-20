@@ -127,7 +127,8 @@ class ApplicationSyncResult(BaseModel):
 
 
 class ListingRename(BaseModel):
-    """Fix a saved job's name, place or link. Only what's sent changes."""
+    """Fix (or confirm) a saved job's name, place or link, for this user only.
+    Only what's sent changes."""
 
     title: str | None = Field(None, min_length=1, max_length=500)
     company: str | None = Field(None, min_length=1, max_length=255)
@@ -191,6 +192,14 @@ class SavedJobBase(BaseModel):
     # Made from an email, and its name may be wrong (a sentence for a title,
     # the sender's own name for the company): the app asks the user to check.
     name_doubtful: bool = False
+    # The user's own name for the job; folded into ``job_listing`` below, so
+    # every client shows it without knowing it exists.
+    custom_title: str | None = Field(None, exclude=True)
+    custom_company: str | None = Field(None, exclude=True)
+    custom_location: str | None = Field(None, exclude=True)
+    custom_apply_url: str | None = Field(None, exclude=True)
+    # The user has fixed or confirmed this job's name.
+    renamed: bool = False
     notes: str | None
     applied_at: datetime | None
     last_stage_change: datetime
@@ -203,10 +212,31 @@ class SavedJobBase(BaseModel):
     model_config = {"from_attributes": True}
 
 
+def _own_names(item):
+    """Show the user's own name, place and link in place of the listing's."""
+    own = {
+        "title": item.custom_title,
+        "company": item.custom_company,
+        "location": item.custom_location,
+        "apply_url": item.custom_apply_url,
+    }
+    item.renamed = any(v is not None for v in own.values())
+    listing = getattr(item, "job_listing", None)
+    if listing is not None:
+        for field, value in own.items():
+            if value:
+                setattr(listing, field, value)
+    return item
+
+
 class SavedJobSchema(SavedJobBase):
     """A saved job with its listing's full description."""
 
     job_listing: JobListingSchema
+
+    @model_validator(mode="after")
+    def _names(self):
+        return _own_names(self)
 
 
 class SavedJobSummary(BaseModel):
@@ -234,6 +264,10 @@ class SavedJobListItem(SavedJobBase):
     """A saved job for lists and the board: listing preview, no description."""
 
     job_listing: JobListingSummarySchema
+
+    @model_validator(mode="after")
+    def _names(self):
+        return _own_names(self)
 
 
 class SourceFolder(BaseModel):

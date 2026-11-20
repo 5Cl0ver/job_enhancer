@@ -8,13 +8,12 @@ from urllib.parse import quote_plus, urlparse
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
-from sqlalchemy import String, cast, func, select, update
+from sqlalchemy import String, cast, func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload, with_expression
 
 from app.models.detected_event import DetectedEvent
-from app.models.generated_document import GeneratedDocument
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import (
@@ -405,110 +404,77 @@ async def scout_fits(db: AsyncSession, user_id: uuid.UUID) -> dict[uuid.UUID, Sc
 
 
 async def doubtful_names(db: AsyncSession, user_id: uuid.UUID) -> set[uuid.UUID]:
-    """The user's email-made jobs whose name may be wrong: a title that reads
-    like a sentence, or a company that is the person who sent the email."""
-    rows = await db.execute(
-        select(
-            SavedJob.id, JobListing.title, JobListing.company, DetectedEvent.from_addr
+    """The user's email-made jobs whose name may be wrong (a title that reads
+    like a sentence, or a company that is the person who sent the email) and
+    that the user hasn't fixed or confirmed yet."""
+    jobs = (
+        await db.execute(
+            select(SavedJob.id, JobListing.title, JobListing.company)
+            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .where(
+                SavedJob.user_id == user_id,
+                SavedJob.origin == ORIGIN_EMAIL,
+                SavedJob.custom_title.is_(None),
+                SavedJob.custom_company.is_(None),
+            )
         )
-        .join(JobListing, SavedJob.job_listing_id == JobListing.id)
-        .outerjoin(DetectedEvent, DetectedEvent.saved_job_id == SavedJob.id)
-        .where(SavedJob.user_id == user_id, SavedJob.origin == ORIGIN_EMAIL)
-    )
+    ).all()
+    if not jobs:
+        return set()
+    senders: dict[uuid.UUID, list[str]] = {}
+    for sj_id, from_addr in await db.execute(
+        select(DetectedEvent.saved_job_id, DetectedEvent.from_addr).where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.saved_job_id.in_([r.id for r in jobs]),
+        )
+    ):
+        senders.setdefault(sj_id, []).append(from_addr or "")
     return {
-        sj_id
-        for sj_id, title, company, from_addr in rows
-        if role_doubtful(title) or is_sender_person(company, from_addr or "")
+        r.id
+        for r in jobs
+        if role_doubtful(r.title, strict=False)
+        or any(is_sender_person(r.company, a) for a in senders.get(r.id, []))
     }
 
 
 async def rename_listing(
     db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, data: ListingRename
 ) -> SavedJob:
-    """Fix a saved job's title, company, place or link, for this user only.
-
-    ``job_listings`` is a shared pool, so a listing another user has saved (or
-    one from a job-board feed) is never edited: it is copied, and this user's
-    job moves to the copy, taking its documents along. A name that matches
-    another job the user has saved is refused.
-    """
-    sj = await get_saved_job(db, saved_job_id, user_id)
-    old = sj.job_listing
-    title = data.title or old.title
-    company = data.company or old.company
-    location = (
-        data.location if data.location is not None else old.location
-    ) or "Not specified"
-    title_norm, company_norm = normalize(title), normalize(company)
-    content_hash = job_content_hash(title_norm, company_norm, normalize(location))
-
-    if content_hash != old.content_hash:
-        same = await db.scalar(
-            select(JobListing).where(JobListing.content_hash == content_hash)
-        )
-        if same is not None:
-            mine = await db.scalar(
-                select(SavedJob.id).where(
-                    SavedJob.user_id == user_id, SavedJob.job_listing_id == same.id
-                )
-            )
-            if mine is not None:
-                raise HTTPException(
-                    status_code=409, detail="You already have this job saved."
-                )
-            # Another person's listing already has this name: keep this job
-            # apart from it (a hash of its own) rather than merge the two.
-            content_hash = hashlib.sha256(
-                f"{content_hash}:{sj.id}".encode()
-            ).hexdigest()
-
-    others = await db.scalar(
-        select(func.count())
-        .select_from(SavedJob)
-        .where(SavedJob.job_listing_id == old.id, SavedJob.user_id != user_id)
-    )
-    listing = old
-    if old.source != "manual" or others:
-        listing = JobListing(
-            id=uuid.uuid4(),
-            external_id=f"manual:{uuid.uuid4()}",
-            source="manual",
-            title=old.title,
-            company=old.company,
-            location=old.location,
-            is_remote=old.is_remote,
-            description=old.description,
-            salary_min=old.salary_min,
-            salary_max=old.salary_max,
-            salary_period=old.salary_period,
-            currency=old.currency,
-            job_type=old.job_type,
-            apply_url=old.apply_url,
-            posted_at=old.posted_at,
-            content_hash=f"tmp:{uuid.uuid4().hex}"[:64],
-            title_normalized=old.title_normalized,
-            company_normalized=old.company_normalized,
-        )
-        db.add(listing)
-        await db.flush()
-        sj.job_listing_id = listing.id
-        # The user's résumés and letters for this job follow it to the copy.
-        await db.execute(
-            update(GeneratedDocument)
-            .where(
-                GeneratedDocument.user_id == user_id,
-                GeneratedDocument.job_listing_id == old.id,
-            )
-            .values(job_listing_id=listing.id)
-        )
-
-    listing.title, listing.company, listing.location = title, company, location
-    listing.title_normalized, listing.company_normalized = title_norm, company_norm
-    listing.content_hash = content_hash
-    if data.apply_url:
-        listing.apply_url = data.apply_url
+    """Fix or confirm a saved job's title, company, place or link. Kept on the
+    user's saved job and shown in place of the listing's own: the shared
+    listing is never edited, so nobody else's job, search results or the
+    extension's "already saved" check change."""
+    sj = await get_saved_job(db, saved_job_id, user_id, with_description=False)
+    if data.title is not None:
+        sj.custom_title = data.title
+    if data.company is not None:
+        sj.custom_company = data.company
+    if data.location is not None:
+        sj.custom_location = data.location or None
+    if data.apply_url is not None:
+        sj.custom_apply_url = data.apply_url
     await db.flush()
-    return await get_saved_job(db, sj.id, user_id, with_description=False)
+    return sj
+
+
+async def own_names(
+    db: AsyncSession, user_id: uuid.UUID, listing_id: uuid.UUID
+) -> dict[str, str]:
+    """The user's own name, place and link for a listing they saved, if any."""
+    row = (
+        await db.execute(
+            select(
+                SavedJob.custom_title,
+                SavedJob.custom_company,
+                SavedJob.custom_location,
+                SavedJob.custom_apply_url,
+            ).where(SavedJob.user_id == user_id, SavedJob.job_listing_id == listing_id)
+        )
+    ).first()
+    if row is None:
+        return {}
+    names = dict(zip(("title", "company", "location", "apply_url"), row, strict=True))
+    return {k: v for k, v in names.items() if v}
 
 
 async def mark_applied(

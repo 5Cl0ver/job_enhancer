@@ -25,6 +25,7 @@ from email.utils import parseaddr
 
 from app.services.email_classify import company_from_sender
 from app.services.email_match import _ROLE_PHRASE
+from app.services.email_prefilter import is_platform_sender
 
 _MAX = 120
 
@@ -60,10 +61,14 @@ _ROLE_LEAD_IN = re.compile(
     r"|^(?:the\s+)?(?:position|role)\s+of\s+",
     re.I,
 )
-_ROLE_TAIL = re.compile(r"\s+(?:position|role|opening|vacancy)\b.*$", re.I)
+# "… role", "… position at Acme": the word ends the title, never inside it
+# ("Product Owner Role Based Access" keeps its words).
+_ROLE_TAIL = re.compile(
+    r"\s+(?:position|role|opening|vacancy)(?:\s+(?:at|with|in|for)\b.*)?$", re.I
+)
 # A job title doesn't talk to you: these words mean a sentence was caught.
 _SENTENCE_WORDS = re.compile(
-    r"\b(?:we|you|your|our|us|please|would|thank|thanks|invite|invited|inviting|"
+    r"\b(?:we|you|your|our|please|would|thank|thanks|invite|invited|inviting|"
     r"pleased|excited|regarding|recruitment process|hiring process)\b",
     re.I,
 )
@@ -91,46 +96,63 @@ def _tidy(value: str | None) -> str | None:
     return value[:_MAX]
 
 
-def role_doubtful(title: str | None) -> bool:
+def role_doubtful(title: str | None, *, strict: bool = True) -> bool:
     """True when a job title reads like a piece of a sentence rather than a
-    title: it starts in lower case, runs long, or talks to the reader."""
+    title: its first word is all lower case ("next phase of …"; "iOS" and
+    "eCommerce" are fine), or it talks to the reader. ``strict`` also counts
+    words, for text read freely out of an email body (a hiring system's own
+    title field can be long and still right)."""
     t = (title or "").strip()
     if not t:
         return True
-    if not (t[0].isupper() or t[0].isdigit()):
+    first = t.split()[0]
+    if first[0].isalpha() and first == first.lower():
         return True
-    if len(t.split()) > _MAX_ROLE_WORDS:
+    if strict and len(t.split()) > _MAX_ROLE_WORDS:
         return True
     return bool(_SENTENCE_WORDS.search(t))
 
 
-def clean_role(raw: str | None) -> str | None:
+def clean_role(raw: str | None, *, strict: bool = True) -> str | None:
     """A role read from an email, cut down to the title, or None when what's
-    left still isn't one."""
+    left still isn't one. ``strict=False`` for titles a hiring system filled
+    in itself, which only lose a lead-in."""
     role = _tidy(raw)
     if not role:
         return None
     for _ in range(2):
         role = _ROLE_LEAD_IN.sub("", role).strip()
     role = _tidy(_ROLE_TAIL.sub("", role))
-    if not role or role_doubtful(role):
+    if not role or role_doubtful(role, strict=strict):
         return None
     return role
 
 
 def is_sender_person(name: str | None, from_addr: str) -> bool:
     """True when ``name`` is the person who sent the email ("Nancy Karnas"
-    writing from nancy.karnas@…), not the company they work for. A shape
-    alone isn't enough ("Tidelock Systems"): the address must carry the name."""
+    writing from nancy.karnas@…), not the company they work for. A shape alone
+    isn't enough ("Tidelock Systems"): the address must be a person's (first
+    name, first.last, flast, …) and not a hiring system's mailbox, where
+    "Wells Fargo <wellsfargo@…workday…>" is the employer."""
     name = (name or "").strip()
-    display, address = parseaddr(from_addr or "")
     if not name or not _PERSON.match(name):
         return False
+    display, address = parseaddr(from_addr or "")
     display = display.strip().strip("\"'")
-    if display and display.lower() == name.lower() and not _ORG_WORDS.search(display):
-        local = address.split("@")[0].lower()
-        return any(part.lower() in local for part in name.split() if len(part) > 1)
-    return False
+    if not display or display.lower() != name.lower() or _ORG_WORDS.search(display):
+        return False
+    if is_platform_sender(address):
+        return False
+    parts = [p.lower() for p in name.split()]
+    first, last = parts[0], parts[-1]
+    local = address.split("@")[0].lower()
+    # nancy, nancy.karnas, karnas_n, nkarnas, nancyk; not "nancykarnas", which
+    # is as likely a company's mailbox as a person's.
+    pieces = set(re.split(r"[._+-]+", local))
+    return bool(pieces & {first, last}) or local in {
+        f"{first[0]}{last}",
+        f"{first}{last[0]}",
+    }
 
 
 def _org_display_name(from_addr: str) -> str | None:

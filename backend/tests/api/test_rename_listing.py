@@ -1,6 +1,6 @@
-"""Fixing a saved job's name: only this user's job changes, never a listing
-someone else relies on, and never into a copy of a job they already have.
-Invented companies throughout.
+"""Fixing a saved job's name: kept on the user's own saved job, shown wherever
+they see the job, and never written to the shared listing (so nobody else's
+job, search results or duplicate checks change). Invented companies.
 """
 
 import uuid
@@ -9,7 +9,8 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 
-from app.models.generated_document import GeneratedDocument
+from app.models.detected_event import DetectedEvent
+from app.models.email_account import EmailAccount
 from app.models.job_listing import JobListing
 from app.models.saved_job import SavedJob
 from tests.api.test_saved_jobs import sample_job  # noqa: F401 — fixture
@@ -34,7 +35,7 @@ def _rename(client, job, **body):
 
 @pytest.mark.asyncio
 class TestRename:
-    async def test_fixes_the_name_in_place_for_a_job_only_this_user_has(
+    async def test_the_users_name_shows_everywhere_they_see_the_job(
         self, client: AsyncClient
     ):
         job = await _manual(client)
@@ -44,26 +45,37 @@ class TestRename:
             title="  Platform   Engineer ",
             company="Vellacor",
             location="Springfield, IL",
+            apply_url="https://careers.vellacor.example/9",
         )
         assert r.status_code == 200, r.text
         listing = r.json()["job_listing"]
-        assert (listing["title"], listing["company"], listing["location"]) == (
+        assert (
+            listing["title"],
+            listing["company"],
+            listing["location"],
+            listing["apply_url"],
+        ) == (
             "Platform Engineer",
             "Vellacor",
             "Springfield, IL",
+            "https://careers.vellacor.example/9",
         )
-        # Same listing: nobody else had it.
+        assert r.json()["renamed"] is True
+        # Same job, same page.
         assert r.json()["job_listing_id"] == job["job_listing_id"]
-        # And it's found under its new name.
-        check = await client.post(
-            "/v1/saved-jobs/check",
-            json={
-                "title": "Platform Engineer",
-                "company": "Vellacor",
-                "location": "Springfield, IL",
-            },
-        )
-        assert check.json()["saved"] is True
+        # The list, and the job's own page, say the same.
+        (listed,) = (await client.get("/v1/saved-jobs/")).json()
+        assert listed["job_listing"]["title"] == "Platform Engineer"
+        page = (await client.get(f"/v1/jobs/{job['job_listing_id']}")).json()
+        assert (page["title"], page["company"]) == ("Platform Engineer", "Vellacor")
+
+    async def test_saving_without_changes_is_fine(self, client: AsyncClient):
+        job = await _manual(client)
+        name = {"title": MANUAL["title"], "company": MANUAL["company"]}
+        for _ in range(2):
+            r = await _rename(client, job, **name, location="Not specified")
+            assert r.status_code == 200, r.text
+            assert r.json()["job_listing"]["title"] == MANUAL["title"]
 
     async def test_only_what_is_sent_changes(self, client: AsyncClient):
         job = await _manual(client, location="Remote")
@@ -72,97 +84,42 @@ class TestRename:
         assert listing["title"] == MANUAL["title"] and listing["location"] == "Remote"
         assert listing["apply_url"] == "https://careers.vellacor.example/9"
 
-    async def test_a_listing_someone_else_saved_is_copied_not_changed(
-        self, client: AsyncClient, db_session, test_user
-    ):
-        job = await _manual(client, title="Data Engineer", company="Quillstone")
-        other = await _other_user(db_session)
-        theirs = SavedJob(
-            id=uuid.uuid4(),
-            user_id=other.id,
-            job_listing_id=uuid.UUID(job["job_listing_id"]),
-        )
-        doc = GeneratedDocument(
-            id=uuid.uuid4(),
-            user_id=test_user.id,
-            job_listing_id=uuid.UUID(job["job_listing_id"]),
-            document_type="cover_letter",
-            content="Dear Quillstone team",
-        )
-        db_session.add_all([theirs, doc])
-        await db_session.commit()
-        doc_id = doc.id
-
-        r = await _rename(client, job, title="Senior Data Engineer")
-        assert r.status_code == 200, r.text
-        moved_to = r.json()["job_listing_id"]
-        assert moved_to != job["job_listing_id"]
-        # Theirs is untouched.
-        db_session.expire_all()
-        original = await db_session.get(JobListing, uuid.UUID(job["job_listing_id"]))
-        assert original.title == "Data Engineer"
-        copy = await db_session.get(JobListing, uuid.UUID(moved_to))
-        assert (copy.title, copy.company, copy.source) == (
-            "Senior Data Engineer",
-            "Quillstone",
-            "manual",
-        )
-        # The user's letter follows the job to its copy.
-        assert (
-            await db_session.get(GeneratedDocument, doc_id)
-        ).job_listing_id == copy.id
-
-    async def test_a_job_board_listing_is_copied(
+    async def test_the_shared_listing_is_never_changed(
         self,
         client: AsyncClient,
         db_session,
         sample_job,  # noqa: F811
     ):
+        """A job-board listing (and anyone else who saved it, or finds it in
+        search) keeps its own name; the extension still knows it's saved."""
         feed_id = sample_job.id
         saved = (
             await client.post("/v1/saved-jobs/", json={"job_listing_id": str(feed_id)})
         ).json()
-        r = await _rename(client, saved, company="Acme Corporation")
-        assert r.status_code == 200
-        assert r.json()["job_listing_id"] != str(feed_id)
-        db_session.expire_all()
-        assert (await db_session.get(JobListing, feed_id)).company == "Acme Corp"
-
-    async def test_renaming_into_a_job_already_saved_is_refused(
-        self, client: AsyncClient
-    ):
-        await _manual(client, title="Platform Engineer", company="Vellacor")
-        job = await _manual(client)
-        r = await _rename(client, job, title="Platform Engineer", company="Vellacor")
-        assert r.status_code == 409
-        assert r.json()["detail"] == "You already have this job saved."
-        (await client.get("/v1/saved-jobs/")).json()
-
-    async def test_a_name_another_user_has_keeps_the_jobs_apart(
-        self, client: AsyncClient, db_session
-    ):
-        """Someone else saved a job by the new name: this job is renamed, and
-        neither listing becomes the other."""
-        job = await _manual(client)
         other = await _other_user(db_session)
+        theirs_id = uuid.uuid4()
+        db_session.add(SavedJob(id=theirs_id, user_id=other.id, job_listing_id=feed_id))
         await db_session.commit()
-        from app.schemas.saved_job import ManualJobCreate
-        from app.services.saved_jobs import save_manual_job
 
-        theirs = await save_manual_job(
-            db_session,
-            other.id,
-            ManualJobCreate(
-                url="https://careers.vellacor.example/1",
-                title="Platform Engineer",
-                company="Vellacor",
-            ),
+        r = await _rename(client, saved, title="Backend Engineer", company="Acme")
+        assert r.status_code == 200
+        # Read fresh from the database (not the session's copies).
+        listing = await db_session.get(JobListing, feed_id, populate_existing=True)
+        assert (listing.title, listing.company) == ("Python Developer", "Acme Corp")
+        theirs = await db_session.get(SavedJob, theirs_id, populate_existing=True)
+        assert theirs.custom_title is None
+        # No new listing was made for anyone to find.
+        assert len((await db_session.scalars(select(JobListing))).all()) == 1
+        # The extension's "already saved?" check reads the posting's own name.
+        check = await client.post(
+            "/v1/saved-jobs/check",
+            json={
+                "title": "Python Developer",
+                "company": "Acme Corp",
+                "location": "New York, NY",
+            },
         )
-        await db_session.commit()
-        r = await _rename(client, job, title="Platform Engineer", company="Vellacor")
-        assert r.status_code == 200, r.text
-        assert r.json()["job_listing_id"] not in (str(theirs.job_listing_id),)
-        assert r.json()["job_listing"]["title"] == "Platform Engineer"
+        assert check.json()["saved"] is True
 
     @pytest.mark.parametrize(
         "body",
@@ -193,35 +150,114 @@ class TestRename:
             f"/v1/saved-jobs/{theirs_id}/listing", json={"title": "Mine now"}
         )
         assert r.status_code == 404
-        db_session.expire_all()
-        listing = await db_session.scalar(
-            select(JobListing).where(JobListing.id == feed_id)
+        theirs = await db_session.get(SavedJob, theirs_id, populate_existing=True)
+        assert theirs.custom_title is None
+        # And another user's name for a job never shows on this user's page.
+        page = (await client.get(f"/v1/jobs/{feed_id}")).json()
+        assert page["title"] == "Python Developer"
+
+    async def test_emails_are_matched_under_the_users_name(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        """After fixing the company, an email from that company finds the job."""
+        from app.services.email_scan import _candidate_jobs
+
+        job = await _manual(client)
+        await _rename(client, job, title="Platform Engineer", company="Vellacor")
+        (candidate,) = await _candidate_jobs(db_session, test_user.id)
+        assert (candidate["company"], candidate["title"]) == (
+            "Vellacor",
+            "Platform Engineer",
         )
-        assert listing.title == "Python Developer"
+
+
+async def _email_event(db, user, saved_job_id, sender):
+    account = await db.scalar(
+        select(EmailAccount).where(EmailAccount.user_id == user.id)
+    )
+    if account is None:
+        account = EmailAccount(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            email_address="me@mail.example",
+            provider="yahoo",
+            auth_type="app_password",
+            imap_host="imap.mail.example",
+            imap_port=993,
+            secret_encrypted="x",
+            status="connected",
+        )
+        db.add(account)
+        await db.flush()
+    db.add(
+        DetectedEvent(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            email_account_id=account.id,
+            saved_job_id=saved_job_id,
+            event_type="interview",
+            target_stage="Interview",
+            from_addr=sender,
+            subject="Interview",
+            message_uid=uuid.uuid4().hex,
+            logical_key=uuid.uuid4().hex,
+            status="applied",
+        )
+    )
+    await db.commit()
+
+
+async def _flags(client):
+    jobs = (await client.get("/v1/saved-jobs/")).json()
+    return {j["id"]: j["name_doubtful"] for j in jobs}
+
+
+async def _as_email_made(db_session):
+    for sj in (await db_session.scalars(select(SavedJob))).all():
+        sj.origin = "email"
+    await db_session.commit()
 
 
 @pytest.mark.asyncio
 class TestDoubtfulNames:
-    async def test_an_email_made_job_with_a_sentence_for_a_title_is_flagged(
+    async def test_a_sentence_for_a_title_is_flagged_until_fixed(
         self, client: AsyncClient, db_session
     ):
         job = await _manual(client)
-        await _manual(client, title="Data Analyst", company="Quillstone")
-        # Only jobs made from emails are checked.
-        for sj in (await db_session.scalars(select(SavedJob))).all():
-            sj.origin = "email"
-        await db_session.commit()
-        jobs = {j["id"]: j for j in (await client.get("/v1/saved-jobs/")).json()}
-        assert jobs[job["id"]]["name_doubtful"] is True
-        others = [j for j in jobs.values() if j["id"] != job["id"]]
-        assert [j["name_doubtful"] for j in others] == [False]
-
-        # Fixed: no longer flagged.
+        fine = await _manual(client, title="Data Analyst", company="Quillstone")
+        await _as_email_made(db_session)
+        assert await _flags(client) == {job["id"]: True, fine["id"]: False}
         await _rename(client, job, title="Platform Engineer", company="Vellacor")
-        jobs = {j["id"]: j for j in (await client.get("/v1/saved-jobs/")).json()}
-        assert jobs[job["id"]]["name_doubtful"] is False
+        assert (await _flags(client))[job["id"]] is False
+
+    async def test_confirming_the_name_as_it_is_clears_the_flag(
+        self, client: AsyncClient, db_session
+    ):
+        job = await _manual(client)
+        await _as_email_made(db_session)
+        await _rename(client, job, title=MANUAL["title"], company=MANUAL["company"])
+        assert (await _flags(client))[job["id"]] is False
+
+    async def test_the_sender_as_the_company_is_flagged(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        person = await _manual(client, title="Platform Engineer")
+        team = await _manual(client, title="Data Analyst", company="Wells Fargo")
+        await _as_email_made(db_session)
+        await _email_event(
+            db_session,
+            test_user,
+            uuid.UUID(person["id"]),
+            "Nancy Karnas <nancy.karnas@vellacor.example>",
+        )
+        # A hiring system sending as the employer is not a person.
+        for sender in (
+            "Wells Fargo <wellsfargo@myworkday.com>",
+            "Wells Fargo Careers <careers@wellsfargo.example>",
+        ):
+            await _email_event(db_session, test_user, uuid.UUID(team["id"]), sender)
+        assert await _flags(client) == {person["id"]: True, team["id"]: False}
 
     async def test_a_typed_in_job_is_never_flagged(self, client: AsyncClient):
         job = await _manual(client)
-        (listed,) = (await client.get("/v1/saved-jobs/")).json()
-        assert listed["id"] == job["id"] and listed["name_doubtful"] is False
+        assert await _flags(client) == {job["id"]: False}

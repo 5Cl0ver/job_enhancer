@@ -218,6 +218,12 @@ class TestNamesThatAreNotNames:
                 "Senior Site Reliability Engineer (Remote)",
                 "Senior Site Reliability Engineer (Remote)",
             ),
+            ("Account Executive - US", "Account Executive - US"),
+            ("Sales Manager, US Remote", "Sales Manager, US Remote"),
+            ("iOS Engineer", "iOS Engineer"),
+            ("eCommerce Manager", "eCommerce Manager"),
+            ("Process Engineer", "Process Engineer"),
+            ("Product Owner Role Based Access", "Product Owner Role Based Access"),
             # Still a sentence once the lead-in is gone: no title at all.
             ("we would like to invite you to an interview", None),
             ("thank you for your interest", None),
@@ -229,6 +235,19 @@ class TestNamesThatAreNotNames:
     )
     def test_role(self, raw, expected):
         assert clean_role(raw) == expected
+
+    def test_a_hiring_systems_long_title_is_kept(self):
+        long = "Senior Software Engineer, Backend Platform Infrastructure Team - Remote"
+        assert clean_role(long) is None  # read freely out of a body: too long
+        assert clean_role(long, strict=False) == long  # a template's own field
+
+    def test_an_employer_sending_through_a_hiring_system_keeps_its_name(self):
+        company, role = job_names(
+            "Your application to Wells Fargo",
+            "Wells Fargo <wellsfargo@myworkday.com>",
+            "Thank you for your application for the Data Analyst position.",
+        )
+        assert (company, role) == ("Wells Fargo", "Data Analyst")
 
     def test_a_subject_that_names_the_sender_is_not_the_company(self):
         sender = "Nancy Karnas <nancy.karnas@vellacor.example>"
@@ -246,6 +265,11 @@ class TestNamesThatAreNotNames:
         [
             ("Nancy Karnas", "Nancy Karnas <nancy.karnas@vellacor.example>", True),
             ("Nancy Karnas", "Nancy Karnas <nkarnas@vellacor.example>", True),
+            ("Nancy Karnas", "Nancy Karnas <nancy@vellacor.example>", True),
+            # The employer's mailbox at a hiring system, or a run-together name.
+            ("Wells Fargo", "Wells Fargo <wellsfargo@myworkday.com>", False),
+            ("Wells Fargo", "Wells Fargo <wells.fargo@myworkday.com>", False),
+            ("Nancy Karnas", "Nancy Karnas <nancykarnas@vellacor.example>", False),
             # A company's two-word name, sent from a team mailbox.
             ("Tidelock Systems", "Tidelock Systems <jobs@tidelock.example>", False),
             ("Tidelock Systems", "x@mailhost.example", False),
@@ -263,6 +287,8 @@ class TestNamesThatAreNotNames:
             ("IT Systems Administrator II", False),
             ("next phase of our recruitment process", True),
             ("We are hiring", True),
+            ("iOS Engineer", False),
+            ("Account Executive - US", False),
             ("", True),
         ],
     )

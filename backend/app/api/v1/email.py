@@ -12,7 +12,7 @@ import uuid
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -88,8 +88,10 @@ async def _events_out(
                 SavedJob.id,
                 SavedJob.job_listing_id,
                 SavedJob.is_archived,
-                JobListing.company,
-                JobListing.title,
+                func.coalesce(SavedJob.custom_company, JobListing.company).label(
+                    "company"
+                ),
+                func.coalesce(SavedJob.custom_title, JobListing.title).label("title"),
                 PipelineStage.name.label("stage"),
             )
             .join(JobListing, SavedJob.job_listing_id == JobListing.id)
@@ -120,7 +122,7 @@ async def _events_out(
             # better to ask the user than to show those.
             if is_sender_person(d.company, e.from_addr):
                 d.company = None
-            d.title = clean_role(d.title) if d.title else None
+            d.title = clean_role(d.title, strict=False) if d.title else None
         d.stage_missing = bool(e.target_stage) and e.target_stage not in stage_names
         d.mail_link = mail_link(
             provider,

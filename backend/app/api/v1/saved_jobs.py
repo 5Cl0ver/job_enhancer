@@ -205,11 +205,11 @@ async def rename_listing(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobListItem:
-    """Fix a saved job's title, company, place or link. Only this user's job
-    changes; a listing someone else saved is copied first. The answer's
-    ``job_listing_id`` is the job's new page when it was copied."""
+    """Fix (or confirm) a saved job's title, company, place or link. Only this
+    user's job changes; the shared listing is never edited."""
     sj = await svc.rename_listing(db, user.id, saved_job_id, data)
     await db.commit()
+    sj = await svc.get_saved_job(db, sj.id, user.id, with_description=False)
     return SavedJobListItem.model_validate(sj)
 
 
