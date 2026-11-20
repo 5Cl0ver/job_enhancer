@@ -2,7 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { useDroppable } from "@dnd-kit/core";
 import { ChevronLeft, ChevronRight } from "lucide-react";
 import { KanbanCard } from "@/components/tracker/KanbanCard";
+import type { JobEmailLatest } from "@/hooks/useEmailAccount";
 import { PAGE_SIZE, columnView } from "@/lib/boardFilter";
+import { stageTone } from "@/lib/stageStyle";
 import { cn } from "@/lib/utils";
 import type { PipelineStage, SavedJob } from "@/types/api";
 
@@ -18,22 +20,13 @@ interface PipelineColumnProps {
   hits: SavedJob[] | null;
   /** The card the search just jumped to. */
   pulseId: string | null;
+  /** The email behind each job's stage, by saved-job id. */
+  emails?: Map<string, JobEmailLatest>;
   onMoveJob: (savedJobId: string, stageId: string) => void;
   canMoveLeft?: boolean;
   canMoveRight?: boolean;
   onMove?: (dir: -1 | 1) => void;
 }
-
-const STAGE_COLORS: Record<string, string> = {
-  Interested: "bg-slate-50 border-slate-200 dark:bg-slate-900/40 dark:border-slate-800",
-  "Referral Sent": "bg-purple-50 border-purple-200 dark:bg-purple-950/30 dark:border-purple-900",
-  Applied: "bg-blue-50 border-blue-200 dark:bg-blue-950/30 dark:border-blue-900",
-  "Phone Screen": "bg-cyan-50 border-cyan-200 dark:bg-cyan-950/30 dark:border-cyan-900",
-  "Take-Home Assignment": "bg-yellow-50 border-yellow-200 dark:bg-yellow-950/30 dark:border-yellow-900",
-  Interview: "bg-orange-50 border-orange-200 dark:bg-orange-950/30 dark:border-orange-900",
-  Offer: "bg-green-50 border-green-200 dark:bg-green-950/30 dark:border-green-900",
-  Rejected: "bg-red-50 border-red-200 dark:bg-red-950/30 dark:border-red-900",
-};
 
 export function PipelineColumn({
   stage,
@@ -43,6 +36,7 @@ export function PipelineColumn({
   words,
   hits,
   pulseId,
+  emails,
   onMoveJob,
   canMoveLeft,
   canMoveRight,
@@ -55,7 +49,7 @@ export function PipelineColumn({
   const [opened, setOpened] = useState(false);
   const scroller = useRef<HTMLDivElement>(null);
   const more = useRef<HTMLButtonElement>(null);
-  const columnColor = stage.color ? undefined : STAGE_COLORS[stage.name];
+  const tone = stageTone(stage.name);
   const view = columnView(jobs, hits, limit);
   const found = view.hitIds?.size ?? 0;
 
@@ -82,13 +76,13 @@ export function PipelineColumn({
         onClick={() => setOpened(true)}
         title={`${stage.name}: no jobs. Drop a job here, or click to open.`}
         className={cn(
-          "flex w-11 shrink-0 snap-start flex-col items-center gap-2 rounded-lg border py-2 transition-shadow",
-          columnColor ?? "border-border bg-muted",
-          isOver && "ring-2 ring-primary",
+          "flex w-10 shrink-0 snap-start flex-col items-center gap-2.5 rounded-xl bg-muted/40 py-3 text-muted-foreground transition-colors hover:bg-muted/70 hover:text-foreground",
+          isOver && "bg-primary/10 ring-2 ring-primary/60",
         )}
       >
-        <span className="rounded-full bg-background px-1.5 py-0.5 text-xs font-medium">0</span>
-        <span className="text-sm font-semibold [writing-mode:vertical-rl]">{stage.name}</span>
+        <span className={cn("h-2 w-2 rounded-full", tone.dot)} aria-hidden />
+        <span className="text-sm font-medium [writing-mode:vertical-rl]">{stage.name}</span>
+        <span className="text-xs tabular-nums">0</span>
       </button>
     );
   }
@@ -97,15 +91,26 @@ export function PipelineColumn({
     <div
       ref={setNodeRef}
       className={cn(
-        "flex min-h-0 w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-lg transition-shadow sm:w-64",
-        isOver && "ring-2 ring-primary",
+        // One quiet panel per stage; the stage's colour is the dot by its name.
+        "group/col flex min-h-0 w-[82vw] max-w-72 shrink-0 snap-start flex-col rounded-xl bg-muted/40 transition-colors sm:w-72",
+        isOver && "bg-primary/10 ring-2 ring-primary/60",
       )}
     >
       {/* Column header */}
-      <div className={cn("rounded-t-lg border px-3 py-2", columnColor ?? "border-border bg-muted")}>
-        <div className="flex items-center justify-between gap-1">
+      <div className="px-3 pb-2 pt-3">
+        <div className="flex items-center gap-2">
+          <span className={cn("h-2 w-2 shrink-0 rounded-full", tone.dot)} aria-hidden />
           <span className="truncate text-sm font-semibold">{stage.name}</span>
-          <div className="flex items-center gap-0.5">
+          <span
+            className={cn(
+              "whitespace-nowrap rounded-full px-1.5 text-xs font-medium tabular-nums text-muted-foreground",
+              found > 0 && "bg-primary text-primary-foreground",
+            )}
+          >
+            {view.hitIds ? `${found} of ${jobs.length}` : jobs.length}
+          </span>
+          {/* Reorder this column (◀ ▶): there when you point at the column. */}
+          <div className="ml-auto flex items-center gap-0.5 opacity-0 transition-opacity focus-within:opacity-100 group-hover/col:opacity-100 pointer-coarse:opacity-100">
             {/* Reorder this column (◀ ▶). */}
             <button
               type="button"
@@ -125,14 +130,6 @@ export function PipelineColumn({
             >
               <ChevronRight className="h-3.5 w-3.5" />
             </button>
-            <span
-              className={cn(
-                "whitespace-nowrap rounded-full bg-background px-1.5 py-0.5 text-xs font-medium",
-                found > 0 && "bg-primary text-primary-foreground",
-              )}
-            >
-              {view.hitIds ? `${found} of ${jobs.length}` : jobs.length}
-            </span>
           </div>
         </div>
       </div>
@@ -140,11 +137,7 @@ export function PipelineColumn({
       {/* Cards: this part scrolls, the header above stays put. */}
       <div
         ref={scroller}
-        className={cn(
-          "flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto rounded-b-lg border border-t-0 p-2 transition-colors",
-          columnColor ?? "border-border",
-          isOver && "bg-muted/60",
-        )}
+        className="flex min-h-[120px] flex-1 flex-col gap-2 overflow-y-auto px-2 pb-2"
       >
         {view.visible.map((sj) => {
           // A job with no stage is only shown here; it isn't in this stage yet.
@@ -161,6 +154,7 @@ export function PipelineColumn({
               words={words}
               dimmed={view.hitIds !== null && !view.hitIds.has(sj.id)}
               pulse={pulseId === sj.id}
+              email={emails?.get(sj.id)}
             />
           );
         })}

@@ -41,6 +41,12 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `nav.ts` | The page list: desktop sidebar order, the phone's three tabs (`TABS`) and its More sheet (`MORE`), admin-only filtering, `pageFor(path)`, `signOut` |
 | `PhoneNav.tsx` | The phone frame (under 768px): `TopBar` (page title, back arrow on inner pages, a slot for the page's buttons via `TopBarActions`), `TabBar` (My Jobs · Email with count · Find Jobs · More → sheet with the rest + Sign out), `CountBadge` |
 
+## `email/`
+| File | Purpose |
+|---|---|
+| `JobEmails.tsx` | "Emails about this job": why a job is in its stage. Each email says what it was and what it did to the card, with **View email** (quick read here) and **Open in Yahoo Mail / Gmail** (the message itself). On the job page, the board's job dialog; says so when a job has none |
+| `EmailViewer.tsx` | One email, fetched read-only when opened and shown as plain text, with the link to the message in the user's own mail and a search fallback |
+
 ## `jobs/`
 | File | Purpose |
 |---|---|

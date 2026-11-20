@@ -32,12 +32,22 @@ export interface Track {
 
 export type TrackInput = Pick<
   Track,
-  "name" | "target_titles" | "key_skills" | "skip_rules" | "min_pay" | "resume_id" | "notes"
+  | "name"
+  | "target_titles"
+  | "key_skills"
+  | "skip_rules"
+  | "min_pay"
+  | "resume_id"
+  | "notes"
 >;
 
 export const MAX_TRACKS = 8;
 
-export const DEFAULT_SKIP: SkipRules = { degree_only: true, max_years: null, exclude: [] };
+export const DEFAULT_SKIP: SkipRules = {
+  degree_only: true,
+  max_years: null,
+  exclude: [],
+};
 
 /** Suggested resume types, so a first-time user starts with a click. */
 export const STARTER_TRACKS: TrackInput[] = [
@@ -120,7 +130,10 @@ export function formatPay(pay: number | null): string | null {
 
 /** "$70K" / "70,000" / "70k" -> 70000; blank -> null; nonsense -> NaN. */
 export function parsePay(text: string): number | null {
-  const t = text.trim().toLowerCase().replace(/[$,\s]/g, "");
+  const t = text
+    .trim()
+    .toLowerCase()
+    .replace(/[$,\s]/g, "");
   if (!t) return null;
   const k = t.endsWith("k");
   const n = Number(k ? t.slice(0, -1) : t);
@@ -159,7 +172,21 @@ export const MAX_JOBS_PER_RUN = 10;
 
 /** What the user says to Claude in Chrome. Never changes: the app knows which
  * search is next, so Claude's chat stays small. */
-export const SCOUT_LINE = "Do my next Job Scout run with the Job Enhancer connector.";
+export const SCOUT_LINE =
+  "Do my next Job Scout run with the Job Enhancer connector.";
+
+/** "Within N miles" choices the three job boards all understand. */
+export const RADIUS_MILES = [5, 10, 25, 50, 100] as const;
+
+/** Where a search looks, in words: "within 25 mi of Springfield, IL". */
+export function whereLabel(
+  m: Pick<Mission, "location" | "radius_miles" | "remote">,
+): string | null {
+  if (!m.location) return null;
+  return m.radius_miles && m.remote !== "remote_only"
+    ? `within ${m.radius_miles} mi of ${m.location}`
+    : m.location;
+}
 
 export interface Mission {
   id: string;
@@ -170,6 +197,8 @@ export interface Mission {
   posted_within_days: number;
   min_pay: number | null;
   location: string | null;
+  /** "Within N miles" of `location`; null leaves it to the job board. */
+  radius_miles: number | null;
   remote: Remote;
   min_fit: number;
   extra_instructions: string | null;
@@ -185,12 +214,14 @@ export type MissionInput = Pick<
   | "posted_within_days"
   | "min_pay"
   | "location"
+  | "radius_miles"
   | "remote"
   | "min_fit"
   | "extra_instructions"
 > & { name?: string | null };
 
-export type Outcome = "saved" | "below_bar" | "duplicate" | "waiting_for_copy" | "no_copy";
+export type Outcome =
+  "saved" | "below_bar" | "duplicate" | "waiting_for_copy" | "no_copy";
 
 export interface Finding {
   id: string;
@@ -243,7 +274,9 @@ export function sourceLabel(source: string): string {
 }
 
 export function postedLabel(days: number): string {
-  return POSTED_WITHIN.find((p) => p.value === days)?.label ?? `Last ${days} days`;
+  return (
+    POSTED_WITHIN.find((p) => p.value === days)?.label ?? `Last ${days} days`
+  );
 }
 
 /** 8 -> "Strong", 6 -> "Good", 4 -> "Weak". */
@@ -262,12 +295,15 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
 };
 
 /** One line for a run's progress, as the page shows it. */
-export function runSummary(run: Pick<Run, "status" | "counts" | "target">): string {
+export function runSummary(
+  run: Pick<Run, "status" | "counts" | "target">,
+): string {
   const { saved } = run.counts;
   const skipped = run.counts.below_bar + run.counts.duplicate;
   const extra = skipped ? ` · ${skipped} passed over` : "";
   if (run.status === "queued") return "Waiting for Claude to start";
-  if (run.status === "running") return `Searching · ${saved} of ${run.target} saved${extra}`;
+  if (run.status === "running")
+    return `Searching · ${saved} of ${run.target} saved${extra}`;
   if (run.status === "stopped") return `Stopped · ${saved} saved${extra}`;
   return `Done · ${saved} saved${extra}`;
 }

@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import and_, func, or_, select
+from sqlalchemy import Row, and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -47,6 +47,7 @@ from app.services.email_scan import (
     IMPORTANT_EVENTS,
     _stage_orders,
     card_action,
+    email_id_of,
     mail_link,
 )
 from app.services.saved_jobs import save_manual_job
@@ -95,6 +96,56 @@ async def list_pending(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEve
         .order_by(DetectedEvent.created_at.desc())
     )
     return list(rows)
+
+
+# An email "about" a job, for explaining where its card sits: one that moved the
+# card, or one waiting for the user's click. Not a weak guess the scan hid, a
+# recruiter contact, or one the user dismissed.
+_EXPLAINS = (STATUS_APPLIED, STATUS_AUTO_APPLIED, STATUS_PENDING)
+
+
+async def latest_by_job(db: AsyncSession, user_id: uuid.UUID) -> list[tuple[Row, int]]:
+    """For each saved job with emails about it: the one that best explains
+    where its card is (the newest that moved it; failing that, the newest
+    waiting on the user) and how many such emails it has.
+
+    "Newest" is by when the email was sent, where that is known; a scan that
+    stores an old and a new email in one go gives both the same ``created_at``.
+    Only the columns the board needs are read."""
+    sent = func.coalesce(DetectedEvent.email_date, DetectedEvent.created_at)
+    rows = await db.execute(
+        select(
+            DetectedEvent.id,
+            DetectedEvent.saved_job_id,
+            DetectedEvent.event_type,
+            DetectedEvent.status,
+            DetectedEvent.target_stage,
+            DetectedEvent.email_date,
+            DetectedEvent.created_at,
+            DetectedEvent.logical_key,
+            DetectedEvent.folder,
+            DetectedEvent.subject,
+            DetectedEvent.from_addr,
+        )
+        .where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.saved_job_id.is_not(None),
+            DetectedEvent.status.in_(_EXPLAINS),
+        )
+        .order_by(sent.desc(), DetectedEvent.id)
+    )
+    moved = (STATUS_APPLIED, STATUS_AUTO_APPLIED)
+    best: dict[uuid.UUID, Row] = {}
+    counts: dict[uuid.UUID, int] = {}
+    for ev in rows:
+        job = ev.saved_job_id
+        counts[job] = counts.get(job, 0) + 1
+        held = best.get(job)
+        # Newest first, so the first seen wins, unless a later one moved the card
+        # and the one held didn't.
+        if held is None or (ev.status in moved and held.status not in moved):
+            best[job] = ev
+    return [(ev, counts[job]) for job, ev in best.items()]
 
 
 async def count_to_review(db: AsyncSession, user_id: uuid.UUID) -> int:
@@ -306,7 +357,16 @@ async def track_event(
     ev = await _get_event(db, user_id, event_id)
     if ev.status != STATUS_UNSAVED:
         raise HTTPException(status_code=409, detail="This item can't be added")
-    url = mail_link(provider, subject=ev.subject) or "https://mail.yahoo.com/"
+    url = (
+        mail_link(
+            provider,
+            subject=ev.subject,
+            email_id=email_id_of(ev.logical_key),
+            folder=ev.folder,
+            from_addr=ev.from_addr,
+        )
+        or "https://mail.yahoo.com/"
+    )
     sj = await save_manual_job(
         db, user_id, ManualJobCreate(url=url, title=title, company=company)
     )

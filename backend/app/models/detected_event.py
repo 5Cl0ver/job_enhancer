@@ -121,6 +121,9 @@ class DetectedEvent(Base):
         ForeignKey("pipeline_stages.id", ondelete="SET NULL"),
     )
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # The email's own date (its Date header). Null for emails recorded before
+    # this column existed; ``created_at`` is when a scan found the email.
+    email_date: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

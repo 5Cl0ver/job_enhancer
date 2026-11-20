@@ -69,7 +69,13 @@ class DetectedEventOut(BaseModel):
     from_addr: str
     subject: str
     status: str
-    mail_link: str | None = None  # open/search the email in the user's webmail
+    # The email in the user's webmail: the exact message when it can be named,
+    # else a search for it.
+    mail_link: str | None = None
+    # Always a search, for when the exact link doesn't open the message.
+    mail_search_link: str | None = None
+    # When the email was sent; None for emails recorded before this was kept.
+    email_date: datetime | None = None
     # The target stage was deleted: approving can't move the card.
     stage_missing: bool = False
     # How the job was chosen (job_url, job_id, known_sender, company_title,
@@ -104,6 +110,24 @@ class MatchCandidateOut(BaseModel):
     saved_job_id: uuid.UUID | None = None  # what a one-click resolve sends
 
 
+class JobEmailLatestOut(BaseModel):
+    """The email that best explains where a saved job's card sits: the newest
+    one that moved it, else the newest one about it."""
+
+    saved_job_id: uuid.UUID
+    event_id: uuid.UUID
+    event_type: str
+    status: str
+    target_stage: str | None = None
+    email_date: datetime | None = None
+    created_at: datetime
+    # The email in the user's webmail, for when it can't be shown in the app.
+    mail_link: str | None = None
+    mail_search_link: str | None = None
+    # How many emails explain the job's stage (moved it, or wait on the user).
+    count: int
+
+
 class EmailMessageOut(BaseModel):
     """One detected email, fetched read-only on demand — plain text only."""
 
@@ -111,7 +135,8 @@ class EmailMessageOut(BaseModel):
     from_addr: str
     date: datetime | None = None
     text: str
-    mail_link: str | None = None  # open/search it in the user's webmail
+    mail_link: str | None = None  # the exact message when possible, else a search
+    mail_search_link: str | None = None  # always a search
 
 
 class TrackEventRequest(BaseModel):

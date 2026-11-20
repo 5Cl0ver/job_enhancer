@@ -1,6 +1,7 @@
 """Tests for the scan orchestration — emails → pending DetectedEvents."""
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -81,6 +82,7 @@ class TestDetectEvents:
                 subject="Update on your application to Acme",
                 body="Unfortunately we have decided to move forward with other "
                 "candidates.",
+                date=datetime(2026, 11, 18, 9, 14, tzinfo=UTC),
             )
         ]
         result = await detect_events(db_session, acct, msgs)
@@ -89,6 +91,8 @@ class TestDetectEvents:
         ev = result.created[0]
         assert ev.event_type == "rejected"
         assert ev.target_stage == "Rejected"
+        # The email's own date is kept, so the page can say when it arrived.
+        assert ev.email_date == datetime(2026, 11, 18, 9, 14, tzinfo=UTC)
         assert ev.saved_job_id == job.id
         assert ev.status == STATUS_PENDING
         # Undo target = where the card was before (Applied).

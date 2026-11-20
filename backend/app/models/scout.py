@@ -78,6 +78,8 @@ class ScoutMission(Base):
     posted_within_days: Mapped[int] = mapped_column(Integer, nullable=False, default=7)
     min_pay: Mapped[int | None] = mapped_column(Integer)  # yearly USD
     location: Mapped[str | None] = mapped_column(String(120))
+    # "Within N miles" of ``location``; null = the job board's own default.
+    radius_miles: Mapped[int | None] = mapped_column(Integer)
     remote: Mapped[str] = mapped_column(String(20), nullable=False, default="any")
     min_fit: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=6)
     extra_instructions: Mapped[str | None] = mapped_column(Text)

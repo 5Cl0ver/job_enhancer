@@ -73,7 +73,14 @@ export interface DetectedEvent {
   title?: string | null;
   /** Where the saved job's card is now ("Interested"); null if unsaved. */
   current_stage?: string | null;
+  /** The email in the user's webmail: the message itself when it can be named,
+   * else a search for it. */
   mail_link: string | null;
+  /** Always a search, for when the direct link doesn't land on the email. */
+  mail_search_link?: string | null;
+  /** When the email was sent; null for emails recorded before this was kept. */
+  email_date?: string | null;
+  /** When a scan found the email. */
   created_at: string;
 }
 
@@ -344,6 +351,7 @@ export interface EmailMessage {
   /** Plain text only — the server never sends email HTML. */
   text: string;
   mail_link: string | null;
+  mail_search_link?: string | null;
 }
 
 /** One detected email, fetched read-only from the mailbox when asked. */
@@ -355,6 +363,37 @@ export function useEmailMessage(eventId: string | null) {
     staleTime: 5 * 60_000,
     retry: false,
   });
+}
+
+/** The email that explains where a saved job's card sits. */
+export interface JobEmailLatest {
+  saved_job_id: string;
+  event_id: string;
+  event_type: string;
+  status: string;
+  target_stage: string | null;
+  email_date?: string | null;
+  created_at: string;
+  mail_link?: string | null;
+  mail_search_link?: string | null;
+  /** How many emails explain the job's stage. */
+  count: number;
+}
+
+/** For every saved job with emails, the one behind its stage, by saved-job id.
+ * One request for the whole board. The key sits under "email-events" so any
+ * email action refreshes it. */
+export function useJobEmailLatest() {
+  return useQuery({
+    queryKey: ["email-events", "job-latest"],
+    queryFn: () => api.get<JobEmailLatest[]>("/v1/email/job-emails/latest"),
+    select: bySavedJob,
+    staleTime: 60_000,
+  });
+}
+
+function bySavedJob(rows: JobEmailLatest[]): Map<string, JobEmailLatest> {
+  return new Map(rows.map((r) => [r.saved_job_id, r]));
 }
 
 /** Detected emails tied to one saved job (by its listing id). */

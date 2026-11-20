@@ -149,6 +149,49 @@ describe("KanbanBoard", () => {
     );
   });
 
+  it("shows the email behind a job's stage on its card, and opens it from there", async () => {
+    const user = userEvent.setup();
+    get.mockImplementation((path: string) => {
+      if (path.startsWith("/v1/pipeline-stages")) return Promise.resolve(STAGES);
+      if (path.startsWith("/v1/saved-jobs")) return Promise.resolve(JOBS);
+      if (path.startsWith("/v1/users/me")) return Promise.resolve({ follow_up_days: 7 });
+      if (path.startsWith("/v1/email/job-emails/latest"))
+        return Promise.resolve([
+          {
+            saved_job_id: "i1",
+            event_id: "ev1",
+            event_type: "interview",
+            status: "auto_applied",
+            target_stage: "Interview",
+            created_at: "2026-11-18T10:00:00Z",
+            count: 1,
+          },
+        ]);
+      if (path === "/v1/email/events/ev1/message")
+        return Promise.resolve({
+          subject: "Phone screen",
+          from_addr: "talent@brambleworks.example",
+          date: null,
+          text: "Are you free Thursday?",
+          mail_link: "https://mail.yahoo.com/d/folders/1/messages/abc",
+          mail_search_link: null,
+        });
+      return Promise.resolve([]);
+    });
+    renderBoard();
+
+    const line = await screen.findByRole("button", { name: /Interview email · Nov 18/ });
+    // Only the job with an email gets the line.
+    expect(screen.getAllByRole("button", { name: /email · /i })).toHaveLength(1);
+    await user.click(line);
+
+    const view = await screen.findByRole("dialog");
+    expect(await within(view).findByText("Are you free Thursday?")).toBeInTheDocument();
+    expect(within(view).getByRole("link", { name: /Open in Yahoo Mail/ })).toBeInTheDocument();
+    // The email opened, not the job's own dialog.
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
   it("tells the user when a move fails, with Retry", async () => {
     const user = userEvent.setup();
     post.mockRejectedValue(new Error("network"));

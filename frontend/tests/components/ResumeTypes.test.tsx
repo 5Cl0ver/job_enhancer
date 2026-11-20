@@ -87,7 +87,93 @@ describe("Resume types", () => {
     expect(await screen.findByText("IT Admin")).toBeInTheDocument();
     expect(screen.getByText("Jira Administrator")).toBeInTheDocument();
     expect(screen.getByText(/2 saved jobs · \$70K\+/)).toBeInTheDocument();
-    expect(screen.getByText(/no resume attached yet/i)).toBeInTheDocument();
+    // No resume yet: the card itself offers the upload.
+    expect(
+      screen.getByRole("button", { name: "Upload the resume for this type" }),
+    ).toBeInTheDocument();
+  });
+
+  it("uploads a resume from the card, attaches it and fills in the skills", async () => {
+    const user = userEvent.setup();
+    const blank = { ...TRACK, key_skills: [] };
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/scout/tracks") return Promise.resolve([blank]);
+      if (path === "/v1/ai/resumes/r9/skills")
+        return Promise.resolve({ skills: ["Microsoft 365", "PowerShell"] });
+      return Promise.resolve([]);
+    });
+    post.mockResolvedValue({ id: "r9", filename: "it-admin.pdf" });
+    patch.mockResolvedValue({});
+    renderWithQuery(<ResumeTypes />);
+
+    const file = new File(["%PDF"], "it-admin.pdf", { type: "application/pdf" });
+    await user.upload(await screen.findByLabelText("Resume file for IT Admin"), file);
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", {
+        resume_id: "r9",
+        key_skills: ["Microsoft 365", "PowerShell"],
+      }),
+    );
+    expect(post.mock.calls[0][0]).toBe("/v1/ai/resumes?make_active=false");
+  });
+
+  it("keeps the skills a type already has when a resume is attached", async () => {
+    const user = userEvent.setup();
+    serve([TRACK]); // has "Microsoft 365" already
+    post.mockResolvedValue({ id: "r9", filename: "it-admin.pdf" });
+    patch.mockResolvedValue({});
+    renderWithQuery(<ResumeTypes />);
+
+    const file = new File(["%PDF"], "it-admin.pdf", { type: "application/pdf" });
+    await user.upload(await screen.findByLabelText("Resume file for IT Admin"), file);
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", { resume_id: "r9" }),
+    );
+  });
+
+  it("in the editor, skills follow the chosen resume until the user writes their own", async () => {
+    const user = userEvent.setup();
+    const RESUMES = [
+      { id: "ra", filename: "admin.pdf", is_active: false, created_at: "2026-11-01T10:00:00Z" },
+      { id: "rb", filename: "analyst.pdf", is_active: false, created_at: "2026-11-02T10:00:00Z" },
+    ];
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/scout/tracks") return Promise.resolve([{ ...TRACK, key_skills: [] }]);
+      if (path === "/v1/ai/resumes") return Promise.resolve(RESUMES);
+      if (path === "/v1/ai/resumes/ra/skills")
+        return Promise.resolve({ skills: ["PowerShell", "Intune"] });
+      if (path === "/v1/ai/resumes/rb/skills")
+        return Promise.resolve({ skills: ["Power BI", "Visio"] });
+      return Promise.resolve([]);
+    });
+    renderWithQuery(<ResumeTypes />);
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    const box = await screen.findByLabelText("Your key skills for this kind of role");
+    const pick = async (name: string) => {
+      await user.click(screen.getByRole("combobox", { name: "Resume to apply with" }));
+      await user.click(await screen.findByRole("option", { name }));
+    };
+
+    await pick("admin.pdf");
+    await waitFor(() => expect(box).toHaveValue("PowerShell, Intune"));
+    // Another resume: its skills replace the ones the app filled in.
+    await pick("analyst.pdf");
+    await waitFor(() => expect(box).toHaveValue("Power BI, Visio"));
+    // Once the user edits the box, choosing a resume leaves it alone.
+    await user.type(box, ", Excel");
+    await pick("admin.pdf");
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/v1/ai/resumes/ra/skills"));
+    expect(box).toHaveValue("Power BI, Visio, Excel");
+  });
+
+  it("an attached resume can be viewed or replaced from the card", async () => {
+    serve([{ ...TRACK, resume_id: "r1", resume_filename: "it-admin.pdf" }]);
+    renderWithQuery(<ResumeTypes />);
+    expect(await screen.findByText("it-admin.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Replace" })).toBeInTheDocument();
   });
 
   it("edits a type and sends clean lists", async () => {

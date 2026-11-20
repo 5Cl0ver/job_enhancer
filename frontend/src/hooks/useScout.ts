@@ -4,7 +4,14 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isOpen, type Mission, type MissionInput, type Run, type Track, type TrackInput } from "@/lib/scout";
+import {
+  isOpen,
+  type Mission,
+  type MissionInput,
+  type Run,
+  type Track,
+  type TrackInput,
+} from "@/lib/scout";
 
 export function useTracks() {
   return useQuery<Track[]>({
@@ -41,20 +48,70 @@ export function useDeleteTrack() {
   });
 }
 
-/** Upload a resume for one resume type without replacing the main resume
- * (the one match scores and autofill use). */
+/** Upload a resume without replacing the main one (the one match scores and
+ * autofill use). */
+function uploadResume(file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return api.post<{ id: string; filename: string }>(
+    "/v1/ai/resumes?make_active=false",
+    form,
+  );
+}
+
+/** The upload went through but linking it to the resume type didn't. */
+export class AttachFailed extends Error {}
+
+/** Upload a resume for one resume type (see `uploadResume`). */
 export function useUploadTrackResume() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (file: File) => {
-      const form = new FormData();
-      form.append("file", file);
-      return api.post<{ id: string; filename: string }>(
-        "/v1/ai/resumes?make_active=false",
-        form,
-      );
+      return uploadResume(file);
     },
     onSuccess: () => qc.invalidateQueries({ queryKey: ["resumes"] }),
+  });
+}
+
+/** The skills the app recognises in a resume, as the resume writes them. */
+export function resumeSkills(resumeId: string): Promise<string[]> {
+  return api
+    .get<{ skills: string[] }>(`/v1/ai/resumes/${resumeId}/skills`)
+    .then((r) => r.skills);
+}
+
+/**
+ * Attach a resume file to a resume type in one go: upload it, link it, and, if
+ * the type has no key skills yet, fill them in from the resume. Resolves with
+ * how many skills were filled in.
+ */
+export function useAttachResume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ track, file }: { track: Track; file: File }) => {
+      const uploaded = await uploadResume(file);
+      // Skills are a bonus: a failure here must not lose the upload.
+      const skills =
+        track.key_skills.length === 0
+          ? await resumeSkills(uploaded.id).catch(() => [])
+          : [];
+      try {
+        await api.patch<Track>(`/v1/scout/tracks/${track.id}`, {
+          resume_id: uploaded.id,
+          ...(skills.length > 0 ? { key_skills: skills } : {}),
+        });
+      } catch {
+        // The file is in the user's resumes; say so rather than "upload failed".
+        throw new AttachFailed(
+          "The file uploaded, but it couldn't be attached. Open Edit and pick it from the list.",
+        );
+      }
+      return skills.length;
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+      qc.invalidateQueries({ queryKey: ["scout-tracks"] });
+    },
   });
 }
 
@@ -92,7 +149,8 @@ export function useDeleteMission() {
 export function useStartRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (missionId: string) => api.post<Run>(`/v1/scout/missions/${missionId}/runs`, {}),
+    mutationFn: (missionId: string) =>
+      api.post<Run>(`/v1/scout/missions/${missionId}/runs`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["scout-runs"] });
       qc.invalidateQueries({ queryKey: ["scout-missions"] });
@@ -122,7 +180,8 @@ export function useRun(id: string | null) {
       return run;
     },
     enabled: !!id,
-    refetchInterval: (q) => (q.state.data && isOpen(q.state.data) ? POLL_MS : false),
+    refetchInterval: (q) =>
+      q.state.data && isOpen(q.state.data) ? POLL_MS : false,
   });
 }
 
