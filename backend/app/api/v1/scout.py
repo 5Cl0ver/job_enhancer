@@ -14,6 +14,8 @@ from app.schemas.scout import (
     ActiveRunOut,
     CaptureIn,
     CaptureOut,
+    CompanyOut,
+    CompanyUpdate,
     ConfirmIn,
     ConfirmOut,
     MissionCreate,
@@ -26,6 +28,7 @@ from app.schemas.scout import (
     TrackOut,
     TrackUpdate,
 )
+from app.services import scout_companies as companies
 from app.services import scout_review as review
 from app.services import scout_runs as runs
 from app.services import scout_tracks as svc
@@ -210,3 +213,25 @@ async def capture(
     stored = await runs.record_capture(db, user.id, data)
     await db.commit()
     return CaptureOut(stored=stored)
+
+
+@router.get("/companies", response_model=list[CompanyOut])
+async def list_companies(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CompanyOut]:
+    """The local companies Scout has checked, latest first."""
+    return await companies.list_companies(db, user.id)
+
+
+@router.patch("/companies/{company_id}", response_model=CompanyOut)
+async def update_company(
+    company_id: uuid.UUID,
+    data: CompanyUpdate,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> CompanyOut:
+    """Never check a company again (or start again), or check it next run."""
+    out = await companies.update_company(db, user.id, company_id, data)
+    await db.commit()
+    return out

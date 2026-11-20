@@ -125,7 +125,7 @@ class TrackOut(BaseModel):
 # --------------------------------------------------------------------------- #
 # Missions (saved searches) and runs
 # --------------------------------------------------------------------------- #
-Source = Literal["linkedin", "indeed", "ziprecruiter"]
+Source = Literal["linkedin", "indeed", "ziprecruiter", "google_jobs", "local_companies"]
 Remote = Literal["any", "remote_only", "no_remote"]
 POSTED_WITHIN = (1, 3, 7, 14, 30)
 MAX_JOBS_PER_RUN = 10
@@ -133,6 +133,20 @@ MAX_JOBS_PER_RUN = 10
 
 # "Within N miles" of the search's city. The three boards all take these.
 Radius = Literal[5, 10, 25, 50, 100]
+
+
+def place_problem(source: str, location: str | None, remote: str) -> str | None:
+    """Why a search can't run where it's set to look, or None. Local companies
+    are found around a place, so that search needs one (and on-site work)."""
+    if source != "local_companies":
+        return None
+    if not location:
+        return "Add a city or area: Scout looks for companies near it."
+    if remote == "remote_only":
+        return (
+            "Local companies are near you: choose on-site or hybrid, not remote only."
+        )
+    return None
 
 
 class MissionCreate(BaseModel):
@@ -165,6 +179,13 @@ class MissionCreate(BaseModel):
         if v is None:
             return None
         return " ".join(v.split()) or None
+
+    @model_validator(mode="after")
+    def _place(self) -> "MissionCreate":
+        problem = place_problem(self.source, self.location, self.remote)
+        if problem:
+            raise ValueError(problem)
+        return self
 
 
 class MissionUpdate(BaseModel):
@@ -375,3 +396,30 @@ class CaptureIn(BaseModel):
 
 class CaptureOut(BaseModel):
     stored: bool
+
+
+# --------------------------------------------------------------------------- #
+# Local companies a search checked
+# --------------------------------------------------------------------------- #
+class CompanyOut(BaseModel):
+    id: uuid.UUID
+    name: str
+    website: str | None
+    careers_url: str | None
+    last_checked_at: datetime | None
+    times_checked: int
+    # "openings", "none", "no_careers" from the latest report; null until one.
+    last_result: str | None
+    never_check: bool
+    # Due for a check on the next run.
+    due: bool = False
+
+    model_config = {"from_attributes": True}
+
+
+class CompanyUpdate(BaseModel):
+    """``never_check``: stop (or start again) checking it. ``check_next``: put
+    it first in line for the next run."""
+
+    never_check: bool | None = None
+    check_next: bool = False

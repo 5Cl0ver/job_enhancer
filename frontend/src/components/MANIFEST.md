@@ -29,7 +29,8 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `ScoutStart.tsx` | Saved searches (create/edit/delete, each with "Save into" and "save without asking"), Start (queues a run), the open run: the one line to say to Claude in Chrome + live progress; finished searches whose good fits are waiting, each with its review |
 | `RunReview.tsx` | The review: Claude's good fits ticked, the rest unticked, the collection pre-filled, one "Save N to My Jobs" button; `SavedNote` says where they went, with a link |
 | `FolderSelect.tsx` | "Save into": the search's own collection, one of the user's, or a new one named on the spot |
-| `ScoutHistory.tsx` | Past runs; open one to see what it found |
+| `ScoutHistory.tsx` | Past runs; open one to see what it found (and, for Local companies, how many companies it checked) |
+| `ScoutCompanies.tsx` | Above History: the local companies checked, folded away; each links to its careers page, with "Check next run" and "Never check" |
 | `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job and its collection), passed on or below bar (Save to My Jobs while the page copy exists), already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
 | `errorText.ts` | The server's `detail` message for a failed request |
 | `ResumeTypes.tsx` | Resume types: five suggested types to start, cards, add/edit/delete dialog, resume upload that keeps the main resume |

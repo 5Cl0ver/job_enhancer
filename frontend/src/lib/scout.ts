@@ -145,14 +145,37 @@ export function parsePay(text: string): number | null {
 // Searches (missions) and runs
 // ---------------------------------------------------------------------------
 
-export type Source = "linkedin" | "indeed" | "ziprecruiter";
+export type Source =
+  "linkedin" | "indeed" | "ziprecruiter" | "google_jobs" | "local_companies";
 export type Remote = "any" | "remote_only" | "no_remote";
 
 export const SOURCES: { value: Source; label: string }[] = [
   { value: "linkedin", label: "LinkedIn" },
   { value: "indeed", label: "Indeed" },
   { value: "ziprecruiter", label: "ZipRecruiter" },
+  { value: "google_jobs", label: "Google Jobs" },
+  { value: "local_companies", label: "Local companies" },
 ];
+
+/** What a choice does, said under the picker where it isn't obvious. */
+export const SOURCE_HINT: Partial<Record<Source, string>> = {
+  google_jobs:
+    "Google's own job search: postings from company sites and job boards near you.",
+  local_companies:
+    "No job boards. Claude finds businesses near you on Google and checks each one's own careers page: mostly new ones each run, and one it checked before only after a week.",
+};
+
+/** Searches that look around a place, so they need one. */
+export function needsPlace(source: Source): boolean {
+  return source === "local_companies";
+}
+
+/** Searches that aren't one job board (so no board decides the distance). */
+export function isBoard(source: Source): boolean {
+  return (
+    source === "linkedin" || source === "indeed" || source === "ziprecruiter"
+  );
+}
 
 export const POSTED_WITHIN: { value: number; label: string }[] = [
   { value: 1, label: "Today" },
@@ -376,13 +399,71 @@ export function lookedAt(
   add(c.below_bar, "below your bar");
   add(c.duplicate, "you already had");
   add(uncopied, "couldn't be copied");
-  if (!run.looked_at) return parts.length ? `${head} ${parts.join(" · ")}.` : head;
+  if (!run.looked_at)
+    return parts.length ? `${head} ${parts.join(" · ")}.` : head;
   const opened = found + c.below_bar + c.duplicate + uncopied;
   // A job reported without going through the results-page check still counts.
-  const rows = Math.max(run.looked_at.rows ?? 0, seen + excluded + tracked + opened);
+  const rows = Math.max(
+    run.looked_at.rows ?? 0,
+    seen + excluded + tracked + opened,
+  );
   add(rows - seen - excluded - tracked - opened, "not opened");
   const looked = `Looked at ${rows} ${rows === 1 ? "posting" : "postings"}`;
-  return parts.length ? `${head} ${looked}: ${parts.join(" · ")}.` : `${head} ${looked}.`;
+  return parts.length
+    ? `${head} ${looked}: ${parts.join(" · ")}.`
+    : `${head} ${looked}.`;
+}
+
+/**
+ * A Local companies run's companies, in one line: "Checked 12 local companies:
+ * 9 new · 3 re-checked · 4 had openings." Null for other searches.
+ */
+export function companiesLine(
+  lookedAtCounts: Record<string, number> | null,
+): string | null {
+  const n = lookedAtCounts?.companies ?? 0;
+  if (!n) return null;
+  const parts: string[] = [];
+  const add = (count: number | undefined, what: string) => {
+    if (count) parts.push(`${count} ${what}`);
+  };
+  add(lookedAtCounts?.companies_new, "new");
+  add(lookedAtCounts?.companies_rechecked, "re-checked");
+  parts.push(`${lookedAtCounts?.companies_with_openings ?? 0} had openings`);
+  return `Checked ${n} local ${n === 1 ? "company" : "companies"}: ${parts.join(" · ")}.`;
+}
+
+/** A local company a search checked. */
+export interface Company {
+  id: string;
+  name: string;
+  website: string | null;
+  careers_url: string | null;
+  last_checked_at: string | null;
+  times_checked: number;
+  last_result: "openings" | "none" | "no_careers" | null;
+  never_check: boolean;
+  /** Due for a check on the next run. */
+  due: boolean;
+}
+
+/** "Had openings · checked Nov 18" */
+export function companyStatus(c: Company): string {
+  const result =
+    c.last_result === "openings"
+      ? "Had openings"
+      : c.last_result === "none"
+        ? "No openings"
+        : c.last_result === "no_careers"
+          ? "No careers page"
+          : "Not reported";
+  if (c.never_check) return `${result} · you skipped it`;
+  if (!c.last_checked_at) return `${result} · checked next run`;
+  const when = new Date(c.last_checked_at).toLocaleDateString(undefined, {
+    month: "short",
+    day: "numeric",
+  });
+  return `${result} · checked ${when}`;
 }
 
 /**

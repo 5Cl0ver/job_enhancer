@@ -92,6 +92,65 @@ def _url_key(url: str) -> str | None:
     return f"{host}{path}" + (f"?{urlencode(kept)}" if kept else "")
 
 
+# Job boards, and the directories and review sites a Google search for local
+# businesses also lists. A "Local companies" search uses none of them: only
+# each company's own site (or the hiring system its careers page runs on).
+JOB_SITES = (
+    "linkedin.com",
+    "indeed.com",
+    "ziprecruiter.com",
+    "glassdoor.com",
+    "monster.com",
+    "simplyhired.com",
+    "careerbuilder.com",
+    "dice.com",
+    "snagajob.com",
+    "talent.com",
+    "jooble.org",
+    "lensa.com",
+    "adzuna.com",
+    "jobright.ai",
+    "theladders.com",
+    "flexjobs.com",
+    "builtin.com",
+    "wellfound.com",
+    "salary.com",
+    "payscale.com",
+    "google.com",
+    "yelp.com",
+    "facebook.com",
+    "instagram.com",
+    "twitter.com",
+    "x.com",
+    "youtube.com",
+    "tiktok.com",
+    "wikipedia.org",
+    "bbb.org",
+    "mapquest.com",
+    "yellowpages.com",
+    "angi.com",
+    "nextdoor.com",
+    "tripadvisor.com",
+    "zoominfo.com",
+    "crunchbase.com",
+    "manta.com",
+    "bizapedia.com",
+    "opencorporates.com",
+    "dnb.com",
+    "chamberofcommerce.com",
+)
+
+
+def is_job_site(url: str) -> bool:
+    """A job board, directory or review site: not a company's own site."""
+    host = _host(url if "//" in (url or "") else f"https://{url}")
+    return bool(host) and (
+        any(host == d or host.endswith(f".{d}") for d in JOB_SITES)
+        # indeed.co.uk, google.ca …
+        or bool(re.match(r"^(?:[\w-]+\.)*(?:indeed|google|linkedin)\.[a-z.]+$", host))
+    )
+
+
 def posting_problem(url: str) -> str | None:
     """Why this link isn't one job's own posting page, or None if it is.
 
@@ -118,6 +177,11 @@ def posting_problem(url: str) -> str | None:
     )
     if zip_search:
         return "That's a ZipRecruiter search page. Open the job and send its link."
+    if ".google." in f".{host}":  # google.com, google.ca, jobs.google.com
+        return (
+            "That's a Google page. Open the job's own page (its \"Apply on\" "
+            "link, the company's own site first) and send that link."
+        )
     if path in ("", "/careers", "/jobs", "/careers/jobs", "/join-us", "/about/careers"):
         return "That's a careers homepage, not one job. Open the job and send its link."
     return None
