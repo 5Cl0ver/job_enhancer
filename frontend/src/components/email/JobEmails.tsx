@@ -11,6 +11,7 @@ import { useJobEmails, type DetectedEvent } from "@/hooks/useEmailAccount";
 import { emailWhen, mailName, sentence } from "@/lib/emailUpdates";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import { EmailViewer } from "@/components/email/EmailViewer";
 
 /** What the email did to the job's card. */
@@ -35,9 +36,33 @@ export function JobEmails({
   /** With no emails, say so (the job's own page) instead of showing nothing. */
   sayWhenNone?: boolean;
 }) {
-  const { data: emails } = useJobEmails(jobListingId);
+  const { data: emails, isError, refetch, isFetching } = useJobEmails(jobListingId);
   const [open, setOpen] = useState<string | null>(null);
-  if (!emails) return null;
+  if (!emails) {
+    // Where the job's emails are expected (its page and pop-up), say what's
+    // happening instead of leaving a gap that looks like "no emails".
+    if (!sayWhenNone) return null;
+    if (!isError) return <Skeleton className={cn("h-11 rounded-lg", className)} />;
+    return (
+      <p
+        role="alert"
+        className={cn(
+          "flex flex-wrap items-center gap-x-3 gap-y-1 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground",
+          className,
+        )}
+      >
+        Couldn&apos;t check for emails about this job.
+        <button
+          type="button"
+          disabled={isFetching}
+          onClick={() => refetch()}
+          className="font-medium text-primary underline underline-offset-2"
+        >
+          Try again
+        </button>
+      </p>
+    );
+  }
   if (emails.length === 0) {
     if (!sayWhenNone) return null;
     return (

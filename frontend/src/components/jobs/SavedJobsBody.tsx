@@ -1,9 +1,12 @@
 import { useMemo, useState } from "react";
 import { BookmarkX, SlidersHorizontal, X } from "lucide-react";
+import { EmailViewer } from "@/components/email/EmailViewer";
 import { CollectionSidebar } from "@/components/jobs/CollectionSidebar";
 import { JobCard } from "@/components/jobs/JobCard";
+import { JobDetailDialog } from "@/components/tracker/JobDetailDialog";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { useJobEmailLatest } from "@/hooks/useEmailAccount";
 import { ANY_ORIGIN, useJobsParams } from "@/hooks/useJobsParams";
 import { useCollections, useSavedJobs, useUnsaveJob } from "@/hooks/useSavedJobs";
 import { useShowMore } from "@/hooks/useShowMore";
@@ -35,6 +38,13 @@ export function SavedJobsBody() {
     collectionId: selectedCollection ?? undefined,
   });
   const unsaveJob = useUnsaveJob();
+  // Clicking a job opens the same pop-up the board does; its emails open from
+  // the card. Ids, so both follow the list as it refreshes.
+  const { data: emails } = useJobEmailLatest();
+  const [openId, setOpenId] = useState<string | null>(null);
+  const [emailFor, setEmailFor] = useState<string | null>(null);
+  const openJob = savedJobs.find((sj) => sj.id === openId);
+  const openEmail = emailFor ? emails?.get(emailFor) : undefined;
 
   const [typed, setTyped] = useState<JobFilters>(NO_FILTERS);
   const filters = useMemo(() => ({ ...typed, origin }), [typed, origin]);
@@ -183,6 +193,9 @@ export function SavedJobsBody() {
                   applied={!!sj.applied_at}
                   savedJobId={sj.id}
                   savedJob={sj}
+                  onOpen={() => setOpenId(sj.id)}
+                  email={emails?.get(sj.id)}
+                  onOpenEmail={() => setEmailFor(sj.id)}
                   onSave={() => unsaveJob.mutate(sj.id)}
                 />
               ))}
@@ -201,6 +214,20 @@ export function SavedJobsBody() {
           </>
         )}
       </main>
+
+      {openJob && (
+        <JobDetailDialog
+          savedJob={openJob}
+          open
+          onOpenChange={(open) => !open && setOpenId(null)}
+        />
+      )}
+      <EmailViewer
+        eventId={openEmail?.event_id ?? null}
+        mailLink={openEmail?.mail_link}
+        searchLink={openEmail?.mail_search_link}
+        onClose={() => setEmailFor(null)}
+      />
     </div>
   );
 }

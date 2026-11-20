@@ -113,6 +113,22 @@ describe("JobEmails", () => {
     );
   });
 
+  it("says so and offers a retry when the emails can't be checked", async () => {
+    let fail = true;
+    get.mockImplementation((path: string) =>
+      path.startsWith("/v1/email/job-emails") && fail
+        ? Promise.reject(new Error("offline"))
+        : Promise.resolve(emails),
+    );
+    renderEmails({ sayWhenNone: true });
+    expect(await screen.findByRole("alert")).toHaveTextContent(
+      "Couldn't check for emails about this job.",
+    );
+    fail = false;
+    await userEvent.click(screen.getByRole("button", { name: "Try again" }));
+    expect(await screen.findByText("Emails about this job (2)")).toBeInTheDocument();
+  });
+
   it("shows nothing for a job with no emails, unless asked to say so", async () => {
     emails = [];
     const { container, unmount } = renderEmails();
