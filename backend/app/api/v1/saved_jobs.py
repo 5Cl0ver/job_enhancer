@@ -2,11 +2,13 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
+from app.models.job_listing import JobListing
+from app.models.saved_job import ORIGIN_EXTENSION
 from app.models.user import User
 from app.schemas.saved_job import (
     ApplicationSyncRequest,
@@ -14,6 +16,7 @@ from app.schemas.saved_job import (
     BackfillResult,
     JobSavedCheck,
     JobSavedResult,
+    JobSourceOut,
     ManualJobCreate,
     MarkAppliedRequest,
     MarkAppliedResult,
@@ -24,6 +27,7 @@ from app.schemas.saved_job import (
     SavedJobSummaryResponse,
     SavedJobUpdate,
 )
+from app.services import job_source
 from app.services import saved_jobs as svc
 
 router = APIRouter()
@@ -47,7 +51,13 @@ async def list_saved_jobs(
         is_archived,
         with_description=False,
     )
-    return [SavedJobListItem.model_validate(r) for r in rows]
+    fits = await svc.scout_fits(db, user.id)
+    out = []
+    for r in rows:
+        item = SavedJobListItem.model_validate(r)
+        item.scout = fits.get(r.id)
+        out.append(item)
+    return out
 
 
 @router.get("/summary", response_model=SavedJobSummaryResponse)
@@ -90,7 +100,8 @@ async def save_job(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
-    sj = await svc.save_job(db, user.id, data)
+    listing = await db.get(JobListing, data.job_listing_id)
+    sj = await svc.save_job(db, user.id, data, origin=svc.listing_origin(listing))
     await db.commit()
     return SavedJobSchema.model_validate(sj)
 
@@ -98,11 +109,17 @@ async def save_job(
 @router.post("/manual", response_model=SavedJobSchema, status_code=201)
 async def save_manual_job(
     data: ManualJobCreate,
+    request: Request,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
     """Add a job found on an external site by URL + details (FR-004a)."""
-    sj = await svc.save_manual_job(db, user.id, data)
+    # Job Catcher builds from before it sent ``origin`` are told apart by where
+    # the request comes from: only an extension has a chrome-extension origin.
+    from_extension = request.headers.get("origin", "").startswith("chrome-extension://")
+    sj = await svc.save_manual_job(
+        db, user.id, data, origin=ORIGIN_EXTENSION if from_extension else None
+    )
     await db.commit()
     return SavedJobSchema.model_validate(sj)
 
@@ -165,6 +182,17 @@ async def sync_applications(
     result = await svc.sync_applications(db, user.id, data.applications)
     await db.commit()
     return result
+
+
+@router.get("/{saved_job_id}/source", response_model=JobSourceOut)
+async def saved_job_source(
+    saved_job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> JobSourceOut:
+    """Where this job came from: its folder, and the Scout search or the email
+    that put it in My Jobs."""
+    return await job_source.job_source(db, user.id, saved_job_id)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobListItem)

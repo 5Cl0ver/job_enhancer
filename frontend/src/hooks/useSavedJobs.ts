@@ -59,7 +59,9 @@ export function useSavedJobs(params?: {
   if (params?.isArchived) qs.set("is_archived", "true");
 
   return useQuery<SavedJob[]>({
-    queryKey: ["saved-jobs", params],
+    // No filter at all is one cache entry however it was asked for ({} or
+    // nothing), so the whole list isn't downloaded twice by one page.
+    queryKey: ["saved-jobs", qs.toString() ? params : undefined],
     queryFn: () => api.get<SavedJob[]>(`/v1/saved-jobs/?${qs.toString()}`),
     select: cleanSavedJobs,
     staleTime: 30_000,
@@ -92,6 +94,40 @@ export function useSaveJob() {
   });
 }
 
+export interface JobSource {
+  origin: string | null;
+  saved_at: string;
+  collection: { id: string; name: string } | null;
+  scout: {
+    run_id: string;
+    finding_id: string;
+    source: string;
+    search_name: string;
+    fit_score: number;
+    why_fit: string;
+    gaps: string;
+    found_at: string;
+  } | null;
+  email: {
+    event_id: string;
+    event_type: string;
+    email_date: string | null;
+    mail_link: string | null;
+    mail_search_link: string | null;
+  } | null;
+}
+
+/** Where a saved job came from: its collection, and the Scout search or email
+ * behind it. Its own key (not under "saved-jobs": those caches are lists). */
+export function useJobSource(savedJobId: string | null) {
+  return useQuery<JobSource>({
+    queryKey: ["job-source", savedJobId],
+    queryFn: () => api.get<JobSource>(`/v1/saved-jobs/${savedJobId}/source`),
+    enabled: !!savedJobId,
+    staleTime: 60_000,
+  });
+}
+
 export function useUpdateSavedJob() {
   const qc = useQueryClient();
   return useMutation({
@@ -110,6 +146,7 @@ export function useUpdateSavedJob() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
       qc.invalidateQueries({ queryKey: ["tracker"] });
+      qc.invalidateQueries({ queryKey: ["job-source"] });
     },
   });
 }

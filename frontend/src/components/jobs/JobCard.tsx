@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2, Check, Undo2 } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
+import { OriginLabel } from "@/components/jobs/OriginLabel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
@@ -8,7 +9,7 @@ import { formatDistanceToNow } from "date-fns";
 import { formatSalary } from "@/lib/utils";
 import { useToggleApplied } from "@/hooks/useSavedJobs";
 import { usePipelineStages } from "@/hooks/useTracker";
-import type { JobListing } from "@/types/api";
+import type { JobListing, SavedJob } from "@/types/api";
 
 interface JobCardProps {
   job: JobListing;
@@ -18,6 +19,9 @@ interface JobCardProps {
   applied?: boolean;
   /** The saved-job row id — enables the "Applied / Undo" toggle. */
   savedJobId?: string;
+  /** The saved job: the card then says where it came from (Claude Scout, an
+   * email…) in place of the listing's feed name. */
+  savedJob?: SavedJob;
 }
 
 export function JobCard({
@@ -26,6 +30,7 @@ export function JobCard({
   isSaved = false,
   applied = false,
   savedJobId,
+  savedJob,
 }: JobCardProps) {
   const toggleApplied = useToggleApplied();
   const { data: stages } = usePipelineStages();
@@ -57,9 +62,13 @@ export function JobCard({
             {applied && (
               <Badge className="bg-green-600 text-xs hover:bg-green-600">✓ Applied</Badge>
             )}
-            <Badge variant="outline" className="text-xs capitalize">
-              {job.source}
-            </Badge>
+            {savedJob ? (
+              <OriginLabel savedJob={savedJob} className="max-w-40" />
+            ) : (
+              <Badge variant="outline" className="text-xs capitalize">
+                {job.source}
+              </Badge>
+            )}
             {job.is_expired && (
               <Badge variant="destructive" className="text-xs">
                 Listing expired
@@ -175,6 +184,7 @@ export function JobCard({
             size="sm"
             variant="outline"
             className="h-7 text-xs"
+            fromEmail={savedJob?.origin === "email"}
           />
         </div>
       </CardFooter>

@@ -7,6 +7,7 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    String,
     Text,
     UniqueConstraint,
     func,
@@ -15,6 +16,21 @@ from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.models import Base
+
+ORIGIN_SCOUT = "scout"  # Claude Scout found it on a job board
+ORIGIN_EMAIL = "email"  # made from an email update
+ORIGIN_EXTENSION = "extension"  # saved with Job Catcher
+ORIGIN_CLAUDE = "claude"  # Claude saved it from a chat
+ORIGIN_SEARCH = "search"  # saved from the app's job-board search
+ORIGIN_MANUAL = "manual"  # typed in by the user
+ORIGINS = (
+    ORIGIN_SCOUT,
+    ORIGIN_EMAIL,
+    ORIGIN_EXTENSION,
+    ORIGIN_CLAUDE,
+    ORIGIN_SEARCH,
+    ORIGIN_MANUAL,
+)
 
 
 class SavedJob(Base):
@@ -46,6 +62,9 @@ class SavedJob(Base):
         UUID(as_uuid=True),
         ForeignKey("resume_tracks.id", ondelete="SET NULL"),
     )
+    # How the job got here (see ORIGINS). Null = saved before this was recorded
+    # and the app can't tell, so nothing is shown rather than a guess.
+    origin: Mapped[str | None] = mapped_column(String(12))
     notes: Mapped[str | None] = mapped_column(Text)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_stage_change: Mapped[datetime] = mapped_column(

@@ -18,7 +18,8 @@ from app.models.saved_job import SavedJob
 from app.models.scout import ScoutFinding, ScoutRun
 from app.models.user import User
 from app.schemas.scout import CaptureIn, MissionCreate, TrackCreate
-from app.services import scout_runs, scout_tracks
+from app.services import job_source, scout_runs, scout_tracks
+from app.services import saved_jobs as sj_svc
 from tests.test_mcp_server import _connected_user
 
 POSTING = (
@@ -182,6 +183,17 @@ class TestReportJob:
             finding = await db.scalar(select(ScoutFinding))
             assert finding.why_fit == "Runs M365 and Entra daily"
             assert finding.saved_job_id == sj.id
+            # The job knows it came from Scout, and from which search.
+            assert sj.origin == "scout"
+            fits = await sj_svc.scout_fits(db, user_id)
+            assert (fits[sj.id].fit_score, fits[sj.id].run_id) == (8, run_id)
+            src = await job_source.job_source(db, user_id, sj.id)
+            assert src.collection.name == "Scout" and src.email is None
+            assert (src.scout.run_id, src.scout.fit_score) == (run_id, 8)
+            assert (
+                src.scout.source == "linkedin" and "IT Admin" in src.scout.search_name
+            )
+            assert src.scout.gaps == "No Intune cert"
 
     async def test_waits_for_the_copy_then_gives_up_without_saving(
         self, engine, monkeypatch

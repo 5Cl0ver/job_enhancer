@@ -615,6 +615,13 @@ class TestUnsavedJobs:
         listing = await db_session.get(JobListing, sj.job_listing_id)
         assert stage.name == "Rejected"
         assert (listing.company, listing.title) == ("Vellacor", "Data Engineer")
+        # The card knows it was made from an email, and which one.
+        assert sj.origin == "email"
+        src = (await client.get(f"/v1/saved-jobs/{sj.id}/source")).json()
+        assert src["origin"] == "email" and src["scout"] is None
+        assert src["email"]["event_id"] == unsaved["id"]
+        assert src["email"]["event_type"] == "rejected"
+        assert src["email"]["mail_search_link"].startswith("https://mail.")
         # It's done: not listed any more, and can't be added twice.
         ids = {e["id"] for e in (await client.get("/v1/email/events")).json()}
         assert unsaved["id"] not in ids

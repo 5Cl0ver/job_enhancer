@@ -97,7 +97,8 @@ async function saveJob(job) {
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/manual`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify(job),
+    // origin: the app labels the job "Job Catcher" in My Jobs.
+    body: JSON.stringify({ ...job, origin: "extension" }),
   });
   if (res.status === 401) {
     await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
