@@ -211,7 +211,8 @@ class TestClaudeChoosesTheTitles:
         out = await mcp_mod.set_search_titles(str(run_id), TITLES[1:])
         assert out["titles"] == TITLES[1:]
         await mcp_mod.check_jobs(
-            str(run_id), [{"company": "Vellacor", "title": "Microsoft 365 Administrator"}]
+            str(run_id),
+            [{"company": "Vellacor", "title": "Microsoft 365 Administrator"}],
         )
         out = await mcp_mod.set_search_titles(str(run_id), ["Something Else"])
         assert out["titles"] == TITLES[1:] and "set" in out["note"]
@@ -239,7 +240,9 @@ class TestClaudeChoosesTheTitles:
         await mcp_mod.get_scout_brief()
         out = await mcp_mod.set_search_titles(str(run_id), TITLES)
         first = parse_qs(urlsplit(out["start_urls"][0]).query)["q"][0]
-        assert first.startswith("companies that hire IT Systems Administrator within 25")
+        assert first.startswith(
+            "companies that hire IT Systems Administrator within 25"
+        )
         assert "check_companies" in out["next"]
 
 
