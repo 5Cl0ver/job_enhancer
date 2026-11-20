@@ -112,6 +112,11 @@ useful on its own.
 Slice 1 goes first because it answers "where did these save" on its own and
 makes the junk email cards explain themselves before anything else changes.
 
+**Status (2026-11-19):** all four slices built. 1 → PR #16, plus the list
+opening the same job pop-up as the board → PR #17; 2 → PR #18; 3 → PR #19;
+4 → the phone checks in `frontend/tests/e2e/phone.spec.ts` (run against a
+local copy at 390 × 844), with the phone layout done inside each slice.
+
 ## Dependencies and risks
 
 - **PR #15 must merge first** (its migration `b9c0d1e2f3a5` is this one's
