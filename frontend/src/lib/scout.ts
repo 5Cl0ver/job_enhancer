@@ -202,6 +202,13 @@ export interface Mission {
   remote: Remote;
   min_fit: number;
   extra_instructions: string | null;
+  /** The collection good fits are saved into; null = the search's own, named
+   * after its resume type. */
+  collection_id: string | null;
+  /** Save good fits without asking first. */
+  auto_save: boolean;
+  /** The name of the collection jobs go into (chosen, or the search's own). */
+  collection_name: string;
   last_run_at: string | null;
   created_at: string;
 }
@@ -218,10 +225,18 @@ export type MissionInput = Pick<
   | "remote"
   | "min_fit"
   | "extra_instructions"
+  | "collection_id"
+  | "auto_save"
 > & { name?: string | null };
 
 export type Outcome =
-  "saved" | "below_bar" | "duplicate" | "waiting_for_copy" | "no_copy";
+  | "picked" // a good fit, waiting for the user to tick and save
+  | "saved"
+  | "skipped" // a good fit the user passed on
+  | "below_bar"
+  | "duplicate"
+  | "waiting_for_copy"
+  | "no_copy";
 
 export interface Finding {
   id: string;
@@ -236,13 +251,20 @@ export interface Finding {
   app_note: string | null;
   saved_job_id: string | null;
   job_listing_id: string | null;
+  /** The collection a saved finding's job is in. */
+  collection_id: string | null;
+  collection_name: string | null;
+  /** The user can still put it in My Jobs (its page copy exists). */
+  can_save: boolean;
   created_at: string;
 }
 
 export type RunStatus = "queued" | "running" | "done" | "stopped";
 
 export interface RunCounts {
+  picked: number;
   saved: number;
+  skipped: number;
   below_bar: number;
   duplicate: number;
   waiting_for_copy: number;
@@ -262,6 +284,12 @@ export interface Run {
   started_at: string | null;
   finished_at: string | null;
   counts: RunCounts;
+  /** Good fits are waiting for the user to tick and save. */
+  needs_review: boolean;
+  /** Where a save would go by default; `id` null until the collection exists. */
+  folder: { id: string | null; name: string } | null;
+  /** The result rows Claude checked, and why some were passed over. */
+  looked_at: Record<string, number> | null;
   findings: Finding[];
 }
 
@@ -287,23 +315,88 @@ export function fitBand(score: number): "Strong" | "Good" | "Weak" {
 }
 
 export const OUTCOME_LABEL: Record<Outcome, string> = {
+  picked: "Good fit",
   saved: "Saved",
+  skipped: "You passed on it",
   below_bar: "Below your bar",
   duplicate: "Already had it",
   waiting_for_copy: "Copying…",
   no_copy: "Not copied",
 };
 
+/** Good fits a run found: waiting, saved, or passed on by the user. */
+function goodFits(c: RunCounts): number {
+  return (c.picked ?? 0) + c.saved + (c.skipped ?? 0);
+}
+
 /** One line for a run's progress, as the page shows it. */
 export function runSummary(
   run: Pick<Run, "status" | "counts" | "target">,
 ): string {
   const { saved } = run.counts;
-  const skipped = run.counts.below_bar + run.counts.duplicate;
-  const extra = skipped ? ` · ${skipped} passed over` : "";
+  const picked = run.counts.picked ?? 0;
+  const passed = run.counts.below_bar + run.counts.duplicate;
+  const extra = passed ? ` · ${passed} passed over` : "";
   if (run.status === "queued") return "Waiting for Claude to start";
+  // The same count Claude works to: good fits waiting or saved (one the user
+  // passed on doesn't count, so Claude keeps looking).
   if (run.status === "running")
-    return `Searching · ${saved} of ${run.target} saved${extra}`;
-  if (run.status === "stopped") return `Stopped · ${saved} saved${extra}`;
-  return `Done · ${saved} saved${extra}`;
+    return `Searching · ${saved + picked} of ${run.target} found${extra}`;
+  const ended = run.status === "stopped" ? "Stopped" : "Done";
+  if (picked > 0)
+    return `${ended} · ${picked} waiting for you${saved ? ` · ${saved} saved` : ""}${extra}`;
+  return `${ended} · ${saved} saved${extra}`;
+}
+
+/**
+ * Why a finished search came back with fewer jobs than asked, in one line whose
+ * numbers add up: "Asked for 5, found 2. Looked at 24 postings: 9 seen in
+ * earlier searches · 4 skipped by title · …". Null while it's running or when
+ * it found what was asked.
+ */
+export function lookedAt(
+  run: Pick<Run, "status" | "counts" | "target" | "looked_at">,
+): string | null {
+  if (isOpen(run)) return null;
+  const c = run.counts;
+  const found = goodFits(c);
+  if (found >= run.target) return null;
+  const head = `Asked for ${run.target}, found ${found}.`;
+  const parts: string[] = [];
+  const add = (n: number, what: string) => {
+    if (n > 0) parts.push(`${n} ${what}`);
+  };
+  const seen = run.looked_at?.seen_before ?? 0;
+  const excluded = run.looked_at?.excluded ?? 0;
+  const tracked = run.looked_at?.in_tracker ?? 0;
+  const uncopied = c.no_copy + c.waiting_for_copy;
+  add(seen, "seen in earlier searches");
+  add(excluded, "skipped by title");
+  add(tracked, "already in My Jobs");
+  add(c.below_bar, "below your bar");
+  add(c.duplicate, "you already had");
+  add(uncopied, "couldn't be copied");
+  if (!run.looked_at) return parts.length ? `${head} ${parts.join(" · ")}.` : head;
+  const opened = found + c.below_bar + c.duplicate + uncopied;
+  // A job reported without going through the results-page check still counts.
+  const rows = Math.max(run.looked_at.rows ?? 0, seen + excluded + tracked + opened);
+  add(rows - seen - excluded - tracked - opened, "not opened");
+  const looked = `Looked at ${rows} ${rows === 1 ? "posting" : "postings"}`;
+  return parts.length ? `${head} ${looked}: ${parts.join(" · ")}.` : `${head} ${looked}.`;
+}
+
+/**
+ * Which findings are ticked in the review: Claude's good fits, then whatever
+ * the user changed. Only findings that can still be saved count.
+ */
+export function reviewTicks(
+  findings: Pick<Finding, "id" | "outcome" | "can_save">[],
+  changed: Map<string, boolean>,
+): Set<string> {
+  const ticks = new Set<string>();
+  for (const f of findings) {
+    if (!f.can_save) continue;
+    if (changed.get(f.id) ?? f.outcome === "picked") ticks.add(f.id);
+  }
+  return ticks;
 }

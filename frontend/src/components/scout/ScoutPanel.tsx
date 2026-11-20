@@ -28,8 +28,8 @@ export function ScoutPanel() {
   return (
     <div className="space-y-4">
       <p className="max-w-2xl text-sm text-muted-foreground max-md:hidden">
-        Claude in Chrome searches the job boards for you and saves what fits straight into My
-        Jobs, never the same job twice.
+        Claude in Chrome searches the job boards for you and brings back what fits. You pick
+        what to keep and where; nothing comes back twice.
       </p>
       <Tabs value={view} onValueChange={setView} className="space-y-4">
         <TabsList className="w-full sm:w-auto">

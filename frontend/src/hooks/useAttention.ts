@@ -6,6 +6,8 @@ export interface Attention {
   tasks_overdue: number;
   /** Email updates waiting for a click or an answer. */
   email_review: number;
+  /** Jobs Claude Scout picked that are waiting to be ticked and saved. */
+  scout_review?: number;
 }
 
 /** Counts for the navigation badges. Cheap (three numbers), refreshed every

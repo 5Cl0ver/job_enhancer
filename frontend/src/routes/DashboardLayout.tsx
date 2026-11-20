@@ -28,6 +28,8 @@ function Frame() {
   const { data: attention } = useAttention();
   const isAdmin = profile?.role === "admin";
   const emailCount = attention?.email_review ?? 0;
+  // Good fits from Claude Scout waiting to be ticked and saved (on Find Jobs).
+  const scoutCount = attention?.scout_review ?? 0;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -53,9 +55,9 @@ function Frame() {
               >
                 <item.icon className="h-4 w-4 shrink-0" aria-hidden />
                 <span className="flex-1 truncate">{item.label}</span>
-                {item.to === "/email-updates" && (
+                {(item.to === "/email-updates" || item.to === "/search") && (
                   <CountBadge
-                    count={emailCount}
+                    count={item.to === "/search" ? scoutCount : emailCount}
                     className="bg-background text-foreground ring-1 ring-border"
                   />
                 )}
@@ -82,7 +84,7 @@ function Frame() {
         </div>
       </div>
 
-      <TabBar emailCount={emailCount} isAdmin={isAdmin} />
+      <TabBar emailCount={emailCount} scoutCount={scoutCount} isAdmin={isAdmin} />
     </div>
   );
 }

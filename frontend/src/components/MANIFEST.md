@@ -26,9 +26,11 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | File | Purpose |
 |------|---------|
 | `ScoutPanel.tsx` | The Claude Scout tab: views Start · History · Resume types (`?view=`) |
-| `ScoutStart.tsx` | Saved searches (create/edit/delete), Start (queues a run), the open run: the one line to say to Claude in Chrome + live progress |
+| `ScoutStart.tsx` | Saved searches (create/edit/delete, each with "Save into" and "save without asking"), Start (queues a run), the open run: the one line to say to Claude in Chrome + live progress; finished searches whose good fits are waiting, each with its review |
+| `RunReview.tsx` | The review: Claude's good fits ticked, the rest unticked, the collection pre-filled, one "Save N to My Jobs" button; `SavedNote` says where they went, with a link |
+| `FolderSelect.tsx` | "Save into": the search's own collection, one of the user's, or a new one named on the spot |
 | `ScoutHistory.tsx` | Past runs; open one to see what it found |
-| `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job), below bar, already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
+| `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job and its collection), passed on or below bar (Save to My Jobs while the page copy exists), already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
 | `errorText.ts` | The server's `detail` message for a failed request |
 | `ResumeTypes.tsx` | Resume types: five suggested types to start, cards, add/edit/delete dialog, resume upload that keeps the main resume |
 | `JobResumeType.tsx` | Resume type picker on a saved job's page |

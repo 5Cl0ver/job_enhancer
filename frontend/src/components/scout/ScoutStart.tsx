@@ -2,9 +2,10 @@
  * Claude Scout → Start: the user's saved searches, a Start button on each, and
  * the run that's open right now. Start queues a run; the user says one fixed
  * line to Claude in Chrome, which asks the app for everything else, and the
- * jobs it saves appear here live.
+ * jobs it finds appear here live for the user to tick and save.
  */
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
@@ -15,9 +16,14 @@ import {
   Plus,
   Square,
 } from "lucide-react";
+import { api } from "@/lib/api";
 import { errorText } from "@/components/scout/errorText";
+import { FolderSelect, whereReady, type Where } from "@/components/scout/FolderSelect";
 import { RunFindings } from "@/components/scout/RunFindings";
+import { RunReview, SavedNote } from "@/components/scout/RunReview";
+import { useCollections, useCreateCollection } from "@/hooks/useSavedJobs";
 import {
+  type ConfirmResult,
   useDeleteMission,
   useMissions,
   useRun,
@@ -30,6 +36,7 @@ import {
 import {
   formatPay,
   isOpen,
+  lookedAt,
   MAX_JOBS_PER_RUN,
   type Mission,
   type MissionInput,
@@ -65,6 +72,7 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { Skeleton } from "@/components/ui/skeleton";
+import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
 export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
@@ -73,6 +81,10 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
   const { data: runs } = useRuns();
   const [editing, setEditing] = useState<Mission | "new" | null>(null);
   const openRun = runs?.find(isOpen) ?? null;
+  // Finished searches whose good fits are still waiting to be ticked and saved.
+  const toReview = runs?.filter((r) => r.needs_review && !isOpen(r)) ?? [];
+  // What the last save did; kept here so it outlives the review it came from.
+  const [saved, setSaved] = useState<ConfirmResult | null>(null);
 
   if (tracks && tracks.length === 0)
     return (
@@ -91,7 +103,11 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
 
   return (
     <div className="space-y-6">
-      {openRun && <LiveRun runId={openRun.id} />}
+      {saved && <SavedNote result={saved} onDismiss={() => setSaved(null)} />}
+      {openRun && <LiveRun runId={openRun.id} onSaved={setSaved} />}
+      {toReview.map((r) => (
+        <FinishedRun key={r.id} runId={r.id} onSaved={setSaved} />
+      ))}
 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -176,6 +192,10 @@ function MissionCard({
     `fit ${m.min_fit}+`,
     whereLabel(m),
   ].filter(Boolean);
+  // Where its jobs go. Older responses don't say; then nothing is shown.
+  const into = m.collection_name
+    ? `Saves into ${m.collection_name}${m.auto_save ? ", without asking" : ""}`
+    : null;
 
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-4">
@@ -184,6 +204,7 @@ function MissionCard({
         <p className="mt-1 text-xs text-muted-foreground">
           {details.join(" · ")}
         </p>
+        {into && <p className="mt-0.5 truncate text-xs text-muted-foreground">{into}</p>}
       </div>
       {start.isError && (
         <p className="text-xs text-destructive">
@@ -219,8 +240,44 @@ function MissionCard({
   );
 }
 
+/** A finished search with good fits still waiting: the review, on its own. */
+function FinishedRun({
+  runId,
+  onSaved,
+}: {
+  runId: string;
+  onSaved: (result: ConfirmResult) => void;
+}) {
+  const { data: run } = useRun(runId);
+  if (!run) return <Skeleton className="h-40" />;
+  if (!run.needs_review) return null;
+  const why = lookedAt(run);
+  return (
+    <section className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4 sm:p-5">
+      <div className="min-w-0">
+        <p className="font-medium">{run.name}</p>
+        <p className="text-sm text-muted-foreground">{runSummary(run)}</p>
+        {why && <p className="mt-1 text-sm text-muted-foreground">{why}</p>}
+        {run.note && (
+          <p className="mt-1 text-sm">
+            <span className="font-medium">Claude&apos;s note: </span>
+            {run.note}
+          </p>
+        )}
+      </div>
+      <RunReview run={run} onSaved={onSaved} />
+    </section>
+  );
+}
+
 /** The open run: the line to say, then progress and jobs as they land. */
-function LiveRun({ runId }: { runId: string }) {
+function LiveRun({
+  runId,
+  onSaved,
+}: {
+  runId: string;
+  onSaved: (result: ConfirmResult) => void;
+}) {
   const { data: run } = useRun(runId);
   const stop = useStopRun();
   const [copied, setCopied] = useState(false);
@@ -290,7 +347,13 @@ function LiveRun({ runId }: { runId: string }) {
         </div>
       )}
 
-      {run.findings.length > 0 && <RunFindings findings={run.findings} />}
+      {/* Good fits can be ticked and saved while the search is still going. */}
+      {run.findings.length > 0 &&
+        (run.needs_review ? (
+          <RunReview run={run} onSaved={onSaved} />
+        ) : (
+          <RunFindings findings={run.findings} />
+        ))}
     </section>
   );
 }
@@ -351,6 +414,15 @@ function MissionForm({
   );
   const [fit, setFit] = useState(String(mission?.min_fit ?? 6));
   const [extra, setExtra] = useState(mission?.extra_instructions ?? "");
+  // Where good fits go: the search's own collection unless one is chosen.
+  const [where, setWhere] = useState<Where>({
+    collectionId: mission?.collection_id ?? null,
+    newName: null,
+  });
+  const [autoSave, setAutoSave] = useState(mission?.auto_save ?? false);
+  const { data: collections = [] } = useCollections();
+  const createCollection = useCreateCollection();
+  const qc = useQueryClient();
   const [problem, setProblem] = useState<string | null>(null);
   const track = tracks.find((t) => t.id === trackId);
   // "Within N miles" only means something around a place, for jobs you'd go to.
@@ -362,7 +434,30 @@ function MissionForm({
     if (Number.isNaN(minPay))
       return setProblem("Minimum pay should look like 70K or 70000.");
     if (!trackId) return setProblem("Pick a resume type.");
+    if (!whereReady(where)) return setProblem("Name the new collection.");
     setProblem(null);
+    let collectionId = where.collectionId;
+    if (where.newName !== null) {
+      // A new collection: use the one of that name if there is one, else make it.
+      const name = where.newName.trim();
+      const byName = (list: { id: string; name: string }[]) =>
+        list.find((c) => c.name.toLowerCase() === name.toLowerCase());
+      try {
+        collectionId =
+          byName(collections)?.id ?? (await createCollection.mutateAsync({ name })).id;
+      } catch {
+        // Made on an earlier try that then failed to save the search: use it.
+        const fresh = await qc
+          .fetchQuery({
+            queryKey: ["collections"],
+            queryFn: () => api.get<{ id: string; name: string }[]>("/v1/collections/"),
+            staleTime: 0,
+          })
+          .catch(() => []);
+        collectionId = byName(fresh)?.id ?? null;
+        if (!collectionId) return setProblem("Couldn't make that collection. Try another name.");
+      }
+    }
     const data: MissionInput & { id?: string } = {
       id: mission?.id,
       source,
@@ -376,6 +471,8 @@ function MissionForm({
       min_pay: minPay,
       min_fit: Number(fit),
       extra_instructions: extra.trim() || null,
+      collection_id: collectionId,
+      auto_save: autoSave,
     };
     // A saved name follows the settings unless the user renamed it.
     if (mission) data.name = null;
@@ -528,6 +625,29 @@ function MissionForm({
             </SelectContent>
           </Select>
         </Field>
+      </div>
+      <Field label="Save into">
+        <FolderSelect
+          value={where}
+          onChange={setWhere}
+          ownLabel={track ? `A collection named “${track.name}”` : "A collection for this search"}
+        />
+      </Field>
+      <div className="flex items-start gap-3">
+        <Switch
+          id="scout-auto-save"
+          checked={autoSave}
+          onCheckedChange={setAutoSave}
+          className="mt-0.5"
+        />
+        <div className="min-w-0">
+          <Label htmlFor="scout-auto-save">Save good fits without asking</Label>
+          <p className="text-xs text-muted-foreground">
+            {autoSave
+              ? "Good fits go straight into My Jobs. Use this when you won't be around when it finishes."
+              : "You pick what to keep when the search finishes."}
+          </p>
+        </div>
       </div>
       <Field label="Anything else for Claude (optional)" htmlFor="scout-extra">
         <Textarea

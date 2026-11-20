@@ -13,6 +13,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Index,
@@ -41,6 +42,9 @@ BELOW_BAR = "below_bar"
 DUPLICATE = "duplicate"
 WAITING = "waiting_for_copy"
 NO_COPY = "no_copy"
+# A good fit waiting for the user to confirm it, and one they passed on.
+PICKED = "picked"
+SKIPPED = "skipped"
 
 
 def _now_col() -> Mapped[datetime]:
@@ -83,6 +87,14 @@ class ScoutMission(Base):
     remote: Mapped[str] = mapped_column(String(20), nullable=False, default="any")
     min_fit: Mapped[int] = mapped_column(SmallInteger, nullable=False, default=6)
     extra_instructions: Mapped[str | None] = mapped_column(Text)
+    # Where good fits are saved; null = a collection named after the resume type.
+    collection_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("collections.id", ondelete="SET NULL")
+    )
+    # Save good fits without asking first (a search left to run unattended).
+    auto_save: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now_col()
 
@@ -107,6 +119,9 @@ class ScoutRun(Base):
     playbook_version: Mapped[str] = mapped_column(String(20), nullable=False)
     status: Mapped[str] = mapped_column(String(10), nullable=False, default=RUN_QUEUED)
     note: Mapped[str | None] = mapped_column(Text)  # Claude's end note
+    # Running totals of the result rows Claude checked and why some were passed
+    # over: {"rows", "in_tracker", "seen_before", "excluded"}. Counts only.
+    stats: Mapped[dict | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = _now_col()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

@@ -507,10 +507,11 @@ async def report_job(
 ) -> dict:
     """Report one job while its posting page is OPEN in the tab. Send only the
     posting's link, your 0-10 fit score (the playbook's rubric), why it fits and
-    the gaps, each a sentence or two. Do NOT send the job text: the app saves
-    the exact posting from the page itself. Answers with the outcome (saved,
-    below_bar, duplicate, waiting_for_copy, no_copy, rejected_link), the
-    progress, and what to do next."""
+    the gaps, each a sentence or two. Do NOT send the job text: the app takes
+    the exact posting from the page itself. Answers with the outcome (picked =
+    a good fit, kept for the user to confirm; saved; below_bar; duplicate;
+    waiting_for_copy; no_copy; rejected_link), the progress, and what to do
+    next."""
     async with _session_user() as (db, user):
         out = await scout_svc.report_job(
             db, user.id, run_id, url, fit_score, why_fit, gaps

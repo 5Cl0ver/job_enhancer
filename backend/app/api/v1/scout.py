@@ -14,14 +14,19 @@ from app.schemas.scout import (
     ActiveRunOut,
     CaptureIn,
     CaptureOut,
+    ConfirmIn,
+    ConfirmOut,
     MissionCreate,
     MissionOut,
     MissionUpdate,
     RunOut,
+    SaveFindingIn,
+    SaveFindingOut,
     TrackCreate,
     TrackOut,
     TrackUpdate,
 )
+from app.services import scout_review as review
 from app.services import scout_runs as runs
 from app.services import scout_tracks as svc
 
@@ -76,7 +81,7 @@ async def list_missions(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[MissionOut]:
-    return [MissionOut.model_validate(m) for m in await runs.list_missions(db, user.id)]
+    return await runs.missions_out(db, user.id, await runs.list_missions(db, user.id))
 
 
 @router.post("/missions", response_model=MissionOut, status_code=201)
@@ -88,7 +93,7 @@ async def create_mission(
     mission = await runs.create_mission(db, user.id, data)
     await db.commit()
     await db.refresh(mission)
-    return MissionOut.model_validate(mission)
+    return (await runs.missions_out(db, user.id, [mission]))[0]
 
 
 @router.patch("/missions/{mission_id}", response_model=MissionOut)
@@ -101,7 +106,7 @@ async def update_mission(
     mission = await runs.update_mission(db, mission_id, user.id, data)
     await db.commit()
     await db.refresh(mission)
-    return MissionOut.model_validate(mission)
+    return (await runs.missions_out(db, user.id, [mission]))[0]
 
 
 @router.delete("/missions/{mission_id}", status_code=204)
@@ -164,6 +169,35 @@ async def stop_run(
     await db.commit()
     await db.refresh(run)
     return (await runs.runs_out(db, [run], with_findings=True))[0]
+
+
+@router.post("/runs/{run_id}/confirm", response_model=ConfirmOut)
+async def confirm_run(
+    run_id: uuid.UUID,
+    data: ConfirmIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> ConfirmOut:
+    """The review's one button: save the findings the user ticked, into the
+    collection they chose. Picks left unticked are kept in History."""
+    run = await runs.get_run(db, run_id, user.id)
+    out = await review.confirm_run(db, user.id, run, data)
+    await db.commit()
+    return out
+
+
+@router.post("/findings/{finding_id}/save", response_model=SaveFindingOut)
+async def save_finding(
+    finding_id: uuid.UUID,
+    data: SaveFindingIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> SaveFindingOut:
+    """Save one job later, from History: one the user skipped, or one Claude
+    scored under the bar."""
+    out = await review.save_one(db, user.id, finding_id, data)
+    await db.commit()
+    return out
 
 
 @router.post("/captures", response_model=CaptureOut)
