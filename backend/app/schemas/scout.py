@@ -402,6 +402,9 @@ class RunOut(BaseModel):
     looked_at: dict[str, int] | None = None
     # What to change when a finished search came back short.
     tip: str | None = None
+    # Which instructions it used: per section, when the user's edit was made
+    # (null = the original). Null for runs from before spec 010.
+    instructions: dict[str, str | None] | None = None
     # "Anything I'd be good at": the titles this run searched, with good fits.
     broad: bool = False
     titles: list["RunTitle"] = Field(default_factory=list)
@@ -476,3 +479,59 @@ class CompanyUpdate(BaseModel):
 
     never_check: bool | None = None
     check_next: bool = False
+
+
+# --------------------------------------------------------------------------- #
+# The Instructions page and the run log (spec 010)
+# --------------------------------------------------------------------------- #
+class InstructionSection(BaseModel):
+    key: str
+    title: str
+    kind: Literal["text", "rubric", "limits"]
+    original: str | dict[str, int]
+    current: str | dict[str, int]
+    edited: bool
+    edited_at: datetime | None
+    # The app's own original changed since the user edited this.
+    original_changed: bool = False
+    ranges: dict[str, list[int]] | None = None
+    labels: dict[str, str] | None = None
+
+
+class InstructionsOut(BaseModel):
+    sections: list[InstructionSection]
+    # The scoring line Claude gets, made from the current weights.
+    rubric_text: str
+    # Always sent after the main steps; never editable.
+    locked_rules: str
+    # What the connector tells Claude about itself, and each Scout tool.
+    connector_note: str
+    tools: list[dict[str, str]]
+    fixed_limits: list[dict[str, str]]
+
+
+class InstructionSave(BaseModel):
+    """A text section's new text, or the numbers for scoring and limits."""
+
+    text: str | None = Field(None, max_length=20000)
+    values: dict[str, int] | None = None
+
+
+class InstructionVersionOut(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    # A "reset to original" entry.
+    reset: bool
+    body: str | dict[str, int]
+
+
+class RunEventOut(BaseModel):
+    id: uuid.UUID
+    created_at: datetime
+    tool: str
+    summary: str
+    ok: bool
+    request: dict | None
+    response: dict | None
+
+    model_config = {"from_attributes": True}

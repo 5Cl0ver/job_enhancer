@@ -1,5 +1,5 @@
 This is a GOOGLE JOBS search. The start URL is Google's own job search.
-These steps replace playbook steps 2 and 3; the rest of the playbook holds.
+These steps replace playbook steps 3 and 4; the rest of the playbook holds.
 
 a. If Google shows a "Date posted" filter, choose the one closest to the
    search's "posted within" days first. Otherwise leave the filters as they are.

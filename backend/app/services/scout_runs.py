@@ -27,7 +27,6 @@ import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from pathlib import Path
 from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException
@@ -74,6 +73,7 @@ from app.schemas.scout import (
 )
 from app.services import collections as col_svc
 from app.services import scout_companies as companies
+from app.services import scout_instructions as instr
 from app.services import scout_review as review
 from app.services import scout_titles as titles_svc
 from app.services.scout_dedupe import (
@@ -87,30 +87,16 @@ from app.services.scout_dedupe import (
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.6"
-PLAYBOOK = (Path(__file__).parent.parent / "scout" / "playbook.md").read_text(
-    encoding="utf-8"
-)
-# Extra steps for searches that aren't one job board's results pages.
-_SCOUT_DIR = Path(__file__).parent.parent / "scout"
-SOURCE_STEPS = {
-    source: (_SCOUT_DIR / f"{source}.md").read_text(encoding="utf-8")
-    for source in ("google_jobs", LOCAL)
-}
-# The extra steps for an "Anything I'd be good at" search.
-BROAD_STEPS = (_SCOUT_DIR / "broad.md").read_text(encoding="utf-8")
+PLAYBOOK_VERSION = "2026.11.7"
+# What Claude is told lives in app/scout/*.md and scout_instructions (the user
+# can edit most of it; a run uses its own snapshot).
+SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
 NO_RESUME = "Upload your resume first: AI Apply → Your Resume."
-RUBRIC = {
-    "skills": 4,
-    "experience": 2,
-    "title_level": 2,
-    "recency": 1,
-    "pay_location": 1,
-}
+RUBRIC = instr.RUBRIC
 MAX_ROWS_PER_CHECK = 30
-# Results pages a run reads before it stops, and how many of the resume type's
-# titles one search asks for (runs take turns with the rest).
-MAX_PAGES = 4
+# Results pages a run reads before it stops (the user can change it), and how
+# many of the resume type's titles one search asks for (runs take turns).
+MAX_PAGES = instr.LIMITS["pages"]
 TITLES_PER_SEARCH = 4
 HOURS_PER_YEAR = 2080
 # Findings that count as "seen": a job the user has decided on or has waiting
@@ -385,7 +371,8 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
             "Most job titles didn't fit the resume type. Add the titles you want "
             "to the resume type so the search asks for them."
         )
-    ran_out = run.status == RUN_DONE and s.get("pages", MAX_PAGES) < MAX_PAGES
+    pages_limit = instr.limit(c, "pages")
+    ran_out = run.status == RUN_DONE and s.get("pages", pages_limit) < pages_limit
     if ran_out and (widen or (radius and radius < 100)):
         more = [w for w in (widen, "pick a bigger radius" if radius else "") if w]
         return f"The search ran out of results. For more, {' or '.join(more)}."
@@ -445,14 +432,12 @@ def company_searches(c: dict) -> list[str]:
     ]
 
 
-async def queue_run(
-    db: AsyncSession, mission_id: uuid.UUID, user_id: uuid.UUID
-) -> ScoutRun:
-    mission = await get_mission(db, mission_id, user_id)
-    track = await get_track(db, mission.track_id, user_id, allow_broad=True)
+async def _criteria(
+    db: AsyncSession, user_id: uuid.UUID, mission: ScoutMission, track: ResumeTrack
+) -> dict:
+    """A run's snapshot of its search, resume type and instructions, so later
+    edits never change a run that's already going."""
     broad = track.kind == BROAD
-    if broad and not await resume_ready(db, user_id):
-        raise HTTPException(status_code=422, detail=NO_RESUME)
     overrides = titles_svc.overrides({"overrides": mission.overrides})
     skip = dict(track.skip_rules or {})
     if broad:
@@ -489,6 +474,18 @@ async def queue_run(
         # Claude picks the titles; the user's overrides as they were at Start.
         criteria["broad"] = True
         criteria["overrides"] = overrides
+    criteria.update(await instr.snapshot(db, user_id))
+    return criteria
+
+
+async def queue_run(
+    db: AsyncSession, mission_id: uuid.UUID, user_id: uuid.UUID
+) -> ScoutRun:
+    mission = await get_mission(db, mission_id, user_id)
+    track = await get_track(db, mission.track_id, user_id, allow_broad=True)
+    if track.kind == BROAD and not await resume_ready(db, user_id):
+        raise HTTPException(status_code=422, detail=NO_RESUME)
+    criteria = await _criteria(db, user_id, mission, track)
     run = ScoutRun(
         id=uuid.uuid4(),
         user_id=user_id,
@@ -659,6 +656,7 @@ async def runs_out(
                     else None
                 ),
                 tip=run_tip(r, counts.get(r.id, {})),
+                instructions=c.get("instructions"),
                 broad=bool(c.get("broad")),
                 titles=[
                     RunTitle(title=t, good_fits=fits_by_title.get((r.id, t), 0))
@@ -859,22 +857,61 @@ async def _resume_types(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
 
 async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dict:
     run = await _run_for_agent(db, user_id, run_id, start=True)
+    return await _brief_body(db, user_id, run, await _progress(db, run))
+
+
+async def preview(db: AsyncSession, user_id: uuid.UUID, mission_id: uuid.UUID) -> dict:
+    """What Claude would be given if this search started now. Nothing is
+    created or marked: the run here is never saved."""
+    mission = await get_mission(db, mission_id, user_id)
+    track = await get_track(db, mission.track_id, user_id, allow_broad=True)
+    run = ScoutRun(
+        id=None,
+        user_id=user_id,
+        mission_id=mission.id,
+        track_id=track.id,
+        criteria=await _criteria(db, user_id, mission, track),
+        playbook_version=PLAYBOOK_VERSION,
+        status=RUN_QUEUED,
+    )
+    target = run.criteria["job_count"]
+    progress = {"kept": 0, "target": target, "done": False}
+    return {
+        **await _brief_body(db, user_id, run, progress, preview=True),
+        "preview": True,
+    }
+
+
+async def _brief_body(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run: ScoutRun,
+    progress: dict,
+    *,
+    preview: bool = False,
+) -> dict:
     c = run.criteria
-    progress = await _progress(db, run)
     local = c["source"] == LOCAL
     ready = await resume_ready(db, user_id)
     extra: dict = {"resume_ready": ready}
-    if c["source"] in SOURCE_STEPS:
-        extra["source_steps"] = SOURCE_STEPS[c["source"]]
+    if c["source"] in SOURCE_STEP_KEYS:
+        extra["source_steps"] = instr.text_for(c, c["source"])
         extra["posted_within_days"] = c["posted_within_days"]
     if not local:
-        extra["max_pages"] = MAX_PAGES
+        extra["max_pages"] = instr.limit(c, "pages")
     first = "Open the start URL and send the first page of rows to check_jobs."
     if local:
-        extra["recheck"] = await companies.rechecks(db, user_id, run)
+        # Choosing re-checks marks them handed out: a preview only says so.
+        extra["recheck"] = (
+            "Chosen when the run starts."
+            if preview
+            else await companies.rechecks(db, user_id, run)
+        )
         extra["companies"] = companies.counts(run)
         first = (
-            "Visit the recheck companies first. Then open"
+            "Visit the recheck companies first, if the run picks any. Then open"
+            if preview
+            else "Visit the recheck companies first. Then open"
             if extra["recheck"]
             else "Open"
         ) + " the first start URL and send the companies it lists to check_companies."
@@ -884,8 +921,8 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
         ov = titles_svc.overrides(c)
         extra.update(
             broad=True,
-            broad_steps=BROAD_STEPS,
-            max_titles=titles_svc.MAX_TITLES,
+            broad_steps=instr.text_for(c, "broad"),
+            max_titles=instr.limit(c, "titles"),
             titles_tried=await titles_svc.for_brief(db, run),
             always=ov["always"],
             never=ov["never"],
@@ -895,7 +932,7 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
     if choosing:
         first = (
             "Call get_master_profile, choose up to "
-            f"{titles_svc.MAX_TITLES} job titles the user would be good at (see "
+            f"{instr.limit(c, 'titles')} job titles the user would be good at (see "
             "broad_steps), then call set_search_titles: it gives you the start URLs."
         )
     elif ready:
@@ -903,9 +940,10 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
             "Call get_master_profile once and score every job against the resume. "
             f"Then {first[0].lower()}{first[1:]}"
         )
+    rubric = instr.rubric_for(c)
     return {
-        "run_id": str(run.id),
-        "playbook": PLAYBOOK,
+        "run_id": str(run.id) if run.id else None,
+        "playbook": instr.assemble_playbook(instr.text_for(c, "playbook"), rubric),
         "playbook_version": run.playbook_version,
         "source": c["source"],
         **extra,
@@ -913,7 +951,7 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
         "track": c["track"],
         "min_pay": c.get("min_pay"),
         "min_fit": c["min_fit"],
-        "rubric": RUBRIC,
+        "rubric": rubric,
         "extra_instructions": c.get("extra_instructions"),
         "saving": _saving_note(c),
         "progress": progress,
@@ -1143,7 +1181,8 @@ async def check_jobs(
     await db.flush()
     progress = await _progress(db, run)
     pages = stats.get("pages", 0)
-    more = pages < MAX_PAGES and not ran_out
+    max_pages = instr.limit(c, "pages")
+    more = pages < max_pages and not ran_out
     next_page = page_url(c, pages) if more else None
     if progress["done"]:
         nxt = "Target reached: call finish_scout_run."
@@ -1156,14 +1195,14 @@ async def check_jobs(
         )
     else:
         if next_page:
-            after = f"open next_page_url (page {pages + 1} of {MAX_PAGES})"
+            after = f"open next_page_url (page {pages + 1} of {max_pages})"
         elif more:
             after = "scroll the list for more jobs and send the next rows"
         elif ran_out:
             after = "there are no more results, so call finish_scout_run"
         else:
             after = (
-                f"call finish_scout_run: that was the last of the {MAX_PAGES} "
+                f"call finish_scout_run: that was the last of the {max_pages} "
                 "pages a run reads"
             )
         nxt = (

@@ -30,9 +30,11 @@ from app.models.scout import (  # noqa: E402, F401
     ScoutCapture,
     ScoutCompany,
     ScoutFinding,
+    ScoutInstructionVersion,
     ScoutMission,
     ScoutPass,
     ScoutRun,
+    ScoutRunEvent,
     ScoutTitle,
 )
 from app.models.user import User  # noqa: E402, F401
@@ -55,8 +57,10 @@ __all__ = [
     "ScoutCapture",
     "ScoutCompany",
     "ScoutFinding",
+    "ScoutInstructionVersion",
     "ScoutMission",
     "ScoutPass",
     "ScoutRun",
+    "ScoutRunEvent",
     "ScoutTitle",
 ]

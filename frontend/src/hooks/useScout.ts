@@ -6,11 +6,16 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
   type Company,
+  type InstructionKey,
+  type Instructions,
+  type InstructionSection,
+  type InstructionVersion,
   isOpen,
   type Mission,
   type MissionInput,
   type Overrides,
   type Run,
+  type RunEvent,
   type TitleTried,
   type Track,
   type TrackInput,
@@ -318,5 +323,74 @@ export function useUpdateCompany() {
       check_next?: boolean;
     }) => api.patch<Company>(`/v1/scout/companies/${id}`, body),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["scout-companies"] }),
+  });
+}
+
+// --------------------------------------------------------------------------
+// The Instructions page and the run log
+// --------------------------------------------------------------------------
+export function useInstructions() {
+  return useQuery({
+    queryKey: ["scout-instructions"],
+    queryFn: () => api.get<Instructions>("/v1/scout/instructions"),
+  });
+}
+
+/** Save, reset or restore one section; the page and its history refresh. */
+export function useChangeInstruction() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (
+      change:
+        | { key: InstructionKey; text: string }
+        | { key: InstructionKey; values: Record<string, number> }
+        | { key: InstructionKey; reset: true }
+        | { key: InstructionKey; restore: string },
+    ) => {
+      const base = `/v1/scout/instructions/${change.key}`;
+      if ("reset" in change)
+        return api.post<InstructionSection>(`${base}/reset`, {});
+      if ("restore" in change)
+        return api.post<InstructionSection>(
+          `${base}/restore/${change.restore}`,
+          {},
+        );
+      if ("text" in change)
+        return api.put<InstructionSection>(base, { text: change.text });
+      return api.put<InstructionSection>(base, { values: change.values });
+    },
+    onSuccess: (_s, change) =>
+      Promise.all([
+        qc.invalidateQueries({ queryKey: ["scout-instructions"] }),
+        qc.invalidateQueries({ queryKey: ["scout-instruction-history", change.key] }),
+        qc.invalidateQueries({ queryKey: ["scout-preview"] }),
+      ]),
+  });
+}
+
+export function useInstructionHistory(key: InstructionKey, enabled: boolean) {
+  return useQuery({
+    queryKey: ["scout-instruction-history", key],
+    queryFn: () =>
+      api.get<InstructionVersion[]>(`/v1/scout/instructions/${key}/history`),
+    enabled,
+  });
+}
+
+/** What Claude would be given if this search started now. */
+export function usePreview(missionId: string | null) {
+  return useQuery({
+    queryKey: ["scout-preview", missionId],
+    queryFn: () =>
+      api.get<Record<string, unknown>>(`/v1/scout/missions/${missionId}/preview`),
+    enabled: !!missionId,
+  });
+}
+
+export function useRunLog(runId: string, enabled: boolean) {
+  return useQuery({
+    queryKey: ["scout-run-log", runId],
+    queryFn: () => api.get<RunEvent[]>(`/v1/scout/runs/${runId}/log`),
+    enabled,
   });
 }
