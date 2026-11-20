@@ -4,7 +4,14 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
-import { isOpen, type Mission, type MissionInput, type Run, type Track, type TrackInput } from "@/lib/scout";
+import {
+  isOpen,
+  type Mission,
+  type MissionInput,
+  type Run,
+  type Track,
+  type TrackInput,
+} from "@/lib/scout";
 
 export function useTracks() {
   return useQuery<Track[]>({
@@ -58,6 +65,46 @@ export function useUploadTrackResume() {
   });
 }
 
+/** The skills the app recognises in a resume, as the resume writes them. */
+export function resumeSkills(resumeId: string): Promise<string[]> {
+  return api
+    .get<{ skills: string[] }>(`/v1/ai/resumes/${resumeId}/skills`)
+    .then((r) => r.skills);
+}
+
+/**
+ * Attach a resume file to a resume type in one go: upload it, link it, and, if
+ * the type has no key skills yet, fill them in from the resume. Resolves with
+ * how many skills were filled in.
+ */
+export function useAttachResume() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({ track, file }: { track: Track; file: File }) => {
+      const form = new FormData();
+      form.append("file", file);
+      const uploaded = await api.post<{ id: string }>(
+        "/v1/ai/resumes?make_active=false",
+        form,
+      );
+      // Skills are a bonus: a failure here must not lose the upload.
+      const skills =
+        track.key_skills.length === 0
+          ? await resumeSkills(uploaded.id).catch(() => [])
+          : [];
+      await api.patch<Track>(`/v1/scout/tracks/${track.id}`, {
+        resume_id: uploaded.id,
+        ...(skills.length > 0 ? { key_skills: skills } : {}),
+      });
+      return skills.length;
+    },
+    onSettled: () => {
+      qc.invalidateQueries({ queryKey: ["resumes"] });
+      qc.invalidateQueries({ queryKey: ["scout-tracks"] });
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Searches (missions) and runs
 // ---------------------------------------------------------------------------
@@ -92,7 +139,8 @@ export function useDeleteMission() {
 export function useStartRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (missionId: string) => api.post<Run>(`/v1/scout/missions/${missionId}/runs`, {}),
+    mutationFn: (missionId: string) =>
+      api.post<Run>(`/v1/scout/missions/${missionId}/runs`, {}),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ["scout-runs"] });
       qc.invalidateQueries({ queryKey: ["scout-missions"] });
@@ -122,7 +170,8 @@ export function useRun(id: string | null) {
       return run;
     },
     enabled: !!id,
-    refetchInterval: (q) => (q.state.data && isOpen(q.state.data) ? POLL_MS : false),
+    refetchInterval: (q) =>
+      q.state.data && isOpen(q.state.data) ? POLL_MS : false,
   });
 }
 

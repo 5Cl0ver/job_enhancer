@@ -176,3 +176,71 @@ class TestJobsTaggedWithATrack:
             f"/v1/saved-jobs/{job.id}", json={"track_id": str(theirs.id)}
         )
         assert r.status_code == 404
+
+
+@pytest.mark.asyncio
+class TestResumeFileAndSkills:
+    """Looking at a resume, and reading its skills, before attaching it."""
+
+    async def _with_file(self, db, user_id):
+        r = Resume(
+            id=uuid.uuid4(),
+            user_id=user_id,
+            filename='it "admin".pdf',
+            mime_type="application/pdf",
+            file_size_bytes=8,
+            file_data=b"%PDF-1.4",
+            extracted_text=(
+                "Administered Microsoft 365 and Active Directory for 400 staff. "
+                "Wrote PowerShell and Python automation; ran Jira."
+            ),
+            is_active=False,
+        )
+        db.add(r)
+        await db.flush()
+        return r
+
+    async def test_view_the_file_in_the_browser(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        resume = await self._with_file(db_session, test_user.id)
+        r = await client.get(f"/v1/ai/resumes/{resume.id}/file")
+        assert r.status_code == 200
+        assert r.content == b"%PDF-1.4"
+        assert r.headers["content-type"] == "application/pdf"
+        # Shown in the tab, not downloaded; quotes can't break the header.
+        assert r.headers["content-disposition"] == 'inline; filename="it admin.pdf"'
+
+    async def test_skills_are_read_from_the_resume_text(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        resume = await self._with_file(db_session, test_user.id)
+        r = await client.get(f"/v1/ai/resumes/{resume.id}/skills")
+        # Written as the resume writes them, in the order it mentions them.
+        assert r.json()["skills"] == [
+            "Microsoft 365",
+            "Active Directory",
+            "PowerShell",
+            "Python",
+            "automation",
+            "Jira",
+        ]
+
+    async def test_a_resume_with_no_text_has_no_skills(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        resume = await _resume(db_session, test_user.id)
+        r = await client.get(f"/v1/ai/resumes/{resume.id}/skills")
+        assert r.json() == {"skills": []}
+        # ...and with no stored file there is nothing to view.
+        assert (await client.get(f"/v1/ai/resumes/{resume.id}/file")).status_code == 404
+
+    async def test_someone_elses_resume_is_not_found(
+        self, client: AsyncClient, db_session
+    ):
+        other = await _other_user(db_session)
+        theirs = await self._with_file(db_session, other.id)
+        assert (await client.get(f"/v1/ai/resumes/{theirs.id}/file")).status_code == 404
+        assert (
+            await client.get(f"/v1/ai/resumes/{theirs.id}/skills")
+        ).status_code == 404

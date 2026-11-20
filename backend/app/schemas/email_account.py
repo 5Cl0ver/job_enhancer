@@ -74,6 +74,8 @@ class DetectedEventOut(BaseModel):
     mail_link: str | None = None
     # Always a search, for when the exact link doesn't open the message.
     mail_search_link: str | None = None
+    # When the email was sent; None for emails recorded before this was kept.
+    email_date: datetime | None = None
     # The target stage was deleted: approving can't move the card.
     stage_missing: bool = False
     # How the job was chosen (job_url, job_id, known_sender, company_title,
@@ -117,6 +119,7 @@ class JobEmailLatestOut(BaseModel):
     event_type: str
     status: str
     target_stage: str | None = None
+    email_date: datetime | None = None
     created_at: datetime
     # How many emails are tied to the job (not counting dismissed ones).
     count: int

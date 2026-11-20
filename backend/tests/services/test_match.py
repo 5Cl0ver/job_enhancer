@@ -1,6 +1,6 @@
 """Unit tests for resume ↔ job-description match scoring."""
 
-from app.services.match import extract_keywords, match_resume
+from app.services.match import extract_keywords, match_resume, skills_in_resume
 
 JOB = """We're hiring a Full-Stack Engineer. You'll build customer-facing web
 apps with React and TypeScript on the frontend and Python (FastAPI) services
@@ -57,3 +57,24 @@ def test_no_keywords_means_zero_score_not_crash():
     assert result.score == 0
     assert result.matched == []
     assert result.missing == []
+
+
+def test_skills_in_resume_keeps_the_resumes_own_words_and_order():
+    text = (
+        "Rolled out Azure AD and Intune to 300 people. Daily PowerShell. "
+        "Strong communication. Later: azure ad again, SSO via Okta."
+    )
+    # As written, first mention first, no repeats, no soft skills.
+    assert skills_in_resume(text) == ["Azure AD", "Intune", "PowerShell", "SSO", "Okta"]
+
+
+def test_skills_in_resume_stops_at_the_limit():
+    text = "Python, JavaScript, TypeScript, Java, SQL, HTML, CSS, Bash"
+    assert skills_in_resume(text, limit=3) == ["Python", "JavaScript", "TypeScript"]
+
+
+def test_job_keywords_now_cover_it_admin_roles():
+    kws = extract_keywords(
+        "Administer Microsoft 365, Active Directory and Intune; script in PowerShell."
+    )
+    assert {"microsoft 365", "active directory", "intune", "powershell"} <= set(kws)

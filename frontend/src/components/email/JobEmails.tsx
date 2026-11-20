@@ -8,7 +8,7 @@ import { useState } from "react";
 import { Link } from "react-router-dom";
 import { ExternalLink, Mail } from "lucide-react";
 import { useJobEmails, type DetectedEvent } from "@/hooks/useEmailAccount";
-import { mailName, sentence } from "@/lib/emailUpdates";
+import { emailWhen, mailName, sentence } from "@/lib/emailUpdates";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { EmailViewer } from "@/components/email/EmailViewer";
@@ -76,7 +76,7 @@ export function JobEmails({
               <div className="min-w-0">
                 <p className="text-sm leading-snug">{sentence(ev)}</p>
                 <p className="text-xs text-muted-foreground">
-                  {new Date(ev.created_at).toLocaleDateString()}
+                  {emailWhen(ev)}
                   {did ? ` · ${did}` : ""}
                 </p>
               </div>

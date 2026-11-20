@@ -492,6 +492,7 @@ async def detect_events(
             "message_uid": msg.uid,
             "logical_key": key,
             "match_evidence": match.evidence or None,
+            "email_date": msg.date,
         }
 
         # A forward card move WITH a confident match becomes a pending update.

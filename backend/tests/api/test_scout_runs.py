@@ -47,6 +47,30 @@ class TestMissions:
         ).status_code == 204
         assert (await client.get("/v1/scout/missions")).json() == []
 
+    async def test_within_n_miles_is_kept_and_can_be_cleared(self, client: AsyncClient):
+        track_id = await _track(client)
+        r = await client.post(
+            "/v1/scout/missions",
+            json={
+                "source": "linkedin",
+                "track_id": track_id,
+                "location": "Springfield, IL",
+                "radius_miles": 25,
+            },
+        )
+        assert r.status_code == 201, r.text
+        mission = r.json()
+        assert mission["radius_miles"] == 25
+
+        run = (await client.post(f"/v1/scout/missions/{mission['id']}/runs")).json()
+        assert run["status"] == "queued"
+        await client.post(f"/v1/scout/runs/{run['id']}/stop")
+
+        r = await client.patch(
+            f"/v1/scout/missions/{mission['id']}", json={"radius_miles": None}
+        )
+        assert r.json()["radius_miles"] is None
+
     @pytest.mark.parametrize(
         "bad",
         [
@@ -54,6 +78,7 @@ class TestMissions:
             {"job_count": 11},
             {"posted_within_days": 5},
             {"min_fit": 11},
+            {"radius_miles": 7},
         ],
     )
     async def test_bad_input(self, client: AsyncClient, bad):

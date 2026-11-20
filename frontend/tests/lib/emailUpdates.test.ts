@@ -224,3 +224,31 @@ describe("mailName / emailLabel", () => {
     expect(emailLabel("unsure")).toBe("Email");
   });
 });
+
+describe("whenText / emailWhen", () => {
+  const now = new Date(2026, 10, 19, 15, 0); // Thu Nov 19 2026, 3:00 PM local
+
+  it("says today and yesterday with the time", async () => {
+    const { whenText } = await import("@/lib/emailUpdates");
+    expect(whenText(new Date(2026, 10, 19, 9, 14).toISOString(), now)).toMatch(/^Today 9:14/);
+    // 11:50 PM last night is yesterday, though it is less than 24 hours ago.
+    expect(whenText(new Date(2026, 10, 18, 23, 50).toISOString(), now)).toMatch(
+      /^Yesterday 11:50/,
+    );
+  });
+
+  it("uses the weekday within a week, then the date", async () => {
+    const { whenText } = await import("@/lib/emailUpdates");
+    expect(whenText(new Date(2026, 10, 16, 8, 5).toISOString(), now)).toMatch(/^Mon 8:05/);
+    expect(whenText(new Date(2026, 10, 2, 8, 5).toISOString(), now)).toBe("Nov 2");
+    expect(whenText(new Date(2025, 11, 30, 8, 5).toISOString(), now)).toBe("Dec 30, 2025");
+  });
+
+  it("shows when the email arrived, or when it was found if that wasn't kept", async () => {
+    const { emailWhen } = await import("@/lib/emailUpdates");
+    const found = new Date(2026, 10, 19, 11, 29).toISOString();
+    const sent = new Date(2026, 10, 18, 9, 14).toISOString();
+    expect(emailWhen({ email_date: sent, created_at: found }, now)).toMatch(/^Yesterday 9:14/);
+    expect(emailWhen({ email_date: null, created_at: found }, now)).toMatch(/^Found Today 11:29/);
+  });
+});

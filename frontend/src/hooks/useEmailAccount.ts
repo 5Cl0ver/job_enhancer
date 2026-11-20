@@ -78,6 +78,9 @@ export interface DetectedEvent {
   mail_link: string | null;
   /** Always a search, for when the direct link doesn't land on the email. */
   mail_search_link?: string | null;
+  /** When the email was sent; null for emails recorded before this was kept. */
+  email_date?: string | null;
+  /** When a scan found the email. */
   created_at: string;
 }
 
@@ -369,6 +372,7 @@ export interface JobEmailLatest {
   event_type: string;
   status: string;
   target_stage: string | null;
+  email_date?: string | null;
   created_at: string;
   /** How many emails are tied to the job. */
   count: number;

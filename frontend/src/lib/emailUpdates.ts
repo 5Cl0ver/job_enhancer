@@ -221,3 +221,30 @@ const EMAIL_LABEL: Record<string, string> = {
 export function emailLabel(eventType: string): string {
   return EMAIL_LABEL[eventType] ?? "Email";
 }
+
+const clock = (d: Date) => d.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" });
+
+/** A moment as a person says it: "Today 9:14 AM", "Yesterday 4:02 PM",
+ * "Mon 9:14 AM" within a week, then "Nov 12". Days are calendar days. */
+export function whenText(iso: string, now: Date = new Date()): string {
+  const d = new Date(iso);
+  const dayOf = (x: Date) => new Date(x.getFullYear(), x.getMonth(), x.getDate()).getTime();
+  const days = Math.round((dayOf(now) - dayOf(d)) / 86_400_000);
+  if (days <= 0) return `Today ${clock(d)}`;
+  if (days === 1) return `Yesterday ${clock(d)}`;
+  if (days < 7) return `${d.toLocaleDateString([], { weekday: "short" })} ${clock(d)}`;
+  return d.toLocaleDateString([], {
+    month: "short",
+    day: "numeric",
+    ...(d.getFullYear() === now.getFullYear() ? {} : { year: "numeric" }),
+  });
+}
+
+/** When an email arrived. Emails recorded before the app kept their date only
+ * have the time a scan found them, and say so. */
+export function emailWhen(
+  ev: { email_date?: string | null; created_at: string },
+  now: Date = new Date(),
+): string {
+  return ev.email_date ? whenText(ev.email_date, now) : `Found ${whenText(ev.created_at, now)}`;
+}

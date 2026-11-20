@@ -82,3 +82,15 @@ describe("scout runs", () => {
     expect(isOpen({ status: "stopped" })).toBe(false);
   });
 });
+
+describe("whereLabel", () => {
+  it("says how far around a place the search looks", async () => {
+    const { whereLabel } = await import("@/lib/scout");
+    const base = { location: "Springfield, IL", radius_miles: 25, remote: "any" } as const;
+    expect(whereLabel(base)).toBe("within 25 mi of Springfield, IL");
+    expect(whereLabel({ ...base, radius_miles: null })).toBe("Springfield, IL");
+    // A radius means nothing for remote-only jobs or with no place.
+    expect(whereLabel({ ...base, remote: "remote_only" })).toBe("Springfield, IL");
+    expect(whereLabel({ ...base, location: null })).toBeNull();
+  });
+});

@@ -5,7 +5,16 @@
  * jobs it saves appear here live.
  */
 import { useState } from "react";
-import { Bot, Check, Copy, Loader2, Pencil, Play, Plus, Square } from "lucide-react";
+import {
+  Bot,
+  Check,
+  Copy,
+  Loader2,
+  Pencil,
+  Play,
+  Plus,
+  Square,
+} from "lucide-react";
 import { errorText } from "@/components/scout/errorText";
 import { RunFindings } from "@/components/scout/RunFindings";
 import {
@@ -19,21 +28,23 @@ import {
   useTracks,
 } from "@/hooks/useScout";
 import {
-  MAX_JOBS_PER_RUN,
-  POSTED_WITHIN,
-  REMOTE_RULES,
-  SCOUT_LINE,
-  SOURCES,
   formatPay,
   isOpen,
-  parsePay,
-  postedLabel,
-  runSummary,
+  MAX_JOBS_PER_RUN,
   type Mission,
   type MissionInput,
+  parsePay,
+  POSTED_WITHIN,
+  postedLabel,
+  RADIUS_MILES,
   type Remote,
+  REMOTE_RULES,
+  runSummary,
+  SCOUT_LINE,
   type Source,
+  SOURCES,
   type Track,
+  whereLabel,
 } from "@/lib/scout";
 import { Button } from "@/components/ui/button";
 import {
@@ -69,7 +80,8 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
         <Bot className="mx-auto h-6 w-6 text-primary" aria-hidden />
         <p className="mt-2 font-medium">First, set up your resume types</p>
         <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-          Each search looks for one kind of role, so Scout needs to know which ones you go after.
+          Each search looks for one kind of role, so Scout needs to know which
+          ones you go after.
         </p>
         <Button className="mt-4" onClick={onSetUpTypes}>
           Set up resume types
@@ -86,12 +98,16 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
           <div className="space-y-1">
             <h2 className="text-lg font-semibold">Your searches</h2>
             <p className="text-sm text-muted-foreground">
-              Press Start, then tell Claude in Chrome one line. It finds the jobs; the app
-              remembers every job it has seen, so nothing comes back twice.
+              Press Start, then tell Claude in Chrome one line. It finds the
+              jobs; the app remembers every job it has seen, so nothing comes
+              back twice.
             </p>
           </div>
           {!!missions?.length && (
-            <Button onClick={() => setEditing("new")} className="shrink-0 gap-1.5">
+            <Button
+              onClick={() => setEditing("new")}
+              className="shrink-0 gap-1.5"
+            >
               <Plus className="h-4 w-4" aria-hidden /> New search
             </Button>
           )}
@@ -99,13 +115,16 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
 
         {isLoading && <Skeleton className="h-28" />}
         {isError && (
-          <p className="text-sm text-destructive">Couldn't load your searches. Try again.</p>
+          <p className="text-sm text-destructive">
+            Couldn't load your searches. Try again.
+          </p>
         )}
         {missions && missions.length === 0 && (
           <div className="rounded-lg border border-dashed p-5 text-center sm:p-8">
             <p className="font-medium">No searches yet</p>
             <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-              For example: LinkedIn, IT Admin, 5 jobs from the last 7 days, $70K or more.
+              For example: LinkedIn, IT Admin, 5 jobs from the last 7 days, $70K
+              or more.
             </p>
             <Button className="mt-4 gap-1.5" onClick={() => setEditing("new")}>
               <Plus className="h-4 w-4" aria-hidden /> Make your first search
@@ -155,23 +174,29 @@ function MissionCard({
     postedLabel(m.posted_within_days).toLowerCase(),
     pay && `${pay}+`,
     `fit ${m.min_fit}+`,
-    m.location,
+    whereLabel(m),
   ].filter(Boolean);
 
   return (
     <li className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="min-w-0">
         <p className="truncate font-medium">{m.name}</p>
-        <p className="mt-1 text-xs text-muted-foreground">{details.join(" · ")}</p>
+        <p className="mt-1 text-xs text-muted-foreground">
+          {details.join(" · ")}
+        </p>
       </div>
       {start.isError && (
-        <p className="text-xs text-destructive">{errorText(start.error, "Couldn't start.")}</p>
+        <p className="text-xs text-destructive">
+          {errorText(start.error, "Couldn't start.")}
+        </p>
       )}
       <div className="mt-auto flex gap-2">
         <Button
           className="flex-1 gap-1.5"
           disabled={busy || start.isPending}
-          title={busy ? "Finish or stop the search that's running first" : undefined}
+          title={
+            busy ? "Finish or stop the search that's running first" : undefined
+          }
           onClick={() => start.mutate(m.id)}
         >
           {start.isPending ? (
@@ -181,7 +206,12 @@ function MissionCard({
           )}
           Start
         </Button>
-        <Button variant="outline" size="icon" onClick={onEdit} aria-label={`Edit ${m.name}`}>
+        <Button
+          variant="outline"
+          size="icon"
+          onClick={onEdit}
+          aria-label={`Edit ${m.name}`}
+        >
           <Pencil className="h-4 w-4" aria-hidden />
         </Button>
       </div>
@@ -211,8 +241,13 @@ function LiveRun({ runId }: { runId: string }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-start sm:justify-between">
         <div className="min-w-0">
           <p className="font-medium">{run.name}</p>
-          <p className="flex items-center gap-1.5 text-sm text-muted-foreground" aria-live="polite">
-            {isOpen(run) && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+          <p
+            className="flex items-center gap-1.5 text-sm text-muted-foreground"
+            aria-live="polite"
+          >
+            {isOpen(run) && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            )}
             {runSummary(run)}
           </p>
         </div>
@@ -248,9 +283,9 @@ function LiveRun({ runId }: { runId: string }) {
             </Button>
           </div>
           <p className="text-xs text-muted-foreground">
-            Keep Job Catcher on and signed in. It copies each job word for word as Claude
-            opens it. Searching LinkedIn this way is against its rules for automated use, so
-            keep searches small.
+            Keep Job Catcher on and signed in. It copies each job word for word
+            as Claude opens it. Searching LinkedIn this way is against its rules
+            for automated use, so keep searches small.
           </p>
         </div>
       )}
@@ -287,6 +322,8 @@ function MissionEditor({
   );
 }
 
+const ANY_DISTANCE = "any";
+
 function MissionForm({
   mission,
   tracks,
@@ -299,21 +336,31 @@ function MissionForm({
   const save = useSaveMission();
   const del = useDeleteMission();
   const [source, setSource] = useState<Source>(mission?.source ?? "linkedin");
-  const [trackId, setTrackId] = useState(mission?.track_id ?? tracks[0]?.id ?? "");
+  const [trackId, setTrackId] = useState(
+    mission?.track_id ?? tracks[0]?.id ?? "",
+  );
   const [count, setCount] = useState(String(mission?.job_count ?? 5));
   const [days, setDays] = useState(String(mission?.posted_within_days ?? 7));
   const [location, setLocation] = useState(mission?.location ?? "");
+  const [radius, setRadius] = useState(
+    mission?.radius_miles != null ? String(mission.radius_miles) : ANY_DISTANCE,
+  );
   const [remote, setRemote] = useState<Remote>(mission?.remote ?? "any");
-  const [pay, setPay] = useState(mission?.min_pay != null ? String(mission.min_pay) : "");
+  const [pay, setPay] = useState(
+    mission?.min_pay != null ? String(mission.min_pay) : "",
+  );
   const [fit, setFit] = useState(String(mission?.min_fit ?? 6));
   const [extra, setExtra] = useState(mission?.extra_instructions ?? "");
   const [problem, setProblem] = useState<string | null>(null);
   const track = tracks.find((t) => t.id === trackId);
+  // "Within N miles" only means something around a place, for jobs you'd go to.
+  const radiusApplies = location.trim() !== "" && remote !== "remote_only";
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
     const minPay = parsePay(pay);
-    if (Number.isNaN(minPay)) return setProblem("Minimum pay should look like 70K or 70000.");
+    if (Number.isNaN(minPay))
+      return setProblem("Minimum pay should look like 70K or 70000.");
     if (!trackId) return setProblem("Pick a resume type.");
     setProblem(null);
     const data: MissionInput & { id?: string } = {
@@ -323,6 +370,8 @@ function MissionForm({
       job_count: Number(count),
       posted_within_days: Number(days),
       location: location.trim() || null,
+      radius_miles:
+        radiusApplies && radius !== ANY_DISTANCE ? Number(radius) : null,
       remote,
       min_pay: minPay,
       min_fit: Number(fit),
@@ -343,7 +392,8 @@ function MissionForm({
       <DialogHeader>
         <DialogTitle>{mission ? "Edit search" : "New search"}</DialogTitle>
         <DialogDescription>
-          Where Claude looks, for which kind of role, and what counts as a good find.
+          Where Claude looks, for which kind of role, and what counts as a good
+          find.
         </DialogDescription>
       </DialogHeader>
 
@@ -382,7 +432,9 @@ function MissionForm({
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
-              {Array.from({ length: MAX_JOBS_PER_RUN }, (_, i) => String(i + 1)).map((n) => (
+              {Array.from({ length: MAX_JOBS_PER_RUN }, (_, i) =>
+                String(i + 1),
+              ).map((n) => (
                 <SelectItem key={n} value={n}>
                   {n}
                 </SelectItem>
@@ -409,8 +461,31 @@ function MissionForm({
             id="scout-location"
             value={location}
             onChange={(e) => setLocation(e.target.value)}
-            placeholder="Springfield, IL"
+            placeholder="e.g. Springfield, IL"
           />
+        </Field>
+        <Field label="How far around it">
+          <Select
+            value={radiusApplies ? radius : ANY_DISTANCE}
+            onValueChange={setRadius}
+          >
+            <SelectTrigger
+              aria-label="How far around it"
+              disabled={!radiusApplies}
+            >
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ANY_DISTANCE}>
+                {radiusApplies ? "The job board decides" : "Add a city first"}
+              </SelectItem>
+              {RADIUS_MILES.map((miles) => (
+                <SelectItem key={miles} value={String(miles)}>
+                  Within {miles} miles
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
         </Field>
         <Field label="Remote">
           <Select value={remote} onValueChange={(v) => setRemote(v as Remote)}>
@@ -432,7 +507,11 @@ function MissionForm({
             inputMode="numeric"
             value={pay}
             onChange={(e) => setPay(e.target.value)}
-            placeholder={track?.min_pay ? `${formatPay(track.min_pay)} (from ${track.name})` : "70K"}
+            placeholder={
+              track?.min_pay
+                ? `${formatPay(track.min_pay)} (from ${track.name})`
+                : "70K"
+            }
           />
         </Field>
         <Field label="Minimum fit (0–10)">
@@ -457,7 +536,7 @@ function MissionForm({
           maxLength={1000}
           value={extra}
           onChange={(e) => setExtra(e.target.value)}
-          placeholder="Skip staffing agencies."
+          placeholder="e.g. Skip staffing agencies."
         />
       </Field>
 
@@ -476,7 +555,11 @@ function MissionForm({
             className="text-destructive"
             disabled={del.isPending}
             onClick={async () => {
-              if (!window.confirm(`Delete “${mission.name}”? Past results stay in History.`))
+              if (
+                !window.confirm(
+                  `Delete “${mission.name}”? Past results stay in History.`,
+                )
+              )
                 return;
               try {
                 await del.mutateAsync(mission.id);
@@ -492,7 +575,9 @@ function MissionForm({
           <span />
         )}
         <Button type="submit" disabled={save.isPending}>
-          {save.isPending && <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />}
+          {save.isPending && (
+            <Loader2 className="mr-1.5 h-4 w-4 animate-spin" aria-hidden />
+          )}
           Save search
         </Button>
       </DialogFooter>

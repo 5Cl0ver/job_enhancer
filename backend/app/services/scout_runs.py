@@ -153,7 +153,12 @@ async def update_mission(
         mission.source, old_track.name, mission.job_count, mission.posted_within_days
     )
     for key, value in updates.items():
-        if value is None and key not in ("min_pay", "location", "extra_instructions"):
+        if value is None and key not in (
+            "min_pay",
+            "location",
+            "radius_miles",
+            "extra_instructions",
+        ):
             continue  # required fields: null means "leave as is"
         setattr(mission, key, value)
     renamed = "name" in updates and updates["name"]
@@ -183,6 +188,9 @@ def start_urls(c: dict) -> list[str]:
     days = c["posted_within_days"]
     location = c.get("location") or ""
     remote = c.get("remote", "any")
+    # "Within N miles" only means something around a place, for jobs you'd
+    # travel to. Each board has its own name for it.
+    radius = c.get("radius_miles") if location and remote != "remote_only" else None
     if c["source"] == "linkedin":
         q = {
             "keywords": " OR ".join(f'"{t}"' for t in titles),
@@ -195,14 +203,20 @@ def start_urls(c: dict) -> list[str]:
             q["f_WT"] = "2"
         elif remote == "no_remote":
             q["f_WT"] = "1,3"
+        if radius:
+            q["distance"] = str(radius)
         return [f"https://www.linkedin.com/jobs/search/?{urlencode(q)}"]
     query = " OR ".join(f'"{t}"' for t in titles)
     where = "Remote" if remote == "remote_only" else location
     if c["source"] == "indeed":
         q = {"q": query, "l": where, "fromage": str(min(days, 14)), "sort": "date"}
+        if radius:
+            q["radius"] = str(radius)
         return [f"https://www.indeed.com/jobs?{urlencode(q)}"]
     zip_days = next(d for d in (1, 5, 10, 30) if d >= days)
     q = {"search": query, "location": where, "days": str(zip_days)}
+    if radius:
+        q["radius"] = str(radius)
     return [f"https://www.ziprecruiter.com/jobs-search?{urlencode(q)}"]
 
 
@@ -218,6 +232,7 @@ async def queue_run(
         "posted_within_days": mission.posted_within_days,
         "min_pay": mission.min_pay if mission.min_pay is not None else track.min_pay,
         "location": mission.location,
+        "radius_miles": mission.radius_miles,
         "remote": mission.remote,
         "min_fit": mission.min_fit,
         "extra_instructions": mission.extra_instructions,

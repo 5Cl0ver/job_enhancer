@@ -439,6 +439,7 @@ async def job_emails_latest(
             event_type=ev.event_type,
             status=ev.status,
             target_stage=ev.target_stage,
+            email_date=ev.email_date,
             created_at=ev.created_at,
             count=count,
         )

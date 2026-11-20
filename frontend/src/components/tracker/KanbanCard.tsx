@@ -131,7 +131,8 @@ export function CardFace({
         >
           <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
           <span className="truncate">
-            {emailLabel(email.event_type)} · {format(new Date(email.created_at), "MMM d")}
+            {emailLabel(email.event_type)} ·{" "}
+            {format(new Date(email.email_date ?? email.created_at), "MMM d")}
           </span>
         </button>
       )}

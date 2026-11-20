@@ -43,6 +43,7 @@ import {
 } from "@/hooks/useEmailAccount";
 import {
   collapseRepeats,
+  emailWhen,
   group,
   question,
   reason,
@@ -77,14 +78,6 @@ const SAYS: Record<string, string> = {
 
 /** How many rows a long section shows before "Show all". */
 const SHOWN = 3;
-
-function when(iso: string): string {
-  const days = Math.floor((Date.now() - new Date(iso).getTime()) / 86_400_000);
-  if (days <= 0) return "Today";
-  if (days === 1) return "Yesterday";
-  if (days < 7) return `${days} days ago`;
-  return new Date(iso).toLocaleDateString();
-}
 
 function errorText(e: unknown, fallback: string): string {
   return e instanceof ApiError ? e.message : fallback;
@@ -322,7 +315,7 @@ function Icon({ kind, small }: { kind: string; small?: boolean }) {
 
 /** Icon, company, then job · when — one slim block that fits any screen. */
 function RowHead({ ev, extra }: { ev: DetectedEvent; extra?: string }) {
-  const sub = [ev.company && ev.title, when(ev.created_at), extra].filter(Boolean).join(" · ");
+  const sub = [ev.company && ev.title, emailWhen(ev), extra].filter(Boolean).join(" · ");
   return (
     <>
       <Icon kind={ev.event_type} small />
@@ -734,7 +727,7 @@ function QuestionRow({ ev }: { ev: DetectedEvent }) {
       <div className="min-w-0 flex-1 [overflow-wrap:anywhere]">
         <p className="text-sm font-medium leading-snug">{question(ev)}</p>
         <p className="text-xs text-muted-foreground">
-          {when(ev.created_at)} · Pick the job to update its card.
+          {emailWhen(ev)} · Pick the job to update its card.
         </p>
         <div className="mt-2 flex flex-wrap gap-1.5">
           {(ev.candidates ?? []).map((c) =>

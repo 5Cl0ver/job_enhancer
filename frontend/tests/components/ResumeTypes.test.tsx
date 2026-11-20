@@ -87,7 +87,58 @@ describe("Resume types", () => {
     expect(await screen.findByText("IT Admin")).toBeInTheDocument();
     expect(screen.getByText("Jira Administrator")).toBeInTheDocument();
     expect(screen.getByText(/2 saved jobs · \$70K\+/)).toBeInTheDocument();
-    expect(screen.getByText(/no resume attached yet/i)).toBeInTheDocument();
+    // No resume yet: the card itself offers the upload.
+    expect(
+      screen.getByRole("button", { name: "Upload the resume for this type" }),
+    ).toBeInTheDocument();
+  });
+
+  it("uploads a resume from the card, attaches it and fills in the skills", async () => {
+    const user = userEvent.setup();
+    const blank = { ...TRACK, key_skills: [] };
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/scout/tracks") return Promise.resolve([blank]);
+      if (path === "/v1/ai/resumes/r9/skills")
+        return Promise.resolve({ skills: ["Microsoft 365", "PowerShell"] });
+      return Promise.resolve([]);
+    });
+    post.mockResolvedValue({ id: "r9", filename: "it-admin.pdf" });
+    patch.mockResolvedValue({});
+    renderWithQuery(<ResumeTypes />);
+
+    const file = new File(["%PDF"], "it-admin.pdf", { type: "application/pdf" });
+    await user.upload(await screen.findByLabelText("Resume file for IT Admin"), file);
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", {
+        resume_id: "r9",
+        key_skills: ["Microsoft 365", "PowerShell"],
+      }),
+    );
+    expect(post.mock.calls[0][0]).toBe("/v1/ai/resumes?make_active=false");
+  });
+
+  it("keeps the skills a type already has when a resume is attached", async () => {
+    const user = userEvent.setup();
+    serve([TRACK]); // has "Microsoft 365" already
+    post.mockResolvedValue({ id: "r9", filename: "it-admin.pdf" });
+    patch.mockResolvedValue({});
+    renderWithQuery(<ResumeTypes />);
+
+    const file = new File(["%PDF"], "it-admin.pdf", { type: "application/pdf" });
+    await user.upload(await screen.findByLabelText("Resume file for IT Admin"), file);
+
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", { resume_id: "r9" }),
+    );
+  });
+
+  it("an attached resume can be viewed or replaced from the card", async () => {
+    serve([{ ...TRACK, resume_id: "r1", resume_filename: "it-admin.pdf" }]);
+    renderWithQuery(<ResumeTypes />);
+    expect(await screen.findByText("it-admin.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Replace" })).toBeInTheDocument();
   });
 
   it("edits a type and sends clean lists", async () => {

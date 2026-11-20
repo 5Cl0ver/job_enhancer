@@ -19,6 +19,12 @@ class ResumeSchema(BaseModel):
     model_config = {"from_attributes": True}
 
 
+class ResumeSkills(BaseModel):
+    """Skills the app recognised in a resume's text."""
+
+    skills: list[str]
+
+
 class GeneratedDocumentCreate(BaseModel):
     job_listing_id: uuid.UUID | None = None
     resume_id: uuid.UUID

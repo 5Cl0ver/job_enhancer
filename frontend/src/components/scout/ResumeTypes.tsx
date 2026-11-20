@@ -4,10 +4,22 @@
  * resume to apply with. First-time users start from five suggested types.
  */
 import { useRef, useState } from "react";
-import { FileText, Loader2, Pencil, Plus, Sparkles, Upload } from "lucide-react";
+import {
+  Eye,
+  FileText,
+  Loader2,
+  Pencil,
+  Plus,
+  Sparkles,
+  Upload,
+} from "lucide-react";
+import { toast } from "sonner";
 import { errorText } from "@/components/scout/errorText";
 import { useResumes } from "@/hooks/useAI";
+import { openOwnFile } from "@/lib/openFile";
 import {
+  resumeSkills,
+  useAttachResume,
   useCreateTrack,
   useDeleteTrack,
   useTracks,
@@ -59,8 +71,8 @@ export function ResumeTypes() {
         <div className="space-y-1">
           <h2 className="text-lg font-semibold">Resume types</h2>
           <p className="text-sm text-muted-foreground">
-            One for each kind of role you go after. Claude Scout tags every job it finds with
-            one, so you always know which resume to apply with.
+            One for each kind of role you go after. Claude Scout tags every job
+            it finds with one, so you always know which resume to apply with.
           </p>
         </div>
         {!!tracks?.length && (
@@ -83,10 +95,14 @@ export function ResumeTypes() {
         </div>
       )}
       {isError && (
-        <p className="text-sm text-destructive">Couldn't load your resume types. Try again.</p>
+        <p className="text-sm text-destructive">
+          Couldn't load your resume types. Try again.
+        </p>
       )}
 
-      {tracks && tracks.length === 0 && <StartHere onCustom={() => setEditing("new")} />}
+      {tracks && tracks.length === 0 && (
+        <StartHere onCustom={() => setEditing("new")} />
+      )}
 
       {tracks && tracks.length > 0 && (
         <ul className="grid gap-3 sm:grid-cols-2">
@@ -128,8 +144,8 @@ function StartHere({ onCustom }: { onCustom: () => void }) {
       <Sparkles className="mx-auto h-6 w-6 text-primary" aria-hidden />
       <p className="mt-2 font-medium">Start with five suggested resume types</p>
       <p className="mx-auto mt-1 max-w-md text-sm text-muted-foreground">
-        {STARTER_TRACKS.map((t) => t.name).join(" · ")}. You can rename, change or delete any
-        of them, and attach a resume to each.
+        {STARTER_TRACKS.map((t) => t.name).join(" · ")}. You can rename, change
+        or delete any of them, and attach a resume to each.
       </p>
       <div className="mt-4 flex flex-col justify-center gap-2 sm:flex-row">
         <Button onClick={addStarters} disabled={adding} className="gap-1.5">
@@ -145,7 +161,34 @@ function StartHere({ onCustom }: { onCustom: () => void }) {
   );
 }
 
+/** Open a resume in a new tab, or say why it couldn't be. */
+function viewResume(resumeId: string) {
+  openOwnFile(`/v1/ai/resumes/${resumeId}/file`).catch(() =>
+    toast.error("Couldn't open that resume. Try uploading it again."),
+  );
+}
+
+const RESUME_FILES =
+  ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
+
 function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
+  const attach = useAttachResume();
+  const fileInput = useRef<HTMLInputElement>(null);
+  const onFile = (file: File | undefined) => {
+    if (!file) return;
+    attach.mutate(
+      { track: t, file },
+      {
+        onSuccess: (filled) =>
+          toast.success(
+            filled > 0
+              ? `Resume attached to ${t.name}. Filled in ${filled} skills from it.`
+              : `Resume attached to ${t.name}.`,
+          ),
+        onError: (e) => toast.error(errorText(e, "Couldn't upload that file.")),
+      },
+    );
+  };
   const shown = t.target_titles.slice(0, 4);
   const more = t.target_titles.length - shown.length;
   const pay = formatPay(t.min_pay);
@@ -159,7 +202,12 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
             {pay && ` · ${pay}+`}
           </p>
         </div>
-        <Button variant="ghost" size="sm" className="-mr-2 -mt-1 gap-1" onClick={onEdit}>
+        <Button
+          variant="ghost"
+          size="sm"
+          className="-mr-2 -mt-1 gap-1"
+          onClick={onEdit}
+        >
           <Pencil className="h-3.5 w-3.5" aria-hidden /> Edit
         </Button>
       </div>
@@ -177,16 +225,62 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
           )}
         </div>
       ) : (
-        <p className="text-xs text-muted-foreground">No job titles yet — add a few.</p>
+        <p className="text-xs text-muted-foreground">
+          No job titles yet — add a few.
+        </p>
       )}
-      <p className="mt-auto flex items-center gap-1.5 text-xs">
-        <FileText className="h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
-        {t.resume_filename ? (
-          <span className="truncate">{t.resume_filename}</span>
-        ) : (
-          <span className="text-amber-600 dark:text-amber-400">No resume attached yet</span>
-        )}
-      </p>
+      {/* The resume for this type: see it, or put one here without opening Edit. */}
+      <input
+        ref={fileInput}
+        type="file"
+        accept={RESUME_FILES}
+        className="hidden"
+        aria-label={`Resume file for ${t.name}`}
+        onChange={(e) => {
+          onFile(e.target.files?.[0]);
+          e.target.value = "";
+        }}
+      />
+      {t.resume_id && t.resume_filename ? (
+        <div className="mt-auto flex items-center gap-2 text-xs">
+          <FileText
+            className="h-3.5 w-3.5 shrink-0 text-muted-foreground"
+            aria-hidden
+          />
+          <span className="min-w-0 flex-1 truncate">{t.resume_filename}</span>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 gap-1 px-2"
+            onClick={() => viewResume(t.resume_id!)}
+          >
+            <Eye className="h-3.5 w-3.5" aria-hidden /> View
+          </Button>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-7 px-2"
+            disabled={attach.isPending}
+            onClick={() => fileInput.current?.click()}
+          >
+            {attach.isPending ? "Uploading…" : "Replace"}
+          </Button>
+        </div>
+      ) : (
+        <Button
+          variant="outline"
+          className="mt-auto w-full gap-2 border-dashed"
+          disabled={attach.isPending}
+          onClick={() => fileInput.current?.click()}
+        >
+          {attach.isPending ? (
+            <Loader2 className="h-4 w-4 animate-spin" aria-hidden />
+          ) : (
+            <Upload className="h-4 w-4" aria-hidden />
+          )}
+          {attach.isPending ? "Uploading…" : "Upload the resume for this type"}
+        </Button>
+      )}
     </li>
   );
 }
@@ -207,13 +301,25 @@ function TrackEditor({
     <Dialog open={open} onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[90vh] w-[calc(100vw-2rem)] max-w-lg overflow-y-auto">
         {/* Keyed so each open starts from the track's current values. */}
-        {open && <EditorForm key={track?.id ?? "new"} track={track} onClose={onClose} />}
+        {open && (
+          <EditorForm
+            key={track?.id ?? "new"}
+            track={track}
+            onClose={onClose}
+          />
+        )}
       </DialogContent>
     </Dialog>
   );
 }
 
-function EditorForm({ track, onClose }: { track: Track | null; onClose: () => void }) {
+function EditorForm({
+  track,
+  onClose,
+}: {
+  track: Track | null;
+  onClose: () => void;
+}) {
   const { data: resumes = [] } = useResumes();
   const create = useCreateTrack();
   const update = useUpdateTrack();
@@ -225,10 +331,14 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
   const [name, setName] = useState(track?.name ?? "");
   const [titles, setTitles] = useState((track?.target_titles ?? []).join("\n"));
   const [skills, setSkills] = useState((track?.key_skills ?? []).join(", "));
-  const [pay, setPay] = useState(track?.min_pay != null ? String(track.min_pay) : "");
+  const [pay, setPay] = useState(
+    track?.min_pay != null ? String(track.min_pay) : "",
+  );
   const [resumeId, setResumeId] = useState(track?.resume_id ?? NO_RESUME);
   const [degreeOnly, setDegreeOnly] = useState(skip.degree_only);
-  const [maxYears, setMaxYears] = useState(skip.max_years != null ? String(skip.max_years) : "");
+  const [maxYears, setMaxYears] = useState(
+    skip.max_years != null ? String(skip.max_years) : "",
+  );
   const [exclude, setExclude] = useState(skip.exclude.join(", "));
   const [notes, setNotes] = useState(track?.notes ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -237,17 +347,64 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
   const busy = create.isPending || update.isPending || remove.isPending;
   const saveError = create.error ?? update.error ?? remove.error;
 
+  // Which skills the chosen resume names. Fills an empty skills box by itself;
+  // "Fill from resume" adds any that are missing to what's there.
+  const [filling, setFilling] = useState(false);
+  const [filledFrom, setFilledFrom] = useState<string | null>(null);
+  const fillSkills = async (id: string, mode: "if-empty" | "add") => {
+    if (id === NO_RESUME || (mode === "if-empty" && skills.trim())) return;
+    setFilling(true);
+    try {
+      const found = await resumeSkills(id);
+      if (found.length === 0) return;
+      setSkills((current) => {
+        const have = splitList(current);
+        const known = new Set(have.map((s) => s.toLowerCase()));
+        return [
+          ...have,
+          ...found.filter((s) => !known.has(s.toLowerCase())),
+        ].join(", ");
+      });
+      setFilledFrom(id);
+    } catch {
+      // The box just stays as it is; the user can still type.
+    } finally {
+      setFilling(false);
+    }
+  };
+  const chooseResume = (id: string) => {
+    setResumeId(id);
+    void fillSkills(id, "if-empty");
+  };
+
   const onUpload = (file: File | undefined) => {
     if (!file) return;
-    upload.mutate(file, { onSuccess: (r) => setResumeId(r.id) });
+    upload.mutate(file, { onSuccess: (r) => chooseResume(r.id) });
   };
+  // Two files with one name are told apart by the day they were uploaded.
+  const nameCount = new Map<string, number>();
+  for (const r of resumes)
+    nameCount.set(r.filename, (nameCount.get(r.filename) ?? 0) + 1);
+  const resumeLabel = (r: (typeof resumes)[number]) =>
+    r.filename +
+    ((nameCount.get(r.filename) ?? 0) > 1
+      ? // Same name, sometimes the same day: the time settles it.
+        ` · uploaded ${new Date(r.created_at).toLocaleString([], {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+        })}`
+      : "") +
+    (r.is_active ? " (main)" : "");
 
   const submit = (e: React.FormEvent) => {
     e.preventDefault();
     const minPay = parsePay(pay);
     const years = maxYears.trim() ? Number(maxYears) : null;
     if (!name.trim()) return setProblem("Give it a name.");
-    if (Number.isNaN(minPay)) return setProblem("Minimum pay should look like 70000 or $70K.");
+    if (Number.isNaN(minPay))
+      return setProblem("Minimum pay should look like 70000 or $70K.");
     if (years != null && (!Number.isInteger(years) || years < 0))
       return setProblem("Max years should be a whole number.");
     setProblem(null);
@@ -255,7 +412,11 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
       name: name.trim(),
       target_titles: splitLines(titles),
       key_skills: splitList(skills),
-      skip_rules: { degree_only: degreeOnly, max_years: years, exclude: splitList(exclude) },
+      skip_rules: {
+        degree_only: degreeOnly,
+        max_years: years,
+        exclude: splitList(exclude),
+      },
       min_pay: minPay,
       resume_id: resumeId === NO_RESUME ? null : resumeId,
       notes: notes.trim() || null,
@@ -267,9 +428,11 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
   return (
     <form onSubmit={submit} className="space-y-4">
       <DialogHeader>
-        <DialogTitle>{track ? `Edit ${track.name}` : "New resume type"}</DialogTitle>
+        <DialogTitle>
+          {track ? `Edit ${track.name}` : "New resume type"}
+        </DialogTitle>
         <DialogDescription>
-          What Claude Scout should look for, what to skip, and the resume to apply with.
+          Most of this is filled in for you. Change what you want, then Save.
         </DialogDescription>
       </DialogHeader>
 
@@ -279,7 +442,7 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
           id="track-name"
           value={name}
           maxLength={60}
-          placeholder="IT Admin"
+          placeholder="e.g. IT Admin"
           onChange={(e) => setName(e.target.value)}
         />
       </div>
@@ -290,23 +453,39 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
           id="track-titles"
           rows={4}
           value={titles}
-          placeholder={"IT Systems Administrator\nJira Administrator"}
+          placeholder={"e.g. IT Systems Administrator\nJira Administrator"}
           onChange={(e) => setTitles(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">One per line, up to 15.</p>
       </div>
 
       <div className="space-y-1.5">
-        <Label htmlFor="track-skills">Your key skills for this kind of role</Label>
+        <div className="flex items-center justify-between gap-2">
+          <Label htmlFor="track-skills">
+            Your key skills for this kind of role
+          </Label>
+          {resumeId !== NO_RESUME && (
+            <button
+              type="button"
+              disabled={filling}
+              onClick={() => fillSkills(resumeId, "add")}
+              className="text-xs font-medium text-primary underline-offset-2 hover:underline disabled:opacity-50"
+            >
+              {filling ? "Reading your resume…" : "Fill from resume"}
+            </button>
+          )}
+        </div>
         <Textarea
           id="track-skills"
-          rows={2}
+          rows={3}
           value={skills}
-          placeholder="Microsoft 365, Entra ID, PowerShell"
+          placeholder="Attach a resume below and these fill in. Or type: Microsoft 365, PowerShell"
           onChange={(e) => setSkills(e.target.value)}
         />
         <p className="text-xs text-muted-foreground">
-          Separated by commas. Claude uses these to score how well you fit each job.
+          {filledFrom === resumeId && resumeId !== NO_RESUME
+            ? "Filled in from your resume. Add or remove anything."
+            : "Separated by commas. Claude uses these to score how well you fit each job."}
         </p>
       </div>
 
@@ -317,7 +496,7 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
             id="track-pay"
             inputMode="numeric"
             value={pay}
-            placeholder="$70K"
+            placeholder="e.g. $70K"
             onChange={(e) => setPay(e.target.value)}
           />
         </div>
@@ -331,7 +510,9 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
               placeholder="No limit"
               onChange={(e) => setMaxYears(e.target.value)}
             />
-            <span className="shrink-0 text-sm text-muted-foreground">years</span>
+            <span className="shrink-0 text-sm text-muted-foreground">
+              years
+            </span>
           </div>
         </div>
       </div>
@@ -339,24 +520,36 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
       <div className="space-y-1.5">
         <Label>Resume to apply with</Label>
         <div className="flex flex-col gap-2 sm:flex-row">
-          <Select value={resumeId} onValueChange={setResumeId}>
-            <SelectTrigger className="min-w-0 flex-1" aria-label="Resume to apply with">
+          <Select value={resumeId} onValueChange={chooseResume}>
+            <SelectTrigger
+              className="min-w-0 flex-1"
+              aria-label="Resume to apply with"
+            >
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={NO_RESUME}>None yet</SelectItem>
               {resumes.map((r) => (
                 <SelectItem key={r.id} value={r.id}>
-                  {r.filename}
-                  {r.is_active ? " (main)" : ""}
+                  {resumeLabel(r)}
                 </SelectItem>
               ))}
             </SelectContent>
           </Select>
+          {resumeId !== NO_RESUME && (
+            <Button
+              type="button"
+              variant="outline"
+              className="gap-1.5"
+              onClick={() => viewResume(resumeId)}
+            >
+              <Eye className="h-4 w-4" aria-hidden /> View
+            </Button>
+          )}
           <input
             ref={fileInput}
             type="file"
-            accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+            accept={RESUME_FILES}
             className="hidden"
             onChange={(e) => onUpload(e.target.files?.[0])}
           />
@@ -388,7 +581,11 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
           <Label htmlFor="track-degree" className="text-sm font-normal">
             Needs a degree, with no “or equivalent experience”
           </Label>
-          <Switch id="track-degree" checked={degreeOnly} onCheckedChange={setDegreeOnly} />
+          <Switch
+            id="track-degree"
+            checked={degreeOnly}
+            onCheckedChange={setDegreeOnly}
+          />
         </div>
         <div className="space-y-1.5">
           <Label htmlFor="track-exclude" className="text-sm font-normal">
@@ -397,7 +594,7 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
           <Input
             id="track-exclude"
             value={exclude}
-            placeholder="clearance, SAP, Director"
+            placeholder="e.g. clearance, SAP, Director"
             onChange={(e) => setExclude(e.target.value)}
           />
         </div>
@@ -410,7 +607,7 @@ function EditorForm({ track, onClose }: { track: Track | null; onClose: () => vo
           rows={2}
           maxLength={2000}
           value={notes}
-          placeholder="Prefer companies under 500 people."
+          placeholder="e.g. Prefer companies under 500 people."
           onChange={(e) => setNotes(e.target.value)}
         />
       </div>
