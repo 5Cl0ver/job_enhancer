@@ -24,7 +24,7 @@ separately as PR #12.
 **Testing**: Vitest + Testing Library (components, pure helpers), Playwright (board drag, search, scan progress), pytest (SQLite in-memory + a Postgres migration check, per the schema-drift lesson)
 **Target Platform**: Vercel (web), Render free tier (API, one instance), phone + desktop browsers
 **Project Type**: Web application (existing `frontend/` + `backend/`)
-**Performance Goals**: board first render < 1 s with 200 jobs; search < 100 ms per keystroke; no request held open > 1 s by a scan; saved-jobs list payload cut by dropping descriptions
+**Performance Goals**: board first render < 1 s with 200 jobs; search < 100 ms per keystroke; no request held open > 1 s by a scan
 **Constraints**: $0 hosting (no queue, no worker, no websockets); one API process; Supabase egress-conscious (no full-list polling: `/attention` is three counts); WCAG 2.1 AA; reduced motion honoured; no new runtime dependency over ~15 kB gzip
 **Scale/Scope**: ~200–1,000 saved jobs per user, a handful of users; 5 screens reworked, ~12 new components, 6 new/changed endpoints
 
@@ -73,7 +73,7 @@ backend/
 │   │   ├── email_scan_job.py                  # background scan + status/heartbeat
 │   │   ├── email_review.py                    # list by view, acted_at/acted_by, bulk
 │   │   ├── email_scan.py                      # mail_link: Yahoo sender + subject
-│   │   ├── saved_jobs.py                      # default stage, open_tasks, slim list
+│   │   ├── saved_jobs.py                      # default stage, open_tasks
 │   │   └── scout_tracks.py                    # attach_resume (atomic upload)
 │   └── api/v1/{tasks,attention}.py            # + email.py, scout.py, saved_jobs.py changes
 └── tests/{services/test_job_tasks.py, services/test_email_scan_job.py,
@@ -107,7 +107,7 @@ Each slice is its own branch → PR → review → CI → merge, and is usable a
 1. **Board that works** (US1): shared kit needed now (toasts, tooltip, sheet,
    scroll-area, EmptyState/ErrorState, fonts + tokens), drop fix, Move to…,
    touch/keyboard sensors, per-column scroll, incremental render, collapse empty
-   stages, search + highlight, hover, default-stage backfill, slim list.
+   stages, search + highlight, hover, default-stage backfill.
 2. **Needs you** (US2): `job_tasks`, API, created from email events, badges,
    panel, nav counts, job drawer.
 3. **Email you can follow** (US3): tabs + History + undo, paged Other mail,

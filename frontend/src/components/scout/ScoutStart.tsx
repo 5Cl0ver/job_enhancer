@@ -113,7 +113,7 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
           </div>
         )}
         {missions && missions.length > 0 && (
-          <ul className="grid gap-3 sm:grid-cols-2">
+          <ul className="grid grid-cols-1 gap-3 sm:grid-cols-2">
             {missions.map((m) => (
               <MissionCard
                 key={m.id}
@@ -159,7 +159,7 @@ function MissionCard({
   ].filter(Boolean);
 
   return (
-    <li className="flex flex-col gap-3 rounded-lg border p-4">
+    <li className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="min-w-0">
         <p className="truncate font-medium">{m.name}</p>
         <p className="mt-1 text-xs text-muted-foreground">{details.join(" · ")}</p>

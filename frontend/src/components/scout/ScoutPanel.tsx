@@ -27,7 +27,7 @@ export function ScoutPanel() {
 
   return (
     <div className="space-y-4">
-      <p className="max-w-2xl text-sm text-muted-foreground">
+      <p className="max-w-2xl text-sm text-muted-foreground max-md:hidden">
         Claude in Chrome searches the job boards for you and saves what fits straight into My
         Jobs, never the same job twice.
       </p>

@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -43,7 +43,12 @@ from app.services.email_classify import (
     stage_for_event,
 )
 from app.services.email_match import JOB_ID, JOB_URL, TEMPLATE
-from app.services.email_scan import _stage_orders, card_action, mail_link
+from app.services.email_scan import (
+    IMPORTANT_EVENTS,
+    _stage_orders,
+    card_action,
+    mail_link,
+)
 from app.services.saved_jobs import save_manual_job
 from app.services.tracker import move_job_to_stage
 
@@ -90,6 +95,45 @@ async def list_pending(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEve
         .order_by(DetectedEvent.created_at.desc())
     )
     return list(rows)
+
+
+async def count_to_review(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """How many items the Email Updates page lists as waiting on the user.
+
+    Must agree with the page: its "question" and "important" groups
+    (``category_of`` in api/v1/email.py), with repeats folded the way the page
+    folds them (``repeatKey`` in frontend/src/lib/emailUpdates.ts): several
+    emails saying the same thing about one saved job count once."""
+    mine = (
+        DetectedEvent.user_id == user_id,
+        DetectedEvent.event_type.in_(IMPORTANT_EVENTS),
+    )
+    pending = (*mine, DetectedEvent.status == STATUS_PENDING)
+    # Each question, and each pending update with no saved job, stands alone.
+    alone = await db.scalar(
+        select(func.count())
+        .select_from(DetectedEvent)
+        .where(
+            *mine,
+            or_(
+                DetectedEvent.status == STATUS_REVIEW,
+                and_(
+                    DetectedEvent.status == STATUS_PENDING,
+                    DetectedEvent.saved_job_id.is_(None),
+                ),
+            ),
+        )
+    )
+    # Pending updates about a saved job: one per (job, kind of update).
+    folded = await db.scalar(
+        select(func.count()).select_from(
+            select(DetectedEvent.saved_job_id, DetectedEvent.event_type)
+            .where(*pending, DetectedEvent.saved_job_id.is_not(None))
+            .distinct()
+            .subquery()
+        )
+    )
+    return (alone or 0) + (folded or 0)
 
 
 async def auto_apply(

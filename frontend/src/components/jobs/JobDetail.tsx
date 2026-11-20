@@ -1,4 +1,5 @@
 import { Building2, MapPin, DollarSign, Clock, Wifi, ArrowLeft, ExternalLink, Trash2 } from "lucide-react";
+import { useState } from "react";
 import { Link } from "react-router-dom";
 import { formatDistanceToNow, format } from "date-fns";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
@@ -7,7 +8,8 @@ import { JobDocuments } from "@/components/ai/JobDocuments";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
-import { formatSalary } from "@/lib/utils";
+import { useIsPhone } from "@/hooks/useIsPhone";
+import { cn, formatSalary } from "@/lib/utils";
 import type { JobListing } from "@/types/api";
 
 interface JobDetailProps {
@@ -17,6 +19,43 @@ interface JobDetailProps {
   onGenerateDocuments?: () => void;
   /** Shown right under the actions, above the description (e.g. resume type). */
   aside?: React.ReactNode;
+  /** The saved job's stage control: by the title on a computer, in the action
+   * bar pinned to the bottom on a phone. */
+  stage?: React.ReactNode;
+}
+
+/** Descriptions longer than this start folded on a phone. */
+const LONG_DESCRIPTION = 700;
+
+function Description({ text }: { text: string }) {
+  const [open, setOpen] = useState(false);
+  const long = text.length > LONG_DESCRIPTION;
+  return (
+    <div className="space-y-2">
+      <h2 className="text-lg font-semibold">Job Description</h2>
+      <div
+        className={cn(
+          "whitespace-pre-wrap break-words text-sm leading-relaxed text-muted-foreground",
+          // A phone shows the start and fades out; a computer shows it all.
+          long &&
+            !open &&
+            "max-md:max-h-64 max-md:overflow-hidden max-md:[mask-image:linear-gradient(to_bottom,black_55%,transparent)]",
+        )}
+      >
+        {text}
+      </div>
+      {long && (
+        <Button
+          variant="outline"
+          className="w-full md:hidden"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+        >
+          {open ? "Show less" : "Read the full description"}
+        </Button>
+      )}
+    </div>
+  );
 }
 
 export function JobDetail({
@@ -25,7 +64,9 @@ export function JobDetail({
   isSaved = false,
   onGenerateDocuments,
   aside,
+  stage,
 }: JobDetailProps) {
+  const phone = useIsPhone();
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
   const postedAgo = job.posted_at
     ? formatDistanceToNow(new Date(job.posted_at), { addSuffix: true })
@@ -36,19 +77,19 @@ export function JobDetail({
 
   return (
     <div className="mx-auto max-w-3xl space-y-6">
-      {/* Back link */}
+      {/* Back link (a phone has the back arrow in its top bar instead) */}
       <Link
-        to="/saved"
-        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground"
+        to="/jobs"
+        className="inline-flex items-center gap-1 text-sm text-muted-foreground hover:text-foreground max-md:hidden"
       >
         <ArrowLeft className="h-3.5 w-3.5" />
-        Back to saved
+        Back to My Jobs
       </Link>
 
       {/* Header */}
       <div className="space-y-3">
         <div className="flex items-start justify-between gap-4">
-          <h1 className="text-2xl font-bold leading-tight">{job.title}</h1>
+          <h1 className="min-w-0 break-words text-2xl font-bold leading-tight">{job.title}</h1>
           <Badge variant="outline" className="shrink-0 capitalize">
             {job.source}
           </Badge>
@@ -89,9 +130,12 @@ export function JobDetail({
         </div>
       </div>
 
+      {/* On a phone the stage and Apply sit in the bar pinned to the bottom. */}
+      {stage && !phone && <div className="flex items-center gap-2">{stage}</div>}
+
       {/* Actions */}
       <div className="flex flex-wrap gap-3">
-        <ApplyButton job={job} />
+        {!phone && <ApplyButton job={job} />}
         {/* Always a link to the original posting (for now this is the same as
             Apply; once we capture a separate company-apply URL, Apply Now goes
             to the employer and this stays pointed at the source listing). */}
@@ -138,16 +182,20 @@ export function JobDetail({
 
       {/* Description */}
       {job.description ? (
-        <div className="space-y-2">
-          <h2 className="text-lg font-semibold">Job Description</h2>
-          <div className="whitespace-pre-wrap text-sm leading-relaxed text-muted-foreground">
-            {job.description}
-          </div>
-        </div>
+        <Description text={job.description} />
       ) : (
         <p className="text-sm text-muted-foreground italic">
           No description available. Visit the job posting for full details.
         </p>
+      )}
+
+      {/* Phone: the two things you came to do stay in reach, above the tab bar.
+          The page leaves room for this bar (JobDetailPage). */}
+      {phone && (
+        <div className="fixed inset-x-0 bottom-[calc(3.5rem+env(safe-area-inset-bottom))] z-30 flex items-center gap-2 border-t bg-background px-4 py-2">
+          {stage}
+          <ApplyButton job={job} className="min-w-0 flex-1" />
+        </div>
       )}
     </div>
   );

@@ -34,8 +34,8 @@ export function SearchBar({ defaultQuery = "", defaultLocation = "" }: SearchBar
   );
 
   return (
-    <form onSubmit={handleSearch} className="flex w-full gap-2">
-      <div className="relative flex-1">
+    <form onSubmit={handleSearch} className="flex w-full flex-col gap-2 sm:flex-row">
+      <div className="relative sm:flex-1">
         <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
         <Input
           type="text"
@@ -51,7 +51,7 @@ export function SearchBar({ defaultQuery = "", defaultLocation = "" }: SearchBar
         placeholder="Location (optional)"
         value={location}
         onChange={(e) => setLocation(e.target.value)}
-        className="max-w-[200px]"
+        className="sm:max-w-[200px]"
         aria-label="Location"
       />
       <Button type="submit" disabled={!query.trim()}>

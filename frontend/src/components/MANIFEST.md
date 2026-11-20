@@ -5,7 +5,7 @@ use them live in `src/routes/` (see its MANIFEST); the **data hooks** live in
 `src/hooks/` (see its MANIFEST). Feature status: [docs/FEATURES.md](../../../docs/FEATURES.md).
 
 ```
-ui/  base shadcn primitives   layout/  legacy shell bits
+ui/  base shadcn primitives   layout/  the app frame's pieces
 common/  shared page pieces (empty / error states)
 jobs/ tracker/ ai/ analytics/ admin/ settings/   feature UI
 ```
@@ -16,7 +16,9 @@ in `index.html`; wired in `src/providers.tsx`.
 
 ## `ui/` — shadcn/ui primitives
 alert, badge, button, card, dialog, dropdown-menu, input, label, select,
-separator, skeleton, sonner (toasts), switch, table, tabs, textarea. Themed via CSS variables in
+separator, skeleton, sonner (toasts), switch, table, tabs, textarea. On touch screens
+(`pointer-coarse:`) buttons, inputs, selects and tabs are 44px tall. `dialog` is a
+centred box from 768px and a bottom sheet below it (scrolls inside, footer pinned). Themed via CSS variables in
 `src/globals.css`; use `cn()` from `lib/utils`.
 
 ## `scout/` — Claude Scout (Find Jobs → Claude Scout)
@@ -36,6 +38,8 @@ separator, skeleton, sonner (toasts), switch, table, tabs, textarea. Themed via 
 |---|---|
 | `Navbar.tsx`, `Sidebar.tsx` | ⚠️ Legacy shell — the live app frame is `routes/DashboardLayout.tsx`; these are pending consolidation |
 | `OfflineBanner.tsx` | Offline indicator when the browser goes offline |
+| `nav.ts` | The page list: desktop sidebar order, the phone's three tabs (`TABS`) and its More sheet (`MORE`), admin-only filtering, `pageFor(path)`, `signOut` |
+| `PhoneNav.tsx` | The phone frame (under 768px): `TopBar` (page title, back arrow on inner pages, a slot for the page's buttons via `TopBarActions`), `TabBar` (My Jobs · Email with count · Find Jobs · More → sheet with the rest + Sign out), `CountBadge` |
 
 ## `jobs/`
 | File | Purpose |
@@ -44,6 +48,9 @@ separator, skeleton, sonner (toasts), switch, table, tabs, textarea. Themed via 
 | `SearchFilters.tsx` | Remote/type/salary/experience filters → URL params |
 | `SearchResults.tsx` | `useJobSearch` → grid of `JobCard` + pagination |
 | `JobCard.tsx` | Job card: title, company, salary, source, apply/save |
+| `SavedJobsBody.tsx` | My Jobs list on a computer: folders, filter bar, card grid drawn 30 at a time |
+| `StagePicker.tsx` | A saved job's stage as a coloured pill you can change (the board's move, from the job page; pinned at the bottom on a phone) |
+| `PhoneJobList.tsx` | My Jobs list on a phone: rows (about ten a screen), stage chips with counts (remembered per device), search, filters in a bottom sheet, 30 rows at a time |
 | `JobDetail.tsx` | Full job view (legacy; no `/jobs/:id` route yet) |
 | `SaveButton.tsx` | Optimistic save/unsave toggle |
 | `SaveSearchButton.tsx` | Save current search criteria (FR-024) |

@@ -9,6 +9,7 @@ import {
   keepPreviousData,
 } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { cleanJob } from "@/lib/text";
 import type { SavedJob, Collection } from "@/types/api";
 
 // -------------------------
@@ -60,8 +61,18 @@ export function useSavedJobs(params?: {
   return useQuery<SavedJob[]>({
     queryKey: ["saved-jobs", params],
     queryFn: () => api.get<SavedJob[]>(`/v1/saved-jobs/?${qs.toString()}`),
+    select: cleanSavedJobs,
     staleTime: 30_000,
     placeholderData: keepPreviousData,
+  });
+}
+
+// At module level so the reference is stable and the work is only redone when
+// the list changes.
+function cleanSavedJobs(rows: SavedJob[]): SavedJob[] {
+  return rows.map((sj) => {
+    const listing = cleanJob(sj.job_listing);
+    return listing === sj.job_listing ? sj : { ...sj, job_listing: listing };
   });
 }
 
@@ -69,7 +80,7 @@ export function useSavedJobs(params?: {
 export function useSavedJobId(jobListingId: string) {
   const { data, isLoading } = useSavedJobs();
   const match = data?.find((sj) => sj.job_listing_id === jobListingId);
-  return { savedJobId: match?.id ?? null, isLoading };
+  return { savedJobId: match?.id ?? null, savedJob: match ?? null, isLoading };
 }
 
 export function useSaveJob() {
