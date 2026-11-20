@@ -83,10 +83,15 @@ function NumbersEditor({ section }: { section: InstructionSection }) {
   const isRubric = section.kind === "rubric";
   const total = Object.values(numbers).reduce((a, b) => a + (b || 0), 0);
   const dirty = Object.keys(current).some((k) => numbers[k] !== current[k]);
+  const outOfRange = Object.values(numbers).some(
+    (n) => !Number.isInteger(n) || n < 0 || n > 10,
+  );
   const problem = isRubric
-    ? total !== 10
-      ? `The parts must add up to 10 (now ${total}).`
-      : null
+    ? outOfRange
+      ? "Each part is a whole number from 0 to 10."
+      : total !== 10
+        ? `The parts must add up to 10 (now ${total}).`
+        : null
     : Object.entries(section.ranges ?? {}).find(
           ([k, [lo, hi]]) =>
             !Number.isInteger(numbers[k]) || numbers[k] < lo || numbers[k] > hi,
@@ -131,13 +136,12 @@ function NumbersEditor({ section }: { section: InstructionSection }) {
       {isRubric && (
         <p
           className={
-            total === 10
-              ? "text-xs text-muted-foreground"
-              : "text-xs text-destructive"
+            problem ? "text-xs text-destructive" : "text-xs text-muted-foreground"
           }
           aria-live="polite"
         >
           Total: {total} of 10
+          {outOfRange && " · each part is 0 to 10"}
         </p>
       )}
       {problem && dirty && !isRubric && (

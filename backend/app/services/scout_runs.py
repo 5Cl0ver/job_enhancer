@@ -909,7 +909,9 @@ async def _brief_body(
         )
         extra["companies"] = companies.counts(run)
         first = (
-            "Visit the recheck companies first. Then open"
+            "Visit the recheck companies first, if the run picks any. Then open"
+            if preview
+            else "Visit the recheck companies first. Then open"
             if extra["recheck"]
             else "Open"
         ) + " the first start URL and send the companies it lists to check_companies."

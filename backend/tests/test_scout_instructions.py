@@ -96,6 +96,27 @@ class TestVersions:
                 await instr.save(db, uid, key, **kwargs)
             assert e.value.status_code == 422 and message in e.value.detail
 
+    async def test_saving_one_limit_keeps_the_others(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="i7@test.dev")
+        uid = await _user_id(maker, "i7@test.dev")
+        async with maker() as db:
+            await instr.save(db, uid, "limits", values={"pages": 2})
+            out = await instr.save(db, uid, "limits", values={"titles": 5})
+            assert out["current"] == {"pages": 2, "titles": 5, "companies": 15}
+
+    async def test_restore_rechecks_the_version(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="i8@test.dev")
+        uid = await _user_id(maker, "i8@test.dev")
+        async with maker() as db:
+            await instr.save(db, uid, "limits", values={"pages": 8})
+            await instr.reset(db, uid, "limits")
+            (_, old) = await instr.history(db, uid, "limits")
+            # The range got tighter since that version was saved.
+            monkeypatch.setitem(instr.LIMIT_RANGES, "pages", (1, 6))
+            with pytest.raises(HTTPException) as e:
+                await instr.restore(db, uid, "limits", old["id"])
+            assert e.value.status_code == 422 and "can't be used now" in e.value.detail
+
     async def test_unknown_keys_and_the_rules_cant_be_written(
         self, engine, monkeypatch
     ):
@@ -223,6 +244,18 @@ class TestRunsUseThem:
         ]
         out = await mcp_mod.check_companies(str(run_id), rows)
         assert len(out["visit"]) == 5
+        # The limit counts everywhere the run checks it.
+        out = await mcp_mod.check_companies(str(run_id), rows[5:])
+        assert out["visit"] == [] and "limit reached" in out["next"]
+        out = await mcp_mod.company_checked(
+            str(run_id), "brambleworks0.example", "none"
+        )
+        assert "limit reached" not in out["next"]
+        for i in range(1, 5):
+            out = await mcp_mod.company_checked(
+                str(run_id), f"brambleworks{i}.example", "none"
+            )
+        assert "limit reached" in out["next"]
 
 
 @pytest.mark.asyncio

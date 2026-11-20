@@ -552,11 +552,11 @@ async def check_jobs(run_id: str, rows: list[dict]) -> dict:
 
 @mcp.tool
 async def set_search_titles(run_id: str, titles: list[str]) -> dict:
-    """ "Anything I'd be good at" searches only. Send the job titles you chose
-    from the user's resume (up to 8 are searched). The app adds the user's
-    Always titles first, leaves out Never titles and titles resting after
-    finding nothing, and answers with the start_urls to open (filters already
-    set) and any titles it left out, with why."""
+    """'Anything I'd be good at' searches only. Send the job titles you chose
+    from the user's resume (up to the brief's max_titles are searched). The app
+    adds the user's Always titles first, leaves out Never titles and titles
+    resting after finding nothing, and answers with the start_urls to open
+    (filters already set) and any titles it left out, with why."""
     return await _scout(
         "set_search_titles",
         run_id,

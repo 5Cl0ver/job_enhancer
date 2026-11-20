@@ -39,7 +39,8 @@ from app.services import scout_instructions as instr
 from app.services.scout_dedupe import company_key, is_job_site
 
 RECHECK_DAYS = 7
-MAX_COMPANIES_PER_RUN = 15
+# The default; each run uses its own (the user can change it, spec 010).
+MAX_COMPANIES_PER_RUN = instr.LIMITS["companies"]
 MAX_RECHECKS_PER_RUN = 3
 MAX_COMPANIES_PER_CHECK = 20
 
@@ -307,7 +308,7 @@ async def check(
         if key:
             seen_now.add(key)
     await db.flush()
-    full = len(handed) >= MAX_COMPANIES_PER_RUN
+    full = len(handed) >= instr.limit(run.criteria, "companies")
     if visit:
         nxt = (
             'Visit each company in "visit" in turn: find its careers page, send '
@@ -363,7 +364,9 @@ async def checked(
     stats["companies_with_openings"] = len(opened)
     run.stats = stats
     await db.flush()
-    full = counts(run)["checked"] >= MAX_COMPANIES_PER_RUN
+    # Full once every company the run may check has been reported (not just
+    # handed out: Claude may still have some to visit).
+    full = len(_reported(run.stats)) >= instr.limit(run.criteria, "companies")
     return {
         "recorded": result,
         "companies": counts(run),

@@ -103,6 +103,20 @@ class TestEveryCallIsLogged:
         assert refused.response == {"error": refused.summary.removeprefix("Refused: ")}
         assert rejected.ok is True and "link turned down" in rejected.summary
 
+    async def test_the_resume_read_goes_on_the_run_claude_is_working_on(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="g5@test.dev")
+        user_id, _, first = await _setup(maker, "g5@test.dev")
+        _, _, second = await _setup_second_run(maker, "g5@test.dev")
+        await _resume(maker, user_id)
+        await mcp_mod.get_scout_brief(str(first))
+        await mcp_mod.get_scout_brief(str(second))
+        await mcp_mod.get_master_profile()
+        # Like a tool call with no run id: the run started first.
+        reads = [e for e in await _events(maker) if e.tool == "get_master_profile"]
+        assert [e.run_id for e in reads] == [first]
+
     async def test_reading_the_resume_with_no_search_going_isnt_logged(
         self, engine, monkeypatch
     ):

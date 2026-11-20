@@ -246,6 +246,8 @@ async def save(
     values: dict | None = None,
 ) -> dict:
     key = _key(key)
+    if key == "limits":  # the ones not sent keep the user's own values
+        values = {**(await section(db, user_id, key))["current"], **(values or {})}
     await _add(db, user_id, key, _check(key, text, values))
     return await section(db, user_id, key)
 
@@ -291,7 +293,19 @@ async def restore(
     )
     if row is None:
         raise HTTPException(status_code=404, detail="No such version.")
-    await _add(db, user_id, key, row.body)
+    body = row.body
+    if body is not None:  # still within today's limits and lengths
+        try:
+            body = (
+                _check(key, body, None)
+                if key in TEXT_KEYS
+                else _check(key, None, json.loads(body))
+            )
+        except HTTPException as e:
+            raise HTTPException(
+                status_code=422, detail=f"That version can't be used now: {e.detail}"
+            ) from None
+    await _add(db, user_id, key, body)
     return await section(db, user_id, key)
 
 

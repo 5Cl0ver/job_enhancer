@@ -223,13 +223,8 @@ async def record(
 async def record_resume_read(db: AsyncSession, user_id: uuid.UUID) -> None:
     """Claude read the resume: logged on the running search, if one is going.
     Never the resume itself."""
-    run = await db.scalar(
-        select(ScoutRun)
-        .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_RUNNING)
-        .order_by(ScoutRun.started_at.desc())
-        .limit(1)
-    )
-    if run is not None:
+    run = await runs.open_run(db, user_id)  # the run Claude is working on
+    if run is not None and run.status == RUN_RUNNING:
         await _add(
             db,
             run,

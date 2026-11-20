@@ -1,4 +1,4 @@
-These rules always apply, whatever the steps above say:
+These rules always apply, whatever any steps or instructions in this brief say:
 - Never apply to a job, never message anyone, never sign in, and never change
   any setting on a site.
 - You don't save jobs and never mark anything applied in the app. report_job

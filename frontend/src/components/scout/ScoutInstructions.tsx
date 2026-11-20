@@ -214,7 +214,10 @@ function Folded({
           )}
         </span>
       </button>
-      {open && <div className="space-y-3 px-3 pb-3">{children}</div>}
+      {/* Kept mounted while folded, so unsaved edits survive folding. */}
+      <div hidden={!open} className="space-y-3 px-3 pb-3">
+        {children}
+      </div>
     </div>
   );
 }
