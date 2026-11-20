@@ -13,9 +13,10 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scout import ScoutFinding, ScoutRun, ScoutTitle
+from app.services import scout_instructions as instr
 from app.services.scout_dedupe import title_key
 
-MAX_TITLES = 8  # searched in one run
+MAX_TITLES = instr.LIMITS["titles"]  # searched in one run (the user can change it)
 MAX_SENT = 20  # Claude may send this many to choose from
 RESTING_RUNS = 3  # runs with no good fit before a title rests…
 REST_DAYS = 14  # …for this long
@@ -87,7 +88,7 @@ async def choose(
             else "resting"
             if k in resting
             else "over_the_limit"
-            if len(kept) >= MAX_TITLES
+            if len(kept) >= instr.limit(run.criteria, "titles")
             else None
         )
         if why:

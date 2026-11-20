@@ -10,8 +10,15 @@ import { RunReview, SavedNote } from "@/components/scout/RunReview";
 import { ScoutCompanies } from "@/components/scout/ScoutCompanies";
 import { useRun, useRuns, type ConfirmResult } from "@/hooks/useScout";
 import { RunTip } from "@/components/scout/RunTip";
+import { RunLog } from "@/components/scout/RunLog";
 import { RunTitles } from "@/components/scout/RunTitles";
-import { companiesLine, lookedAt, runSummary, type Run } from "@/lib/scout";
+import {
+  companiesLine,
+  instructionsLine,
+  lookedAt,
+  runSummary,
+  type Run,
+} from "@/lib/scout";
 import { Skeleton } from "@/components/ui/skeleton";
 
 export function ScoutHistory() {
@@ -120,6 +127,12 @@ function RunRow({
             <p className="text-sm text-muted-foreground">{checked}</p>
           )}
           {full?.broad && <RunTitles run={full} />}
+          {instructionsLine((full ?? run).instructions) && (
+            <p className="text-xs text-muted-foreground">
+              {instructionsLine((full ?? run).instructions)}
+            </p>
+          )}
+          <RunLog runId={run.id} />
           {saved && (
             <SavedNote result={saved} onDismiss={() => setSaved(null)} />
           )}

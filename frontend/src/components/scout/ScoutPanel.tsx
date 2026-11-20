@@ -1,15 +1,17 @@
 /**
  * The Claude Scout tab on Find Jobs. Claude in Chrome does the browsing; this
- * app is its memory. Three views: Start (searches + the run in progress),
- * History (past runs) and Resume types (one per kind of role).
+ * app is its memory. Four views: Start (searches + the run in progress),
+ * History (past runs, each with its log), Resume types (one per kind of role)
+ * and Instructions (everything Claude is told, editable).
  */
 import { useSearchParams } from "react-router-dom";
 import { ResumeTypes } from "@/components/scout/ResumeTypes";
 import { ScoutHistory } from "@/components/scout/ScoutHistory";
+import { ScoutInstructions } from "@/components/scout/ScoutInstructions";
 import { ScoutStart } from "@/components/scout/ScoutStart";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
-const VIEWS = ["start", "history", "types"] as const;
+const VIEWS = ["start", "history", "types", "instructions"] as const;
 type View = (typeof VIEWS)[number];
 
 export function ScoutPanel() {
@@ -42,6 +44,9 @@ export function ScoutPanel() {
           <TabsTrigger value="types" className="flex-1 sm:flex-none">
             Resume types
           </TabsTrigger>
+          <TabsTrigger value="instructions" className="flex-1 sm:flex-none">
+            Instructions
+          </TabsTrigger>
         </TabsList>
         <TabsContent value="start">
           <ScoutStart onSetUpTypes={() => setView("types")} />
@@ -51,6 +56,9 @@ export function ScoutPanel() {
         </TabsContent>
         <TabsContent value="types">
           <ResumeTypes />
+        </TabsContent>
+        <TabsContent value="instructions">
+          <ScoutInstructions />
         </TabsContent>
       </Tabs>
     </div>

@@ -338,6 +338,9 @@ export interface Run {
   looked_at: Record<string, number> | null;
   /** What to change when a finished search came back short. */
   tip?: string | null;
+  /** Which instructions it used: per section, when the user's edit was made
+   * (null = the original). Null for runs from before the Instructions page. */
+  instructions?: Record<string, string | null> | null;
   /** "Anything I'd be good at": the titles this run searched, with good fits. */
   broad?: boolean;
   titles?: { title: string; good_fits: number }[];
@@ -539,4 +542,90 @@ export function reviewTicks(
     if (changed.get(f.id) ?? f.outcome === "picked") ticks.add(f.id);
   }
   return ticks;
+}
+
+// --------------------------------------------------------------------------
+// The Instructions page and the run log
+// --------------------------------------------------------------------------
+export type InstructionKey =
+  | "playbook"
+  | "google_jobs"
+  | "local_companies"
+  | "broad"
+  | "rubric"
+  | "limits";
+
+export interface InstructionSection {
+  key: InstructionKey;
+  title: string;
+  kind: "text" | "rubric" | "limits";
+  original: string | Record<string, number>;
+  current: string | Record<string, number>;
+  edited: boolean;
+  edited_at: string | null;
+  /** The app's own original changed since the user edited this. */
+  original_changed: boolean;
+  ranges?: Record<string, [number, number]> | null;
+  labels?: Record<string, string> | null;
+}
+
+export interface Instructions {
+  sections: InstructionSection[];
+  rubric_text: string;
+  locked_rules: string;
+  connector_note: string;
+  tools: { name: string; description: string }[];
+  fixed_limits: { label: string; value: string }[];
+}
+
+export interface InstructionVersion {
+  id: string;
+  created_at: string;
+  reset: boolean;
+  body: string | Record<string, number>;
+}
+
+export interface RunEvent {
+  id: string;
+  created_at: string;
+  tool: string;
+  summary: string;
+  ok: boolean;
+  request: Record<string, unknown> | null;
+  response: Record<string, unknown> | null;
+}
+
+/** What each section is for, in one line. */
+export const INSTRUCTION_HINT: Record<InstructionKey, string> = {
+  playbook: "What Claude does on every run, step by step.",
+  google_jobs: "Used in place of steps 3 and 4 on a Google Jobs search.",
+  local_companies: "Used in place of steps 3 and 4 on a Local companies search.",
+  broad: "Added on an Anything I'd be good at search.",
+  rubric: "How Claude scores each job. The parts add up to 10.",
+  limits: "How far one run goes.",
+};
+
+const SHORT_DATE: Intl.DateTimeFormatOptions = { month: "short", day: "numeric" };
+
+/** "Main steps: edited Nov 21 · the rest original" (null for older runs). */
+export function instructionsLine(
+  used: Record<string, string | null> | null | undefined,
+): string | null {
+  if (!used) return null;
+  const names: Record<string, string> = {
+    playbook: "Main steps",
+    google_jobs: "Google Jobs steps",
+    local_companies: "Local companies steps",
+    broad: "Anything I'd be good at steps",
+    rubric: "Scoring",
+    limits: "Limits",
+  };
+  const edited = Object.entries(used)
+    .filter(([, when]) => when)
+    .map(
+      ([key, when]) =>
+        `${names[key] ?? key}: edited ${new Date(when as string).toLocaleDateString(undefined, SHORT_DATE)}`,
+    );
+  if (edited.length === 0) return "Instructions: the originals";
+  return `Instructions: ${edited.join(" · ")} · the rest original`;
 }

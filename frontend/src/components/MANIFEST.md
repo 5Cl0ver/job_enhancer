@@ -33,6 +33,10 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `RunTip.tsx` | Under a search that came back short: the app's one-line tip on what to change (wait a day, a wider "Posted", a bigger radius, more titles on the resume type) |
 | `BroadOverrides.tsx` | In an "Anything I'd be good at" search's settings: Always search / Never search / Skip-these-words lists, and the folded "Titles tried" list |
 | `RunTitles.tsx` | In History, a broad run's "Claude searched for:" titles with good fits; Always, Never and Add to resume type on each |
+| `ScoutInstructions.tsx` | The Instructions tab: everything Claude is told, the editable parts (Original / Edited) then the locked ones (rules, fixed limits, tool descriptions), and Preview |
+| `InstructionEditor.tsx` | One editable section: text, scoring (live total of 10) or limits (with ranges); Save, Reset to original, History with Restore |
+| `ScoutPreview.tsx` | Pick a search: the brief Claude would get if it started now, without starting it |
+| `RunLog.tsx` | In History: a run's log in plain words, each call's detail (what Claude sent, what the app answered) behind a tap, refusals marked |
 | `ScoutCompanies.tsx` | Above History: the local companies checked, folded away; each links to its careers page, with "Check next run" and "Never check" |
 | `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job and its collection), passed on or below bar (Save to My Jobs while the page copy exists), already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
 | `errorText.ts` | The server's `detail` message for a failed request |

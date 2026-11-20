@@ -35,6 +35,7 @@ from app.models.scout import (
     ScoutRun,
 )
 from app.schemas.scout import CompanyOut, CompanyUpdate
+from app.services import scout_instructions as instr
 from app.services.scout_dedupe import company_key, is_job_site
 
 RECHECK_DAYS = 7
@@ -138,7 +139,10 @@ def _reported(stats: dict) -> set[str]:
 def counts(run: ScoutRun) -> dict:
     """How many companies this run has checked, against its limit."""
     stats = run.stats or {}
-    return {"checked": stats.get("companies", 0), "limit": MAX_COMPANIES_PER_RUN}
+    return {
+        "checked": stats.get("companies", 0),
+        "limit": instr.limit(run.criteria, "companies"),
+    }
 
 
 def _hand_out(
@@ -275,7 +279,7 @@ async def check(
             skip("skipped_by_you")
         elif company is not None and not _due(company, now):
             skip("checked_recently")
-        elif len(handed) >= MAX_COMPANIES_PER_RUN:
+        elif len(handed) >= instr.limit(run.criteria, "companies"):
             skip("over_the_limit")
         elif company is not None and (
             stats.get("companies_rechecked", 0) >= MAX_RECHECKS_PER_RUN

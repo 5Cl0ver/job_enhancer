@@ -16,6 +16,8 @@ Mounting + the OAuth flow are documented in ``docs/mcp-connector.md``.
 
 from __future__ import annotations
 
+import inspect
+import logging
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -37,8 +39,11 @@ from app.models.user import User
 from app.schemas.saved_job import ManualJobCreate
 from app.services import collections as col_svc
 from app.services import saved_jobs as sj_svc
+from app.services import scout_log
 from app.services import scout_runs as scout_svc
 from app.services import tracker as tracker_svc
+
+log = logging.getLogger(__name__)
 
 
 # --------------------------------------------------------------------------- #
@@ -372,7 +377,15 @@ async def get_master_profile() -> str:
     this before writing any résumé, cover letter, or outreach email so it's based
     only on the user's real background."""
     async with _session_user() as (db, user):
-        return await _master_profile_text(db, user)
+        user_id = user.id
+        text = await _master_profile_text(db, user)
+        try:
+            async with db.begin_nested():
+                await scout_log.record_resume_read(db, user_id)
+            await db.commit()
+        except Exception:  # noqa: BLE001 — reading the profile matters more
+            log.warning("Scout run log: couldn't note the resume read", exc_info=True)
+        return text
 
 
 @mcp.tool
@@ -476,6 +489,32 @@ async def flag_for_research(job_id: str, flagged: bool = True) -> dict:
 # --------------------------------------------------------------------------- #
 # Claude Scout: the app is the memory; every reply stays small (research R8)
 # --------------------------------------------------------------------------- #
+async def _log(db, user_id, run_id, tool, sent, out=None, error=None) -> None:
+    """Write one run-log entry; never lets logging break the tool itself."""
+    try:
+        async with db.begin_nested():
+            await scout_log.record(db, user_id, run_id, tool, sent, out, error)
+    except Exception:  # noqa: BLE001 — the tool's answer matters more
+        log.warning("Scout run log: couldn't record %s", tool, exc_info=True)
+
+
+async def _scout(tool: str, run_id, sent: dict, call):
+    """Run one Scout tool for the signed-in user and log it on its run (spec
+    010): what Claude sent and what the app answered, or why it refused."""
+    async with _session_user() as (db, user):
+        user_id = user.id  # read now: a rollback expires the user
+        try:
+            out = await call(db, user)
+        except ValueError as e:
+            await db.rollback()
+            await _log(db, user_id, run_id, tool, sent, error=str(e))
+            await db.commit()
+            raise
+        await _log(db, user_id, run_id or (out or {}).get("run_id"), tool, sent, out)
+        await db.commit()
+        return out
+
+
 @mcp.tool
 async def get_scout_brief(run_id: str | None = None) -> dict:
     """Start (or carry on with) the user's Job Scout run. Call this FIRST when
@@ -486,10 +525,12 @@ async def get_scout_brief(run_id: str | None = None) -> dict:
     against the resume. An "Anything I'd be good at" search (broad) has no start
     URL yet: choose titles and call set_search_titles. A fresh chat on a
     half-done run carries on where it was."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.brief(db, user.id, run_id)
-        await db.commit()
-        return out
+    return await _scout(
+        "get_scout_brief",
+        run_id,
+        {"run_id": run_id},
+        lambda db, user: scout_svc.brief(db, user.id, run_id),
+    )
 
 
 @mcp.tool
@@ -501,10 +542,12 @@ async def check_jobs(run_id: str, rows: list[dict]) -> dict:
     the positions (0-based) worth opening; the rest are already in the user's
     tracker, were seen by an earlier run, hit an excluded word or didn't fit.
     Also returns next_page_url: open it for the next page of results."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.check_jobs(db, user.id, run_id, rows)
-        await db.commit()
-        return out
+    return await _scout(
+        "check_jobs",
+        run_id,
+        {"rows": rows},
+        lambda db, user: scout_svc.check_jobs(db, user.id, run_id, rows),
+    )
 
 
 @mcp.tool
@@ -514,10 +557,12 @@ async def set_search_titles(run_id: str, titles: list[str]) -> dict:
     Always titles first, leaves out Never titles and titles resting after
     finding nothing, and answers with the start_urls to open (filters already
     set) and any titles it left out, with why."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.set_search_titles(db, user.id, run_id, titles)
-        await db.commit()
-        return out
+    return await _scout(
+        "set_search_titles",
+        run_id,
+        {"titles": titles},
+        lambda db, user: scout_svc.set_search_titles(db, user.id, run_id, titles),
+    )
 
 
 @mcp.tool
@@ -537,12 +582,21 @@ async def report_job(
     waiting_for_copy; no_copy; rejected_link), the progress, and what to do
     next. On an "Anything I'd be good at" search, also pass resume_type: the
     name of the user's resume type this job is closest to ("" for none)."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.report_job(
+    sent = {
+        "url": url,
+        "fit_score": fit_score,
+        "why_fit": why_fit,
+        "gaps": gaps,
+        "resume_type": resume_type,
+    }
+    return await _scout(
+        "report_job",
+        run_id,
+        sent,
+        lambda db, user: scout_svc.report_job(
             db, user.id, run_id, url, fit_score, why_fit, gaps, resume_type
-        )
-        await db.commit()
-        return out
+        ),
+    )
 
 
 @mcp.tool
@@ -553,10 +607,12 @@ async def check_companies(run_id: str, companies: list[dict]) -> dict:
     visit now, with a known careers_url when there is one. The rest were
     checked in the last week, are job boards or directories, or are over this
     run's company limit."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.check_companies(db, user.id, run_id, companies)
-        await db.commit()
-        return out
+    return await _scout(
+        "check_companies",
+        run_id,
+        {"companies": companies},
+        lambda db, user: scout_svc.check_companies(db, user.id, run_id, companies),
+    )
 
 
 @mcp.tool
@@ -571,12 +627,20 @@ async def company_checked(
     what it had: result "openings", "none" or "no_careers", with the careers
     page's link when you found one. Send the same website you sent to
     check_companies. Report the jobs themselves with report_job as usual."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.company_checked(
+    sent = {
+        "website": website,
+        "result": result,
+        "careers_url": careers_url,
+        "name": name,
+    }
+    return await _scout(
+        "company_checked",
+        run_id,
+        sent,
+        lambda db, user: scout_svc.company_checked(
             db, user.id, run_id, website, result, careers_url, name
-        )
-        await db.commit()
-        return out
+        ),
+    )
 
 
 @mcp.tool
@@ -584,10 +648,12 @@ async def finish_scout_run(run_id: str, note: str = "") -> dict:
     """End the run: when report_job says done, when results run out, or on a
     CAPTCHA, login wall or error. ``note`` is one line for the user (e.g. "only
     3 new jobs this week")."""
-    async with _session_user() as (db, user):
-        out = await scout_svc.finish_run(db, user.id, run_id, note)
-        await db.commit()
-        return out
+    return await _scout(
+        "finish_scout_run",
+        run_id,
+        {"note": note},
+        lambda db, user: scout_svc.finish_run(db, user.id, run_id, note),
+    )
 
 
 def build_mcp_app():
@@ -600,3 +666,23 @@ def build_mcp_app():
     if not settings.mcp_public_url:
         return None
     return mcp.http_app(path="/mcp")
+
+
+SCOUT_TOOLS = (
+    get_scout_brief,
+    set_search_titles,
+    check_jobs,
+    report_job,
+    check_companies,
+    company_checked,
+    finish_scout_run,
+    get_master_profile,
+)
+
+
+def scout_tool_descriptions() -> list[dict]:
+    """Each Scout tool's name and description, exactly as Claude sees them."""
+    return [
+        {"name": t.__name__, "description": inspect.getdoc(t) or ""}
+        for t in SCOUT_TOOLS
+    ]
