@@ -5,6 +5,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
+  type Company,
   isOpen,
   type Mission,
   type MissionInput,
@@ -244,7 +245,11 @@ export function useConfirmRun() {
     mutationFn: ({
       runId,
       ...body
-    }: { runId: string; finding_ids: string[]; shown_ids?: string[] } & WhereBody) =>
+    }: {
+      runId: string;
+      finding_ids: string[];
+      shown_ids?: string[];
+    } & WhereBody) =>
       api.post<ConfirmResult>(`/v1/scout/runs/${runId}/confirm`, body),
     onSuccess: () => afterScoutSave(qc),
   });
@@ -262,5 +267,29 @@ export function useSaveFinding() {
         folder: { id: string | null; name: string };
       }>(`/v1/scout/findings/${findingId}/save`, body),
     onSuccess: () => afterScoutSave(qc),
+  });
+}
+
+/** The local companies Scout has checked, latest first. */
+export function useCompanies() {
+  return useQuery<Company[]>({
+    queryKey: ["scout-companies"],
+    queryFn: () => api.get<Company[]>("/v1/scout/companies"),
+  });
+}
+
+/** Never check a company again (or start again), or check it next run. */
+export function useUpdateCompany() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({
+      id,
+      ...body
+    }: {
+      id: string;
+      never_check?: boolean;
+      check_next?: boolean;
+    }) => api.patch<Company>(`/v1/scout/companies/${id}`, body),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ["scout-companies"] }),
   });
 }

@@ -127,7 +127,9 @@ class TestRuns:
         assert [x["id"] for x in listed] == [run["id"]]
         # Queued counts as open: the user presses Start, then pastes the line.
         assert (await client.get("/v1/scout/runs/active")).json() == {
-            "run_id": run["id"]
+            "run_id": run["id"],
+            # A LinkedIn search: pages beyond the boards are never copied.
+            "any_site": False,
         }
 
         stopped = (await client.post(f"/v1/scout/runs/{run['id']}/stop")).json()

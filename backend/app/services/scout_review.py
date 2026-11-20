@@ -48,7 +48,11 @@ SOURCE_LABEL = {
     "linkedin": "LinkedIn",
     "indeed": "Indeed",
     "ziprecruiter": "ZipRecruiter",
+    "google_jobs": "Google Jobs",
+    "local_companies": "Local companies",
 }
+# "Found by Claude Scout on …" for a search that isn't one site.
+FOUND_ON = {"local_companies": "a local company's own site"}
 # A finding the user can still put in My Jobs (given its page copy exists).
 SAVEABLE = (PICKED, SKIPPED, BELOW_BAR)
 NO_COPY_REASON = "The copy of this job's page is gone. Open the posting and save it."
@@ -203,7 +207,8 @@ async def save_finding_job(
             job_type=capture.job_type,
             collection_id=folder_id,
             notes=(
-                f"Found by Claude Scout on {SOURCE_LABEL.get(source, source)}. "
+                f"Found by Claude Scout on "
+                f"{FOUND_ON.get(source) or SOURCE_LABEL.get(source, source)}. "
                 f"Claude's fit score: {finding.fit_score}/10."
             ),
         ),

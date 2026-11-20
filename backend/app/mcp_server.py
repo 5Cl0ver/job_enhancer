@@ -521,6 +521,40 @@ async def report_job(
 
 
 @mcp.tool
+async def check_companies(run_id: str, companies: list[dict]) -> dict:
+    """Local companies search only. Which of the businesses a Google search
+    listed should you visit? Send every company on the page at once (up to 20),
+    each as {"name", "website"}. Returns "visit": the positions (0-based) to
+    visit now, with a known careers_url when there is one. The rest were
+    checked in the last week, are job boards or directories, or are over this
+    run's company limit."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.check_companies(db, user.id, run_id, companies)
+        await db.commit()
+        return out
+
+
+@mcp.tool
+async def company_checked(
+    run_id: str,
+    website: str,
+    result: str,
+    careers_url: str | None = None,
+    name: str = "",
+) -> dict:
+    """Local companies search only. After looking at a company's site, say
+    what it had: result "openings", "none" or "no_careers", with the careers
+    page's link when you found one. Send the same website you sent to
+    check_companies. Report the jobs themselves with report_job as usual."""
+    async with _session_user() as (db, user):
+        out = await scout_svc.company_checked(
+            db, user.id, run_id, website, result, careers_url, name
+        )
+        await db.commit()
+        return out
+
+
+@mcp.tool
 async def finish_scout_run(run_id: str, note: str = "") -> dict:
     """End the run: when report_job says done, when results run out, or on a
     CAPTCHA, login wall or error. ``note`` is one line for the user (e.g. "only

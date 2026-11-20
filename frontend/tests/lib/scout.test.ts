@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
+  type Company,
+  companiesLine,
+  companyStatus,
+  isBoard,
+  needsPlace,
   MAX_TRACKS,
   STARTER_TRACKS,
   fitBand,
@@ -23,7 +28,10 @@ describe("splitList / splitLines", () => {
   });
 
   it("keeps commas inside a title", () => {
-    expect(splitLines("Engineer, Senior\n  Analyst \n")).toEqual(["Engineer, Senior", "Analyst"]);
+    expect(splitLines("Engineer, Senior\n  Analyst \n")).toEqual([
+      "Engineer, Senior",
+      "Analyst",
+    ]);
   });
 });
 
@@ -49,19 +57,20 @@ describe("starter resume types", () => {
     expect(new Set(STARTER_TRACKS.map((t) => t.name.toLowerCase())).size).toBe(
       STARTER_TRACKS.length,
     );
-    for (const t of STARTER_TRACKS) expect(t.target_titles.length).toBeGreaterThan(0);
+    for (const t of STARTER_TRACKS)
+      expect(t.target_titles.length).toBeGreaterThan(0);
   });
 });
 
 describe("scout runs", () => {
   it("bands fit scores", () => {
-    expect([fitBand(9), fitBand(8), fitBand(7), fitBand(6), fitBand(5)]).toEqual([
-      "Strong",
-      "Strong",
-      "Good",
-      "Good",
-      "Weak",
-    ]);
+    expect([
+      fitBand(9),
+      fitBand(8),
+      fitBand(7),
+      fitBand(6),
+      fitBand(5),
+    ]).toEqual(["Strong", "Strong", "Good", "Good", "Weak"]);
   });
 
   it("summarises a run in one line", () => {
@@ -79,9 +88,13 @@ describe("scout runs", () => {
     );
     // Good fits count as found whether or not they've been confirmed yet;
     // one the user passed on doesn't (Claude keeps looking).
-    expect(runSummary({ status: "running", counts: { ...counts, skipped: 3 }, target: 5 })).toBe(
-      "Searching · 2 of 5 found · 2 passed over",
-    );
+    expect(
+      runSummary({
+        status: "running",
+        counts: { ...counts, skipped: 3 },
+        target: 5,
+      }),
+    ).toBe("Searching · 2 of 5 found · 2 passed over");
     expect(runSummary({ status: "done", counts, target: 5 })).toBe(
       "Done · 1 waiting for you · 1 saved · 2 passed over",
     );
@@ -111,19 +124,27 @@ describe("scout runs", () => {
         "4 skipped by title · 2 already in My Jobs · 3 below your bar · " +
         "1 couldn't be copied · 3 not opened.",
     );
-    const numbers = [...line!.split("postings:")[1].matchAll(/(\d+) /g)].map((m) => Number(m[1]));
+    const numbers = [...line!.split("postings:")[1].matchAll(/(\d+) /g)].map(
+      (m) => Number(m[1]),
+    );
     expect(numbers.reduce((a, b) => a + b, 0) + 2).toBe(24);
     // Nothing to explain while it runs, or when it found what was asked.
-    expect(lookedAt({ status: "running", counts, target: 5, looked_at })).toBeNull();
-    expect(lookedAt({ status: "done", counts, target: 2, looked_at })).toBeNull();
+    expect(
+      lookedAt({ status: "running", counts, target: 5, looked_at }),
+    ).toBeNull();
+    expect(
+      lookedAt({ status: "done", counts, target: 2, looked_at }),
+    ).toBeNull();
     // A job reported without the results-page check: the numbers still add up.
     expect(
       lookedAt({ status: "done", counts, target: 5, looked_at: { rows: 3 } }),
-    ).toBe("Asked for 5, found 2. Looked at 6 postings: 3 below your bar · 1 couldn't be copied.");
-    // A run from before the counts were kept still says what it can.
-    expect(lookedAt({ status: "done", counts, target: 5, looked_at: null })).toBe(
-      "Asked for 5, found 2. 3 below your bar · 1 couldn't be copied.",
+    ).toBe(
+      "Asked for 5, found 2. Looked at 6 postings: 3 below your bar · 1 couldn't be copied.",
     );
+    // A run from before the counts were kept still says what it can.
+    expect(
+      lookedAt({ status: "done", counts, target: 5, looked_at: null }),
+    ).toBe("Asked for 5, found 2. 3 below your bar · 1 couldn't be copied.");
   });
 
   it("ticks good fits by default and follows the user's changes", () => {
@@ -153,11 +174,55 @@ describe("scout runs", () => {
 describe("whereLabel", () => {
   it("says how far around a place the search looks", async () => {
     const { whereLabel } = await import("@/lib/scout");
-    const base = { location: "Springfield, IL", radius_miles: 25, remote: "any" } as const;
+    const base = {
+      location: "Springfield, IL",
+      radius_miles: 25,
+      remote: "any",
+    } as const;
     expect(whereLabel(base)).toBe("within 25 mi of Springfield, IL");
     expect(whereLabel({ ...base, radius_miles: null })).toBe("Springfield, IL");
     // A radius means nothing for remote-only jobs or with no place.
-    expect(whereLabel({ ...base, remote: "remote_only" })).toBe("Springfield, IL");
+    expect(whereLabel({ ...base, remote: "remote_only" })).toBe(
+      "Springfield, IL",
+    );
     expect(whereLabel({ ...base, location: null })).toBeNull();
+  });
+});
+
+describe("local companies", () => {
+  it("only Local companies needs a place, and only the three boards decide distance", () => {
+    expect(needsPlace("local_companies")).toBe(true);
+    expect(needsPlace("google_jobs")).toBe(false);
+    expect(isBoard("linkedin")).toBe(true);
+    expect(isBoard("google_jobs")).toBe(false);
+  });
+
+  it("sums up a run's companies, or says nothing for other searches", () => {
+    expect(companiesLine(null)).toBeNull();
+    expect(companiesLine({ rows: 20 })).toBeNull();
+    expect(companiesLine({ companies: 1, companies_new: 1 })).toBe(
+      "Checked 1 local company: 1 new · 0 had openings.",
+    );
+  });
+
+  it("says what a company had and when", () => {
+    const c: Company = {
+      id: "c1",
+      name: "Brambleworks",
+      website: "https://brambleworks.example",
+      careers_url: null,
+      last_checked_at: "2026-11-18T12:00:00Z",
+      times_checked: 1,
+      last_result: "openings",
+      never_check: false,
+      due: false,
+    };
+    expect(companyStatus(c)).toMatch(/^Had openings · checked Nov 1[78]$/);
+    expect(companyStatus({ ...c, last_checked_at: null })).toBe(
+      "Had openings · checked next run",
+    );
+    expect(
+      companyStatus({ ...c, last_result: "no_careers", never_check: true }),
+    ).toBe("No careers page · you skipped it");
   });
 });

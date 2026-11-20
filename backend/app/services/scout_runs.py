@@ -9,6 +9,9 @@ The app is the memory and the planner; each chat with Claude stays small
 - ``report_job`` takes a link plus Claude's opinion. The job saved is the exact
   page copy the Job Catcher extension captured (``record_capture``); nothing in
   it comes from Claude (research R9).
+- A "Local companies" search has no job board: ``check_companies`` says which
+  of the businesses a Google search listed to visit (``scout_companies``), and
+  ``company_checked`` records what each one's careers page had.
 
 Functions Claude reaches through the connector raise ``ValueError`` with a
 message Claude can act on; the page's REST functions raise ``HTTPException``.
@@ -19,7 +22,7 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy import func, or_, select
@@ -30,8 +33,10 @@ from app.models.job_listing import JobListing
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
 from app.models.scout import (
+    ANY_SITE_SOURCES,
     BELOW_BAR,
     DUPLICATE,
+    LOCAL,
     NO_COPY,
     PICKED,
     RUN_DONE,
@@ -55,11 +60,15 @@ from app.schemas.scout import (
     RunCounts,
     RunFolder,
     RunOut,
+    place_problem,
 )
 from app.services import collections as col_svc
+from app.services import scout_companies as companies
 from app.services import scout_review as review
 from app.services.scout_dedupe import (
+    BOARD_HOSTS,
     company_key,
+    is_job_site,
     posting_problem,
     title_key,
     url_key,
@@ -67,10 +76,16 @@ from app.services.scout_dedupe import (
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import get_track
 
-PLAYBOOK_VERSION = "2026.11.3"
+PLAYBOOK_VERSION = "2026.11.4"
 PLAYBOOK = (Path(__file__).parent.parent / "scout" / "playbook.md").read_text(
     encoding="utf-8"
 )
+# Extra steps for searches that aren't one job board's results pages.
+_SCOUT_DIR = Path(__file__).parent.parent / "scout"
+SOURCE_STEPS = {
+    source: (_SCOUT_DIR / f"{source}.md").read_text(encoding="utf-8")
+    for source in ("google_jobs", LOCAL)
+}
 RUBRIC = {
     "skills": 4,
     "experience": 2,
@@ -167,6 +182,9 @@ async def update_mission(
         ):
             continue  # required fields: null means "leave as is"
         setattr(mission, key, value)
+    problem = place_problem(mission.source, mission.location, mission.remote)
+    if problem:
+        raise HTTPException(status_code=422, detail=problem)
     renamed = "name" in updates and updates["name"]
     if not renamed and (auto_named or "name" in updates):
         track = await get_track(db, mission.track_id, user_id)
@@ -254,6 +272,18 @@ def start_urls(c: dict) -> list[str]:
         return [f"https://www.linkedin.com/jobs/search/?{urlencode(q)}"]
     query = " OR ".join(f'"{t}"' for t in titles)
     where = "Remote" if remote == "remote_only" else location
+    if c["source"] == LOCAL:
+        return company_searches(c)
+    if c["source"] == "google_jobs":
+        if remote == "remote_only":
+            q = f"{query} remote jobs"
+        elif location:
+            near = f"within {radius} miles of" if radius else "near"
+            q = f"{query} jobs {near} {location}"
+        else:
+            q = f"{query} jobs"
+        # udm=8: Google's own Jobs results.
+        return [f"https://www.google.com/search?{urlencode({'q': q, 'udm': '8'})}"]
     if c["source"] == "indeed":
         q = {"q": query, "l": where, "fromage": str(min(days, 14)), "sort": "date"}
         if radius:
@@ -264,6 +294,54 @@ def start_urls(c: dict) -> list[str]:
     if radius:
         q["radius"] = str(radius)
     return [f"https://www.ziprecruiter.com/jobs-search?{urlencode(q)}"]
+
+
+# Kinds of local employers a "Local companies" search looks through, a couple
+# per run, so runs reach different businesses.
+EMPLOYER_KINDS = (
+    "largest employers",
+    "hospitals and clinics",
+    "manufacturing companies",
+    "banks and credit unions",
+    "school districts and colleges",
+    "law firms",
+    "engineering firms",
+    "software and IT companies",
+    "logistics and distribution companies",
+    "insurance companies",
+    "city and county government offices",
+    "nonprofit organizations",
+    "accounting firms",
+    "construction companies",
+    "company headquarters",
+)
+# Keeps job boards out of the plain results.
+_NOT_BOARDS = "-indeed -linkedin -glassdoor -ziprecruiter"
+
+
+def company_searches(c: dict) -> list[str]:
+    """Google searches for businesses near the user: one from the resume type
+    (its name or one of its titles, in turn) and two kinds of employer. Each run
+    (``round``) moves on to the next ones."""
+    track = c["track"]
+    titles = track.get("titles") or []
+    location = c.get("location") or ""
+    radius = c.get("radius_miles")
+    near = f"within {radius} miles of {location}" if radius else f"near {location}"
+    n = int(c.get("round") or 0)
+    roles = [f"{track['name']} companies"] + [
+        f"companies that hire {t}" for t in titles
+    ]
+    kinds = len(EMPLOYER_KINDS)
+    queries = [
+        roles[n % len(roles)],
+        EMPLOYER_KINDS[(2 * n) % kinds],
+        EMPLOYER_KINDS[(2 * n + 1) % kinds],
+    ]
+    return [
+        f"https://www.google.com/search?{urlencode({'q': f'{q} {near} {_NOT_BOARDS}'})}"
+        for q in queries
+    ]
 
 
 async def queue_run(
@@ -285,6 +363,12 @@ async def queue_run(
         # Where good fits go, and whether the user confirms them first.
         "collection_id": str(mission.collection_id) if mission.collection_id else None,
         "auto_save": bool(mission.auto_save),
+        # How many runs this search has had: a Local companies search moves on
+        # to different Google searches each time.
+        "round": await db.scalar(
+            select(func.count()).where(ScoutRun.mission_id == mission.id)
+        )
+        or 0,
         "track": {
             "name": track.name,
             "titles": list(track.target_titles or []),
@@ -471,13 +555,40 @@ async def active_run_id(db: AsyncSession, user_id: uuid.UUID) -> uuid.UUID | Non
     return run.id if run else None
 
 
+open_run = _open_run
+
+
+async def any_site_run(db: AsyncSession, user_id: uuid.UUID) -> ScoutRun | None:
+    """The running search whose postings live on any site (Google Jobs, Local
+    companies), if any: only then are pages beyond the three job boards
+    copied. Never a queued one; an older run left running doesn't hide it."""
+    running = (
+        await db.scalars(
+            select(ScoutRun)
+            .where(ScoutRun.user_id == user_id, ScoutRun.status == RUN_RUNNING)
+            .order_by(ScoutRun.started_at.desc())
+        )
+    ).all()
+    return next(
+        (r for r in running if (r.criteria or {}).get("source") in ANY_SITE_SOURCES),
+        None,
+    )
+
+
 async def record_capture(db: AsyncSession, user_id: uuid.UUID, data: CaptureIn) -> bool:
     """Keep the extension's exact copy of a posting for the open run. Returns
     False (nothing stored) when no run is open or the link isn't a posting."""
-    run_id = await active_run_id(db, user_id)
+    run = await _open_run(db, user_id)
     key = url_key(data.url)
-    if run_id is None or key is None or posting_problem(data.url):
+    if run is None or key is None or posting_problem(data.url):
         return False
+    host = (urlsplit(data.url).hostname or "").lower()
+    on_board = any(host == b or host.endswith(f".{b}") for b in BOARD_HOSTS)
+    if not on_board:
+        run = await any_site_run(db, user_id)
+        if run is None:
+            return False  # some other site, and no search that looks there
+    run_id = run.id
     values = data.model_dump()
     capture = await db.scalar(
         select(ScoutCapture).where(
@@ -570,11 +681,26 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
     run = await _run_for_agent(db, user_id, run_id, start=True)
     c = run.criteria
     progress = await _progress(db, run)
+    local = c["source"] == LOCAL
+    extra: dict = {}
+    if c["source"] in SOURCE_STEPS:
+        extra["source_steps"] = SOURCE_STEPS[c["source"]]
+        extra["posted_within_days"] = c["posted_within_days"]
+    first = "Open the start URL and send the first page of rows to check_jobs."
+    if local:
+        extra["recheck"] = await companies.rechecks(db, user_id, run)
+        extra["companies"] = companies.counts(run)
+        first = (
+            "Visit the recheck companies first. Then open"
+            if extra["recheck"]
+            else "Open"
+        ) + " the first start URL and send the companies it lists to check_companies."
     return {
         "run_id": str(run.id),
         "playbook": PLAYBOOK,
         "playbook_version": run.playbook_version,
         "source": c["source"],
+        **extra,
         "start_urls": start_urls(c),
         "track": c["track"],
         "min_pay": c.get("min_pay"),
@@ -583,11 +709,7 @@ async def brief(db: AsyncSession, user_id: uuid.UUID, run_id: str | None) -> dic
         "extra_instructions": c.get("extra_instructions"),
         "saving": _saving_note(c),
         "progress": progress,
-        "next": (
-            "Target reached: call finish_scout_run."
-            if progress["done"]
-            else "Open the start URL and send the first page of rows to check_jobs."
-        ),
+        "next": "Target reached: call finish_scout_run." if progress["done"] else first,
     }
 
 
@@ -749,6 +871,11 @@ async def report_job(
     if not 0 <= int(fit_score) <= 10:
         raise ValueError("fit_score must be 0-10.")
     problem = posting_problem(url)
+    if not problem and run.criteria.get("source") == LOCAL and is_job_site(url):
+        problem = (
+            "This search only uses the companies' own sites. Skip jobs that "
+            "are only on a job board."
+        )
     if problem:
         return {
             "outcome": "rejected_link",
@@ -887,6 +1014,9 @@ async def finish_run(
         tell = f"{saved} job{'s were' if saved != 1 else ' was'} saved to My Jobs."
     else:
         tell = "nothing new fit this time."
+    looked = companies.summary(run.stats)
+    if looked:
+        tell = f"{looked} {tell[0].upper()}{tell[1:]}"
     return {
         "status": RUN_DONE,
         "counts": RunCounts(**counts).model_dump(),
@@ -898,3 +1028,31 @@ async def finish_run(
             else ""
         ),
     }
+
+
+async def check_companies(
+    db: AsyncSession, user_id: uuid.UUID, run_id: str | None, rows: list[dict]
+) -> dict:
+    run = await _run_for_agent(db, user_id, run_id)
+    out = await companies.check(db, user_id, run, rows)
+    progress = await _progress(db, run)
+    if progress["done"]:
+        out["next"] = "Target reached: call finish_scout_run."
+    return {**out, "progress": progress}
+
+
+async def company_checked(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run_id: str | None,
+    website: str,
+    result: str,
+    careers_url: str | None = None,
+    name: str = "",
+) -> dict:
+    run = await _run_for_agent(db, user_id, run_id)
+    out = await companies.checked(db, user_id, run, website, result, careers_url, name)
+    progress = await _progress(db, run)
+    if progress["done"]:
+        out["next"] = "Target reached: call finish_scout_run."
+    return {**out, "progress": progress}
