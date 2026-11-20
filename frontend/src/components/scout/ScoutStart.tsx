@@ -25,6 +25,7 @@ import {
 } from "@/components/scout/FolderSelect";
 import { RunFindings } from "@/components/scout/RunFindings";
 import { RunReview, SavedNote } from "@/components/scout/RunReview";
+import { RunTip } from "@/components/scout/RunTip";
 import { useCollections, useCreateCollection } from "@/hooks/useSavedJobs";
 import {
   type ConfirmResult,
@@ -271,6 +272,7 @@ function FinishedRun({
         <p className="font-medium">{run.name}</p>
         <p className="text-sm text-muted-foreground">{runSummary(run)}</p>
         {why && <p className="mt-1 text-sm text-muted-foreground">{why}</p>}
+        {why && run.tip && <RunTip tip={run.tip} className="mt-1" />}
         {checked && (
           <p className="mt-1 text-sm text-muted-foreground">{checked}</p>
         )}

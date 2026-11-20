@@ -9,6 +9,7 @@ import { RunFindings } from "@/components/scout/RunFindings";
 import { RunReview, SavedNote } from "@/components/scout/RunReview";
 import { ScoutCompanies } from "@/components/scout/ScoutCompanies";
 import { useRun, useRuns, type ConfirmResult } from "@/hooks/useScout";
+import { RunTip } from "@/components/scout/RunTip";
 import { companiesLine, lookedAt, runSummary, type Run } from "@/lib/scout";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -113,6 +114,7 @@ function RunRow({
           )}
           {/* Why it came back short, in numbers that add up. */}
           {why && <p className="text-sm text-muted-foreground">{why}</p>}
+          {why && (full ?? run).tip && <RunTip tip={(full ?? run).tip!} />}
           {checked && (
             <p className="text-sm text-muted-foreground">{checked}</p>
           )}
