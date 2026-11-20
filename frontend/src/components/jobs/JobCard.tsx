@@ -1,12 +1,14 @@
 import { Link } from "react-router-dom";
-import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2, Check, Undo2 } from "lucide-react";
+import { Building2, MapPin, DollarSign, Clock, Wifi, Trash2, Check, Undo2, Mail } from "lucide-react";
 import { ApplyButton } from "@/components/jobs/ApplyButton";
 import { OriginLabel } from "@/components/jobs/OriginLabel";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardFooter, CardHeader } from "@/components/ui/card";
-import { formatDistanceToNow } from "date-fns";
+import { format, formatDistanceToNow } from "date-fns";
+import { emailLabel } from "@/lib/emailUpdates";
 import { formatSalary } from "@/lib/utils";
+import type { JobEmailLatest } from "@/hooks/useEmailAccount";
 import { useToggleApplied } from "@/hooks/useSavedJobs";
 import { usePipelineStages } from "@/hooks/useTracker";
 import type { JobListing, SavedJob } from "@/types/api";
@@ -22,6 +24,12 @@ interface JobCardProps {
   /** The saved job: the card then says where it came from (Claude Scout, an
    * email…) in place of the listing's feed name. */
   savedJob?: SavedJob;
+  /** Opens the job's pop-up (the list in My Jobs). Without it the title links
+   * to the job's page. */
+  onOpen?: () => void;
+  /** The email behind this job's stage, and what opening it does. */
+  email?: JobEmailLatest;
+  onOpenEmail?: () => void;
 }
 
 export function JobCard({
@@ -31,6 +39,9 @@ export function JobCard({
   applied = false,
   savedJobId,
   savedJob,
+  onOpen,
+  email,
+  onOpenEmail,
 }: JobCardProps) {
   const toggleApplied = useToggleApplied();
   const { data: stages } = usePipelineStages();
@@ -47,12 +58,22 @@ export function JobCard({
       <CardHeader className="pb-2">
         <div className="flex items-start justify-between gap-2">
           <div className="min-w-0 flex-1">
-            <Link
-              to={`/jobs/${job.id}`}
-              className="line-clamp-2 break-words font-semibold leading-tight hover:underline"
-            >
-              {job.title}
-            </Link>
+            {onOpen ? (
+              <button
+                type="button"
+                onClick={onOpen}
+                className="line-clamp-2 break-words text-left font-semibold leading-tight hover:underline"
+              >
+                {job.title}
+              </button>
+            ) : (
+              <Link
+                to={`/jobs/${job.id}`}
+                className="line-clamp-2 break-words font-semibold leading-tight hover:underline"
+              >
+                {job.title}
+              </Link>
+            )}
             <div className="mt-1 flex items-center gap-1 text-sm text-muted-foreground">
               <Building2 className="h-3.5 w-3.5 shrink-0" />
               <span className="truncate">{job.company}</span>
@@ -104,6 +125,21 @@ export function JobCard({
             </Badge>
           )}
         </div>
+
+        {/* Why the job is where it is: the email that put it there. */}
+        {email && (
+          <button
+            type="button"
+            onClick={onOpenEmail}
+            className="mt-2 flex w-full items-center gap-1.5 rounded-md bg-primary/10 px-2 py-1 text-left text-xs font-medium text-primary hover:bg-primary/15 pointer-coarse:py-2"
+          >
+            <Mail className="h-3.5 w-3.5 shrink-0" aria-hidden />
+            <span className="truncate">
+              {emailLabel(email.event_type)} ·{" "}
+              {format(new Date(email.email_date ?? email.created_at), "MMM d")}
+            </span>
+          </button>
+        )}
 
         {(job.description ?? job.description_preview) && (
           <p className="mt-2 line-clamp-3 text-sm text-muted-foreground">
