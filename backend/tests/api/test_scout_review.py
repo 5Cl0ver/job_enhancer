@@ -6,6 +6,7 @@ the page's endpoints are called as the user. Invented companies throughout.
 """
 
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from httpx import AsyncClient
@@ -141,15 +142,29 @@ class TestPicksWait:
             {"company": "Tessaline", "title": "Network Engineer", "url": _url("b")},
         ]
         await scout_runs.check_jobs(db_session, test_user.id, str(run.id), rows)
+        # The same page again is not more postings.
         await scout_runs.check_jobs(db_session, test_user.id, str(run.id), rows[:1])
         await db_session.commit()
         body = (await client.get(f"/v1/scout/runs/{run.id}")).json()
-        assert body["looked_at"] == {
-            "rows": 3,
-            "in_tracker": 0,
-            "seen_before": 0,
-            "excluded": 0,
-        }
+        assert body["looked_at"] == {"rows": 2}  # counts only, no fingerprints
+
+    async def test_seen_before_means_another_search(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        run, _ = await _three(db_session, test_user)
+        rows = [
+            {"company": c, "title": t, "url": _url(n)} for n, (t, c, _) in JOBS.items()
+        ]
+        # Claude checks a page after reporting its jobs: this search's own.
+        await scout_runs.check_jobs(db_session, test_user.id, str(run.id), rows)
+        await scout_runs.finish_run(db_session, test_user.id, str(run.id), "")
+        (mission,) = await scout_runs.list_missions(db_session, test_user.id)
+        again = await scout_runs.queue_run(db_session, mission.id, test_user.id)
+        await scout_runs.brief(db_session, test_user.id, str(again.id))
+        await scout_runs.check_jobs(db_session, test_user.id, str(again.id), rows)
+        await db_session.commit()
+        later = (await client.get(f"/v1/scout/runs/{again.id}")).json()
+        assert later["looked_at"] == {"rows": 3, "seen_before": 3}
 
 
 @pytest.mark.asyncio
@@ -190,6 +205,38 @@ class TestConfirm:
         assert found["IT Administrator"]["outcome"] == "skipped"
         assert found["IT Administrator"]["can_save"] is True
         assert (await client.get("/v1/attention")).json()["scout_review"] == 0
+
+    async def test_a_pick_reported_after_the_page_loaded_stays_waiting(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        run = await _run(db_session, test_user)
+        await _report(db_session, test_user, run, "strong")
+        _, shown = await _findings(client, run)
+        # Claude reports another good fit while the user is choosing.
+        await _report(db_session, test_user, run, "good")
+        out = await client.post(
+            f"/v1/scout/runs/{run.id}/confirm",
+            json={"finding_ids": [], "shown_ids": [f["id"] for f in shown.values()]},
+        )
+        assert out.status_code == 200
+        body, found = await _findings(client, run)
+        assert found["Systems Administrator"]["outcome"] == "skipped"
+        assert found["IT Administrator"]["outcome"] == "picked"
+        assert body["needs_review"] is True
+
+    async def test_a_run_with_picks_is_listed_however_old(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        run, _ = await _three(db_session, test_user)
+        await scout_runs.finish_run(db_session, test_user.id, str(run.id), "")
+        run.created_at = datetime(2026, 1, 1, tzinfo=UTC)  # long ago
+        (mission,) = await scout_runs.list_missions(db_session, test_user.id)
+        for _ in range(3):
+            newer = await scout_runs.queue_run(db_session, mission.id, test_user.id)
+            await scout_runs.stop_run(db_session, newer.id, test_user.id)
+        await db_session.commit()
+        listed = await scout_runs.list_runs(db_session, test_user.id, limit=2)
+        assert len(listed) == 3 and listed[-1].id == run.id
 
     async def test_confirming_twice_saves_nothing_new(
         self, client: AsyncClient, db_session, test_user
@@ -252,7 +299,8 @@ class TestConfirm:
     ):
         run, _ = await _three(db_session, test_user)
         _, found = await _findings(client, run)
-        one = [found["Systems Administrator"]["id"]]
+        # The last finding reported: every other pick comes before it.
+        one = [found["Help Desk Lead"]["id"]]
         other = await _other_user(db_session)
         theirs = Collection(id=uuid.uuid4(), user_id=other.id, name="Theirs")
         db_session.add(theirs)

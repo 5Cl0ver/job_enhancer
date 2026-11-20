@@ -227,21 +227,25 @@ async def save_finding_job(
 async def confirm_run(
     db: AsyncSession, user_id: uuid.UUID, run: ScoutRun, data: ConfirmIn
 ) -> ConfirmOut:
-    """Save the findings the user ticked; picks they left unticked become
-    "skipped" (still in History, still saveable). Safe to send twice."""
+    """Save the findings the user ticked; picks they were shown and left
+    unticked become "skipped" (still in History, still saveable). Safe to send
+    twice. Checks where to save before changing anything."""
+    if data.collection_id is not None:  # someone else's: 404 before any change
+        await col_svc.get_collection(db, data.collection_id, user_id)
     findings = list(
         await db.scalars(
-            select(ScoutFinding).where(
-                ScoutFinding.run_id == run.id, ScoutFinding.user_id == user_id
-            )
+            select(ScoutFinding)
+            .where(ScoutFinding.run_id == run.id, ScoutFinding.user_id == user_id)
+            .order_by(ScoutFinding.created_at)
         )
     )
     wanted = set(data.finding_ids)
+    shown = None if data.shown_ids is None else set(data.shown_ids)
     out = ConfirmOut(folder=await peek_folder(db, user_id, run.criteria))
     folder: Collection | None = None
     for f in findings:
         if f.id not in wanted:
-            if f.outcome == PICKED:
+            if f.outcome == PICKED and (shown is None or f.id in shown):
                 f.outcome = SKIPPED
             continue
         if f.saved_job_id is not None and f.outcome in (SAVED, DUPLICATE):

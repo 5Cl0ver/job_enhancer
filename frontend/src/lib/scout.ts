@@ -338,8 +338,10 @@ export function runSummary(
   const passed = run.counts.below_bar + run.counts.duplicate;
   const extra = passed ? ` · ${passed} passed over` : "";
   if (run.status === "queued") return "Waiting for Claude to start";
+  // The same count Claude works to: good fits waiting or saved (one the user
+  // passed on doesn't count, so Claude keeps looking).
   if (run.status === "running")
-    return `Searching · ${goodFits(run.counts)} of ${run.target} found${extra}`;
+    return `Searching · ${saved + picked} of ${run.target} found${extra}`;
   const ended = run.status === "stopped" ? "Stopped" : "Done";
   if (picked > 0)
     return `${ended} · ${picked} waiting for you${saved ? ` · ${saved} saved` : ""}${extra}`;
@@ -375,8 +377,9 @@ export function lookedAt(
   add(c.duplicate, "you already had");
   add(uncopied, "couldn't be copied");
   if (!run.looked_at) return parts.length ? `${head} ${parts.join(" · ")}.` : head;
-  const rows = run.looked_at.rows ?? 0;
   const opened = found + c.below_bar + c.duplicate + uncopied;
+  // A job reported without going through the results-page check still counts.
+  const rows = Math.max(run.looked_at.rows ?? 0, seen + excluded + tracked + opened);
   add(rows - seen - excluded - tracked - opened, "not opened");
   const looked = `Looked at ${rows} ${rows === 1 ? "posting" : "postings"}`;
   return parts.length ? `${head} ${looked}: ${parts.join(" · ")}.` : `${head} ${looked}.`;

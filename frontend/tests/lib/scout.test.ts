@@ -77,8 +77,9 @@ describe("scout runs", () => {
     expect(runSummary({ status: "queued", counts, target: 5 })).toBe(
       "Waiting for Claude to start",
     );
-    // Good fits count as found whether or not they've been confirmed yet.
-    expect(runSummary({ status: "running", counts, target: 5 })).toBe(
+    // Good fits count as found whether or not they've been confirmed yet;
+    // one the user passed on doesn't (Claude keeps looking).
+    expect(runSummary({ status: "running", counts: { ...counts, skipped: 3 }, target: 5 })).toBe(
       "Searching · 2 of 5 found · 2 passed over",
     );
     expect(runSummary({ status: "done", counts, target: 5 })).toBe(
@@ -115,6 +116,10 @@ describe("scout runs", () => {
     // Nothing to explain while it runs, or when it found what was asked.
     expect(lookedAt({ status: "running", counts, target: 5, looked_at })).toBeNull();
     expect(lookedAt({ status: "done", counts, target: 2, looked_at })).toBeNull();
+    // A job reported without the results-page check: the numbers still add up.
+    expect(
+      lookedAt({ status: "done", counts, target: 5, looked_at: { rows: 3 } }),
+    ).toBe("Asked for 5, found 2. Looked at 6 postings: 3 below your bar · 1 couldn't be copied.");
     // A run from before the counts were kept still says what it can.
     expect(lookedAt({ status: "done", counts, target: 5, looked_at: null })).toBe(
       "Asked for 5, found 2. 3 below your bar · 1 couldn't be copied.",

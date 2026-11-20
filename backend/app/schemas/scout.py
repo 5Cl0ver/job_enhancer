@@ -248,6 +248,10 @@ class ConfirmIn(_Where):
     """The user's answer to a run's review: the findings they ticked."""
 
     finding_ids: list[uuid.UUID] = Field(default_factory=list, max_length=100)
+    # The findings the user was looking at. Only picks among these that are
+    # left unticked are passed on: one Claude reported a moment ago, after the
+    # page last refreshed, stays waiting. Null = every pick in the run.
+    shown_ids: list[uuid.UUID] | None = Field(None, max_length=200)
 
 
 class SaveFindingIn(_Where):

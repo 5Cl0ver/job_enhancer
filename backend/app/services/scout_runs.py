@@ -14,6 +14,7 @@ Functions Claude reaches through the connector raise ``ValueError`` with a
 message Claude can act on; the page's REST functions raise ``HTTPException``.
 """
 
+import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
@@ -319,14 +320,35 @@ async def get_run(db: AsyncSession, run_id: uuid.UUID, user_id: uuid.UUID) -> Sc
 async def list_runs(
     db: AsyncSession, user_id: uuid.UUID, limit: int = 30
 ) -> Sequence[ScoutRun]:
-    return (
+    """The latest runs, plus any older one with picks still waiting (so the
+    count on Find Jobs always has a review to go with it)."""
+    latest = list(
+        (
+            await db.scalars(
+                select(ScoutRun)
+                .where(ScoutRun.user_id == user_id)
+                .order_by(ScoutRun.created_at.desc())
+                .limit(limit)
+            )
+        ).all()
+    )
+    have = {r.id for r in latest}
+    waiting = (
         await db.scalars(
             select(ScoutRun)
-            .where(ScoutRun.user_id == user_id)
+            .where(
+                ScoutRun.user_id == user_id,
+                ScoutRun.id.in_(
+                    select(ScoutFinding.run_id).where(
+                        ScoutFinding.user_id == user_id,
+                        ScoutFinding.outcome == PICKED,
+                    )
+                ),
+            )
             .order_by(ScoutRun.created_at.desc())
-            .limit(limit)
         )
     ).all()
+    return latest + [r for r in waiting if r.id not in have]
 
 
 async def stop_run(db: AsyncSession, run_id: uuid.UUID, user_id: uuid.UUID) -> ScoutRun:
@@ -417,7 +439,11 @@ async def runs_out(
                 counts=run_counts,
                 needs_review=run_counts.picked > 0,
                 folder=folders.get(r.id),
-                looked_at=r.stats,
+                looked_at=(
+                    {k: v for k, v in r.stats.items() if not k.startswith("_")}
+                    if r.stats
+                    else None
+                ),
                 findings=findings.get(r.id, []),
             )
         )
@@ -652,11 +678,23 @@ async def check_jobs(
         else:
             open_rows.append(i)
     # So the page can say why a search came back short: "looked at 24, 9 seen
-    # before, 4 skipped by title". Counts only, added up across pages.
+    # before, 4 skipped by title". Counts only, added up across pages; a row
+    # Claude sends twice (the same page again) is counted once, by a short
+    # fingerprint, never its text.
     stats = dict(run.stats or {})
-    stats["rows"] = stats.get("rows", 0) + len(rows)
-    for why, n in skipped.items():
-        stats[why] = stats.get(why, 0) + n
+    counted = set(stats.get("_rows", []))
+    for i, (_row, pair, uk) in enumerate(keyed):
+        mark = hashlib.sha1((uk or f"{pair[0]}|{pair[1]}").encode()).hexdigest()[:12]
+        if mark in counted or not (uk or (pair[0] and pair[1])):
+            continue
+        counted.add(mark)
+        stats["rows"] = stats.get("rows", 0) + 1
+        why = seen.get(pair) or (seen.get(uk) if uk else None)
+        if why:
+            stats[why] = stats.get(why, 0) + 1
+        elif i not in open_rows:
+            stats["excluded"] = stats.get("excluded", 0) + 1
+    stats["_rows"] = sorted(counted)[-2000:]
     run.stats = stats
     await db.flush()
     progress = await _progress(db, run)

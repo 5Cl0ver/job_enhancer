@@ -5,6 +5,7 @@
  * jobs it finds appear here live for the user to tick and save.
  */
 import { useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import {
   Bot,
   Check,
@@ -15,6 +16,7 @@ import {
   Plus,
   Square,
 } from "lucide-react";
+import { api } from "@/lib/api";
 import { errorText } from "@/components/scout/errorText";
 import { FolderSelect, whereReady, type Where } from "@/components/scout/FolderSelect";
 import { RunFindings } from "@/components/scout/RunFindings";
@@ -420,6 +422,7 @@ function MissionForm({
   const [autoSave, setAutoSave] = useState(mission?.auto_save ?? false);
   const { data: collections = [] } = useCollections();
   const createCollection = useCreateCollection();
+  const qc = useQueryClient();
   const [problem, setProblem] = useState<string | null>(null);
   const track = tracks.find((t) => t.id === trackId);
   // "Within N miles" only means something around a place, for jobs you'd go to.
@@ -437,11 +440,22 @@ function MissionForm({
     if (where.newName !== null) {
       // A new collection: use the one of that name if there is one, else make it.
       const name = where.newName.trim();
-      const existing = collections.find((c) => c.name.toLowerCase() === name.toLowerCase());
+      const byName = (list: { id: string; name: string }[]) =>
+        list.find((c) => c.name.toLowerCase() === name.toLowerCase());
       try {
-        collectionId = existing?.id ?? (await createCollection.mutateAsync({ name })).id;
+        collectionId =
+          byName(collections)?.id ?? (await createCollection.mutateAsync({ name })).id;
       } catch {
-        return setProblem("Couldn't make that collection. Try another name.");
+        // Made on an earlier try that then failed to save the search: use it.
+        const fresh = await qc
+          .fetchQuery({
+            queryKey: ["collections"],
+            queryFn: () => api.get<{ id: string; name: string }[]>("/v1/collections/"),
+            staleTime: 0,
+          })
+          .catch(() => []);
+        collectionId = byName(fresh)?.id ?? null;
+        if (!collectionId) return setProblem("Couldn't make that collection. Try another name.");
       }
     }
     const data: MissionInput & { id?: string } = {

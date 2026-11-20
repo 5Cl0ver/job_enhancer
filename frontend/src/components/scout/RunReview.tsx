@@ -94,9 +94,11 @@ function Row({
       ? "Saved"
       : f.outcome === "duplicate"
         ? "Already in My Jobs"
-        : !f.can_save
-          ? "Couldn't copy the page"
-          : null;
+        : f.outcome === "waiting_for_copy"
+          ? "Copying the page…"
+          : !f.can_save
+            ? "Couldn't copy the page"
+            : null;
   return (
     <li className="flex gap-3 px-3 py-2.5">
       {f.can_save ? (
@@ -185,7 +187,13 @@ export function RunReview({
 
   const save = () =>
     confirm.mutate(
-      { runId: run.id, finding_ids: [...ticks], ...whereBody(where) },
+      {
+        runId: run.id,
+        finding_ids: [...ticks],
+        // Only what's on screen: a job Claude found a moment ago stays waiting.
+        shown_ids: run.findings.map((f) => f.id),
+        ...whereBody(where),
+      },
       {
         onSuccess: (result) => {
           setChanged(new Map());

@@ -241,7 +241,10 @@ function afterScoutSave(qc: ReturnType<typeof useQueryClient>) {
 export function useConfirmRun() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: ({ runId, ...body }: { runId: string; finding_ids: string[] } & WhereBody) =>
+    mutationFn: ({
+      runId,
+      ...body
+    }: { runId: string; finding_ids: string[]; shown_ids?: string[] } & WhereBody) =>
       api.post<ConfirmResult>(`/v1/scout/runs/${runId}/confirm`, body),
     onSuccess: () => afterScoutSave(qc),
   });

@@ -183,6 +183,7 @@ describe("the review after a Scout search", () => {
 
     expect(post).toHaveBeenCalledWith("/v1/scout/runs/r1/confirm", {
       finding_ids: ["f1", "f3"],
+      shown_ids: ["f1", "f2", "f3", "f4", "f5"],
     });
     const note = await screen.findByRole("status");
     expect(note).toHaveTextContent("2 saved to My Jobs › IT Admin");
@@ -197,6 +198,18 @@ describe("the review after a Scout search", () => {
     expect(screen.getByRole("status")).toBeInTheDocument();
   });
 
+  it("says a job is still being copied, not that copying failed", async () => {
+    run = {
+      ...RUN,
+      status: "running",
+      findings: [...FINDINGS, finding("f6", "", "", { outcome: "waiting_for_copy", can_save: false })],
+    };
+    renderStart();
+    const review = await screen.findByRole("region", { name: "Pick what to keep" });
+    expect(within(review).getByText("Copying the page…")).toBeInTheDocument();
+    expect(within(review).getAllByText("Couldn't copy the page")).toHaveLength(1);
+  });
+
   it("offers 'Keep none' when nothing is ticked", async () => {
     post.mockResolvedValue({ saved: [], already: [], failed: [], folder: { id: null, name: "IT Admin" } });
     const user = userEvent.setup();
@@ -205,7 +218,10 @@ describe("the review after a Scout search", () => {
     await user.click(box(/Keep Systems Administrator/));
     await user.click(box(/Keep IT Administrator/));
     await user.click(screen.getByRole("button", { name: "Keep none" }));
-    expect(post).toHaveBeenCalledWith("/v1/scout/runs/r1/confirm", { finding_ids: [] });
+    expect(post).toHaveBeenCalledWith(
+      "/v1/scout/runs/r1/confirm",
+      expect.objectContaining({ finding_ids: [] }),
+    );
     expect(await screen.findByRole("status")).toHaveTextContent("Nothing new was saved.");
   });
 
@@ -227,10 +243,10 @@ describe("the review after a Scout search", () => {
     await user.type(screen.getByRole("textbox", { name: "New collection name" }), "This week");
     expect(save).toBeEnabled();
     await user.click(save);
-    expect(post).toHaveBeenCalledWith("/v1/scout/runs/r1/confirm", {
-      finding_ids: ["f1"],
-      new_collection_name: "This week",
-    });
+    expect(post).toHaveBeenCalledWith(
+      "/v1/scout/runs/r1/confirm",
+      expect.objectContaining({ finding_ids: ["f1"], new_collection_name: "This week" }),
+    );
   });
 
   it("keeps the review up when saving fails, with the reason", async () => {
