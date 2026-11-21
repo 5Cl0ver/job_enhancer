@@ -110,8 +110,9 @@ def rubric_text(weights: dict) -> str:
         "user's experience as equal to a degree unless the posting strictly "
         "requires one and the resume type's skip rules say degree_only. Pay "
         "that isn't listed counts as met, and on-site, hybrid and remote are "
-        "all fine. Be honest: a 9 or 10 means the user meets nearly everything "
-        "listed."
+        "all fine. Judge the level by the brief's level_rule: a role above the "
+        "user's levels is a stretch however well the skills match. Be honest: a "
+        "9 or 10 means the user meets nearly everything listed."
     )
 
 

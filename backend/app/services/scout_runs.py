@@ -53,6 +53,7 @@ from app.models.scout import (
     RUN_STOPPED,
     SAVED,
     SKIPPED,
+    TOO_FAR,
     WAITING,
     ScoutCapture,
     ScoutFinding,
@@ -66,16 +67,20 @@ from app.schemas.scout import (
     MissionCreate,
     MissionOut,
     MissionUpdate,
+    RunBands,
     RunCounts,
     RunFolder,
+    RunHidden,
     RunLink,
     RunOut,
     RunTitle,
+    RunWidened,
     place_problem,
 )
 from app.services import collections as col_svc
 from app.services import scout_companies as companies
 from app.services import scout_instructions as instr
+from app.services import scout_levels as levels_svc
 from app.services import scout_review as review
 from app.services import scout_titles as titles_svc
 from app.services.scout_dedupe import (
@@ -86,10 +91,11 @@ from app.services.scout_dedupe import (
     title_key,
     url_key,
 )
+from app.services.scout_results import band, status_of
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.8"
+PLAYBOOK_VERSION = "2026.11.9"
 # What Claude is told lives in app/scout/*.md and scout_instructions (the user
 # can edit most of it; a run uses its own snapshot).
 SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
@@ -104,7 +110,13 @@ HOURS_PER_YEAR = 2080
 # Findings that count as "seen": a job the user has decided on or has waiting
 # to decide, or that Claude already judged. A job with no page copy isn't seen;
 # it can be found again.
-_SEEN = (SAVED, PICKED, SKIPPED, BELOW_BAR, DUPLICATE)
+_SEEN = (SAVED, PICKED, SKIPPED, BELOW_BAR, DUPLICATE, TOO_FAR)
+# Reports of one job without a page copy before it's listed as not copied.
+COPY_TRIES = 3
+# A search with fewer results than this in its window is widened once, to the
+# next window (research R5).
+THIN = 25
+WIDEN = {1: 3, 3: 7}
 # Outcomes the user decided on. (A duplicate points at a job already in the
 # tracker, which in_tracker covers, or at an earlier finding that carries its
 # own outcome.)
@@ -285,7 +297,15 @@ BOARD_RADII = {
 # Jobs on one results page, per board.
 PER_PAGE = {"linkedin": 25, "indeed": 10, "ziprecruiter": 20}
 # The link parameters worth checking survived LinkedIn's redirect.
-_CHECKED_PARAMS = ("keywords", "geoId", "location", "distance", "f_TPR", "sortBy")
+_CHECKED_PARAMS = (
+    "keywords",
+    "geoId",
+    "location",
+    "distance",
+    "f_TPR",
+    "f_E",
+    "sortBy",
+)
 
 
 def board_radius(source: str, miles: int | None) -> int | None:
@@ -317,7 +337,11 @@ def search_titles(c: dict) -> list[str]:
     track = c["track"]
     seen: set[str] = set()
     titles = []
-    for t in list(track.get("titles") or []) + list(track.get("related") or []):
+    for t in (
+        list(track.get("titles") or [])
+        + list(track.get("related") or [])
+        + list(track.get("suggested") or [])  # Claude's, for this run only
+    ):
         if t.lower() not in seen:
             seen.add(t.lower())
             titles.append(t)
@@ -339,15 +363,20 @@ def search_links(c: dict) -> list[dict]:
         groups = [(" / ".join(titles), " OR ".join(f'"{t}"' for t in titles))]
     else:  # each title its own search, as plain words LinkedIn matches loosely
         groups = [(t, t) for t in titles]
-    return [{"title": label, "url": _link(c, words)} for label, words in groups]
+    # Searches widened because they were thin keep their own, longer window.
+    widened = c.get("widened") or {}
+    return [
+        {"title": label, "url": _link(c, words, widened.get(str(i)))}
+        for i, (label, words) in enumerate(groups)
+    ]
 
 
 def start_urls(c: dict) -> list[str]:
     return [link["url"] for link in search_links(c)]
 
 
-def _link(c: dict, words: str) -> str:
-    days = c["posted_within_days"]
+def _link(c: dict, words: str, days: int | None = None) -> str:
+    days = int(days or c["posted_within_days"])
     location = c.get("location") or ""
     remote = c.get("remote", "any")
     radius = _radius(c)
@@ -360,6 +389,8 @@ def _link(c: dict, words: str) -> str:
         if radius:
             q["distance"] = str(board_radius(source, radius))
         q["f_TPR"] = f"r{days * 86400}"
+        # Experience levels (spec 012).
+        q["f_E"] = levels_svc.linkedin_f_e(c["track"].get("levels"))
         q["sortBy"] = "DD"
         if remote == "remote_only":
             q["f_WT"] = "2"
@@ -585,6 +616,8 @@ async def _criteria(
             "skills": list(track.key_skills or []),
             "skip": skip,
             "notes": track.notes,
+            "levels": levels_svc.clean_levels(track.levels),
+            "years": track.years,
         },
     }
     if broad:
@@ -684,12 +717,54 @@ async def _counts(db: AsyncSession, run_ids: list[uuid.UUID]) -> dict:
     return out
 
 
+async def _bands(db: AsyncSession, runs: Sequence[ScoutRun]) -> dict:
+    """Per run, the jobs it found in each Results group (spec 012). Repeats of
+    jobs already found or tracked, and jobs too far away, are left out."""
+    bars = {r.id: int((r.criteria or {}).get("min_fit", 6)) for r in runs}
+    rows = await db.execute(
+        select(
+            ScoutFinding.run_id,
+            ScoutFinding.fit_score,
+            ScoutFinding.outcome,
+            ScoutFinding.saved_job_id,
+        ).where(ScoutFinding.run_id.in_(list(bars)))
+    )
+    out: dict[uuid.UUID, dict[str, int]] = {}
+    for run_id, fit, outcome, saved_job_id in rows.all():
+        group = out.setdefault(run_id, {})
+        if status_of(outcome, saved_job_id) == "hidden":
+            key = "too_far" if outcome == TOO_FAR else "repeats"
+            group[key] = group.get(key, 0) + 1
+            continue
+        b = band(fit, bars[run_id])
+        group[b] = group.get(b, 0) + 1
+    return out
+
+
+def looking_for(c: dict) -> dict:
+    """What a run looked for, as it was at Start, for the page's plain line."""
+    track = c.get("track") or {}
+    return {
+        "source": c.get("source"),
+        "track": track.get("name"),
+        "broad": bool(c.get("broad")),
+        "levels": levels_svc.clean_levels(track.get("levels")),
+        "location": c.get("location"),
+        "radius_miles": _radius(c),
+        "remote": c.get("remote", "any"),
+        "days": c.get("posted_within_days"),
+        "min_fit": c.get("min_fit"),
+        "job_count": c.get("job_count"),
+    }
+
+
 async def runs_out(
     db: AsyncSession, runs: Sequence[ScoutRun], *, with_findings: bool = False
 ) -> list[RunOut]:
     if not runs:
         return []
     counts = await _counts(db, [r.id for r in runs])
+    bands = await _bands(db, runs)
     fits_by_title = await _fits_by_title(
         db, [r.id for r in runs if (r.criteria or {}).get("broad")]
     )
@@ -751,6 +826,9 @@ async def runs_out(
     for r in runs:
         c = r.criteria or {}
         run_counts = RunCounts(**counts.get(r.id, {}))
+        finished = r.status in (RUN_DONE, RUN_STOPPED)
+        info = (r.stats or {}).get("_links") or {}
+        names = [link["title"] for link in search_links(c)] if c else []
         out.append(
             RunOut(
                 id=r.id,
@@ -781,6 +859,19 @@ async def runs_out(
                     for t in c.get("search_titles") or []
                 ],
                 findings=findings.get(r.id, []),
+                bands=RunBands(**bands.get(r.id, {})),
+                hidden=RunHidden(**bands.get(r.id, {})),
+                not_copied=run_counts.no_copy
+                + (run_counts.waiting_for_copy if finished else 0),
+                suggested_titles=list((c.get("track") or {}).get("suggested") or []),
+                widened=[
+                    RunWidened(title=names[int(i)], days=int(v["widened_days"]))
+                    for i, v in sorted(info.items(), key=lambda kv: int(kv[0]))
+                    if isinstance(v, dict)
+                    and v.get("widened_days")
+                    and int(i) < len(names)
+                ],
+                looking_for=looking_for(c) if c else None,
             )
         )
     return out
@@ -1030,6 +1121,11 @@ async def _brief_body(
             "radius_miles": radius,
             "linkedin_distance": board_radius("linkedin", radius),
         }
+    track = c["track"]
+    extra["level_rule"] = levels_svc.level_rule(track.get("levels"), track.get("years"))
+    area = area_rule(c)
+    if area:
+        extra["area"] = area
     first = "Open the start URL and send the first page of rows to check_jobs."
     if local:
         # Choosing re-checks marks them handed out: a preview only says so.
@@ -1077,7 +1173,18 @@ async def _brief_body(
         else:
             done_searching = True
             first = "Every search has been read: call finish_scout_run."
-    if choosing:
+    suggest = suggest_count(c, run.stats) if ready else 0
+    if suggest:
+        extra["suggest_titles"] = suggest
+    if suggest and not done_searching:
+        first = (
+            f"Call get_master_profile, choose up to {suggest} more job titles at "
+            f"the user's levels ({levels_svc.levels_label(track.get('levels'))}) "
+            "that their resume fits and the resume type's titles don't cover, and "
+            "call set_search_titles: it gives you the start URLs. Score every job "
+            "against the resume."
+        )
+    elif choosing:
         first = (
             "Call get_master_profile, choose up to "
             f"{instr.limit(c, 'titles')} job titles the user would be good at (see "
@@ -1107,6 +1214,46 @@ async def _brief_body(
     }
 
 
+def area_rule(c: dict) -> dict | None:
+    """Where jobs count for this search, so Claude can send in_area with each
+    job (spec 012). None when the search has no place."""
+    location = c.get("location")
+    remote = c.get("remote", "any")
+    if not location or remote == "remote_only":
+        return None
+    radius = _radius(c)
+    remote_ok = remote == "any"
+    rule = (
+        f"A job counts when it is in or within about {radius} miles of {location}"
+        + (", or fully remote" if remote_ok else "")
+        + ". Send in_area false for any other job: the app marks it Too far."
+    )
+    return {
+        "location": location,
+        "radius_miles": radius,
+        "remote_ok": remote_ok,
+        "rule": rule,
+    }
+
+
+MAX_SUGGESTED = 4
+
+
+def suggest_count(c: dict, stats: dict | None) -> int:
+    """How many related titles Claude may add to this run (research R6): only
+    for a resume type with none of its own, on a job-board search, before
+    results are read."""
+    if c.get("broad") or c.get("source") == LOCAL:
+        return 0
+    track = c.get("track") or {}
+    if track.get("related") or track.get("suggested") or track.get("exact"):
+        return 0
+    s = stats or {}
+    if s.get("rows") or "_link" in s:
+        return 0
+    return MAX_SUGGESTED
+
+
 def _excluded(title: str, words: list[str]) -> bool:
     t = f" {title_key(title)} "
     return any(f" {title_key(w)} " in t for w in words if title_key(w))
@@ -1120,6 +1267,7 @@ async def _seen_jobs(
     *,
     skip_finding: uuid.UUID | None = None,
     track: ResumeTrack | None = None,
+    mission_id: uuid.UUID | None = None,
 ) -> dict[tuple[str, str] | str, str]:
     """Which of these (company_key, title_key) pairs and url keys are already
     known, and why. Queries only rows with matching titles or links, so the
@@ -1173,11 +1321,21 @@ async def _seen_jobs(
                 low.append(ScoutFinding.created_at >= track.rules_changed_at)
         else:
             low.append(false())
+        # Too far is about one search's place (spec 012): it hides a job only
+        # from later runs of that same search.
+        far = and_(
+            ScoutFinding.outcome == TOO_FAR,
+            ScoutFinding.run_id.in_(
+                select(ScoutRun.id).where(ScoutRun.mission_id == mission_id)
+            )
+            if mission_id is not None
+            else false(),
+        )
         query = select(
             ScoutFinding.company_key, ScoutFinding.title_key, ScoutFinding.url_key
         ).where(
             ScoutFinding.user_id == user_id,
-            or_(ScoutFinding.outcome.in_(_DECIDED), and_(*low)),
+            or_(ScoutFinding.outcome.in_(_DECIDED), and_(*low), far),
             or_(*conditions),
         )
         if skip_finding is not None:
@@ -1259,7 +1417,9 @@ async def check_jobs(
     pairs = {p for _, p, _ in keyed if p[0] and p[1]}
     urls = {u for _, _, u in keyed if u}
     track = await db.get(ResumeTrack, run.track_id) if run.track_id else None
-    seen = await _seen_jobs(db, user_id, pairs, urls, track=track)
+    seen = await _seen_jobs(
+        db, user_id, pairs, urls, track=track, mission_id=run.mission_id
+    )
     # Rows passed over by title before (an earlier run, or an earlier page).
     passed = await _passed(db, user_id, run.track_id, pairs, urls)
 
@@ -1352,7 +1512,13 @@ async def check_jobs(
     resent = False
     if seen_link is not None and seen_link < link:
         resent = True  # a page of a search already done
-    elif page_marks and last.get("marks") == page_marks:
+    elif (
+        page_marks
+        and last.get("marks") == page_marks
+        # The first page of a search just widened often shows the same rows:
+        # that's the widened search with nothing new, not a resend.
+        and not (link_pages == 0 and _widened_now(stats, link))
+    ):
         moved_on = last.get("link") != link
         repeats = int(last.get("repeats", 0)) + 1
         resent = not (moved_on and (seen_link == link or repeats >= 2))
@@ -1374,6 +1540,7 @@ async def check_jobs(
     # of this search, the next search, or done (spec 011).
     nxt_url: str | None = None
     note = ""
+    widened_to: int | None = None
     read_on = link  # the search this page was read on
     if paged:
         if place_fixed and page_url_seen and c["source"] == "linkedin":
@@ -1414,7 +1581,18 @@ async def check_jobs(
             or link_pages >= per_search
             or (total is not None and link_pages * per_page >= total)
         )
-        if link_done:
+        widened_to = _widen_to(c, link, info) if link_done else None
+        if widened_to:
+            # A thin search: the same search again over a longer window, once.
+            c = {**c, "widened": {**(c.get("widened") or {}), str(link): widened_to}}
+            run.criteria = c
+            info["base_total"] = info.pop("total", None)
+            info["widened_days"] = widened_to
+            all_links[str(link)] = info
+            link_pages = 0
+            links = search_links(c)
+            nxt_url = links[link]["url"]
+        elif link_done:
             link, link_pages = link + 1, 0
             nxt_url = links[link]["url"] if link < len(links) else None
         else:
@@ -1441,6 +1619,11 @@ async def check_jobs(
                 "there are no more results, so call finish_scout_run"
                 if ran_out and len(links) == 1
                 else "call finish_scout_run: that was the last search"
+            )
+        elif widened_to:
+            after = (
+                f"open next_page_url: the same search, {links[link]['title']}, "
+                f"widened to the past {widened_to} days because it had few results"
             )
         elif stats["_link_pages"] == 0 and link > 0:
             after = (
@@ -1477,6 +1660,23 @@ async def check_jobs(
         }
         await db.flush()
     return out
+
+
+def _widened_now(stats: dict, link: int) -> bool:
+    info = (stats.get("_links") or {}).get(str(link)) or {}
+    return bool(info.get("widened_days")) and "total" not in info
+
+
+def _widen_to(c: dict, link: int, info: dict) -> int | None:
+    """The longer window to search again when a search had fewer than ``THIN``
+    results (research R5), or None: once per search, job boards only."""
+    if c["source"] not in PER_PAGE or info.get("widened_days"):
+        return None
+    total = info.get("total")
+    if total is None or total >= THIN:
+        return None
+    days = int((c.get("widened") or {}).get(str(link)) or c["posted_within_days"])
+    return WIDEN.get(days)
 
 
 def _link_of(c: dict, url: str) -> int | None:
@@ -1549,10 +1749,12 @@ async def report_job(
     why_fit: str,
     gaps: str,
     resume_type: str = "",
+    facts: dict | None = None,
 ) -> dict:
     run = await _run_for_agent(db, user_id, run_id)
     if not 0 <= int(fit_score) <= 10:
         raise ValueError("fit_score must be 0-10.")
+    facts = clean_facts(facts)
     problem = posting_problem(url)
     if not problem and run.criteria.get("source") == LOCAL and is_job_site(url):
         problem = (
@@ -1578,7 +1780,6 @@ async def report_job(
             "note": "Already reported in this run.",
             **await _progress(db, run),
         }
-    first_report = finding is None
     if finding is None:
         finding = ScoutFinding(
             id=uuid.uuid4(),
@@ -1590,14 +1791,35 @@ async def report_job(
             url_key=key,
             outcome=WAITING,
             fit_score=0,
+            facts_from="claude",  # until the page copy arrives
             created_at=_now(),
         )
         db.add(finding)
-    finding.fit_score = int(fit_score)
+    _apply_facts(finding, facts)
+    track_c = c["track"]
+    finding.claude_fit = int(fit_score)
+    finding.fit_score, level_note = levels_svc.cap(
+        int(fit_score),
+        int(c["min_fit"]),
+        track_c.get("levels"),
+        track_c.get("years"),
+        finding.level,
+        finding.years_asked,
+    )
     finding.why_fit = (why_fit or "")[:600]
     finding.gaps = (gaps or "")[:600]
     if c.get("broad"):
         finding.closest_track_id = await _closest_track(db, user_id, resume_type)
+    if finding.in_area is False and area_rule(c):
+        # Outside the search's area: remembered, never counted (spec 012).
+        finding.outcome = TOO_FAR
+        finding.app_note = f"Too far: outside {area_rule(c)['location']}"[:200]
+        await db.flush()
+        return {
+            "outcome": TOO_FAR,
+            "note": "Too far: not counted. Go on to the next new row.",
+            **await _progress(db, run),
+        }
 
     capture = await db.scalar(
         select(ScoutCapture)
@@ -1606,24 +1828,34 @@ async def report_job(
         .limit(1)
     )
     if capture is None:
-        if not first_report:
+        stats = dict(run.stats or {})
+        tries = dict(stats.get("_tries") or {})
+        tries[key] = int(tries.get(key, 0)) + 1
+        stats["_tries"] = dict(list(tries.items())[-200:])
+        run.stats = stats
+        if tries[key] >= COPY_TRIES or finding.outcome == NO_COPY:
             finding.outcome = NO_COPY
-            finding.app_note = "No page copy: open this job and press Save"
+            finding.app_note = level_note or "Not copied: open it and press Save"
             await db.flush()
             return {
                 "outcome": NO_COPY,
-                "note": "The page copy never arrived; it's listed for the user to "
-                "save by hand. Move on to the next job.",
+                "note": "The page copy never arrived. The job is listed for the "
+                "user with the facts you sent; they can save it by hand. Move on "
+                "to the next job.",
                 **await _progress(db, run),
             }
         await db.flush()
         return {
             "outcome": WAITING,
-            "next": "Stay on the posting page, wait a few seconds, then call "
-            "report_job again with the same link.",
+            "next": "Stay on the posting page and scroll it once so it finishes "
+            "loading, wait about 10 seconds, then call report_job again with the "
+            "same link and the same facts.",
             **await _progress(db, run),
         }
 
+    finding.facts_from = "copy"
+    if capture.location:
+        finding.location = capture.location[:120]
     finding.company = capture.company[:255]
     finding.title = capture.title[:500]
     finding.company_key = company_key(capture.company)[:255]
@@ -1632,7 +1864,13 @@ async def report_job(
     await db.flush()
     track = await db.get(ResumeTrack, run.track_id) if run.track_id else None
     seen = await _seen_jobs(
-        db, user_id, {pair}, {key}, skip_finding=finding.id, track=track
+        db,
+        user_id,
+        {pair},
+        {key},
+        skip_finding=finding.id,
+        track=track,
+        mission_id=run.mission_id,
     )
     pay_note = _pay_note(capture, c.get("min_pay"))
     if seen:
@@ -1648,7 +1886,7 @@ async def report_job(
         finding.app_note = pay_note
     elif finding.fit_score < c["min_fit"]:
         finding.outcome = BELOW_BAR
-        finding.app_note = f"Fit under your minimum of {c['min_fit']}"
+        finding.app_note = level_note or f"Fit under your minimum of {c['min_fit']}"
     elif c.get("auto_save"):
         folder = await review.resolve_folder(db, user_id, c)
         await review.save_finding_job(
@@ -1671,6 +1909,7 @@ async def report_job(
     return {
         "outcome": finding.outcome,
         "app_note": finding.app_note,
+        **({"note": level_note} if level_note else {}),
         **progress,
         "next": (
             "Target reached: call finish_scout_run."
@@ -1678,6 +1917,48 @@ async def report_job(
             else "Go on to the next new row."
         ),
     }
+
+
+# Short facts Claude may send with a job (spec 012): never the job text.
+FACT_LIMITS = {"title": 200, "company": 120, "location": 120, "posted": 40}
+
+
+def clean_facts(facts: dict | None) -> dict:
+    """Claude's facts, trimmed and cut to their lengths; unknown ones dropped."""
+    facts = facts if isinstance(facts, dict) else {}
+    out: dict = {}
+    for name, limit in FACT_LIMITS.items():
+        value = " ".join(str(facts.get(name) or "").split())[:limit]
+        if value:
+            out[name] = value
+    level = levels_svc.clean_level(facts.get("level"))
+    if level:
+        out["level"] = level
+    with contextlib.suppress(TypeError, ValueError):
+        years = int(facts.get("years_asked"))
+        if 0 <= years <= 30:
+            out["years_asked"] = years
+    in_area = facts.get("in_area")
+    if isinstance(in_area, str):
+        in_area = {"true": True, "false": False}.get(in_area.strip().lower())
+    if isinstance(in_area, bool):
+        out["in_area"] = in_area
+    return out
+
+
+def _apply_facts(finding: ScoutFinding, facts: dict) -> None:
+    """Keep Claude's facts on the finding. The page copy's title and company,
+    once there, win: Claude's only fill in while there's no copy."""
+    for name in ("location", "level", "years_asked", "posted", "in_area"):
+        if name in facts:
+            setattr(finding, name, facts[name])
+    if finding.facts_from != "copy" or not finding.title:
+        if facts.get("title"):
+            finding.title = facts["title"]
+            finding.facts_from = "claude"
+        if facts.get("company"):
+            finding.company = facts["company"]
+            finding.facts_from = "claude"
 
 
 async def finish_run(
@@ -1743,9 +2024,12 @@ async def company_checked(
     result: str,
     careers_url: str | None = None,
     name: str = "",
+    openings: list | None = None,
 ) -> dict:
     run = await _run_for_agent(db, user_id, run_id)
-    out = await companies.checked(db, user_id, run, website, result, careers_url, name)
+    out = await companies.checked(
+        db, user_id, run, website, result, careers_url, name, openings
+    )
     progress = await _progress(db, run)
     if progress["done"]:
         out["next"] = "Target reached: call finish_scout_run."
@@ -1761,9 +2045,7 @@ async def set_search_titles(
     run = await _run_for_agent(db, user_id, run_id)
     c = run.criteria
     if not c.get("broad"):
-        raise ValueError(
-            "This search uses its resume type's titles: open the brief's start_urls."
-        )
+        return await _suggest_titles(db, run, titles)
     progress = await _progress(db, run)
     first = (
         "Open the first start URL and send the companies it lists to check_companies."
@@ -1796,4 +2078,44 @@ async def set_search_titles(
         "start_urls": start_urls(run.criteria),
         "progress": progress,
         "next": first,
+    }
+
+
+async def _suggest_titles(db: AsyncSession, run: ScoutRun, titles) -> dict:
+    """A resume type with no related titles of its own: up to
+    ``MAX_SUGGESTED`` more titles Claude chose from the resume, for this run
+    only (research R6). Titles above the user's levels are left out."""
+    c = run.criteria
+    allowed = suggest_count(c, run.stats)
+    if not allowed:
+        raise ValueError(
+            "This search uses its resume type's titles: open the brief's start_urls."
+        )
+    track = c["track"]
+    senior_ok = "senior" in levels_svc.clean_levels(track.get("levels"))
+    have = {t.lower() for t in list(track.get("titles") or []) + [track["name"]]}
+    kept: list[str] = []
+    dropped: list[dict] = []
+    for raw in titles if isinstance(titles, list) else []:
+        title = " ".join(str(raw or "").split())[:100]
+        if not title:
+            continue
+        if title.lower() in have or title.lower() in {k.lower() for k in kept}:
+            dropped.append({"title": title, "why": "already searched"})
+        elif not senior_ok and levels_svc.senior_title(title):
+            dropped.append({"title": title, "why": "above the user's levels"})
+        elif len(kept) >= allowed:
+            dropped.append({"title": title, "why": f"only {allowed} can be added"})
+        else:
+            kept.append(title)
+    run.criteria = {**c, "track": {**track, "suggested": kept}}
+    await db.flush()
+    return {
+        "titles": kept,
+        "dropped": dropped,
+        "start_urls": start_urls(run.criteria),
+        "searches": [link["title"] for link in search_links(run.criteria)],
+        "progress": await _progress(db, run),
+        "next": "Open the first start URL and send the first page of rows to "
+        "check_jobs.",
     }

@@ -1,7 +1,8 @@
 /**
  * Claude Scout → History: the local companies a "Local companies" search has
- * checked. Folded away until opened; each one can be put first in line for the
- * next run, or never checked again. Hidden until there are any.
+ * checked, with the openings Claude saw on each careers page (as links). Folded
+ * away until opened; each one can be put first in line for the next run, or
+ * never checked again. Hidden until there are any.
  */
 import { useState } from "react";
 import {
@@ -38,7 +39,8 @@ export function ScoutCompanies() {
             Local companies checked ({companies.length})
           </span>
           <span className="block text-sm text-muted-foreground">
-            {hiring} had openings last time. Each is checked again after a week.
+            {hiring} had jobs listed last time. Each is checked again after a
+            week.
           </span>
         </span>
       </button>
@@ -79,6 +81,7 @@ function CompanyRow({ company: c }: { company: Company }) {
           )}
         </p>
         <p className="text-xs text-muted-foreground">{companyStatus(c)}</p>
+        {!!c.last_openings?.length && <Openings openings={c.last_openings} />}
         {update.isError && (
           <p className="text-xs text-destructive">
             Couldn&apos;t change that. Try again.
@@ -120,5 +123,49 @@ function CompanyRow({ company: c }: { company: Company }) {
         )}
       </div>
     </li>
+  );
+}
+
+/** The jobs a careers page listed, as Claude saw them, best fit first. */
+function Openings({
+  openings,
+}: {
+  openings: NonNullable<Company["last_openings"]>;
+}) {
+  const [all, setAll] = useState(false);
+  const sorted = [...openings].sort((a, b) => (b.fit ?? -1) - (a.fit ?? -1));
+  const shown = all ? sorted : sorted.slice(0, 5);
+  return (
+    <div className="mt-1.5">
+      <ul className="space-y-0.5">
+        {shown.map((o) => (
+          <li key={o.url} className="text-sm">
+            <a
+              href={o.url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex max-w-full items-center gap-1 text-primary underline-offset-2 hover:underline pointer-coarse:min-h-11"
+            >
+              <span className="min-w-0 break-words">{o.title}</span>
+              <ExternalLink className="h-3 w-3 shrink-0" aria-hidden />
+            </a>
+            {o.fit != null && (
+              <span className="ml-1.5 text-xs text-muted-foreground">
+                fit {o.fit}/10
+              </span>
+            )}
+          </li>
+        ))}
+      </ul>
+      {sorted.length > shown.length && (
+        <button
+          type="button"
+          className="text-xs text-muted-foreground underline-offset-2 hover:underline pointer-coarse:min-h-11"
+          onClick={() => setAll(true)}
+        >
+          Show all {sorted.length}
+        </button>
+      )}
+    </div>
   );
 }

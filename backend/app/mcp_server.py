@@ -566,11 +566,13 @@ async def check_jobs(
 
 @mcp.tool
 async def set_search_titles(run_id: str, titles: list[str]) -> dict:
-    """'Anything I'd be good at' searches only. Send the job titles you chose
-    from the user's resume (up to the brief's max_titles are searched). The app
-    adds the user's Always titles first, leaves out Never titles and titles
-    resting after finding nothing, and answers with the start_urls to open
-    (filters already set) and any titles it left out, with why."""
+    """Send the job titles you chose from the user's resume. On an 'Anything
+    I'd be good at' search, up to the brief's max_titles are searched: the app
+    adds the user's Always titles first and leaves out Never titles and titles
+    resting after finding nothing. When the brief has suggest_titles, send up
+    to that many MORE titles at the user's levels, added to the resume type's
+    own for this run. Answers with the start_urls to open (filters already
+    set) and any titles it left out, with why."""
     return await _scout(
         "set_search_titles",
         run_id,
@@ -587,28 +589,49 @@ async def report_job(
     why_fit: str,
     gaps: str,
     resume_type: str = "",
+    title: str = "",
+    company: str = "",
+    location: str = "",
+    level: str = "",
+    years_asked: int | None = None,
+    posted: str = "",
+    in_area: bool | None = None,
 ) -> dict:
-    """Report one job while its posting page is OPEN in the tab. Send only the
+    """Report one job while its posting page is OPEN in the tab. Send the
     posting's link, your 0-10 fit score (the playbook's rubric), why it fits and
-    the gaps, each a sentence or two. Do NOT send the job text: the app takes
-    the exact posting from the page itself. Answers with the outcome (picked =
-    a good fit, kept for the user to confirm; saved; below_bar; duplicate;
-    waiting_for_copy; no_copy; rejected_link), the progress, and what to do
-    next. On an "Anything I'd be good at" search, also pass resume_type: the
-    name of the user's resume type this job is closest to ("" for none)."""
+    the gaps, each a sentence or two, plus short facts you read on the page:
+    title, company, location, level (entry, mid, senior or lead), years_asked
+    (the most years of experience it asks for), posted ("2 days ago") and
+    in_area (false when the job is outside the brief's area). Do NOT send the
+    job text: the app takes the exact posting from the page itself. Answers
+    with the outcome (picked = a good fit, kept for the user to confirm; saved;
+    below_bar; duplicate; too_far; waiting_for_copy; no_copy; rejected_link),
+    the progress, and what to do next. On an "Anything I'd be good at" search,
+    also pass resume_type: the name of the user's resume type this job is
+    closest to ("" for none)."""
+    facts = {
+        "title": title,
+        "company": company,
+        "location": location,
+        "level": level,
+        "years_asked": years_asked,
+        "posted": posted,
+        "in_area": in_area,
+    }
     sent = {
         "url": url,
         "fit_score": fit_score,
         "why_fit": why_fit,
         "gaps": gaps,
         "resume_type": resume_type,
+        **{k: v for k, v in facts.items() if v not in ("", None)},
     }
     return await _scout(
         "report_job",
         run_id,
         sent,
         lambda db, user: scout_svc.report_job(
-            db, user.id, run_id, url, fit_score, why_fit, gaps, resume_type
+            db, user.id, run_id, url, fit_score, why_fit, gaps, resume_type, facts
         ),
     )
 
@@ -636,23 +659,29 @@ async def company_checked(
     result: str,
     careers_url: str | None = None,
     name: str = "",
+    openings: list[dict] | None = None,
 ) -> dict:
     """Local companies search only. After looking at a company's site, say
     what it had: result "openings", "none" or "no_careers", with the careers
     page's link when you found one. Send the same website you sent to
-    check_companies. Report the jobs themselves with report_job as usual."""
+    check_companies. With "openings", also send openings: the jobs the careers
+    page lists (up to 20), each {"title", "url", "fit"} with fit your 0-10
+    score or null when you didn't open it. Report the jobs that fit with
+    report_job as usual."""
     sent = {
         "website": website,
         "result": result,
         "careers_url": careers_url,
         "name": name,
     }
+    if openings:
+        sent["openings"] = openings
     return await _scout(
         "company_checked",
         run_id,
         sent,
         lambda db, user: scout_svc.company_checked(
-            db, user.id, run_id, website, result, careers_url, name
+            db, user.id, run_id, website, result, careers_url, name, openings
         ),
     )
 

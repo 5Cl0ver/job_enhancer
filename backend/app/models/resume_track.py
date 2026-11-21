@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
@@ -55,6 +56,15 @@ class ResumeTrack(Base):
     # {"degree_only": bool, "max_years": int | None, "exclude": [str]}
     skip_rules: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     min_pay: Mapped[int | None] = mapped_column(Integer)  # yearly USD
+    # The job levels to look for: a non-empty subset of entry, mid, senior
+    # (spec 012), and the user's years of experience for the level cap.
+    levels: Mapped[list] = mapped_column(
+        JSON,
+        nullable=False,
+        default=lambda: ["entry", "mid"],
+        server_default='["entry", "mid"]',
+    )
+    years: Mapped[int | None] = mapped_column(SmallInteger)
     resume_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("resumes.id", ondelete="SET NULL")
     )

@@ -28,6 +28,18 @@ def _clean_list(values: list[str], limit: int, max_len: int) -> list[str]:
     return out
 
 
+Level = Literal["entry", "mid", "senior"]
+LEVEL_ORDER = ("entry", "mid", "senior")
+
+
+def _levels(v: list[str]) -> list[str]:
+    """A non-empty set of levels, in order (spec 012)."""
+    chosen = set(v)
+    if not chosen:
+        raise ValueError("choose at least one level")
+    return [level for level in LEVEL_ORDER if level in chosen]
+
+
 class SkipRules(BaseModel):
     """What Claude Scout should pass over for this resume type."""
 
@@ -56,11 +68,19 @@ class TrackBase(BaseModel):
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     resume_id: uuid.UUID | None = None
     notes: str | None = Field(None, max_length=2000)
+    # The job levels to look for, and the user's years of experience.
+    levels: list[Level] = Field(default_factory=lambda: ["entry", "mid"])
+    years: int | None = Field(None, ge=0, le=40)
 
     @field_validator("target_titles", "related_titles")
     @classmethod
     def _titles(cls, v: list[str]) -> list[str]:
         return _clean_list(v, 15, 100)
+
+    @field_validator("levels")
+    @classmethod
+    def _lv(cls, v: list[str]) -> list[str]:
+        return _levels(v)
 
     @field_validator("key_skills")
     @classmethod
@@ -92,11 +112,18 @@ class TrackUpdate(BaseModel):
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     resume_id: uuid.UUID | None = None
     notes: str | None = Field(None, max_length=2000)
+    levels: list[Level] | None = None
+    years: int | None = Field(None, ge=0, le=40)
 
     @field_validator("name")
     @classmethod
     def _name(cls, v: str | None) -> str | None:
         return None if v is None else TrackCreate._name(v)
+
+    @field_validator("levels")
+    @classmethod
+    def _lv(cls, v: list[str] | None) -> list[str] | None:
+        return None if v is None else _levels(v)
 
     @field_validator("target_titles", "related_titles")
     @classmethod
@@ -118,6 +145,8 @@ class TrackOut(BaseModel):
     key_skills: list[str]
     skip_rules: SkipRules
     min_pay: int | None
+    levels: list[str] = Field(default_factory=lambda: ["entry", "mid"])
+    years: int | None = None
     resume_id: uuid.UUID | None
     # The attached resume's file name, so the page can show it without a lookup.
     resume_filename: str | None = None
@@ -181,7 +210,8 @@ class MissionCreate(BaseModel):
     broad: bool = False
     overrides: Overrides | None = None
     name: str | None = Field(None, max_length=80)  # blank = made from the rest
-    job_count: int = Field(5, ge=1, le=MAX_JOBS_PER_RUN)
+    # New searches start from the recommended settings (scout_levels).
+    job_count: int = Field(10, ge=1, le=MAX_JOBS_PER_RUN)
     posted_within_days: int = 7
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     location: str | None = Field(None, max_length=120)
@@ -360,9 +390,104 @@ class FindingOut(BaseModel):
     can_save: bool = False
     # Broad searches: the resume type Claude said this job is closest to.
     closest_track_name: str | None = None
+    # Spec 012: short facts Claude read on the page, and where the title came
+    # from ("copy" = the page, "claude" = Claude's reading).
+    location: str | None = None
+    level: str | None = None
+    posted: str | None = None
+    claude_fit: int | None = None
+    facts_from: str = "copy"
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class FindingItem(BaseModel):
+    """One job in Results (spec 012): Claude's facts and score, its group
+    against its run's bar, and what the user did with it."""
+
+    id: uuid.UUID
+    run_id: uuid.UUID
+    run_name: str
+    track_id: uuid.UUID | None
+    source: str
+    search_title: str | None = None
+    title: str
+    company: str
+    location: str | None = None
+    level: str | None = None
+    years_asked: int | None = None
+    posted: str | None = None
+    url: str
+    fit: int
+    claude_fit: int | None = None
+    band: Literal["best", "possible", "long_shot"]
+    min_fit: int
+    why_fit: str
+    gaps: str
+    app_note: str | None = None
+    status: Literal["new", "saved", "passed", "hidden"]
+    outcome: str
+    # "copy": title and company from the page; "claude": as Claude read them.
+    facts_from: str = "copy"
+    can_save: bool = False
+    saved_job_id: uuid.UUID | None = None
+    job_listing_id: uuid.UUID | None = None
+    found_at: datetime
+
+
+class FindingCounts(BaseModel):
+    best: int = 0
+    possible: int = 0
+    long_shot: int = 0
+    new: int = 0
+    saved: int = 0
+    passed: int = 0
+    hidden: int = 0
+
+
+class FindingPage(BaseModel):
+    items: list[FindingItem]
+    counts: FindingCounts
+    # The offset of the next page, or null on the last one.
+    next: int | None = None
+
+
+class RecommendedMission(BaseModel):
+    job_count: int
+    posted_within_days: int
+    min_fit: int
+    radius_miles: int
+
+
+class RecommendedTrack(BaseModel):
+    levels: list[str]
+    skip: dict[str, bool]
+
+
+class RecommendedOut(BaseModel):
+    mission: RecommendedMission
+    track: RecommendedTrack
+
+
+class RunBands(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    best: int = 0
+    possible: int = 0
+    long_shot: int = 0
+
+
+class RunHidden(BaseModel):
+    model_config = {"extra": "ignore"}
+
+    repeats: int = 0
+    too_far: int = 0
+
+
+class RunWidened(BaseModel):
+    title: str
+    days: int
 
 
 class RunCounts(BaseModel):
@@ -373,6 +498,7 @@ class RunCounts(BaseModel):
     duplicate: int = 0
     waiting_for_copy: int = 0
     no_copy: int = 0
+    too_far: int = 0
 
 
 class RunLink(BaseModel):
@@ -433,6 +559,16 @@ class RunOut(BaseModel):
     # Each search the run read, with the board's result count (spec 011).
     links: list["RunLink"] = Field(default_factory=list)
     findings: list[FindingOut] = Field(default_factory=list)
+    # Spec 012: the jobs found per group (repeats and too-far ones left out),
+    # what was hidden, pages never copied, titles Claude suggested for this
+    # run, and searches widened because they were thin.
+    bands: RunBands = Field(default_factory=RunBands)
+    hidden: RunHidden = Field(default_factory=RunHidden)
+    not_copied: int = 0
+    suggested_titles: list[str] = Field(default_factory=list)
+    widened: list[RunWidened] = Field(default_factory=list)
+    # What the run looked for, as it was at Start: place, radius, window, bar.
+    looking_for: dict | None = None
 
 
 class ActiveRunOut(BaseModel):
@@ -493,6 +629,13 @@ class CompanyOut(BaseModel):
     never_check: bool
     # Due for a check on the next run.
     due: bool = False
+    # The openings Claude saw on the latest check (spec 012).
+    last_openings: list[dict] = Field(default_factory=list)
+
+    @field_validator("last_openings", mode="before")
+    @classmethod
+    def _openings(cls, v: object) -> object:
+        return v or []
 
     model_config = {"from_attributes": True}
 

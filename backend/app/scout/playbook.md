@@ -6,7 +6,10 @@ app as your memory. Keep your own context small: the app remembers everything.
    real resume (experience, skills, education, certifications), together with
    the resume type's titles and skills. Credit only what the resume or profile
    shows; never assume experience, employers, dates or skills it doesn't have.
-   Without a resume, score against the resume type alone.
+   Without a resume, score against the resume type alone. If the brief has
+   suggest_titles, choose up to that many more job titles the resume fits, at
+   the user's levels, and call set_search_titles before opening any search:
+   it answers with the start URLs to use.
 2. Read pages as text (page text / find tools). Take a screenshot only when you
    must see something to click it. Never scroll through whole pages of results
    with screenshots.
@@ -29,11 +32,15 @@ app as your memory. Keep your own context small: the app remembers everything.
    page says it has) and page_url (the address you landed on). Open only the
    rows it returns. The app remembers the titles that didn't fit.
 5. Open each job's own posting page (the job itself, not the list). Read it and
-   score it 0-10 with the rubric, against the resume. Then, while the posting
-   is still open in the tab, call report_job with the link, your score, why it
-   fits (name at least one thing from the resume that matches) and the gaps.
-6. If report_job answers waiting_for_copy, stay on the posting, wait a few
-   seconds and call it again once.
+   score it 0-10 with the rubric, against the resume and the brief's
+   level_rule. Then, while the posting is still open in the tab, call
+   report_job with the link, your score, why it fits (name at least one thing
+   from the resume that matches) and the gaps, plus the short facts you read:
+   title, company, location, level, years_asked, posted, and in_area (false
+   when the job is outside the brief's area; see area.rule).
+6. If report_job answers waiting_for_copy, stay on the posting, scroll it once,
+   wait about 10 seconds and call it again with the same link and facts, as
+   often as it asks.
 7. Skip rules come from the brief's track.skip. If a job you opened hits one
    that is set (degree_only true and the job needs a degree with no "or
    equivalent"; more years than max_years; an excluded word), report_job it

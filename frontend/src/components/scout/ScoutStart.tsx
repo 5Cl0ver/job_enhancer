@@ -27,7 +27,8 @@ import {
 import { BroadOverrides } from "@/components/scout/BroadOverrides";
 import { RunFindings } from "@/components/scout/RunFindings";
 import { RunReview, SavedNote } from "@/components/scout/RunReview";
-import { RunTip } from "@/components/scout/RunTip";
+import { LastRun, WaitingLine } from "@/components/scout/LastRun";
+import { RecommendedButton } from "@/components/scout/Recommended";
 import { useResumes } from "@/hooks/useAI";
 import { useCollections, useCreateCollection } from "@/hooks/useSavedJobs";
 import {
@@ -47,8 +48,9 @@ import {
   formatPay,
   isBoard,
   isOpen,
-  lookedAt,
+  lookingFor,
   MAX_JOBS_PER_RUN,
+  missionLookingFor,
   type Mission,
   type MissionInput,
   needsPlace,
@@ -56,7 +58,6 @@ import {
   type Overrides,
   parsePay,
   POSTED_WITHIN,
-  postedLabel,
   boardRadius,
   DEFAULT_RADIUS,
   type Remote,
@@ -68,7 +69,6 @@ import {
   sourceLabel,
   SOURCES,
   type Track,
-  whereLabel,
 } from "@/lib/scout";
 import { Button } from "@/components/ui/button";
 import {
@@ -92,7 +92,14 @@ import { Skeleton } from "@/components/ui/skeleton";
 import { Switch } from "@/components/ui/switch";
 import { Textarea } from "@/components/ui/textarea";
 
-export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
+export function ScoutStart({
+  onSetUpTypes,
+  onOpenResults,
+}: {
+  onSetUpTypes: () => void;
+  /** Open Results: on one run, or on every run's new jobs (null). */
+  onOpenResults: (runId: string | null) => void;
+}) {
   const { data: tracks } = useTracks();
   const { data: resumes } = useResumes();
   // Claude scores against the uploaded resume: without one, scores are rougher.
@@ -101,8 +108,8 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
   const { data: runs } = useRuns();
   const [editing, setEditing] = useState<Mission | "new" | null>(null);
   const openRun = runs?.find(isOpen) ?? null;
-  // Finished searches whose good fits are still waiting to be ticked and saved.
-  const toReview = runs?.filter((r) => r.needs_review && !isOpen(r)) ?? [];
+  // The latest finished run: its numbers stay on Start until the next one.
+  const lastRun = runs?.find((r) => !isOpen(r)) ?? null;
   // What the last save did; kept here so it outlives the review it came from.
   const [saved, setSaved] = useState<ConfirmResult | null>(null);
 
@@ -135,9 +142,8 @@ export function ScoutStart({ onSetUpTypes }: { onSetUpTypes: () => void }) {
     <div className="space-y-6">
       {saved && <SavedNote result={saved} onDismiss={() => setSaved(null)} />}
       {openRun && <LiveRun runId={openRun.id} onSaved={setSaved} />}
-      {toReview.map((r) => (
-        <FinishedRun key={r.id} runId={r.id} onSaved={setSaved} />
-      ))}
+      <WaitingLine onReview={() => onOpenResults(null)} />
+      {lastRun && <LastRun run={lastRun} onSeeResults={onOpenResults} />}
 
       <section className="space-y-4">
         <div className="flex flex-col gap-3 sm:flex-row sm:items-end sm:justify-between">
@@ -228,13 +234,9 @@ function MissionCard({
 }) {
   const start = useStartRun();
   const pay = formatPay(m.min_pay ?? track?.min_pay ?? null);
-  const details = [
-    `${m.job_count} jobs`,
-    postedLabel(m.posted_within_days).toLowerCase(),
-    pay && `${pay}+`,
-    `fit ${m.min_fit}+`,
-    whereLabel(m),
-  ].filter(Boolean);
+  const details = [`up to ${m.job_count} jobs a run`, pay && `${pay}+`].filter(
+    Boolean,
+  );
   // Where its jobs go. Older responses don't say; then nothing is shown.
   const into = m.collection_name
     ? `Saves into ${m.collection_name}${m.auto_save ? ", without asking" : ""}`
@@ -244,7 +246,10 @@ function MissionCard({
     <li className="flex min-w-0 flex-col gap-3 rounded-lg border bg-card p-4">
       <div className="min-w-0">
         <p className="truncate font-medium">{m.name}</p>
-        <p className="mt-1 text-xs text-muted-foreground">
+        <p className="mt-1 text-sm">
+          {lookingFor(missionLookingFor(m, track))}
+        </p>
+        <p className="mt-0.5 text-xs text-muted-foreground">
           {details.join(" · ")}
         </p>
         {into && (
@@ -252,6 +257,7 @@ function MissionCard({
             {into}
           </p>
         )}
+        <RecommendedButton mission={m} track={track} />
       </div>
       {start.isError && (
         <p className="text-xs text-destructive">
@@ -284,41 +290,6 @@ function MissionCard({
         </Button>
       </div>
     </li>
-  );
-}
-
-/** A finished search with good fits still waiting: the review, on its own. */
-function FinishedRun({
-  runId,
-  onSaved,
-}: {
-  runId: string;
-  onSaved: (result: ConfirmResult) => void;
-}) {
-  const { data: run } = useRun(runId);
-  if (!run) return <Skeleton className="h-40" />;
-  if (!run.needs_review) return null;
-  const why = lookedAt(run);
-  const checked = companiesLine(run.looked_at);
-  return (
-    <section className="space-y-3 rounded-lg border border-primary/40 bg-primary/5 p-4 sm:p-5">
-      <div className="min-w-0">
-        <p className="font-medium">{run.name}</p>
-        <p className="text-sm text-muted-foreground">{runSummary(run)}</p>
-        {why && <p className="mt-1 text-sm text-muted-foreground">{why}</p>}
-        {why && run.tip && <RunTip tip={run.tip} className="mt-1" />}
-        {checked && (
-          <p className="mt-1 text-sm text-muted-foreground">{checked}</p>
-        )}
-        {run.note && (
-          <p className="mt-1 text-sm">
-            <span className="font-medium">Claude&apos;s note: </span>
-            {run.note}
-          </p>
-        )}
-      </div>
-      <RunReview run={run} onSaved={onSaved} />
-    </section>
   );
 }
 
@@ -473,7 +444,7 @@ function MissionForm({
   const [overrides, setOverrides] = useState<Overrides>(
     mission?.overrides ?? NO_OVERRIDES,
   );
-  const [count, setCount] = useState(String(mission?.job_count ?? 5));
+  const [count, setCount] = useState(String(mission?.job_count ?? 10));
   const [days, setDays] = useState(String(mission?.posted_within_days ?? 7));
   const [location, setLocation] = useState(mission?.location ?? "");
   // Miles around the place; a place with none set searches DEFAULT_RADIUS.
@@ -517,7 +488,9 @@ function MissionForm({
     if (!broad && !trackId) return setProblem("Pick a resume type.");
     const miles = Number(radius);
     if (radiusApplies && (!Number.isInteger(miles) || miles < 1 || miles > 100))
-      return setProblem("Distance should be a whole number of miles, 1 to 100.");
+      return setProblem(
+        "Distance should be a whole number of miles, 1 to 100.",
+      );
     if (local && !location.trim())
       return setProblem(
         "Add a city or area: Scout looks for companies near it.",
@@ -552,7 +525,9 @@ function MissionForm({
     const data: MissionInput & { id?: string } = {
       id: mission?.id,
       source,
-      ...(broad ? { broad: true, overrides } : { broad: false, track_id: trackId }),
+      ...(broad
+        ? { broad: true, overrides }
+        : { broad: false, track_id: trackId }),
       job_count: Number(count),
       posted_within_days: Number(days),
       location: location.trim() || null,
@@ -687,7 +662,9 @@ function MissionForm({
             max={100}
             disabled={!radiusApplies}
             value={radiusApplies ? radius : ""}
-            placeholder={radiusApplies ? String(DEFAULT_RADIUS) : "Add a city first"}
+            placeholder={
+              radiusApplies ? String(DEFAULT_RADIUS) : "Add a city first"
+            }
             onChange={(e) => setRadius(e.target.value)}
           />
           {radiusApplies &&

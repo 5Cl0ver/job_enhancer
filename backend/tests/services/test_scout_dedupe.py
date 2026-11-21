@@ -48,6 +48,20 @@ class TestUrlKey:
             "https://boards.greenhouse.io/brambleworks/jobs/555?gh_src=li"
         ) == (url_key("https://brambleworks.example/careers?gh_jid=555"))
 
+    def test_workday_links_match_with_or_without_the_language(self):
+        base = "https://vellacor.wd1.myworkdayjobs.com/External/job/Springfield-IL/IT-Admin_R-1042"
+        landed = (
+            "https://vellacor.wd1.myworkdayjobs.com/en-US/External/job/Springfield-IL/"
+            "IT-Admin_R-1042/apply?source=LinkedIn"
+        )
+        assert url_key(base) == url_key(landed)
+        assert url_key(base) != url_key(base.replace("1042", "1043"))
+
+    def test_oleeo_links_match_by_their_job_id(self):
+        a = "https://quillstone.tal.net/vx/lang-en-GB/mobile-0/appcentre-ext/brand-2/candidate/so/pm/1/pl/1/opp/2214-Help-Desk-Analyst/en-GB"
+        b = "https://quillstone.tal.net/vx/candidate/so/pm/1/pl/1/opp/2214-Help-Desk-Analyst/en-GB"
+        assert url_key(a) == url_key(b) == "quillstone.tal.net/opp/2214"
+
     def test_tracking_params_are_dropped(self):
         assert url_key("https://jobs.vellacor.example/role/9?utm_source=x&id=9") == (
             "jobs.vellacor.example/role/9?id=9"

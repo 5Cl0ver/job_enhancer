@@ -49,8 +49,10 @@ class TestBriefSaysToReadTheResume:
         await _resume(maker, user_id)
         out = await mcp_mod.get_scout_brief()
         assert out["resume_ready"] is True
-        assert out["next"].startswith("Call get_master_profile once")
-        assert "start URL" in out["next"]
+        # No related titles of its own: Claude suggests some first (spec 012).
+        assert out["next"].startswith("Call get_master_profile")
+        assert "set_search_titles" in out["next"]
+        assert "against the resume" in out["next"]
         assert "get_master_profile ONCE" in out["playbook"]
         assert "against the resume" in out["playbook"]
 
@@ -74,7 +76,7 @@ class TestBriefSaysToReadTheResume:
         user_id, _, _ = await _setup(maker, "rg3@test.dev")
         await _resume(maker, user_id, RESUME * 40)
         out = await mcp_mod.get_scout_brief()
-        assert len(json.dumps(out)) < 6000  # the resume isn't in it
+        assert len(json.dumps(out)) < 8000  # the resume isn't in it
 
 
 @pytest.mark.asyncio

@@ -85,6 +85,16 @@ def _url_key(url: str) -> str | None:
             return f"greenhouse/{gh}"
     if "gh_jid" in query:
         return f"greenhouse/{query['gh_jid']}"
+    # Workday adds a language to the link it lands on ("/en-US/…") and
+    # "/apply" while applying: the same posting either way (spec 012).
+    if host.endswith(("myworkdayjobs.com", "myworkdaysite.com")):
+        wd = re.sub(r"^/[a-z]{2}-[a-z]{2}(?=/)", "", path, flags=re.IGNORECASE)
+        return f"{host}{re.sub(r'/apply(?:/.*)?$', '', wd)}"
+    # Oleeo (tal.net) links carry the page layout; the job is its /opp/ id.
+    if host.endswith("tal.net"):
+        m = re.search(r"/opp/(\d+)", path)
+        if m:
+            return f"{host}/opp/{m.group(1)}"
     if host == "jobs.lever.co" or host == "jobs.ashbyhq.com":
         return f"{host}{path.removesuffix('/apply').removesuffix('/application')}"
 
@@ -194,6 +204,12 @@ def posting_problem(url: str) -> str | None:
             "That's a Google page. Open the job's own page (its \"Apply on\" "
             "link, the company's own site first) and send that link."
         )
+    # A Workday site's job list, not one job (a job's link has /job/ in it).
+    if (
+        host.endswith(("myworkdayjobs.com", "myworkdaysite.com"))
+        and "/job/" not in path
+    ):
+        return "That's a Workday job list. Open the job and send its link."
     if path in ("", "/careers", "/jobs", "/careers/jobs", "/join-us", "/about/careers"):
         return "That's a careers homepage, not one job. Open the job and send its link."
     return None

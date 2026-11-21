@@ -25,6 +25,10 @@ export interface Track {
   key_skills: string[];
   skip_rules: SkipRules;
   min_pay: number | null;
+  /** The job levels to look for (never empty; default Entry + Mid). */
+  levels?: Level[];
+  /** The user's years of experience, for the level cap. */
+  years?: number | null;
   resume_id: string | null;
   resume_filename: string | null;
   notes: string | null;
@@ -45,9 +49,34 @@ export type TrackInput = Pick<
   | "min_pay"
   | "resume_id"
   | "notes"
+  | "levels"
+  | "years"
 >;
 
 export const MAX_TRACKS = 8;
+
+export type Level = "entry" | "mid" | "senior";
+export const LEVELS: { value: Level; label: string }[] = [
+  { value: "entry", label: "Entry" },
+  { value: "mid", label: "Mid" },
+  { value: "senior", label: "Senior" },
+];
+export const DEFAULT_LEVELS: Level[] = ["entry", "mid"];
+
+/** "Entry–Mid", "Senior", "Entry + Senior". */
+export function levelsLabel(
+  levels: readonly string[] | null | undefined,
+): string {
+  const wanted = levels?.length ? levels : DEFAULT_LEVELS;
+  const chosen = LEVELS.filter((l) => wanted.includes(l.value));
+  if (chosen.length === 0) return levelsLabel(DEFAULT_LEVELS);
+  if (chosen.length === 1) return chosen[0].label;
+  const ranks = chosen.map((l) => LEVELS.indexOf(l));
+  const together = ranks.every((r, i) => i === 0 || r === ranks[i - 1] + 1);
+  return together
+    ? `${chosen[0].label}–${chosen[chosen.length - 1].label}`
+    : chosen.map((l) => l.label).join(" + ");
+}
 
 export const DEFAULT_SKIP: SkipRules = {
   // Off: jobs needing a degree are scored normally, the degree under gaps.
@@ -301,7 +330,8 @@ export type Outcome =
   | "below_bar"
   | "duplicate"
   | "waiting_for_copy"
-  | "no_copy";
+  | "no_copy"
+  | "too_far"; // outside the search's area
 
 export interface Finding {
   id: string;
@@ -323,6 +353,13 @@ export interface Finding {
   can_save: boolean;
   /** Broad searches: the resume type Claude said this job is closest to. */
   closest_track_name?: string | null;
+  /** Short facts Claude read on the page. */
+  location?: string | null;
+  level?: string | null;
+  posted?: string | null;
+  claude_fit?: number | null;
+  /** "copy": title and company from the page; "claude": as Claude read them. */
+  facts_from?: "copy" | "claude";
   created_at: string;
 }
 
@@ -336,6 +373,7 @@ export interface RunCounts {
   duplicate: number;
   waiting_for_copy: number;
   no_copy: number;
+  too_far?: number;
 }
 
 export interface Run {
@@ -369,6 +407,251 @@ export interface Run {
   broad?: boolean;
   titles?: { title: string; good_fits: number }[];
   findings: Finding[];
+  /** Jobs found per Results group (repeats and too-far ones left out). */
+  bands?: Record<Band, number>;
+  hidden?: { repeats: number; too_far: number };
+  /** Pages the extension never copied. */
+  not_copied?: number;
+  /** Titles Claude added for this run (the resume type had none of its own). */
+  suggested_titles?: string[];
+  /** Thin searches the app widened, and to how many days. */
+  widened?: { title: string; days: number }[];
+  /** What the run looked for, as it was at Start. */
+  looking_for?: LookingFor | null;
+}
+
+export interface LookingFor {
+  source: Source | null;
+  track: string | null;
+  broad?: boolean;
+  levels: string[];
+  location: string | null;
+  radius_miles: number | null;
+  remote: Remote;
+  days: number | null;
+  min_fit: number | null;
+  job_count?: number | null;
+}
+
+/** "Entry–mid IT Admin jobs · Beaverton, OR + 25 mi · past week · fit 6+" */
+export function lookingFor(l: LookingFor): string {
+  const what = l.broad
+    ? "jobs you'd be good at"
+    : `${l.track ?? ""} jobs`.trim();
+  const level = levelsLabel(l.levels);
+  const head = `${level.charAt(0)}${level.slice(1).toLowerCase()} ${what}`;
+  const where =
+    l.remote === "remote_only"
+      ? "remote"
+      : l.location
+        ? `${l.location}${l.radius_miles ? ` + ${l.radius_miles} mi` : ""}${
+            l.remote === "no_remote" ? ", on-site" : ""
+          }`
+        : null;
+  const when =
+    l.days === 1
+      ? "today"
+      : l.days === 7
+        ? "past week"
+        : l.days
+          ? `past ${l.days} days`
+          : null;
+  return [head, where, when, l.min_fit != null ? `fit ${l.min_fit}+` : null]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** A search's own "looking for", before it runs. */
+export function missionLookingFor(
+  m: Mission,
+  track: Track | undefined,
+): LookingFor {
+  return {
+    source: m.source,
+    track: track?.name ?? null,
+    broad: m.broad,
+    levels: track?.levels ?? DEFAULT_LEVELS,
+    location: m.location,
+    radius_miles:
+      m.location && m.remote !== "remote_only"
+        ? (m.radius_miles ?? DEFAULT_RADIUS)
+        : null,
+    remote: m.remote,
+    days: m.posted_within_days,
+    min_fit: m.min_fit,
+    job_count: m.job_count,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Results: every job Scout found, grouped against each run's own bar
+// ---------------------------------------------------------------------------
+export type Band = "best" | "possible" | "long_shot";
+export type FindingStatus = "new" | "saved" | "passed" | "hidden";
+export const BANDS: Band[] = ["best", "possible", "long_shot"];
+export const STATUSES: FindingStatus[] = ["new", "saved", "passed", "hidden"];
+
+export const BAND_LABEL: Record<Band, string> = {
+  best: "Best",
+  possible: "Possible",
+  long_shot: "Long shots",
+};
+export const BAND_HINT: Record<Band, string> = {
+  best: "At or over your bar",
+  possible: "Just under your bar",
+  long_shot: "Unlikely fits",
+};
+export const STATUS_LABEL: Record<FindingStatus, string> = {
+  new: "New",
+  saved: "Saved",
+  passed: "Passed",
+  hidden: "Hidden",
+};
+
+export interface FindingItem {
+  id: string;
+  run_id: string;
+  run_name: string;
+  track_id: string | null;
+  source: Source;
+  search_title: string | null;
+  title: string;
+  company: string;
+  location: string | null;
+  level: string | null;
+  years_asked: number | null;
+  posted: string | null;
+  url: string;
+  fit: number;
+  claude_fit: number | null;
+  band: Band;
+  min_fit: number;
+  why_fit: string;
+  gaps: string;
+  app_note: string | null;
+  status: FindingStatus;
+  outcome: Outcome;
+  facts_from: "copy" | "claude";
+  can_save: boolean;
+  saved_job_id: string | null;
+  job_listing_id: string | null;
+  found_at: string;
+}
+
+export type FindingCounts = Record<Band | FindingStatus, number>;
+
+export interface FindingPage {
+  items: FindingItem[];
+  counts: FindingCounts;
+  next: number | null;
+}
+
+export interface FindingFilters {
+  /** A run id, "last", or null for all runs. */
+  run: string | null;
+  track: string | null;
+  status: FindingStatus;
+  sort: "fit" | "newest";
+}
+
+/** "Mid · 3+ yrs · Springfield, IL · 2 days ago" */
+export function findingFacts(
+  f: Pick<FindingItem, "level" | "years_asked" | "location" | "posted">,
+): string {
+  const level = f.level
+    ? `${f.level.charAt(0).toUpperCase()}${f.level.slice(1)}`
+    : null;
+  return [
+    level,
+    f.years_asked != null ? `${f.years_asked}+ yrs` : null,
+    f.location,
+    f.posted,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/** The recommended settings (served by the app). */
+export interface Recommended {
+  mission: {
+    job_count: number;
+    posted_within_days: number;
+    min_fit: number;
+    radius_miles: number;
+  };
+  track: { levels: Level[]; skip: { degree_only: boolean } };
+}
+
+export interface SettingChange {
+  label: string;
+  from: string;
+  to: string;
+}
+
+/** What "Use recommended settings" would change on a search. It only ever
+ * widens: a search already looking wider than recommended keeps its own. */
+export function missionChanges(
+  m: Pick<
+    Mission,
+    | "job_count"
+    | "posted_within_days"
+    | "min_fit"
+    | "location"
+    | "remote"
+    | "radius_miles"
+  >,
+  rec: Recommended,
+): SettingChange[] {
+  const r = rec.mission;
+  const out: SettingChange[] = [];
+  if (m.job_count < r.job_count)
+    out.push({
+      label: "Jobs per run",
+      from: String(m.job_count),
+      to: String(r.job_count),
+    });
+  if (m.posted_within_days < r.posted_within_days)
+    out.push({
+      label: "Posted",
+      from: postedLabel(m.posted_within_days),
+      to: postedLabel(r.posted_within_days),
+    });
+  if (m.min_fit > r.min_fit)
+    out.push({
+      label: "Fit for Best",
+      from: `${m.min_fit}+`,
+      to: `${r.min_fit}+`,
+    });
+  if (m.location && m.remote !== "remote_only" && m.radius_miles == null)
+    out.push({
+      label: "Distance",
+      from: "Not set",
+      to: `${r.radius_miles} mi`,
+    });
+  return out;
+}
+
+/** What "Use recommended settings" would change on a resume type. */
+export function trackChanges(
+  t: Pick<Track, "levels" | "skip_rules">,
+  rec: Recommended,
+): SettingChange[] {
+  const out: SettingChange[] = [];
+  const levels = t.levels?.length ? t.levels : DEFAULT_LEVELS;
+  const missing = rec.track.levels.filter((l) => !levels.includes(l));
+  if (missing.length)
+    out.push({
+      label: "Levels",
+      from: levelsLabel(levels),
+      to: levelsLabel([...levels, ...missing]),
+    });
+  if (t.skip_rules.degree_only && !rec.track.skip.degree_only)
+    out.push({
+      label: "Degree rule",
+      from: "Skip degree-only jobs",
+      to: "Off",
+    });
+  return out;
 }
 
 /** A title a broad search has tried. */
@@ -428,6 +711,7 @@ export const OUTCOME_LABEL: Record<Outcome, string> = {
   duplicate: "Already had it",
   waiting_for_copy: "Copying…",
   no_copy: "Not copied",
+  too_far: "Too far",
 };
 
 /** Good fits a run found: waiting, saved, or passed on by the user. */
@@ -502,7 +786,7 @@ export function lookedAt(
 
 /**
  * A Local companies run's companies, in one line: "Checked 12 local companies:
- * 9 new · 3 re-checked · 4 had openings." Null for other searches.
+ * 9 new · 3 re-checked · 4 had jobs listed." Null for other searches.
  */
 export function companiesLine(
   lookedAtCounts: Record<string, number> | null,
@@ -515,7 +799,7 @@ export function companiesLine(
   };
   add(lookedAtCounts?.companies_new, "new");
   add(lookedAtCounts?.companies_rechecked, "re-checked");
-  parts.push(`${lookedAtCounts?.companies_with_openings ?? 0} had openings`);
+  parts.push(`${lookedAtCounts?.companies_with_openings ?? 0} had jobs listed`);
   return `Checked ${n} local ${n === 1 ? "company" : "companies"}: ${parts.join(" · ")}.`;
 }
 
@@ -531,13 +815,15 @@ export interface Company {
   never_check: boolean;
   /** Due for a check on the next run. */
   due: boolean;
+  /** The openings Claude saw on the latest check. */
+  last_openings?: { title: string; url: string; fit: number | null }[];
 }
 
-/** "Had openings · checked Nov 18" */
+/** "Has jobs listed · checked Nov 18" */
 export function companyStatus(c: Company): string {
   const result =
     c.last_result === "openings"
-      ? "Had openings"
+      ? "Has jobs listed"
       : c.last_result === "none"
         ? "No openings"
         : c.last_result === "no_careers"
