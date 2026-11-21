@@ -124,6 +124,9 @@ class ScoutMission(Base):
     auto_save: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # LinkedIn's id for the search's place, learned from the page on a run
+    # (spec 011): signed in, LinkedIn keeps only this, not the place's name.
+    linkedin_geo_id: Mapped[str | None] = mapped_column(String(20))
     # A broad search's overrides: {"always": [...], "never": [...], "avoid": [...]}.
     # Null or empty = Claude decides on its own.
     overrides: Mapped[dict | None] = mapped_column(JSON)

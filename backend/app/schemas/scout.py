@@ -31,8 +31,9 @@ def _clean_list(values: list[str], limit: int, max_len: int) -> list[str]:
 class SkipRules(BaseModel):
     """What Claude Scout should pass over for this resume type."""
 
-    # Skip jobs that require a degree with no "or equivalent experience".
-    degree_only: bool = True
+    # Skip jobs that require a degree with no "or equivalent experience". Off by
+    # default: such jobs are scored normally, the degree listed under gaps.
+    degree_only: bool = False
     # Skip jobs asking for more than this many years (None = no limit).
     max_years: int | None = Field(None, ge=0, le=40)
     # Words that rule a job out ("clearance", "SAP", "Director").
@@ -46,13 +47,17 @@ class SkipRules(BaseModel):
 
 class TrackBase(BaseModel):
     target_titles: list[str] = Field(default_factory=list)
+    # Other titles to search for too ("also search for").
+    related_titles: list[str] = Field(default_factory=list)
+    # Search titles as exact phrases (off: each title gets its own looser search).
+    exact_titles: bool = False
     key_skills: list[str] = Field(default_factory=list)
     skip_rules: SkipRules = Field(default_factory=SkipRules)
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     resume_id: uuid.UUID | None = None
     notes: str | None = Field(None, max_length=2000)
 
-    @field_validator("target_titles")
+    @field_validator("target_titles", "related_titles")
     @classmethod
     def _titles(cls, v: list[str]) -> list[str]:
         return _clean_list(v, 15, 100)
@@ -80,6 +85,8 @@ class TrackUpdate(BaseModel):
 
     name: str | None = Field(None, min_length=1, max_length=60)
     target_titles: list[str] | None = None
+    related_titles: list[str] | None = None
+    exact_titles: bool | None = None
     key_skills: list[str] | None = None
     skip_rules: SkipRules | None = None
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
@@ -91,7 +98,7 @@ class TrackUpdate(BaseModel):
     def _name(cls, v: str | None) -> str | None:
         return None if v is None else TrackCreate._name(v)
 
-    @field_validator("target_titles")
+    @field_validator("target_titles", "related_titles")
     @classmethod
     def _titles(cls, v: list[str] | None) -> list[str] | None:
         return None if v is None else _clean_list(v, 15, 100)
@@ -106,6 +113,8 @@ class TrackOut(BaseModel):
     id: uuid.UUID
     name: str
     target_titles: list[str]
+    related_titles: list[str] = Field(default_factory=list)
+    exact_titles: bool = False
     key_skills: list[str]
     skip_rules: SkipRules
     min_pay: int | None
@@ -131,8 +140,9 @@ POSTED_WITHIN = (1, 3, 7, 14, 30)
 MAX_JOBS_PER_RUN = 10
 
 
-# "Within N miles" of the search's city. The three boards all take these.
-Radius = Literal[5, 10, 25, 50, 100]
+# "Within N miles" of the search's city: any whole number of miles. Each job
+# board rounds it up to the nearest distance it offers (scout_runs.board_radius).
+MAX_RADIUS = 100
 
 
 def place_problem(source: str, location: str | None, remote: str) -> str | None:
@@ -175,7 +185,7 @@ class MissionCreate(BaseModel):
     posted_within_days: int = 7
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     location: str | None = Field(None, max_length=120)
-    radius_miles: Radius | None = None
+    radius_miles: int | None = Field(None, ge=1, le=MAX_RADIUS)
     remote: Remote = "any"
     min_fit: int = Field(6, ge=0, le=10)
     extra_instructions: str | None = Field(None, max_length=1000)
@@ -218,7 +228,7 @@ class MissionUpdate(BaseModel):
     posted_within_days: int | None = None
     min_pay: int | None = Field(None, ge=0, le=1_000_000)
     location: str | None = Field(None, max_length=120)
-    radius_miles: Radius | None = None
+    radius_miles: int | None = Field(None, ge=1, le=MAX_RADIUS)
     remote: Remote | None = None
     min_fit: int | None = Field(None, ge=0, le=10)
     extra_instructions: str | None = Field(None, max_length=1000)
@@ -244,6 +254,8 @@ class MissionOut(BaseModel):
     # "Anything I'd be good at": Claude chooses the titles.
     broad: bool = False
     overrides: Overrides | None = None
+    # LinkedIn's id for the place, learned on a run (null until then).
+    linkedin_geo_id: str | None = None
     job_count: int
     posted_within_days: int
     min_pay: int | None
@@ -363,6 +375,16 @@ class RunCounts(BaseModel):
     no_copy: int = 0
 
 
+class RunLink(BaseModel):
+    """One search a run read: what it asked for, the results the board said
+    it had, pages read, and filters the board's redirect dropped."""
+
+    title: str
+    total: int | None = None
+    pages: int = 0
+    dropped: list[str] = Field(default_factory=list)
+
+
 class RunTitle(BaseModel):
     title: str
     good_fits: int = 0
@@ -408,6 +430,8 @@ class RunOut(BaseModel):
     # "Anything I'd be good at": the titles this run searched, with good fits.
     broad: bool = False
     titles: list["RunTitle"] = Field(default_factory=list)
+    # Each search the run read, with the board's result count (spec 011).
+    links: list["RunLink"] = Field(default_factory=list)
     findings: list[FindingOut] = Field(default_factory=list)
 
 

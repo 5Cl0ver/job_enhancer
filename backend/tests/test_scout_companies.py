@@ -143,14 +143,16 @@ class TestStartUrls:
         q = parse_qs(urlsplit(url).query)
         assert url.startswith("https://www.google.com/search?")
         assert q["udm"] == ["8"]
-        assert q["q"] == ['"IT Systems Administrator" jobs near Springfield, IL']
+        assert q["q"] == [
+            "IT Systems Administrator jobs within 25 miles of Springfield, IL"
+        ]
 
     def test_google_jobs_remote_only(self):
         (url,) = scout_runs.start_urls(
             self._criteria(source="google_jobs", remote="remote_only")
         )
         assert parse_qs(urlsplit(url).query)["q"] == [
-            '"IT Systems Administrator" remote jobs'
+            "IT Systems Administrator remote jobs"
         ]
 
 

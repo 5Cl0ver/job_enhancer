@@ -379,6 +379,26 @@ describe("Claude Scout start", () => {
     expect(within(form).getByText(/this search can't start/)).toBeInTheDocument();
   });
 
+  it("takes any radius up to 100 miles and says what the board searches", async () => {
+    serve({ "/v1/scout/tracks": [TRACK], "/v1/scout/missions": [MISSION] });
+    post.mockResolvedValue(MISSION);
+    const user = userEvent.setup();
+    renderStart();
+    await user.click(await screen.findByRole("button", { name: /New search/ }));
+    const form = await screen.findByRole("dialog");
+    await user.type(within(form).getByLabelText(/City or area/), "Beaverton, OR");
+    const miles = within(form).getByLabelText(/How far around it/);
+    expect(miles).toHaveValue(25);
+    await user.clear(miles);
+    await user.type(miles, "40");
+    expect(within(form).getByText(/LinkedIn searches 50 miles/)).toBeInTheDocument();
+    await user.click(within(form).getByRole("button", { name: "Save search" }));
+    expect(post).toHaveBeenCalledWith(
+      "/v1/scout/missions",
+      expect.objectContaining({ location: "Beaverton, OR", radius_miles: 40 }),
+    );
+  });
+
   it("asks a new user to set up resume types first", async () => {
     serve({ "/v1/scout/tracks": [], "/v1/scout/missions": [] });
     renderStart();

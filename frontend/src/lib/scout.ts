@@ -18,6 +18,10 @@ export interface Track {
   id: string;
   name: string;
   target_titles: string[];
+  /** Other titles to search for too ("also search for"). */
+  related_titles?: string[];
+  /** Search titles as exact phrases (off: each title its own looser search). */
+  exact_titles?: boolean;
   key_skills: string[];
   skip_rules: SkipRules;
   min_pay: number | null;
@@ -34,6 +38,8 @@ export type TrackInput = Pick<
   Track,
   | "name"
   | "target_titles"
+  | "related_titles"
+  | "exact_titles"
   | "key_skills"
   | "skip_rules"
   | "min_pay"
@@ -44,7 +50,8 @@ export type TrackInput = Pick<
 export const MAX_TRACKS = 8;
 
 export const DEFAULT_SKIP: SkipRules = {
-  degree_only: true,
+  // Off: jobs needing a degree are scored normally, the degree under gaps.
+  degree_only: false,
   max_years: null,
   exclude: [],
 };
@@ -199,7 +206,21 @@ export const SCOUT_LINE =
   "Do my next Job Scout run with the Job Enhancer connector.";
 
 /** "Within N miles" choices the three job boards all understand. */
-export const RADIUS_MILES = [5, 10, 25, 50, 100] as const;
+/** A place with no radius set searches this far around it. */
+export const DEFAULT_RADIUS = 25;
+/** What each board offers: a radius rounds up to the next one. */
+const BOARD_RADII: Partial<Record<Source, number[]>> = {
+  linkedin: [5, 10, 25, 50, 100],
+  ziprecruiter: [5, 10, 25, 50, 100],
+  indeed: [5, 10, 15, 25, 35, 50, 100],
+};
+
+/** The miles a board is asked for: "LinkedIn searches 50 miles" for 40. */
+export function boardRadius(source: Source, miles: number): number {
+  const options = BOARD_RADII[source];
+  if (!options) return miles;
+  return options.find((o) => o >= miles) ?? options[options.length - 1];
+}
 
 /** Where a search looks, in words: "within 25 mi of Springfield, IL". */
 export function whereLabel(
@@ -338,6 +359,9 @@ export interface Run {
   looked_at: Record<string, number> | null;
   /** What to change when a finished search came back short. */
   tip?: string | null;
+  /** Each search the run read: the board's result count, pages read, and
+   * filters the board's redirect dropped. */
+  links?: { title: string; total: number | null; pages: number; dropped: string[] }[];
   /** Which instructions it used: per section, when the user's edit was made
    * (null = the original). Null for runs from before the Instructions page. */
   instructions?: Record<string, string | null> | null;
@@ -628,4 +652,20 @@ export function instructionsLine(
     );
   if (edited.length === 0) return "Instructions: the originals";
   return `Instructions: ${edited.join(" · ")} · the rest original`;
+}
+
+/** "LinkedIn's results per search: IT Administrator 27 · …" (null if none). */
+export function linksLine(run: Pick<Run, "source" | "links">): string | null {
+  const counted = (run.links ?? []).filter((l) => l.total != null);
+  if (counted.length === 0) return null;
+  return `${sourceLabel(run.source)}'s results per search: ${counted
+    .map((l) => `${l.title} ${l.total}`)
+    .join(" · ")}.`;
+}
+
+/** Filters a board's redirect dropped on any search (null if none). */
+export function droppedLine(run: Pick<Run, "source" | "links">): string | null {
+  const dropped = [...new Set((run.links ?? []).flatMap((l) => l.dropped))];
+  if (dropped.length === 0) return null;
+  return `${sourceLabel(run.source)} dropped these filters when it opened the search: ${dropped.join(", ")}.`;
 }

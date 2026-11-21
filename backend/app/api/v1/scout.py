@@ -88,6 +88,28 @@ async def delete_track(
     await db.commit()
 
 
+@router.get("/tracks/{track_id}/passes")
+async def track_passes(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The titles Claude passed over for this resume type (spec 011)."""
+    return await svc.passes(db, track_id, user.id)
+
+
+@router.post("/tracks/{track_id}/start-fresh", status_code=204)
+async def track_start_fresh(
+    track_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Forget the titles Claude passed over for this resume type, and let its
+    jobs scored below the bar be looked at again."""
+    await svc.start_fresh(db, await svc.get_track(db, track_id, user.id))
+    await db.commit()
+
+
 @router.get("/missions", response_model=list[MissionOut])
 async def list_missions(
     user: User = Depends(get_current_user),

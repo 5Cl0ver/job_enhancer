@@ -30,9 +30,14 @@ class TestInstructionsPage:
         r = await client.put("/v1/scout/instructions/playbook", json={"text": "Mine."})
         assert r.status_code == 200 and r.json()["edited"] is True
         r = await client.put(
-            "/v1/scout/instructions/limits", json={"values": {"pages": 6}}
+            "/v1/scout/instructions/limits", json={"values": {"search_pages": 6}}
         )
-        assert r.json()["current"] == {"pages": 6, "titles": 8, "companies": 15}
+        assert r.json()["current"] == {
+            "links": 6,
+            "search_pages": 6,
+            "titles": 8,
+            "companies": 15,
+        }
         r = await client.post("/v1/scout/instructions/playbook/reset")
         assert r.json()["edited"] is False
         hist = (await client.get("/v1/scout/instructions/playbook/history")).json()

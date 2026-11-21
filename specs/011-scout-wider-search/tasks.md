@@ -1,0 +1,33 @@
+# Tasks: Claude Scout casts a wider, correctly placed net
+
+- [X] T001 Migration `i7d8e9f0a1b3`: `resume_tracks.related_titles` / `exact_titles` / `rules_changed_at`, `scout_missions.linkedin_geo_id`
+- [X] T002 Schemas:
+  - related titles and the exact switch on tracks
+  - `degree_only` default off
+  - radius any 1–100
+  - `RunOut.links`
+  - `MissionOut.linkedin_geo_id`
+- [X] T003 `scout_runs` search building:
+  - `search_titles` / `search_links` (one plain-words search per title)
+  - `board_radius` (default 25)
+  - LinkedIn links carry `geoId` once learned
+- [X] T004 `check_jobs` paging across searches:
+  - pages per search, and a search that runs out moves on
+  - `total_results`, `page_url` and `place_fixed` (saves `geoId`)
+  - dropped filters noted
+- [X] T005 `_seen_jobs`: below-bar hides a job only for the same resume type and until its rules change; decided jobs stay hidden everywhere
+- [X] T006 `scout_tracks`: `start_fresh`, `passes`, and rules changes start a type fresh; routes `/tracks/{id}/passes` and `/start-fresh`
+- [X] T007 Instructions:
+  - limits `links` (1–10, default 6) and `pages` per search (1–8, default 2)
+  - rubric "experience met", experience counts as a degree, unlisted pay counts as met
+  - playbook steps 3, 4, 7 and 8; Google Jobs steps; `PLAYBOOK_VERSION` 2026.11.8
+- [X] T008 Finish summary and History show each search's result count, and any filters the board dropped
+- [X] T009 Frontend:
+  - related titles and the exact switch
+  - degree switch explained, default off
+  - "Fill skills from my resume"
+  - passed titles View / Start fresh
+  - radius in miles 1–100 with the board's rounding
+  - result counts in History
+- [X] T010 Tests: backend (`test_scout_wider_search.py` plus updated paging, radius and title tests) and frontend (editor, radius, helpers); trial Postgres run
+- [ ] T011 PR, independent review, CI; merge after the user's OK
