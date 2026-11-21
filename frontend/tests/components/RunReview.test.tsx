@@ -19,7 +19,7 @@ vi.mock("@/lib/api", () => ({
   API_BASE: "http://localhost:8000",
 }));
 
-import { ScoutStart } from "@/components/scout/ScoutStart";
+import { ScoutHistory } from "@/components/scout/ScoutHistory";
 import type { Finding, Run } from "@/lib/scout";
 
 function finding(id: string, title: string, company: string, over: Partial<Finding>): Finding {
@@ -61,7 +61,7 @@ const FINDINGS = [
 ];
 
 const RUN: Run = {
-  id: "r1",
+  id: "0b5e1c2a-7d3f-4e8a-9c61-2f4d8b7a1e03",
   mission_id: "m1",
   name: "LinkedIn · IT Admin · 5 · last 7 days",
   source: "linkedin",
@@ -107,8 +107,9 @@ function renderStart() {
   });
   return render(
     <QueryClientProvider client={qc}>
-      <MemoryRouter>
-        <ScoutStart onSetUpTypes={() => {}} />
+      {/* A finished run's review lives in History (Start shows its numbers). */}
+      <MemoryRouter initialEntries={["/?view=history&run=0b5e1c2a-7d3f-4e8a-9c61-2f4d8b7a1e03"]}>
+        <ScoutHistory />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -123,7 +124,7 @@ beforeEach(() => {
   get.mockImplementation((path: string) => {
     if (path === "/v1/scout/tracks") return Promise.resolve([TRACK]);
     if (path === "/v1/scout/runs") return Promise.resolve([{ ...run, findings: [] }]);
-    if (path === "/v1/scout/runs/r1") return Promise.resolve(run);
+    if (path === "/v1/scout/runs/0b5e1c2a-7d3f-4e8a-9c61-2f4d8b7a1e03") return Promise.resolve(run);
     if (path.startsWith("/v1/collections")) return Promise.resolve(COLLECTIONS);
     return Promise.resolve([]);
   });
@@ -158,7 +159,7 @@ describe("the review after a Scout search", () => {
     expect(screen.getByText("Only two new ones this week")).toBeInTheDocument();
     // A broad search's good fit says which resume type it's closest to.
     expect(
-      screen.getByText((_, el) => el?.tagName === "P" && el.textContent === "Closest · IT Admin"),
+      await screen.findByText((_, el) => el?.tagName === "P" && el.textContent === "Closest · IT Admin"),
     ).toBeInTheDocument();
     // And what to change for more next time.
     expect(screen.getByText(/the search ran recently\. Give it a day\./)).toBeInTheDocument();
@@ -188,7 +189,7 @@ describe("the review after a Scout search", () => {
     await user.click(box(/Keep Help Desk Lead/));
     await user.click(screen.getByRole("button", { name: "Save 2 to My Jobs" }));
 
-    expect(post).toHaveBeenCalledWith("/v1/scout/runs/r1/confirm", {
+    expect(post).toHaveBeenCalledWith("/v1/scout/runs/0b5e1c2a-7d3f-4e8a-9c61-2f4d8b7a1e03/confirm", {
       finding_ids: ["f1", "f3"],
       shown_ids: ["f1", "f2", "f3", "f4", "f5"],
     });
@@ -226,7 +227,7 @@ describe("the review after a Scout search", () => {
     await user.click(box(/Keep IT Administrator/));
     await user.click(screen.getByRole("button", { name: "Keep none" }));
     expect(post).toHaveBeenCalledWith(
-      "/v1/scout/runs/r1/confirm",
+      "/v1/scout/runs/0b5e1c2a-7d3f-4e8a-9c61-2f4d8b7a1e03/confirm",
       expect.objectContaining({ finding_ids: [] }),
     );
     expect(await screen.findByRole("status")).toHaveTextContent("Nothing new was saved.");
@@ -251,7 +252,7 @@ describe("the review after a Scout search", () => {
     expect(save).toBeEnabled();
     await user.click(save);
     expect(post).toHaveBeenCalledWith(
-      "/v1/scout/runs/r1/confirm",
+      "/v1/scout/runs/0b5e1c2a-7d3f-4e8a-9c61-2f4d8b7a1e03/confirm",
       expect.objectContaining({ finding_ids: ["f1"], new_collection_name: "This week" }),
     );
   });

@@ -55,9 +55,13 @@ export function scoutDone(res) {
 // /JobDetails.aspx, /employment, /openings… (not "steve-jobs-biography").
 const JOBBY_PATH =
   /(^|\/)(careers?|jobs?|job[-_]?details?|jobdetails|positions?|openings?|vacanc\w*|requisitions?|hiring|recruit\w*|employment|join-?us|opportunit\w*)([/._?=&-]|$)/i;
-// Hiring systems small companies use, and careers.* / jobs.* sites.
-const JOBBY_HOST =
-  /^(careers?|jobs?|apply|hire|recruiting)\.|(^|\.)(applytojob\.com|lever\.co|workable\.com|greenhouse\.io|myworkdayjobs\.com|icims\.com|paylocity\.com|bamboohr\.com|ultipro\.com|ukg\.net|breezy\.hr|recruitee\.com|smartrecruiters\.com|jobvite\.com|adp\.com|paycomonline\.net|dayforcehcm\.com|taleo\.net|governmentjobs\.com|schoolspring\.com)$/i;
+// Hiring systems companies use (their own careers pages run on these), and
+// careers.* / jobs.* sites.
+const HIRING_SYSTEMS =
+  /(^|\.)(applytojob\.com|lever\.co|workable\.com|greenhouse\.io|myworkdayjobs\.com|myworkdaysite\.com|icims\.com|paylocity\.com|bamboohr\.com|ultipro\.com|ukg\.net|breezy\.hr|recruitee\.com|smartrecruiters\.com|jobvite\.com|adp\.com|paycomonline\.net|dayforcehcm\.com|taleo\.net|tal\.net|oleeo\.com|oraclecloud\.com|successfactors\.(com|eu)|applicantpro\.com|hrmdirect\.com|rippling-ats\.com|ashbyhq\.com|teamtailor\.com|pinpointhq\.com|jazzhr\.com|governmentjobs\.com|schoolspring\.com)$/i;
+const JOBBY_HOST = /^(careers?|jobs?|apply|hire|recruiting)\./i;
+// A hiring system's subdomain that isn't the company ("jobs.lever.co").
+const NOT_A_COMPANY = /^(www|jobs?|careers?|boards?|apply|recruiting|hire|wd\d+)$/i;
 const APPLY_WORD = /\bapply\b/i;
 const POSTING_WORDS = [
   /\bresponsibilities\b/i,
@@ -104,7 +108,18 @@ function meta(doc, selector) {
   return (doc.querySelector(selector)?.getAttribute("content") || "").trim();
 }
 
-/** The company a site belongs to: its declared name, else its domain's. */
+const capital = (s) => (s ? s[0].toUpperCase() + s.slice(1) : "");
+
+// Hiring systems whose first subdomain is the company ("vellacor.wd1.
+// myworkdayjobs.com", "careers-vellacor.icims.com"). Others (ADP, Oracle,
+// SuccessFactors, UltiPro…) name a server there, never the company.
+const COMPANY_SUBDOMAIN =
+  /\.(myworkdayjobs\.com|myworkdaysite\.com|bamboohr\.com|applytojob\.com|taleo\.net|tal\.net|breezy\.hr|recruitee\.com|teamtailor\.com|pinpointhq\.com|icims\.com)$/i;
+
+/** The company a site belongs to: its declared name, the page title's other
+ * half, the company's subdomain on a hiring system, else its domain's. Empty
+ * on other hiring systems: no name beats a wrong one (Claude's reading of it
+ * is kept in the app). */
 export function siteName(doc, url, title = "") {
   const named = meta(doc, 'meta[property="og:site_name"]') || meta(doc, 'meta[name="application-name"]');
   if (named) return named;
@@ -118,8 +133,21 @@ export function siteName(doc, url, title = "") {
   } catch {
     return "";
   }
+  if (COMPANY_SUBDOMAIN.test(host)) {
+    const first = host.split(".")[0].replace(/^(careers?|jobs?|external)-/i, "").replace(/\d+$/, "");
+    return first && !NOT_A_COMPANY.test(first) ? capital(first.replace(/[-_]+/g, " ")) : "";
+  }
+  if (HIRING_SYSTEMS.test(host)) return "";
   const label = host.split(".").slice(-2, -1)[0] || "";
   return label ? label[0].toUpperCase() + label.slice(1) : "";
+}
+
+function onHiringSystem(url) {
+  try {
+    return HIRING_SYSTEMS.test(new URL(url).hostname.replace(/^www\./, ""));
+  } catch {
+    return false;
+  }
 }
 
 /** Does this page look like one job posting (not a homepage or article)? */
@@ -133,7 +161,7 @@ export function looksLikePosting(url, text) {
   } catch {
     return false;
   }
-  if (JOBBY_HOST.test(host)) return true;
+  if (JOBBY_HOST.test(host) || HIRING_SYSTEMS.test(host)) return true;
   // Or a posting's shape: "apply" plus at least two posting headings.
   const headings = POSTING_WORDS.filter((w) => w.test(text)).length;
   return JOBBY_PATH.test(path) || (APPLY_WORD.test(text) && headings >= 2);
@@ -145,15 +173,48 @@ export function looksLikePosting(url, text) {
  * posting or already had both.
  */
 export function withPageFallback(doc, url, job) {
-  if (!job?.title || (job.company && job.description)) return job;
+  if (!job) return job;
+  const title = job.title || pageTitle(doc);
+  if (!title || (job.title && job.company && job.description)) return job;
+  // The posting's own block where a hiring system marks it (Workday), else
+  // the page's main part.
   const main =
-    doc.querySelector("main, [role='main'], article, #content, .content, #main") || doc.body;
+    doc.querySelector(POSTING_BLOCK) ||
+    doc.querySelector("main, [role='main'], article, #content, .content, #main") ||
+    doc.body;
   if (!main) return job;
   const text = pageText(main);
   if (!looksLikePosting(url, text)) return job;
+  // On a hiring system, a job list looks like a careers page too: only a page
+  // with the posting's own block, or a posting's headings, is one job.
+  if (onHiringSystem(url) && !doc.querySelector(POSTING_BLOCK) && !POSTING_WORDS.some((w) => w.test(text))) {
+    return job;
+  }
   return {
     ...job,
-    company: job.company || siteName(doc, url, job.title),
+    title,
+    company: job.company || siteName(doc, url, title),
+    location: job.location || textOf(doc, LOCATION),
     description: job.description || text,
   };
+}
+
+// Where hiring systems put a posting's title, text and place, for pages that
+// draw themselves with no title tags (Workday).
+const TITLE_BLOCK = '[data-automation-id="jobPostingHeader"]';
+const POSTING_BLOCK = '[data-automation-id="jobPostingDescription"]';
+const LOCATION = '[data-automation-id="locations"] dd';
+
+function textOf(doc, selector) {
+  return (doc.querySelector(selector)?.textContent || "").replace(/\s+/g, " ").trim();
+}
+
+/** A posting's title when the shared extractor found none: the hiring
+ * system's header, the page's h1, or its og:title. */
+export function pageTitle(doc) {
+  return (
+    textOf(doc, TITLE_BLOCK) ||
+    textOf(doc, "h1") ||
+    meta(doc, 'meta[property="og:title"]')
+  ).slice(0, 500);
 }

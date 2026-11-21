@@ -6,6 +6,9 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import {
   type Company,
+  type FindingFilters,
+  type FindingItem,
+  type FindingPage,
   type InstructionKey,
   type Instructions,
   type InstructionSection,
@@ -14,6 +17,7 @@ import {
   type Mission,
   type MissionInput,
   type Overrides,
+  type Recommended,
   type Run,
   type RunEvent,
   type TitleTried,
@@ -290,6 +294,7 @@ function afterScoutSave(qc: ReturnType<typeof useQueryClient>) {
   for (const queryKey of [
     ["scout-run"],
     ["scout-runs"],
+    ["scout-findings"],
     ["saved-jobs"],
     ["collections"],
     ["tracker"],
@@ -328,6 +333,55 @@ export function useSaveFinding() {
         folder: { id: string | null; name: string };
       }>(`/v1/scout/findings/${findingId}/save`, body),
     onSuccess: () => afterScoutSave(qc),
+  });
+}
+
+// ---------------------------------------------------------------------------
+// Results: every job Scout found, grouped against each run's bar
+// ---------------------------------------------------------------------------
+
+/** One page of findings for Results, best first (or newest). Live while a
+ * run is open, so new jobs land without a refresh. */
+export function useFindings(filters: FindingFilters, limit = 100) {
+  const { data: runs } = useRuns();
+  const params = new URLSearchParams({
+    status: filters.status,
+    sort: filters.sort,
+    limit: String(limit),
+  });
+  if (filters.run) params.set("run", filters.run);
+  if (filters.track) params.set("track", filters.track);
+  return useQuery<FindingPage>({
+    queryKey: ["scout-findings", filters, limit],
+    queryFn: () => api.get<FindingPage>(`/v1/scout/findings?${params}`),
+    refetchInterval: runs?.some(isOpen) ? POLL_MS : false,
+  });
+}
+
+/** Pass on a job, or undo that. */
+export function usePassFinding() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, undo }: { id: string; undo?: boolean }) =>
+      api.post<FindingItem>(
+        `/v1/scout/findings/${id}/${undo ? "restore" : "pass"}`,
+        {},
+      ),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["scout-findings"] });
+      qc.invalidateQueries({ queryKey: ["scout-runs"] });
+      qc.invalidateQueries({ queryKey: ["scout-run"] });
+      qc.invalidateQueries({ queryKey: ["email-events", "attention"] });
+    },
+  });
+}
+
+/** The settings that find the most jobs at the user's level. */
+export function useRecommended() {
+  return useQuery<Recommended>({
+    queryKey: ["scout-recommended"],
+    queryFn: () => api.get<Recommended>("/v1/scout/recommended"),
+    staleTime: Infinity,
   });
 }
 

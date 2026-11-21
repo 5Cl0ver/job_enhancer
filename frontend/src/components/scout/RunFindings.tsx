@@ -23,6 +23,7 @@ const OUTCOME_STYLE: Record<Finding["outcome"], string> = {
   duplicate: "",
   waiting_for_copy: "",
   no_copy: "bg-amber-500 text-white hover:bg-amber-500",
+  too_far: "",
 };
 const SOLID: Finding["outcome"][] = ["picked", "saved", "no_copy"];
 

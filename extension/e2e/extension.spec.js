@@ -141,3 +141,56 @@ test("Claude Scout: a job page opened during a run is sent word for word", async
   expect(await worker.evaluate(() => globalThis.__sent.length)).toBe(1);
   await page.close();
 });
+
+test("Claude Scout: a company careers page that draws itself late is still copied", async () => {
+  // A Workday-style page (spec 012): nothing but a loading shell at first, the
+  // posting drawn 3 seconds later, with no title tags or JobPosting data.
+  const drawn = readFileSync(join(fixtures, "workday-posting.html"), "utf8");
+  const body = drawn.slice(drawn.indexOf("<body>") + 6, drawn.indexOf("</body>"));
+  const html =
+    '<!doctype html><html><head><title>Workday</title></head><body><div id="shell">Loading…</div>' +
+    `<template id="later">${body}</template>` +
+    "<script>setTimeout(() => { document.body.replaceChildren(" +
+    "document.getElementById('later').content.cloneNode(true)); }, 3000);</script>" +
+    "</body></html>";
+  const jobUrl =
+    "https://vellacor.wd1.myworkdayjobs.com/en-US/External/job/Springfield-IL/IT-Systems-Administrator_R-1042";
+  await context.route(jobUrl, (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: html }),
+  );
+
+  // A Local companies run Claude has started: pages on any site are copied.
+  await worker.evaluate(async () => {
+    await chrome.storage.local.set({
+      je_token: "test-token",
+      je_expires: Math.floor(Date.now() / 1000) + 3600,
+    });
+    globalThis.__sent = [];
+    globalThis.fetch = async (url, opts = {}) => {
+      const path = new URL(url).pathname;
+      if (path === "/v1/scout/captures") globalThis.__sent.push(JSON.parse(opts.body));
+      const body =
+        path === "/v1/scout/runs/active"
+          ? { run_id: "run-2", any_site: true }
+          : path === "/v1/scout/captures"
+            ? { stored: true }
+            : { saved: false };
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    };
+  });
+
+  const page = await context.newPage();
+  await page.goto(jobUrl);
+  await expect
+    .poll(() => worker.evaluate(() => globalThis.__sent.length), { timeout: 15000 })
+    .toBe(1);
+  const [sent] = await worker.evaluate(() => globalThis.__sent);
+  expect(sent.url).toBe(jobUrl);
+  expect(sent.title).toBe("IT Systems Administrator");
+  expect(sent.company).toBe("Vellacor");
+  expect(sent.description).toContain("Automate onboarding with PowerShell");
+  await page.close();
+});

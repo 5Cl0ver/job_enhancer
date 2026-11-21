@@ -65,6 +65,9 @@ NO_COPY = "no_copy"
 # A good fit waiting for the user to confirm it, and one they passed on.
 PICKED = "picked"
 SKIPPED = "skipped"
+# Outside the search's place and radius (and not remote where remote is fine):
+# remembered so it isn't reported again, never counted toward the target.
+TOO_FAR = "too_far"
 
 # What a company's own careers page had when it was last checked.
 COMPANY_OPENINGS = "openings"
@@ -240,6 +243,20 @@ class ScoutFinding(Base):
     closest_track_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("resume_tracks.id", ondelete="SET NULL")
     )
+    # Short facts Claude read on the page (spec 012), never the job text: shown
+    # even when the page copy never arrived, labelled as Claude's reading.
+    location: Mapped[str | None] = mapped_column(String(120))
+    level: Mapped[str | None] = mapped_column(String(10))
+    years_asked: Mapped[int | None] = mapped_column(SmallInteger)
+    posted: Mapped[str | None] = mapped_column(String(40))
+    in_area: Mapped[bool | None] = mapped_column(Boolean)
+    # Claude's score before the app's level cap; ``fit_score`` is after it.
+    claude_fit: Mapped[int | None] = mapped_column(SmallInteger)
+    # Where the title and company came from: "copy" (the page) or "claude".
+    facts_from: Mapped[str] = mapped_column(
+        String(10), nullable=False, default="copy", server_default="copy"
+    )
+    passed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = _now_col()
 
     __table_args__ = (
@@ -274,6 +291,8 @@ class ScoutCompany(Base):
     never_check: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # The openings Claude saw on the latest check: [{title, url, fit}], <= 20.
+    last_openings: Mapped[list | None] = mapped_column(JSON)
     created_at: Mapped[datetime] = _now_col()
 
     __table_args__ = (

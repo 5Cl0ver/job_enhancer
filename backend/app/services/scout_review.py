@@ -21,9 +21,11 @@ from app.models.saved_job import ORIGIN_SCOUT
 from app.models.scout import (
     BELOW_BAR,
     DUPLICATE,
+    NO_COPY,
     PICKED,
     SAVED,
     SKIPPED,
+    WAITING,
     ScoutCapture,
     ScoutFinding,
     ScoutRun,
@@ -53,8 +55,9 @@ SOURCE_LABEL = {
 }
 # "Found by Claude Scout on …" for a search that isn't one site.
 FOUND_ON = {"local_companies": "a local company's own site"}
-# A finding the user can still put in My Jobs (given its page copy exists).
-SAVEABLE = (PICKED, SKIPPED, BELOW_BAR)
+# A finding the user can still put in My Jobs (given its page copy exists: one
+# that arrived after Claude moved on counts too).
+SAVEABLE = (PICKED, SKIPPED, BELOW_BAR, NO_COPY, WAITING)
 NO_COPY_REASON = "The copy of this job's page is gone. Open the posting and save it."
 
 

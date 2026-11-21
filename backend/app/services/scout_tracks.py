@@ -149,6 +149,8 @@ async def create_track(
         key_skills=data.key_skills,
         skip_rules=data.skip_rules.model_dump(),
         min_pay=data.min_pay,
+        levels=list(data.levels),
+        years=data.years,
         resume_id=data.resume_id,
         notes=data.notes,
         sort_order=count or 0,
@@ -175,6 +177,8 @@ async def update_track(
             t.exact_titles,
             t.key_skills,
             t.skip_rules,
+            t.levels,
+            t.years,
         )
 
     fit_before = fit(track)
@@ -186,6 +190,7 @@ async def update_track(
             "exact_titles",
             "key_skills",
             "skip_rules",
+            "levels",
         ):
             continue  # required fields: null means "leave as is"
         setattr(track, key, value)

@@ -141,7 +141,7 @@ class TestBrief:
             await _track_job(maker, user_id, f"Vellacor {i}", f"Analyst {i}")
         big = len(json.dumps(await mcp_mod.get_scout_brief()))
         assert big == small
-        assert small < 6000  # characters, i.e. roughly 1.5k tokens
+        assert small < 8000  # characters, i.e. roughly 2k tokens
 
 
 @pytest.mark.asyncio
@@ -223,7 +223,10 @@ class TestReportJob:
         first = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "none")
         assert first["outcome"] == "waiting_for_copy"
         second = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "none")
-        assert second["outcome"] == "no_copy"
+        assert second["outcome"] == "waiting_for_copy"
+        assert "10 seconds" in second["next"]
+        third = await mcp_mod.report_job(str(run_id), JOB_URL, 8, "fits", "none")
+        assert third["outcome"] == "no_copy"
         async with maker() as db:
             assert (await db.scalars(select(SavedJob))).all() == []
 

@@ -10,12 +10,13 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const get = vi.fn();
 const post = vi.fn();
+const patch = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
     get: (...args: unknown[]) => get(...args),
     post: (...args: unknown[]) => post(...args),
-    patch: vi.fn(),
+    patch: (...args: unknown[]) => patch(...args),
     delete: vi.fn(),
   },
   ApiError: class ApiError extends Error {
@@ -98,7 +99,7 @@ function renderStart() {
   return render(
     <QueryClientProvider client={qc}>
       <MemoryRouter>
-        <ScoutStart onSetUpTypes={() => {}} />
+        <ScoutStart onSetUpTypes={() => {}} onOpenResults={() => {}} />
       </MemoryRouter>
     </QueryClientProvider>,
   );
@@ -120,8 +121,11 @@ describe("Claude Scout start", () => {
     expect(await screen.findByText(MISSION.name)).toBeInTheDocument();
     // Pay falls back to the resume type's minimum.
     expect(
-      screen.getByText(/5 jobs · last 7 days · \$70K\+ · fit 6\+/),
+      screen.getByText(
+        "Entry–mid IT Admin jobs · Springfield, IL + 25 mi · past week · fit 6+",
+      ),
     ).toBeInTheDocument();
+    expect(screen.getByText("up to 5 jobs a run · $70K+")).toBeInTheDocument();
     // And where its jobs will go.
     expect(screen.getByText("Saves into IT Admin")).toBeInTheDocument();
   });
@@ -316,7 +320,7 @@ describe("Claude Scout start", () => {
     renderStart();
     expect(
       await screen.findByText(
-        "Checked 4 local companies: 3 new · 1 re-checked · 2 had openings.",
+        "Checked 4 local companies: 3 new · 1 re-checked · 2 had jobs listed.",
       ),
     ).toBeInTheDocument();
   });
@@ -332,29 +336,44 @@ describe("Claude Scout start", () => {
     renderStart();
     await user.click(await screen.findByRole("button", { name: /New search/ }));
     const form = await screen.findByRole("dialog");
-    await user.click(within(form).getByRole("combobox", { name: "Resume type" }));
+    await user.click(
+      within(form).getByRole("combobox", { name: "Resume type" }),
+    );
     await user.click(
       await screen.findByRole("option", { name: "Anything I'd be good at" }),
     );
-    expect(within(form).getByText(/Claude reads your resume and picks/)).toBeInTheDocument();
-    expect(within(form).getByRole("combobox", { name: "Save into" })).toHaveTextContent(
-      "A collection named “Claude's picks”",
-    );
+    expect(
+      within(form).getByText(/Claude reads your resume and picks/),
+    ).toBeInTheDocument();
+    expect(
+      within(form).getByRole("combobox", { name: "Save into" }),
+    ).toHaveTextContent("A collection named “Claude's picks”");
     // Step in: one title never searched, one word to skip (Enter adds it).
-    await user.type(within(form).getByLabelText("Never search"), "Help Desk Technician");
-    await user.click(within(form).getByRole("button", { name: "Add to Never search" }));
+    await user.type(
+      within(form).getByLabelText("Never search"),
+      "Help Desk Technician",
+    );
+    await user.click(
+      within(form).getByRole("button", { name: "Add to Never search" }),
+    );
     await user.type(
       within(form).getByLabelText("Skip jobs with these words"),
       "sales, call center{Enter}",
     );
     expect(within(form).getByText("call center")).toBeInTheDocument();
-    await user.click(within(form).getByRole("button", { name: "Remove call center" }));
+    await user.click(
+      within(form).getByRole("button", { name: "Remove call center" }),
+    );
     await user.click(within(form).getByRole("button", { name: "Save search" }));
     expect(post).toHaveBeenCalledWith(
       "/v1/scout/missions",
       expect.objectContaining({
         broad: true,
-        overrides: { always: [], never: ["Help Desk Technician"], avoid: ["sales"] },
+        overrides: {
+          always: [],
+          never: ["Help Desk Technician"],
+          avoid: ["sales"],
+        },
       }),
     );
     expect(post.mock.calls[0][1]).not.toHaveProperty("track_id");
@@ -368,15 +387,21 @@ describe("Claude Scout start", () => {
     });
     const user = userEvent.setup();
     renderStart();
-    const link = await screen.findByRole("link", { name: "Upload your resume" });
+    const link = await screen.findByRole("link", {
+      name: "Upload your resume",
+    });
     expect(link).toHaveAttribute("href", "/ai-apply");
     await user.click(screen.getByRole("button", { name: /New search/ }));
     const form = await screen.findByRole("dialog");
-    await user.click(within(form).getByRole("combobox", { name: "Resume type" }));
+    await user.click(
+      within(form).getByRole("combobox", { name: "Resume type" }),
+    );
     await user.click(
       await screen.findByRole("option", { name: "Anything I'd be good at" }),
     );
-    expect(within(form).getByText(/this search can't start/)).toBeInTheDocument();
+    expect(
+      within(form).getByText(/this search can't start/),
+    ).toBeInTheDocument();
   });
 
   it("takes any radius up to 100 miles and says what the board searches", async () => {
@@ -386,12 +411,17 @@ describe("Claude Scout start", () => {
     renderStart();
     await user.click(await screen.findByRole("button", { name: /New search/ }));
     const form = await screen.findByRole("dialog");
-    await user.type(within(form).getByLabelText(/City or area/), "Beaverton, OR");
+    await user.type(
+      within(form).getByLabelText(/City or area/),
+      "Beaverton, OR",
+    );
     const miles = within(form).getByLabelText(/How far around it/);
     expect(miles).toHaveValue(25);
     await user.clear(miles);
     await user.type(miles, "40");
-    expect(within(form).getByText(/LinkedIn searches 50 miles/)).toBeInTheDocument();
+    expect(
+      within(form).getByText(/LinkedIn searches 50 miles/),
+    ).toBeInTheDocument();
     await user.click(within(form).getByRole("button", { name: "Save search" }));
     expect(post).toHaveBeenCalledWith(
       "/v1/scout/missions",
@@ -417,12 +447,14 @@ describe("Claude Scout start", () => {
     const user = userEvent.setup();
     renderStart();
     await user.click(
-      await screen.findByRole("button", { name: "Or let Claude pick from your resume" }),
+      await screen.findByRole("button", {
+        name: "Or let Claude pick from your resume",
+      }),
     );
     const form = await screen.findByRole("dialog");
-    expect(within(form).getByRole("combobox", { name: "Resume type" })).toHaveTextContent(
-      "Anything I'd be good at",
-    );
+    expect(
+      within(form).getByRole("combobox", { name: "Resume type" }),
+    ).toHaveTextContent("Anything I'd be good at");
     await user.click(within(form).getByRole("button", { name: "Save search" }));
     expect(post).toHaveBeenCalledWith(
       "/v1/scout/missions",
@@ -433,11 +465,190 @@ describe("Claude Scout start", () => {
   it("someone with only broad searches still sees them", async () => {
     serve({
       "/v1/scout/tracks": [],
-      "/v1/scout/missions": [{ ...MISSION, broad: true, name: "LinkedIn · Anything I'd be good at" }],
+      "/v1/scout/missions": [
+        { ...MISSION, broad: true, name: "LinkedIn · Anything I'd be good at" },
+      ],
     });
     renderStart();
     expect(
       await screen.findByText("LinkedIn · Anything I'd be good at"),
     ).toBeInTheDocument();
+  });
+});
+
+describe("Start after a run (spec 012)", () => {
+  const DONE = {
+    ...RUN,
+    status: "done",
+    note: "Few new ones today",
+    finished_at: "2026-11-20T18:00:00Z",
+    looked_at: { rows: 40 },
+    bands: { best: 3, possible: 2, long_shot: 4 },
+    hidden: { repeats: 5, too_far: 1 },
+    not_copied: 2,
+    widened: [{ title: "IT Systems Administrator", days: 3 }],
+    suggested_titles: ["Help Desk Analyst"],
+    looking_for: {
+      source: "linkedin",
+      track: "IT Admin",
+      levels: ["entry", "mid"],
+      location: "Springfield, IL",
+      radius_miles: 25,
+      remote: "any",
+      days: 1,
+      min_fit: 6,
+    },
+  };
+  const REC = {
+    mission: {
+      job_count: 10,
+      posted_within_days: 7,
+      min_fit: 6,
+      radius_miles: 25,
+    },
+    track: { levels: ["entry", "mid"], skip: { degree_only: false } },
+  };
+
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+    patch.mockReset();
+  });
+
+  function renderWith(onOpenResults = vi.fn()) {
+    const qc = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: { retry: false },
+      },
+      mutationCache: new MutationCache({ onError: () => {} }),
+    });
+    render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter>
+          <ScoutStart onSetUpTypes={() => {}} onOpenResults={onOpenResults} />
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    return onOpenResults;
+  }
+
+  it("shows the last run's numbers and opens its results", async () => {
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [MISSION],
+      "/v1/scout/runs": [DONE],
+      "/v1/scout/recommended": REC,
+    });
+    const open = renderWith();
+    const card = await screen.findByRole("region", { name: "Last run" });
+    expect(
+      within(card).getByText(
+        "Looked for: Entry–mid IT Admin jobs · Springfield, IL + 25 mi · today · fit 6+",
+      ),
+    ).toBeInTheDocument();
+    expect(card).toHaveTextContent(
+      "Checked 40 jobs · 3 best · 2 possible · 4 long shots",
+    );
+    expect(card).toHaveTextContent(
+      "Hidden: 5 you'd already seen · 1 too far away",
+    );
+    expect(card).toHaveTextContent(
+      "widened IT Systems Administrator to 3 days",
+    );
+    expect(card).toHaveTextContent("Job Catcher didn't copy 2 pages");
+    expect(card).toHaveTextContent("Few new ones today");
+    await userEvent.click(
+      within(card).getByRole("button", { name: /See results/ }),
+    );
+    expect(open).toHaveBeenCalledWith("r1");
+  });
+
+  it("keeps a title Claude suggested with one tap", async () => {
+    serve({
+      "/v1/scout/tracks": [{ ...TRACK, related_titles: [] }],
+      "/v1/scout/missions": [MISSION],
+      "/v1/scout/runs": [DONE],
+    });
+    patch.mockResolvedValue(TRACK);
+    renderWith();
+    await userEvent.click(
+      await screen.findByRole("button", {
+        name: "Keep Help Desk Analyst for IT Admin",
+      }),
+    );
+    expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", {
+      related_titles: ["Help Desk Analyst"],
+    });
+  });
+
+  it("says how many new jobs are waiting, and opens them", async () => {
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [MISSION],
+    });
+    get.mockImplementation((path: string) =>
+      Promise.resolve(
+        path.startsWith("/v1/scout/findings")
+          ? {
+              items: [],
+              counts: {
+                best: 3,
+                possible: 2,
+                long_shot: 6,
+                new: 11,
+                saved: 0,
+                passed: 0,
+                hidden: 0,
+              },
+              next: null,
+            }
+          : path === "/v1/scout/tracks"
+            ? [TRACK]
+            : path === "/v1/scout/missions"
+              ? [MISSION]
+              : [],
+      ),
+    );
+    const open = renderWith();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /5 new jobs waiting for you/ }),
+    );
+    expect(open).toHaveBeenCalledWith(null);
+  });
+
+  it("shows recommended settings' changes and applies them only on press", async () => {
+    serve({
+      "/v1/scout/tracks": [TRACK],
+      "/v1/scout/missions": [
+        { ...MISSION, job_count: 2, posted_within_days: 1, min_fit: 8 },
+      ],
+      "/v1/scout/recommended": REC,
+    });
+    patch.mockResolvedValue({});
+    renderWith();
+    await userEvent.click(
+      await screen.findByRole("button", { name: /Use recommended settings/ }),
+    );
+    const dialog = await screen.findByRole("dialog");
+    expect(dialog).toHaveTextContent("Jobs per run2 → 10");
+    expect(dialog).toHaveTextContent("Degree ruleSkip degree-only jobs → Off");
+    expect(patch).not.toHaveBeenCalled();
+    await userEvent.click(
+      within(dialog).getByRole("button", { name: "Apply" }),
+    );
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/scout/missions/m1", {
+        job_count: 10,
+        posted_within_days: 7,
+        min_fit: 6,
+        // A place with no distance set gets the recommended one.
+        radius_miles: 25,
+      }),
+    );
+    expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", {
+      levels: ["entry", "mid"],
+      skip_rules: { degree_only: false, max_years: null, exclude: [] },
+    });
   });
 });

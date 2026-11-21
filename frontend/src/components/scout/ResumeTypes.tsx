@@ -16,6 +16,7 @@ import {
 import { toast } from "sonner";
 import { errorText } from "@/components/scout/errorText";
 import { FillSkills, PassedTitles } from "@/components/scout/TrackMemory";
+import { RecommendedButton } from "@/components/scout/Recommended";
 import { useResumes } from "@/hooks/useAI";
 import { openOwnFile } from "@/lib/openFile";
 import {
@@ -28,7 +29,11 @@ import {
   useUploadTrackResume,
 } from "@/hooks/useScout";
 import {
+  DEFAULT_LEVELS,
   DEFAULT_SKIP,
+  type Level,
+  LEVELS,
+  levelsLabel,
   MAX_TRACKS,
   STARTER_TRACKS,
   formatPay,
@@ -199,7 +204,9 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
         <div className="min-w-0">
           <p className="font-medium [overflow-wrap:anywhere]">{t.name}</p>
           <p className="text-xs text-muted-foreground">
-            {t.job_count} saved job{t.job_count === 1 ? "" : "s"}
+            {levelsLabel(t.levels)}
+            {t.years != null && ` · ${t.years} yrs`} · {t.job_count} saved job
+            {t.job_count === 1 ? "" : "s"}
             {pay && ` · ${pay}+`}
           </p>
         </div>
@@ -240,6 +247,7 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
         </>
       )}
       <PassedTitles track={t} />
+      <RecommendedButton track={t} />
       {/* The resume for this type: see it, or put one here without opening Edit. */}
       <input
         ref={fileInput}
@@ -355,6 +363,21 @@ function EditorForm({
     skip.max_years != null ? String(skip.max_years) : "",
   );
   const [exclude, setExclude] = useState(skip.exclude.join(", "));
+  const [levels, setLevels] = useState<Level[]>(
+    track?.levels?.length ? track.levels : DEFAULT_LEVELS,
+  );
+  const [experience, setExperience] = useState(
+    track?.years != null ? String(track.years) : "",
+  );
+  // Never empty: the last level chosen stays.
+  const toggleLevel = (l: Level) =>
+    setLevels((now) =>
+      now.includes(l)
+        ? now.length > 1
+          ? now.filter((x) => x !== l)
+          : now
+        : LEVELS.map((x) => x.value).filter((x) => x === l || now.includes(x)),
+    );
   const [notes, setNotes] = useState(track?.notes ?? "");
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [problem, setProblem] = useState<string | null>(null);
@@ -435,6 +458,14 @@ function EditorForm({
       return setProblem("Minimum pay should look like 70000 or $70K.");
     if (years != null && (!Number.isInteger(years) || years < 0))
       return setProblem("Max years should be a whole number.");
+    const myYears = experience.trim() ? Number(experience) : null;
+    if (
+      myYears != null &&
+      (!Number.isInteger(myYears) || myYears < 0 || myYears > 40)
+    )
+      return setProblem(
+        "Years of experience should be a whole number, 0 to 40.",
+      );
     setProblem(null);
     const data: TrackInput = {
       name: name.trim(),
@@ -450,6 +481,8 @@ function EditorForm({
       min_pay: minPay,
       resume_id: resumeId === NO_RESUME ? null : resumeId,
       notes: notes.trim() || null,
+      levels,
+      years: myYears,
     };
     if (track) update.mutate({ id: track.id, ...data }, { onSuccess: onClose });
     else create.mutate(data, { onSuccess: onClose });
@@ -636,6 +669,50 @@ function EditorForm({
             {errorText(upload.error, "Couldn't upload that file.")}
           </p>
         )}
+      </div>
+
+      <div className="space-y-2 rounded-md border p-3">
+        <p className="text-sm font-medium" id="track-levels">
+          Level
+        </p>
+        <div
+          role="group"
+          aria-labelledby="track-levels"
+          className="flex flex-wrap gap-1.5"
+        >
+          {LEVELS.map((l) => (
+            <Button
+              key={l.value}
+              type="button"
+              size="sm"
+              variant={levels.includes(l.value) ? "default" : "outline"}
+              aria-pressed={levels.includes(l.value)}
+              className="pointer-coarse:min-h-11"
+              onClick={() => toggleLevel(l.value)}
+            >
+              {l.label}
+            </Button>
+          ))}
+        </div>
+        <p className="text-xs text-muted-foreground">
+          Claude looks for {levelsLabel(levels)} jobs. Higher ones never land in
+          Best.
+        </p>
+        <div className="flex items-center gap-2">
+          <Label htmlFor="track-years" className="text-sm font-normal">
+            Your years of experience (optional)
+          </Label>
+          <Input
+            id="track-years"
+            type="number"
+            inputMode="numeric"
+            min={0}
+            max={40}
+            className="w-20"
+            value={experience}
+            onChange={(e) => setExperience(e.target.value)}
+          />
+        </div>
       </div>
 
       <div className="space-y-3 rounded-md border p-3">

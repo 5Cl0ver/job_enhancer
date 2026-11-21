@@ -8,8 +8,13 @@ import {
   scoutPayload,
   siteName,
   withPageFallback,
+  pageTitle,
 } from "../src/scoutCapture.js";
 import { MIN_DESCRIPTION } from "../src/backfill.js";
+import { extractJob } from "../src/extract/index.js";
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
 
 const job = {
   title: "IT Systems Administrator",
@@ -151,5 +156,86 @@ describe("company sites (Local companies / Google Jobs)", () => {
   it("reads text with breaks between blocks", () => {
     const doc = docOf("<html><body><div><p>One  two</p><p>three</p></div></body></html>");
     expect(pageText(doc.body)).toBe("One two\nthree");
+  });
+});
+
+// Spec 012: company careers pages on hiring systems were never copied. These
+// fixtures are the two kinds a Local companies run met: a Workday-style page
+// that draws itself (no title tags) and an Oleeo (tal.net) page.
+describe("hiring-system pages (spec 012)", () => {
+  const here = dirname(fileURLToPath(import.meta.url));
+  const fixture = (name) => {
+    const window = new Window();
+    window.document.write(readFileSync(join(here, "fixtures", name), "utf8"));
+    return window.document;
+  };
+
+  it("copies a Workday-style page with no title tags", () => {
+    const url =
+      "https://vellacor.wd1.myworkdayjobs.com/en-US/External/job/Springfield-IL/IT-Systems-Administrator_R-1042";
+    const doc = fixture("workday-posting.html");
+    const job = withPageFallback(doc, url, extractJob(doc, url));
+    expect(job.title).toBe("IT Systems Administrator");
+    expect(job.company).toBe("Vellacor");
+    expect(job.location).toBe("Springfield, IL");
+    expect(job.description).toContain("Manage laptops in Intune and keep them patched");
+    expect(job.description).not.toContain("Sign In");
+    const payload = scoutPayload(job);
+    expect(payload).not.toBeNull();
+    expect(payload.url).toBe(url);
+  });
+
+  it("copies an Oleeo (tal.net) page", () => {
+    const url =
+      "https://quillstone.tal.net/vx/lang-en-GB/mobile-0/appcentre-ext/brand-2/candidate/so/pm/1/pl/1/opp/2214-Help-Desk-Analyst/en-GB";
+    const doc = fixture("oleeo-posting.html");
+    const job = withPageFallback(doc, url, extractJob(doc, url));
+    expect(job.title).toBe("Help Desk Analyst");
+    expect(job.company).toBe("Quillstone Council"); // the title's other half
+    expect(job.description).toContain("Reset accounts in Active Directory");
+    expect(scoutPayload(job)).not.toBeNull();
+  });
+
+  it("names the company right on hiring systems, or not at all", () => {
+    const blank = new Window().document;
+    const name = (url) => siteName(blank, url, "Systems Administrator");
+    expect(name("https://vellacor.wd1.myworkdayjobs.com/en-US/External/job/1")).toBe("Vellacor");
+    expect(name("https://careers-brambleworks.icims.com/jobs/12/job")).toBe("Brambleworks");
+    for (const url of [
+      "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=1",
+      "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/1",
+      "https://career4.successfactors.com/career?career_job_req_id=77",
+      "https://recruiting2.ultipro.com/VEL1000/JobBoard/abc/OpportunityDetail?opportunityId=1",
+    ]) {
+      expect(name(url)).toBe("");
+    }
+    // The page title still names it.
+    const titled = new Window();
+    titled.document.write("<html><head><title>Systems Administrator | Brambleworks</title></head></html>");
+    expect(siteName(titled.document, "https://workforcenow.adp.com/x", "Systems Administrator")).toBe("Brambleworks");
+  });
+
+  it("doesn't copy a hiring system's job list", () => {
+    const window = new Window();
+    window.document.write(
+      "<html><body><main><h1>Search for jobs</h1><ul><li>IT Technician</li><li>Payroll Clerk</li></ul></main></body></html>",
+    );
+    const url = "https://vellacor.wd1.myworkdayjobs.com/en-US/External";
+    const job = withPageFallback(window.document, url, { title: "", company: "", url });
+    expect(scoutPayload(job)).toBeNull();
+  });
+
+  it("knows more hiring systems, and finds a title where there are no tags", () => {
+    for (const url of [
+      "https://quillstone.tal.net/vx/candidate/so/pm/1/pl/1/opp/2214-Help-Desk-Analyst/en-GB",
+      "https://eeho.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX/job/1234",
+      "https://career4.successfactors.com/career?career_job_req_id=77",
+      "https://vellacor.wd1.myworkdaysite.com/recruiting/vellacor/External/job/1",
+    ]) {
+      expect(looksLikePosting(url, "")).toBe(true);
+    }
+    const window = new Window();
+    window.document.write('<html><head><meta property="og:title" content="Field Technician"></head><body></body></html>');
+    expect(pageTitle(window.document)).toBe("Field Technician");
   });
 });
