@@ -534,19 +534,33 @@ async def get_scout_brief(run_id: str | None = None) -> dict:
 
 
 @mcp.tool
-async def check_jobs(run_id: str, rows: list[dict]) -> dict:
+async def check_jobs(
+    run_id: str,
+    rows: list[dict],
+    total_results: int | None = None,
+    page_url: str | None = None,
+    place_fixed: bool = False,
+) -> dict:
     """Which jobs on this results page are new? Send every row of ONE page at
     once (up to 30), each as {"company", "title", "url", "fits"} as shown in
     the list, where "fits" is false when the title alone doesn't fit the resume
     type (the app remembers those, so no later run weighs them again). Returns
     the positions (0-based) worth opening; the rest are already in the user's
     tracker, were seen by an earlier run, hit an excluded word or didn't fit.
-    Also returns next_page_url: open it for the next page of results."""
+    Also returns next_page_url: open it next (the next page of this search, or
+    the next search). With the first page of each search, send total_results
+    (the result count the page shows) and page_url (the address you landed
+    on); on LinkedIn, place_fixed: true after setting the place yourself."""
+    sent = {"rows": rows, "total_results": total_results, "page_url": page_url}
+    if place_fixed:
+        sent["place_fixed"] = True
     return await _scout(
         "check_jobs",
         run_id,
-        {"rows": rows},
-        lambda db, user: scout_svc.check_jobs(db, user.id, run_id, rows),
+        sent,
+        lambda db, user: scout_svc.check_jobs(
+            db, user.id, run_id, rows, total_results, page_url, place_fixed
+        ),
     )
 
 

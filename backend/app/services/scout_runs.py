@@ -23,14 +23,15 @@ Functions Claude reaches through the connector raise ``ValueError`` with a
 message Claude can act on; the page's REST functions raise ``HTTPException``.
 """
 
+import contextlib
 import hashlib
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
-from urllib.parse import urlencode, urlsplit
+from urllib.parse import parse_qsl, urlencode, urlsplit
 
 from fastapi import HTTPException
-from sqlalchemy import func, or_, select
+from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collection import Collection
@@ -67,6 +68,7 @@ from app.schemas.scout import (
     MissionUpdate,
     RunCounts,
     RunFolder,
+    RunLink,
     RunOut,
     RunTitle,
     place_problem,
@@ -87,7 +89,7 @@ from app.services.scout_dedupe import (
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.7"
+PLAYBOOK_VERSION = "2026.11.8"
 # What Claude is told lives in app/scout/*.md and scout_instructions (the user
 # can edit most of it; a run uses its own snapshot).
 SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
@@ -96,13 +98,17 @@ RUBRIC = instr.RUBRIC
 MAX_ROWS_PER_CHECK = 30
 # Results pages a run reads before it stops (the user can change it), and how
 # many of the resume type's titles one search asks for (runs take turns).
-MAX_PAGES = instr.LIMITS["pages"]
+MAX_PAGES = instr.LIMITS["search_pages"]
 TITLES_PER_SEARCH = 4
 HOURS_PER_YEAR = 2080
 # Findings that count as "seen": a job the user has decided on or has waiting
 # to decide, or that Claude already judged. A job with no page copy isn't seen;
 # it can be found again.
 _SEEN = (SAVED, PICKED, SKIPPED, BELOW_BAR, DUPLICATE)
+# Outcomes the user decided on. (A duplicate points at a job already in the
+# tracker, which in_tracker covers, or at an earlier finding that carries its
+# own outcome.)
+_DECIDED = (SAVED, PICKED, SKIPPED)
 # What counts toward a run's target: good fits, confirmed yet or not.
 _KEPT = (SAVED, PICKED)
 
@@ -185,6 +191,9 @@ async def update_mission(
     auto_named = mission.name == mission_name(
         mission.source, old_track.name, mission.job_count, mission.posted_within_days
     )
+    new_place = "location" in updates and (updates["location"] or None) != (
+        mission.location or None
+    )
     for key, value in updates.items():
         if value is None and key not in (
             "min_pay",
@@ -199,6 +208,8 @@ async def update_mission(
     problem = place_problem(mission.source, mission.location, mission.remote)
     if problem:
         raise HTTPException(status_code=422, detail=problem)
+    if new_place:  # LinkedIn's id was for the old place
+        mission.linkedin_geo_id = None
     renamed = "name" in updates and updates["name"]
     if not renamed and (auto_named or "name" in updates):
         track = await get_track(db, mission.track_id, user_id, allow_broad=True)
@@ -262,82 +273,177 @@ async def delete_mission(
 # --------------------------------------------------------------------------- #
 # Runs (the page's side)
 # --------------------------------------------------------------------------- #
+# A place with no radius set searches this far around it.
+DEFAULT_RADIUS = 25
+# The distances each job board offers; a radius is rounded up to the next one
+# (so a 40-mile search on LinkedIn asks for 50, never fewer miles).
+BOARD_RADII = {
+    "linkedin": (5, 10, 25, 50, 100),
+    "ziprecruiter": (5, 10, 25, 50, 100),
+    "indeed": (5, 10, 15, 25, 35, 50, 100),
+}
+# Jobs on one results page, per board.
+PER_PAGE = {"linkedin": 25, "indeed": 10, "ziprecruiter": 20}
+# The link parameters worth checking survived LinkedIn's redirect.
+_CHECKED_PARAMS = ("keywords", "geoId", "location", "distance", "f_TPR", "sortBy")
+
+
+def board_radius(source: str, miles: int | None) -> int | None:
+    """The distance to ask a job board for: the nearest it offers at or above
+    the user's miles (the most it offers when they asked for more)."""
+    if not miles:
+        return None
+    options = BOARD_RADII.get(source)
+    if not options:
+        return int(miles)
+    return next((o for o in options if o >= miles), options[-1])
+
+
+def _radius(c: dict) -> int | None:
+    """The run's radius in miles: only around a place, for jobs you'd travel
+    to; a place with no radius set gets the default."""
+    if not c.get("location") or c.get("remote") == "remote_only":
+        return None
+    return int(c.get("radius_miles") or DEFAULT_RADIUS)
+
+
 def search_titles(c: dict) -> list[str]:
-    """The titles one search asks for. A resume type with more than
-    ``TITLES_PER_SEARCH`` takes turns: each run (``round``) asks for the next
-    ones, so runs don't all see the same results."""
+    """The titles this run searches. The resume type's titles and related
+    titles, each its own search, up to the "searches per run" limit; runs take
+    turns when there are more (``round``). With exact titles, up to
+    ``TITLES_PER_SEARCH`` share one search, as quoted phrases."""
     if c.get("broad"):  # Claude's own, set with set_search_titles
         return list(c.get("search_titles") or [])
-    titles = list(c["track"]["titles"] or [])
-    if len(titles) <= TITLES_PER_SEARCH:
-        return titles or [c["track"]["name"]]
-    first = (int(c.get("round") or 0) * TITLES_PER_SEARCH) % len(titles)
-    return (titles[first:] + titles[:first])[:TITLES_PER_SEARCH]
+    track = c["track"]
+    seen: set[str] = set()
+    titles = []
+    for t in list(track.get("titles") or []) + list(track.get("related") or []):
+        if t.lower() not in seen:
+            seen.add(t.lower())
+            titles.append(t)
+    titles = titles or [track["name"]]
+    group = TITLES_PER_SEARCH if track.get("exact") else instr.limit(c, "links")
+    if len(titles) <= group:
+        return titles
+    first = (int(c.get("round") or 0) * group) % len(titles)
+    return (titles[first:] + titles[:first])[:group]
+
+
+def search_links(c: dict) -> list[dict]:
+    """The searches this run makes: what each one asks for, and its link with
+    the filters already set, so Claude never spends screenshots on them."""
+    if c["source"] == LOCAL:
+        return [{"title": "", "url": u} for u in company_searches(c)]
+    titles = search_titles(c)
+    if c["track"].get("exact") and not c.get("broad"):
+        groups = [(" / ".join(titles), " OR ".join(f'"{t}"' for t in titles))]
+    else:  # each title its own search, as plain words LinkedIn matches loosely
+        groups = [(t, t) for t in titles]
+    return [{"title": label, "url": _link(c, words)} for label, words in groups]
 
 
 def start_urls(c: dict) -> list[str]:
-    """The search page Claude opens, with the filters already set, so it never
-    spends screenshots clicking through them."""
-    titles = search_titles(c)
+    return [link["url"] for link in search_links(c)]
+
+
+def _link(c: dict, words: str) -> str:
     days = c["posted_within_days"]
     location = c.get("location") or ""
     remote = c.get("remote", "any")
-    # "Within N miles" only means something around a place, for jobs you'd
-    # travel to. Each board has its own name for it.
-    radius = c.get("radius_miles") if location and remote != "remote_only" else None
-    if c["source"] == "linkedin":
-        q = {
-            "keywords": " OR ".join(f'"{t}"' for t in titles),
-            "location": location
-            or ("United States" if remote == "remote_only" else ""),
-            "f_TPR": f"r{days * 86400}",
-            "sortBy": "DD",
-        }
+    radius = _radius(c)
+    source = c["source"]
+    if source == "linkedin":
+        q = {"keywords": words}
+        q["location"] = location or ("United States" if remote == "remote_only" else "")
+        if c.get("geo_id"):  # signed in, LinkedIn goes by this, not the name
+            q["geoId"] = c["geo_id"]
+        if radius:
+            q["distance"] = str(board_radius(source, radius))
+        q["f_TPR"] = f"r{days * 86400}"
+        q["sortBy"] = "DD"
         if remote == "remote_only":
             q["f_WT"] = "2"
         elif remote == "no_remote":
             q["f_WT"] = "1,3"
-        if radius:
-            q["distance"] = str(radius)
-        return [f"https://www.linkedin.com/jobs/search/?{urlencode(q)}"]
-    query = " OR ".join(f'"{t}"' for t in titles)
+        return f"https://www.linkedin.com/jobs/search/?{urlencode(q)}"
     where = "Remote" if remote == "remote_only" else location
-    if c["source"] == LOCAL:
-        return company_searches(c)
-    if c["source"] == "google_jobs":
+    if source == "google_jobs":
         if remote == "remote_only":
-            q = f"{query} remote jobs"
+            q = f"{words} remote jobs"
         elif location:
             near = f"within {radius} miles of" if radius else "near"
-            q = f"{query} jobs {near} {location}"
+            q = f"{words} jobs {near} {location}"
         else:
-            q = f"{query} jobs"
+            q = f"{words} jobs"
         # udm=8: Google's own Jobs results.
-        return [f"https://www.google.com/search?{urlencode({'q': q, 'udm': '8'})}"]
-    if c["source"] == "indeed":
-        q = {"q": query, "l": where, "fromage": str(min(days, 14)), "sort": "date"}
+        return f"https://www.google.com/search?{urlencode({'q': q, 'udm': '8'})}"
+    if source == "indeed":
+        q = {"q": words, "l": where, "fromage": str(min(days, 14)), "sort": "date"}
         if radius:
-            q["radius"] = str(radius)
-        return [f"https://www.indeed.com/jobs?{urlencode(q)}"]
+            q["radius"] = str(board_radius(source, radius))
+        return f"https://www.indeed.com/jobs?{urlencode(q)}"
     zip_days = next(d for d in (1, 5, 10, 30) if d >= days)
-    q = {"search": query, "location": where, "days": str(zip_days)}
+    q = {"search": words, "location": where, "days": str(zip_days)}
     if radius:
-        q["radius"] = str(radius)
-    return [f"https://www.ziprecruiter.com/jobs-search?{urlencode(q)}"]
+        q["radius"] = str(board_radius(source, radius))
+    return f"https://www.ziprecruiter.com/jobs-search?{urlencode(q)}"
 
 
-def page_url(c: dict, pages_read: int) -> str | None:
-    """The link to the next results page after ``pages_read`` pages, so Claude
-    opens it instead of finding and clicking the board's page buttons. None
-    where results don't come in numbered pages (Google)."""
+def page_url(c: dict, link: int, pages_read: int) -> str | None:
+    """The link to the next results page of one search after ``pages_read``
+    pages, so Claude opens it instead of clicking the board's page buttons.
+    None where results don't come in numbered pages (Google)."""
     source = c["source"]
-    if source not in ("linkedin", "indeed", "ziprecruiter"):
+    urls = start_urls(c)
+    if source not in PER_PAGE or link >= len(urls):
         return None
-    url = start_urls(c)[0]
+    url = urls[link]
     if source == "ziprecruiter":
         return f"{url}&page={pages_read + 1}"
-    per_page = 25 if source == "linkedin" else 10
-    return f"{url}&start={pages_read * per_page}"
+    return f"{url}&start={pages_read * PER_PAGE[source]}"
+
+
+def dropped_params(sent: str, landed: str) -> list[str]:
+    """The filters a board's redirect dropped: in the link sent, not in the
+    address the page landed on."""
+    try:
+        sent_q = dict(parse_qsl(urlsplit(sent).query))
+        landed_q = dict(parse_qsl(urlsplit(landed).query))
+    except ValueError:
+        return []
+    return [k for k in _CHECKED_PARAMS if k in sent_q and k not in landed_q]
+
+
+def link_report(c: dict, stats: dict | None) -> list[dict]:
+    """Each search the run read: what it asked for, how many results the board
+    said it had, pages read, and filters its redirect dropped."""
+    info = (stats or {}).get("_links") or {}
+    if not info or not c:
+        return []
+    out = []
+    for i, link in enumerate(search_links(c)):
+        got = info.get(str(i))
+        if got is None:
+            continue
+        out.append(
+            {
+                "title": link["title"],
+                "total": got.get("total"),
+                "pages": got.get("pages", 0),
+                "dropped": got.get("dropped") or [],
+            }
+        )
+    return out
+
+
+def links_line(c: dict, stats: dict | None) -> str | None:
+    """ "LinkedIn's results per search: IT Administrator 27 · …" """
+    rows = [r for r in link_report(c, stats) if r["total"] is not None]
+    if not rows:
+        return None
+    board = SOURCE_LABEL.get(c.get("source", ""), "The board")
+    parts = " · ".join(f"{r['title']} {r['total']}" for r in rows)
+    return f"{board}'s results per search: {parts}."
 
 
 def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
@@ -371,8 +477,15 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
             "Most job titles didn't fit the resume type. Add the titles you want "
             "to the resume type so the search asks for them."
         )
-    pages_limit = instr.limit(c, "pages")
-    ran_out = run.status == RUN_DONE and s.get("pages", pages_limit) < pages_limit
+    totals = [r["total"] for r in link_report(c, s) if r["total"] is not None]
+    if totals and sum(totals) < 30:
+        return (
+            f"The searches themselves found only {sum(totals)} jobs. For more, add "
+            "related titles to the resume type, pick a bigger radius"
+            + (f", or {widen}." if widen else ".")
+        )
+    budget = instr.limit(c, "search_pages") * max(1, len(search_links(c)))
+    ran_out = run.status == RUN_DONE and s.get("pages", budget) < budget
     if ran_out and (widen or (radius and radius < 100)):
         more = [w for w in (widen, "pick a bigger radius" if radius else "") if w]
         return f"The search ran out of results. For more, {' or '.join(more)}."
@@ -462,9 +575,13 @@ async def _criteria(
             select(func.count()).where(ScoutRun.mission_id == mission.id)
         )
         or 0,
+        # LinkedIn's id for the place, once a run learned it.
+        "geo_id": mission.linkedin_geo_id,
         "track": {
             "name": track.name,
             "titles": list(track.target_titles or []),
+            "related": list(track.related_titles or []),
+            "exact": bool(track.exact_titles),
             "skills": list(track.key_skills or []),
             "skip": skip,
             "notes": track.notes,
@@ -656,6 +773,7 @@ async def runs_out(
                     else None
                 ),
                 tip=run_tip(r, counts.get(r.id, {})),
+                links=[RunLink(**x) for x in link_report(c, r.stats)],
                 instructions=c.get("instructions"),
                 broad=bool(c.get("broad")),
                 titles=[
@@ -898,7 +1016,20 @@ async def _brief_body(
         extra["source_steps"] = instr.text_for(c, c["source"])
         extra["posted_within_days"] = c["posted_within_days"]
     if not local:
-        extra["max_pages"] = instr.limit(c, "pages")
+        extra["max_pages"] = instr.limit(c, "search_pages")  # per search
+        extra["searches"] = [link["title"] for link in search_links(c)]
+    if (
+        c["source"] == "linkedin"
+        and c.get("location")
+        and c.get("remote") != ("remote_only")
+    ):
+        radius = _radius(c)
+        extra["place"] = {
+            "location": c.get("location"),
+            "geo_id": c.get("geo_id"),
+            "radius_miles": radius,
+            "linkedin_distance": board_radius("linkedin", radius),
+        }
     first = "Open the start URL and send the first page of rows to check_jobs."
     if local:
         # Choosing re-checks marks them handed out: a preview only says so.
@@ -929,13 +1060,30 @@ async def _brief_body(
             avoid=ov["avoid"],
             resume_types=await _resume_types(db, user_id),
         )
+    done_searching = False
+    so_far = run.stats or {}
+    if not local and not choosing and "_link" in so_far:
+        links = search_links(c)
+        at, at_pages = int(so_far["_link"]), int(so_far.get("_link_pages", 0))
+        if at < len(links):
+            resume = (page_url(c, at, at_pages) if at_pages else None) or links[at][
+                "url"
+            ]
+            extra["resume_url"] = resume
+            first = (
+                f"Carry on where the run was: open resume_url (search {at + 1} of "
+                f"{len(links)}, {links[at]['title']}) and send its rows to check_jobs."
+            )
+        else:
+            done_searching = True
+            first = "Every search has been read: call finish_scout_run."
     if choosing:
         first = (
             "Call get_master_profile, choose up to "
             f"{instr.limit(c, 'titles')} job titles the user would be good at (see "
             "broad_steps), then call set_search_titles: it gives you the start URLs."
         )
-    elif ready:
+    elif ready and not done_searching:
         first = (
             "Call get_master_profile once and score every job against the resume. "
             f"Then {first[0].lower()}{first[1:]}"
@@ -971,10 +1119,16 @@ async def _seen_jobs(
     urls: set[str],
     *,
     skip_finding: uuid.UUID | None = None,
+    track: ResumeTrack | None = None,
 ) -> dict[tuple[str, str] | str, str]:
     """Which of these (company_key, title_key) pairs and url keys are already
     known, and why. Queries only rows with matching titles or links, so the
-    cost doesn't grow with the size of the tracker."""
+    cost doesn't grow with the size of the tracker.
+
+    A job the user decided on (picked, saved, passed on, already had) is seen
+    for good. A job scored below the bar is seen only by runs of the same
+    resume type, and only until that type's titles, skills or rules change
+    (spec 011): a low score for one kind of role says nothing about another."""
     titles = {t for _, t in pairs if t}
     seen: dict[tuple[str, str] | str, str] = {}
     if titles:
@@ -1012,11 +1166,18 @@ async def _seen_jobs(
     if urls:
         conditions.append(ScoutFinding.url_key.in_(urls))
     if conditions:
+        low = [ScoutFinding.outcome == BELOW_BAR]
+        if track is not None:
+            low.append(ScoutFinding.track_id == track.id)
+            if track.rules_changed_at is not None:
+                low.append(ScoutFinding.created_at >= track.rules_changed_at)
+        else:
+            low.append(false())
         query = select(
             ScoutFinding.company_key, ScoutFinding.title_key, ScoutFinding.url_key
         ).where(
             ScoutFinding.user_id == user_id,
-            ScoutFinding.outcome.in_(_SEEN),
+            or_(ScoutFinding.outcome.in_(_DECIDED), and_(*low)),
             or_(*conditions),
         )
         if skip_finding is not None:
@@ -1072,7 +1233,13 @@ def _fits(row: dict) -> bool:
 
 
 async def check_jobs(
-    db: AsyncSession, user_id: uuid.UUID, run_id: str | None, rows: list[dict]
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run_id: str | None,
+    rows: list[dict],
+    total_results: int | None = None,
+    page_url_seen: str | None = None,
+    place_fixed: bool = False,
 ) -> dict:
     run = await _run_for_agent(db, user_id, run_id)
     if len(rows) > MAX_ROWS_PER_CHECK:
@@ -1091,7 +1258,8 @@ async def check_jobs(
         keyed.append((row, pair, uk))
     pairs = {p for _, p, _ in keyed if p[0] and p[1]}
     urls = {u for _, _, u in keyed if u}
-    seen = await _seen_jobs(db, user_id, pairs, urls)
+    track = await db.get(ResumeTrack, run.track_id) if run.track_id else None
+    seen = await _seen_jobs(db, user_id, pairs, urls, track=track)
     # Rows passed over by title before (an earlier run, or an earlier page).
     passed = await _passed(db, user_id, run.track_id, pairs, urls)
 
@@ -1170,20 +1338,92 @@ async def check_jobs(
             stats[why] = stats.get(why, 0) + 1
     # One company's openings (Local companies) aren't a results page.
     paged = c["source"] != LOCAL
-    resent = bool(marks) and sorted(set(marks)) == stats.get("_last")
+    link = int(stats.get("_link", 0))
+    link_pages = int(stats.get("_link_pages", 0))
+    page_marks = sorted(set(marks))
+    last = stats.get("_last")
+    if not isinstance(last, dict):  # runs from before searches were split
+        last = {"marks": last, "link": link}
+    # A call that repeats one already answered (a retry, or a new chat sending
+    # the last page again) changes nothing and gets the same answer. Rows the
+    # next search shares with the last page are told apart: by the address
+    # Claude landed on, or by being sent a second time.
+    seen_link = _link_of(c, page_url_seen) if paged and page_url_seen else None
+    resent = False
+    if seen_link is not None and seen_link < link:
+        resent = True  # a page of a search already done
+    elif page_marks and last.get("marks") == page_marks:
+        moved_on = last.get("link") != link
+        repeats = int(last.get("repeats", 0)) + 1
+        resent = not (moved_on and (seen_link == link or repeats >= 2))
+        last = {**last, "repeats": repeats}
+        stats["_last"] = last
+    if resent and last.get("answer"):
+        run.stats = {**stats, "_rows": sorted(counted)[-2000:]}
+        await db.flush()
+        progress = await _progress(db, run)
+        answer = {**last["answer"], "progress": progress}
+        if progress["done"]:
+            answer.pop("next_page_url", None)
+            answer["next"] = "Target reached: call finish_scout_run."
+        return answer
     ran_out = paged and not new_page and not resent
-    if new_page and paged:
-        stats["pages"] = stats.get("pages", 0) + 1
-    if new_page:  # the last page read, to tell it apart when sent again
-        stats["_last"] = sorted(set(marks))
     stats["_rows"] = sorted(counted)[-2000:]
+
+    # Which search this page belongs to, and where Claude goes next: more pages
+    # of this search, the next search, or done (spec 011).
+    nxt_url: str | None = None
+    note = ""
+    read_on = link  # the search this page was read on
+    if paged:
+        if place_fixed and page_url_seen and c["source"] == "linkedin":
+            geo = _geo_id(page_url_seen)
+            mission = (
+                await db.get(ScoutMission, run.mission_id) if run.mission_id else None
+            )
+            # Only for the place this run searches: the user may have changed it.
+            same_place = (
+                mission is not None
+                and mission.user_id == user_id
+                and (mission.location or None) == (c.get("location") or None)
+            )
+            if geo and same_place:  # LinkedIn's id for the place, kept for later runs
+                c = {**c, "geo_id": geo}
+                run.criteria = c
+                mission.linkedin_geo_id = geo
+                note = " The place is saved for later runs."
+        links = search_links(c)
+        per_search = instr.limit(c, "search_pages")
+        all_links = dict(stats.get("_links") or {})
+        info = dict(all_links.get(str(link)) or {})
+        if total_results is not None and "total" not in info:
+            with contextlib.suppress(TypeError, ValueError):
+                info["total"] = max(0, int(total_results))
+        if page_url_seen and "dropped" not in info and link < len(links):
+            info["dropped"] = dropped_params(links[link]["url"], page_url_seen)
+        if new_page:
+            stats["pages"] = stats.get("pages", 0) + 1
+            link_pages += 1
+            info["pages"] = link_pages
+        all_links[str(link)] = info
+        stats["_links"] = all_links
+        total = info.get("total")
+        per_page = PER_PAGE.get(c["source"], 10)
+        link_done = (
+            ran_out
+            or link_pages >= per_search
+            or (total is not None and link_pages * per_page >= total)
+        )
+        if link_done:
+            link, link_pages = link + 1, 0
+            nxt_url = links[link]["url"] if link < len(links) else None
+        else:
+            nxt_url = page_url(c, link, link_pages)
+        stats["_link"], stats["_link_pages"] = link, link_pages
     run.stats = stats
     await db.flush()
     progress = await _progress(db, run)
     pages = stats.get("pages", 0)
-    max_pages = instr.limit(c, "pages")
-    more = pages < max_pages and not ran_out
-    next_page = page_url(c, pages) if more else None
     if progress["done"]:
         nxt = "Target reached: call finish_scout_run."
     elif not paged:
@@ -1194,23 +1434,32 @@ async def check_jobs(
             else "None new at this company: call company_checked."
         )
     else:
-        if next_page:
-            after = f"open next_page_url (page {pages + 1} of {max_pages})"
-        elif more:
-            after = "scroll the list for more jobs and send the next rows"
-        elif ran_out:
-            after = "there are no more results, so call finish_scout_run"
-        else:
+        links = search_links(c)
+        link = stats["_link"]
+        if link >= len(links):
             after = (
-                f"call finish_scout_run: that was the last of the {max_pages} "
-                "pages a run reads"
+                "there are no more results, so call finish_scout_run"
+                if ran_out and len(links) == 1
+                else "call finish_scout_run: that was the last search"
             )
+        elif stats["_link_pages"] == 0 and link > 0:
+            after = (
+                f"open next_page_url: the next search, {links[link]['title']} "
+                f"({link + 1} of {len(links)})"
+            )
+        elif nxt_url:
+            after = (
+                f"open next_page_url (page {stats['_link_pages'] + 1} of "
+                f"{instr.limit(c, 'search_pages')} of this search)"
+            )
+        else:
+            after = "scroll the list for more jobs and send the next rows"
         nxt = (
             "Open each of these rows' postings in turn and report_job them. "
             f"Then {after}."
             if open_rows
             else f"None new on this page: {after}."
-        )
+        ) + note
     out = {
         "open": open_rows,
         "skipped": skipped,
@@ -1218,9 +1467,47 @@ async def check_jobs(
         "progress": progress,
         "next": nxt,
     }
-    if next_page and not progress["done"]:
-        out["next_page_url"] = next_page
+    if nxt_url and not progress["done"]:
+        out["next_page_url"] = nxt_url
+    if paged and (new_page or ran_out):
+        saved = {k: v for k, v in out.items() if k != "progress"}
+        run.stats = {
+            **run.stats,
+            "_last": {"marks": page_marks, "link": read_on, "answer": saved},
+        }
+        await db.flush()
     return out
+
+
+def _link_of(c: dict, url: str) -> int | None:
+    """Which of the run's searches an address is a page of, by the words it
+    searched for (None when it can't tell)."""
+    key = {"linkedin": "keywords", "indeed": "q", "ziprecruiter": "search"}.get(
+        c["source"], "q"
+    )
+
+    def words(u: str) -> str | None:
+        try:
+            value = dict(parse_qsl(urlsplit(u).query)).get(key)
+        except ValueError:
+            return None
+        return " ".join(value.split()).casefold() if value else None
+
+    landed = words(url)
+    if not landed:
+        return None
+    for i, link in enumerate(search_links(c)):
+        if words(link["url"]) == landed:
+            return i
+    return None
+
+
+def _geo_id(url: str) -> str | None:
+    try:
+        geo = dict(parse_qsl(urlsplit(url).query)).get("geoId", "")
+    except ValueError:
+        return None
+    return geo if geo.isascii() and geo.isdigit() and len(geo) <= 20 else None
 
 
 def _pay_note(capture: ScoutCapture, min_pay: int | None) -> str | None:
@@ -1303,6 +1590,7 @@ async def report_job(
             url_key=key,
             outcome=WAITING,
             fit_score=0,
+            created_at=_now(),
         )
         db.add(finding)
     finding.fit_score = int(fit_score)
@@ -1342,7 +1630,10 @@ async def report_job(
     finding.title_key = title_key(capture.title)[:500]
     pair = (finding.company_key, finding.title_key)
     await db.flush()
-    seen = await _seen_jobs(db, user_id, {pair}, {key}, skip_finding=finding.id)
+    track = await db.get(ResumeTrack, run.track_id) if run.track_id else None
+    seen = await _seen_jobs(
+        db, user_id, {pair}, {key}, skip_finding=finding.id, track=track
+    )
     pay_note = _pay_note(capture, c.get("min_pay"))
     if seen:
         why = seen.get(pair) or seen.get(key)
@@ -1417,6 +1708,9 @@ async def finish_run(
     looked = companies.summary(run.stats)
     if looked:
         tell = f"{looked} {tell[0].upper()}{tell[1:]}"
+    per_search = links_line(run.criteria or {}, run.stats)
+    if per_search:
+        tell = f"{tell} {per_search}"
     return {
         "status": RUN_DONE,
         "counts": RunCounts(**counts).model_dump(),

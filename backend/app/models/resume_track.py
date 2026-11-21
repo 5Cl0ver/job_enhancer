@@ -11,6 +11,7 @@ from datetime import datetime
 
 from sqlalchemy import (
     JSON,
+    Boolean,
     DateTime,
     ForeignKey,
     Integer,
@@ -40,6 +41,17 @@ class ResumeTrack(Base):
     name: Mapped[str] = mapped_column(String(60), nullable=False)
     target_titles: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     key_skills: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Other titles to search for too ("also search for"), and whether titles
+    # are searched as exact phrases (off: each title its own, looser search).
+    related_titles: Mapped[list] = mapped_column(
+        JSON, nullable=False, default=list, server_default="[]"
+    )
+    exact_titles: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # When the titles, skills or skip rules last changed: jobs scored below the
+    # bar before then may be looked at again (spec 011).
+    rules_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     # {"degree_only": bool, "max_years": int | None, "exclude": [str]}
     skip_rules: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
     min_pay: Mapped[int | None] = mapped_column(Integer)  # yearly USD

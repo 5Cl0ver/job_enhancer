@@ -207,6 +207,66 @@ describe("Resume types", () => {
     expect(body.target_titles).toEqual(TRACK.target_titles);
   });
 
+  it("adds related titles, keeps titles loose, and the degree rule off", async () => {
+    serve([TRACK]);
+    patch.mockResolvedValue(TRACK);
+    const user = userEvent.setup();
+    renderWithQuery(<ResumeTypes />);
+    await user.click(await screen.findByRole("button", { name: /edit/i }));
+    await user.type(
+      screen.getByLabelText(/also search for/i),
+      "Systems Administrator{Enter}M365 Admin",
+    );
+    expect(screen.getByRole("switch", { name: /exact titles only/i })).not.toBeChecked();
+    // An older type with the degree rule on: one tap turns it off.
+    expect(screen.getByText(/On: Claude passes these jobs over/)).toBeInTheDocument();
+    await user.click(screen.getByRole("switch", { name: /needs a degree/i }));
+    expect(screen.getByText(/Off: these jobs are scored like any other/)).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: /^save$/i }));
+    await waitFor(() => expect(patch).toHaveBeenCalledTimes(1));
+    const [, body] = patch.mock.calls[0];
+    expect(body.related_titles).toEqual(["Systems Administrator", "M365 Admin"]);
+    expect(body.exact_titles).toBe(false);
+    expect(body.skip_rules.degree_only).toBe(false);
+  });
+
+  it("fills skills from the main resume, and starts a type fresh", async () => {
+    const blank = { ...TRACK, key_skills: [] };
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/scout/tracks") return Promise.resolve([blank]);
+      if (path === "/v1/ai/resumes")
+        return Promise.resolve([{ id: "cv", filename: "cv.pdf", is_active: true }]);
+      if (path === "/v1/ai/resumes/cv/skills")
+        return Promise.resolve({ skills: ["Microsoft 365", "Entra ID"] });
+      if (path === "/v1/scout/tracks/t1/passes")
+        return Promise.resolve({
+          count: 3,
+          titles: [{ title: "registered nurse", times: 2 }, { title: "barista", times: 1 }],
+          since: null,
+        });
+      return Promise.resolve([]);
+    });
+    patch.mockResolvedValue(blank);
+    post.mockResolvedValue(undefined);
+    const user = userEvent.setup();
+    renderWithQuery(<ResumeTypes />);
+    await user.click(
+      await screen.findByRole("button", { name: /fill skills from my resume/i }),
+    );
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/scout/tracks/t1", {
+        key_skills: ["Microsoft 365", "Entra ID"],
+      }),
+    );
+    expect(await screen.findByText("3 titles Claude passed over")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "View" }));
+    expect(screen.getByText("registered nurse")).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Start fresh" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/scout/tracks/t1/start-fresh", {}),
+    );
+  });
+
   it("explains a bad pay instead of saving", async () => {
     serve([TRACK]);
     const user = userEvent.setup();

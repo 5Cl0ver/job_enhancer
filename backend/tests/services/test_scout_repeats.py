@@ -25,27 +25,41 @@ def _criteria(source="linkedin", titles=SIX, **over):
     }
 
 
+NINE = SIX + ["Title G", "Title H", "Title I"]
+
+
 class TestTitlesTakeTurns:
-    def test_four_or_fewer_titles_are_all_asked_for_every_run(self):
-        for n in range(3):
-            assert search_titles(_criteria(titles=SIX[:4], round=n)) == SIX[:4]
+    def test_each_title_is_its_own_unquoted_search(self):
+        urls = start_urls(_criteria(titles=SIX[:3]))
+        assert [parse_qs(urlsplit(u).query)["keywords"] for u in urls] == [
+            ["Title A"],
+            ["Title B"],
+            ["Title C"],
+        ]
+
+    def test_related_titles_are_searched_too_without_repeats(self):
+        c = _criteria(titles=SIX[:2])
+        c["track"]["related"] = ["Title C", "title a"]
+        assert search_titles(c) == ["Title A", "Title B", "Title C"]
 
     def test_no_titles_asks_for_the_resume_type_name(self):
         assert search_titles(_criteria(titles=[])) == ["IT Admin"]
 
-    def test_more_than_four_titles_take_turns_run_by_run(self):
-        asked = [search_titles(_criteria(round=n)) for n in range(3)]
-        assert asked[0] == SIX[:4]
-        assert asked[1] == ["Title E", "Title F", "Title A", "Title B"]
-        assert asked[2] == ["Title C", "Title D", "Title E", "Title F"]
+    def test_more_than_six_titles_take_turns_run_by_run(self):
+        asked = [search_titles(_criteria(titles=NINE, round=n)) for n in range(3)]
+        assert asked[0] == NINE[:6]
+        assert asked[1] == NINE[6:] + NINE[:3]
+        assert asked[2] == NINE[3:9]
 
-    def test_runs_queued_before_rounds_start_at_the_first(self):
-        assert search_titles(_criteria()) == SIX[:4]
+    def test_the_searches_per_run_limit_is_the_users(self):
+        assert len(search_titles(_criteria(limits={"links": 2}))) == 2
 
-    def test_the_search_url_uses_this_runs_titles(self):
-        (url,) = start_urls(_criteria(round=1))
+    def test_exact_titles_share_one_quoted_search(self):
+        c = _criteria(round=1)
+        c["track"]["exact"] = True
+        (url,) = start_urls(c)
         keywords = parse_qs(urlsplit(url).query)["keywords"][0]
-        assert '"Title E"' in keywords and '"Title C"' not in keywords
+        assert keywords == '"Title E" OR "Title F" OR "Title A" OR "Title B"'
 
 
 class TestNextPage:
@@ -58,14 +72,14 @@ class TestNextPage:
         ],
     )
     def test_each_board_pages_its_own_way(self, source, after_one, after_two):
-        c = _criteria(source)
-        (start,) = start_urls(c)
-        assert page_url(c, 1) == start + after_one
-        assert page_url(c, 2) == start + after_two
+        c = _criteria(source, titles=SIX[:2])
+        first, second = start_urls(c)
+        assert page_url(c, 0, 1) == first + after_one
+        assert page_url(c, 1, 2) == second + after_two
 
     @pytest.mark.parametrize("source", ["google_jobs", "local_companies"])
     def test_no_numbered_pages_off_the_boards(self, source):
-        assert page_url(_criteria(source), 1) is None
+        assert page_url(_criteria(source), 0, 1) is None
 
 
 def _run(status="done", stats=None, **over):
@@ -107,7 +121,17 @@ class TestTip:
         assert run_tip(_run(stats={"rows": 6}), {"picked": 1}) is None
 
     def test_read_every_page_and_nothing_stands_out_no_tip(self):
-        assert run_tip(_run(stats={"rows": 100, "pages": 4}), {}) is None
+        # 6 searches x 2 pages each, all read.
+        assert run_tip(_run(stats={"rows": 100, "pages": 12}), {}) is None
+
+    def test_searches_that_found_few_jobs_say_so(self):
+        stats = {
+            "rows": 8,
+            "pages": 3,
+            "_links": {"0": {"total": 6, "pages": 1}, "1": {"total": 2, "pages": 1}},
+        }
+        tip = run_tip(_run(stats=stats), {})
+        assert tip.startswith("The searches themselves found only 8 jobs")
 
     def test_local_companies_have_their_own_line(self):
         stats = {"rows": 20, "seen_before": 18}

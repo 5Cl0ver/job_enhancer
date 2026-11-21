@@ -78,7 +78,8 @@ class TestMissions:
             {"job_count": 11},
             {"posted_within_days": 5},
             {"min_fit": 11},
-            {"radius_miles": 7},
+            {"radius_miles": 0},
+            {"radius_miles": 101},
         ],
     )
     async def test_bad_input(self, client: AsyncClient, bad):

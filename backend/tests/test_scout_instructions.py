@@ -37,7 +37,7 @@ class TestVersions:
         assert not any(s["edited"] for s in sections.values())
         assert sections["playbook"]["current"] == instr.ORIGINALS["playbook"]
         assert sections["rubric"]["current"] == instr.RUBRIC
-        assert sections["limits"]["ranges"]["pages"] == [1, 8]
+        assert sections["limits"]["ranges"]["search_pages"] == [1, 8]
         # The locked rules are no section: there's nothing to edit them with.
         assert "rules" not in sections
         assert "Never apply" in instr.RULES
@@ -82,7 +82,7 @@ class TestVersions:
                 "add up to 10 (now 9)",
             ),
             ("rubric", {"values": {"skills": 10}}, "each part"),
-            ("limits", {"values": {"pages": 9}}, "choose 1 to 8"),
+            ("limits", {"values": {"search_pages": 9}}, "choose 1 to 8"),
             ("limits", {"values": {"companies": 2}}, "choose 5 to 25"),
             ("limits", {"values": {"sneaky": 3}}, "Unknown limit"),
         ],
@@ -100,19 +100,24 @@ class TestVersions:
         maker = await _connected_user(engine, monkeypatch, email="i7@test.dev")
         uid = await _user_id(maker, "i7@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 2})
+            await instr.save(db, uid, "limits", values={"search_pages": 3})
             out = await instr.save(db, uid, "limits", values={"titles": 5})
-            assert out["current"] == {"pages": 2, "titles": 5, "companies": 15}
+            assert out["current"] == {
+                "links": 6,
+                "search_pages": 3,
+                "titles": 5,
+                "companies": 15,
+            }
 
     async def test_restore_rechecks_the_version(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="i8@test.dev")
         uid = await _user_id(maker, "i8@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 8})
+            await instr.save(db, uid, "limits", values={"search_pages": 8})
             await instr.reset(db, uid, "limits")
             (_, old) = await instr.history(db, uid, "limits")
             # The range got tighter since that version was saved.
-            monkeypatch.setitem(instr.LIMIT_RANGES, "pages", (1, 6))
+            monkeypatch.setitem(instr.LIMIT_RANGES, "search_pages", (1, 6))
             with pytest.raises(HTTPException) as e:
                 await instr.restore(db, uid, "limits", old["id"])
             assert e.value.status_code == 422 and "can't be used now" in e.value.detail
@@ -198,21 +203,21 @@ class TestRunsUseThem:
         out = await mcp_mod.get_scout_brief()
         assert out["playbook"].startswith(instr.ORIGINALS["playbook"][:40])
 
-    async def test_pages_limit(self, engine, monkeypatch):
+    async def test_pages_and_searches_limits(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="l1@test.dev")
         uid = await _user_id(maker, "l1@test.dev")
         async with maker() as db:
-            await instr.save(db, uid, "limits", values={"pages": 2})
+            await instr.save(db, uid, "limits", values={"search_pages": 1, "links": 1})
             await db.commit()
         _, _, run_id = await _setup(maker, "l1@test.dev", job_count=10)
         brief = await mcp_mod.get_scout_brief()
-        assert brief["max_pages"] == 2
+        assert brief["max_pages"] == 1
+        # One search a run (the first title), one page of it.
+        assert brief["searches"] == ["IT Systems Administrator"]
         from tests.test_mcp_scout import _page
 
         out = await mcp_mod.check_jobs(str(run_id), _page(0))
-        assert "page 2 of 2" in out["next"]
-        out = await mcp_mod.check_jobs(str(run_id), _page(1))
-        assert "next_page_url" not in out and "last of the 2" in out["next"]
+        assert "next_page_url" not in out and "last search" in out["next"]
 
     async def test_titles_limit(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="l2@test.dev")

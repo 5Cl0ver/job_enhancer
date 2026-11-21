@@ -57,13 +57,15 @@ import {
   parsePay,
   POSTED_WITHIN,
   postedLabel,
-  RADIUS_MILES,
+  boardRadius,
+  DEFAULT_RADIUS,
   type Remote,
   REMOTE_RULES,
   runSummary,
   SCOUT_LINE,
   type Source,
   SOURCE_HINT,
+  sourceLabel,
   SOURCES,
   type Track,
   whereLabel,
@@ -446,7 +448,6 @@ function MissionEditor({
   );
 }
 
-const ANY_DISTANCE = "any";
 // The resume-type choice that lets Claude pick the titles.
 const BROAD = "broad";
 
@@ -475,8 +476,9 @@ function MissionForm({
   const [count, setCount] = useState(String(mission?.job_count ?? 5));
   const [days, setDays] = useState(String(mission?.posted_within_days ?? 7));
   const [location, setLocation] = useState(mission?.location ?? "");
+  // Miles around the place; a place with none set searches DEFAULT_RADIUS.
   const [radius, setRadius] = useState(
-    mission?.radius_miles != null ? String(mission.radius_miles) : ANY_DISTANCE,
+    String(mission?.radius_miles ?? DEFAULT_RADIUS),
   );
   const [remote, setRemote] = useState<Remote>(mission?.remote ?? "any");
   const [pay, setPay] = useState(
@@ -513,6 +515,9 @@ function MissionForm({
     if (Number.isNaN(minPay))
       return setProblem("Minimum pay should look like 70K or 70000.");
     if (!broad && !trackId) return setProblem("Pick a resume type.");
+    const miles = Number(radius);
+    if (radiusApplies && (!Number.isInteger(miles) || miles < 1 || miles > 100))
+      return setProblem("Distance should be a whole number of miles, 1 to 100.");
     if (local && !location.trim())
       return setProblem(
         "Add a city or area: Scout looks for companies near it.",
@@ -551,8 +556,7 @@ function MissionForm({
       job_count: Number(count),
       posted_within_days: Number(days),
       location: location.trim() || null,
-      radius_miles:
-        radiusApplies && radius !== ANY_DISTANCE ? Number(radius) : null,
+      radius_miles: radiusApplies ? Number(radius) : null,
       remote,
       min_pay: minPay,
       min_fit: Number(fit),
@@ -674,32 +678,28 @@ function MissionForm({
             aria-required={local}
           />
         </Field>
-        <Field label="How far around it">
-          <Select
-            value={radiusApplies ? radius : ANY_DISTANCE}
-            onValueChange={setRadius}
-          >
-            <SelectTrigger
-              aria-label="How far around it"
-              disabled={!radiusApplies}
-            >
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value={ANY_DISTANCE}>
-                {!radiusApplies
-                  ? "Add a city first"
-                  : isBoard(source)
-                    ? "The job board decides"
-                    : "Near the city"}
-              </SelectItem>
-              {RADIUS_MILES.map((miles) => (
-                <SelectItem key={miles} value={String(miles)}>
-                  Within {miles} miles
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
+        <Field label="How far around it (miles)" htmlFor="scout-radius">
+          <Input
+            id="scout-radius"
+            type="number"
+            inputMode="numeric"
+            min={1}
+            max={100}
+            disabled={!radiusApplies}
+            value={radiusApplies ? radius : ""}
+            placeholder={radiusApplies ? String(DEFAULT_RADIUS) : "Add a city first"}
+            onChange={(e) => setRadius(e.target.value)}
+          />
+          {radiusApplies &&
+            isBoard(source) &&
+            Number(radius) >= 1 &&
+            boardRadius(source, Number(radius)) !== Number(radius) && (
+              <p className="text-xs text-muted-foreground">
+                {sourceLabel(source)} searches{" "}
+                {boardRadius(source, Number(radius))} miles: its nearest option
+                that covers {radius}.
+              </p>
+            )}
         </Field>
         <Field label="Remote">
           <Select value={remote} onValueChange={(v) => setRemote(v as Remote)}>

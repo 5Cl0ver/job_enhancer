@@ -14,7 +14,9 @@ import { RunLog } from "@/components/scout/RunLog";
 import { RunTitles } from "@/components/scout/RunTitles";
 import {
   companiesLine,
+  droppedLine,
   instructionsLine,
+  linksLine,
   lookedAt,
   runSummary,
   type Run,
@@ -122,6 +124,14 @@ function RunRow({
           )}
           {/* Why it came back short, in numbers that add up. */}
           {why && <p className="text-sm text-muted-foreground">{why}</p>}
+          {linksLine(full ?? run) && (
+            <p className="text-sm text-muted-foreground">{linksLine(full ?? run)}</p>
+          )}
+          {droppedLine(full ?? run) && (
+            <p className="text-xs text-amber-700 dark:text-amber-400">
+              {droppedLine(full ?? run)}
+            </p>
+          )}
           {why && (full ?? run).tip && <RunTip tip={(full ?? run).tip!} />}
           {checked && (
             <p className="text-sm text-muted-foreground">{checked}</p>
