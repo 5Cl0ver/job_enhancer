@@ -269,6 +269,10 @@ class TestClaudeChoosesTheTitles:
         maker = await _connected_user(engine, monkeypatch, email="c6@test.dev")
         _, _, run_id = await _setup(maker, "c6@test.dev")
         await mcp_mod.get_scout_brief()
+        # A scoped search may only add suggestions before results are read.
+        await mcp_mod.check_jobs(
+            str(run_id), [{"company": "Vellacor", "title": "IT Systems Administrator"}]
+        )
         with pytest.raises(ValueError, match="resume type's titles"):
             await mcp_mod.set_search_titles(str(run_id), TITLES)
 

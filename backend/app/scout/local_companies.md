@@ -17,6 +17,9 @@ d. Read its openings as rows ({"company", "title", "url", "fits"}), send them
    while the posting is open.
 e. Then call company_checked with the company's website and what you found:
    "openings", "none", or "no_careers" (plus the careers page link, if any).
+   With "openings", send openings too: every job the careers page lists (up
+   to 20) as {"title", "url", "fit"}, fit null for the ones you didn't open.
+   Jobs at offices outside the brief's area are in_area false.
 f. Stop when report_job says done, or check_companies says the company limit
    is reached, or the start URLs run out of new companies. Then
    finish_scout_run.

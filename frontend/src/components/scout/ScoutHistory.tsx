@@ -12,6 +12,7 @@ import { useRun, useRuns, type ConfirmResult } from "@/hooks/useScout";
 import { RunTip } from "@/components/scout/RunTip";
 import { RunLog } from "@/components/scout/RunLog";
 import { RunTitles } from "@/components/scout/RunTitles";
+import { SuggestedTitles } from "@/components/scout/LastRun";
 import {
   companiesLine,
   droppedLine,
@@ -27,7 +28,9 @@ export function ScoutHistory() {
   const { data: runs, isLoading, isError } = useRuns();
   // `?run=<id>` opens that run: the link a saved job uses to show its search.
   const [params] = useSearchParams();
-  const asked = params.get("run");
+  // Results shares the address ("run=all", "run=last"): only a run's id counts.
+  const raw = params.get("run");
+  const asked = raw && /^[0-9a-f-]{36}$/i.test(raw) ? raw : null;
   const [openId, setOpenId] = useState<string | null>(asked);
   // The list holds the latest runs only; a linked run older than that is
   // fetched on its own and shown first.
@@ -137,6 +140,16 @@ function RunRow({
             <p className="text-sm text-muted-foreground">{checked}</p>
           )}
           {full?.broad && <RunTitles run={full} />}
+          {!!full?.widened?.length && (
+            <p className="text-xs text-muted-foreground">
+              Few results, so Scout widened{" "}
+              {full.widened
+                .map((w) => `${w.title} to ${w.days} days`)
+                .join(", ")}
+              .
+            </p>
+          )}
+          {!!full?.suggested_titles?.length && <SuggestedTitles run={full} />}
           {instructionsLine((full ?? run).instructions) && (
             <p className="text-xs text-muted-foreground">
               {instructionsLine((full ?? run).instructions)}

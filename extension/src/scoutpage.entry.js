@@ -19,6 +19,10 @@ const fails = new Map(); // posting link -> failed sends
 let inFlight = false;
 let href = "";
 let tries = 0;
+// What the last tick read. A page is sent only once two ticks in a row read
+// the same posting, so a careers site that changed its address before
+// redrawing never sends the previous job under the new link.
+let lastRead = "";
 
 function orphaned() {
   try {
@@ -46,12 +50,20 @@ function tick() {
   if (location.href !== href) {
     href = location.href;
     tries = 0;
+    lastRead = "";
   }
   if (inFlight || tries >= TRIES_PER_PAGE) return;
   tries += 1;
   const job = withPageFallback(document, location.href, extractJob(document, location.href));
   const payload = scoutPayload(job);
   if (!payload || sent.has(payload.url)) return;
+  const read = `${payload.url}
+${payload.title}
+${payload.description}`;
+  if (read !== lastRead) {
+    lastRead = read; // settled when the next tick reads the same
+    return;
+  }
   inFlight = true;
   safeSend({ type: "scoutAnySite" })
     .then((res) => (res?.anySite ? send(payload) : null))

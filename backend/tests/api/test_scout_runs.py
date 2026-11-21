@@ -24,7 +24,7 @@ class TestMissions:
         )
         assert r.status_code == 201, r.text
         mission = r.json()
-        assert mission["name"] == "LinkedIn · IT Admin · 5 · last 7 days"
+        assert mission["name"] == "LinkedIn · IT Admin · 10 · last 7 days"
         assert mission["min_fit"] == 6 and mission["remote"] == "any"
 
         r = await client.patch(
@@ -120,7 +120,7 @@ class TestRuns:
         r = await client.post(f"/v1/scout/missions/{mission['id']}/runs")
         assert r.status_code == 201, r.text
         run = r.json()
-        assert run["status"] == "queued" and run["target"] == 5
+        assert run["status"] == "queued" and run["target"] == 10
         assert run["track_name"] == "IT Admin"
         assert run["counts"]["saved"] == 0
 

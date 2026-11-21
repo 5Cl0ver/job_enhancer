@@ -4,7 +4,7 @@ the connector (``app/mcp_server.py``), not these."""
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -18,6 +18,8 @@ from app.schemas.scout import (
     CompanyUpdate,
     ConfirmIn,
     ConfirmOut,
+    FindingItem,
+    FindingPage,
     InstructionSave,
     InstructionSection,
     InstructionsOut,
@@ -25,6 +27,7 @@ from app.schemas.scout import (
     MissionCreate,
     MissionOut,
     MissionUpdate,
+    RecommendedOut,
     RunEventOut,
     RunOut,
     SaveFindingIn,
@@ -36,7 +39,9 @@ from app.schemas.scout import (
 )
 from app.services import scout_companies as companies
 from app.services import scout_instructions as instr
+from app.services import scout_levels as levels_svc
 from app.services import scout_log
+from app.services import scout_results as results
 from app.services import scout_review as review
 from app.services import scout_runs as runs
 from app.services import scout_titles as titles_svc
@@ -254,6 +259,67 @@ async def save_finding(
     out = await review.save_one(db, user.id, finding_id, data)
     await db.commit()
     return out
+
+
+# --------------------------------------------------------------------------- #
+# Results: every job Scout found, grouped and sorted (spec 012)
+# --------------------------------------------------------------------------- #
+@router.get("/findings", response_model=FindingPage)
+async def list_findings(
+    run: str | None = Query(None, max_length=40),
+    track: uuid.UUID | None = None,
+    status: str = Query("new", max_length=10),
+    sort: str = Query("fit", max_length=10),
+    limit: int = Query(100, ge=1, le=results.MAX_LIMIT),
+    offset: int = Query(0, ge=0),
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FindingPage:
+    """The user's findings: one status (new, saved, passed or hidden), best
+    first or newest first, for one run ("last" = the latest) or all."""
+    return FindingPage(
+        **await results.list_findings(
+            db,
+            user.id,
+            run=run,
+            track=track,
+            status=status,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+        )
+    )
+
+
+@router.post("/findings/{finding_id}/pass", response_model=FindingItem)
+async def pass_finding(
+    finding_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FindingItem:
+    """Not for me: the job leaves New, and later runs skip it."""
+    out = await results.pass_finding(db, user.id, finding_id)
+    await db.commit()
+    return FindingItem(**out)
+
+
+@router.post("/findings/{finding_id}/restore", response_model=FindingItem)
+async def restore_finding(
+    finding_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> FindingItem:
+    """Undo a pass."""
+    out = await results.restore_finding(db, user.id, finding_id)
+    await db.commit()
+    return FindingItem(**out)
+
+
+@router.get("/recommended", response_model=RecommendedOut)
+async def recommended(user: User = Depends(get_current_user)) -> RecommendedOut:
+    """The settings that find the most jobs at the user's level. The page shows
+    the changes and applies them only when the user presses the button."""
+    return RecommendedOut(**levels_svc.RECOMMENDED)
 
 
 @router.post("/captures", response_model=CaptureOut)

@@ -218,7 +218,7 @@ describe("local companies", () => {
     expect(companiesLine(null)).toBeNull();
     expect(companiesLine({ rows: 20 })).toBeNull();
     expect(companiesLine({ companies: 1, companies_new: 1 })).toBe(
-      "Checked 1 local company: 1 new · 0 had openings.",
+      "Checked 1 local company: 1 new · 0 had jobs listed.",
     );
   });
 
@@ -234,9 +234,9 @@ describe("local companies", () => {
       never_check: false,
       due: false,
     };
-    expect(companyStatus(c)).toMatch(/^Had openings · checked Nov 1[78]$/);
+    expect(companyStatus(c)).toMatch(/^Has jobs listed · checked Nov 1[78]$/);
     expect(companyStatus({ ...c, last_checked_at: null })).toBe(
-      "Had openings · checked next run",
+      "Has jobs listed · checked next run",
     );
     expect(
       companyStatus({ ...c, last_result: "no_careers", never_check: true }),

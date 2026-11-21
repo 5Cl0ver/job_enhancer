@@ -359,8 +359,8 @@ class TestConfirm:
         self, client: AsyncClient, db_session, test_user
     ):
         run = await _run(db_session, test_user)
-        await _report(db_session, test_user, run, "strong", copy=False)
-        await _report(db_session, test_user, run, "strong", copy=False)  # gives up
+        for _ in range(3):  # the third try without a copy gives up
+            await _report(db_session, test_user, run, "strong", copy=False)
         body, found = await _findings(client, run)
         (f,) = found.values()
         assert f["outcome"] == "no_copy" and f["can_save"] is False

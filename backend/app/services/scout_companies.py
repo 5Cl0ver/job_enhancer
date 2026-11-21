@@ -331,8 +331,10 @@ async def checked(
     result: str,
     careers_url: str | None = None,
     name: str = "",
+    openings: list | None = None,
 ) -> dict:
-    """Claude says what a company's site had."""
+    """Claude says what a company's site had, and which openings it listed
+    (titles and links only, kept so the page can show them; spec 012)."""
     if (run.criteria or {}).get("source") != LOCAL:
         raise ValueError("company_checked is only for a Local companies search.")
     if result not in COMPANY_RESULTS:
@@ -349,6 +351,9 @@ async def checked(
             "check_companies first, with the same website."
         )
     company.last_result = result
+    company.last_openings = (
+        clean_openings(openings) if result == COMPANY_OPENINGS else []
+    )
     link = _http(careers_url)
     if result == COMPANY_NO_CAREERS:
         company.careers_url = None
@@ -376,6 +381,31 @@ async def checked(
             else "Go on to the next company, or the next start URL."
         ),
     }
+
+
+MAX_OPENINGS = 20
+
+
+def clean_openings(openings) -> list[dict]:
+    """Up to ``MAX_OPENINGS`` {title, url, fit}: titles cut short, links that
+    are web addresses, fit 0-10 or null. Never job text."""
+    out: list[dict] = []
+    for o in openings if isinstance(openings, list) else []:
+        if not isinstance(o, dict):
+            continue
+        title = " ".join(str(o.get("title") or "").split())[:200]
+        url = _http(str(o.get("url") or ""))
+        if not title or not url:
+            continue
+        try:
+            fit = int(o.get("fit"))
+            fit = fit if 0 <= fit <= 10 else None
+        except (TypeError, ValueError):
+            fit = None
+        out.append({"title": title, "url": url[:2000], "fit": fit})
+        if len(out) >= MAX_OPENINGS:
+            break
+    return out
 
 
 def summary(stats: dict | None) -> str | None:

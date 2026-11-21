@@ -134,7 +134,7 @@ class TestLinkedInPlace:
             (out,) = await scout_runs.runs_out(db, [run])
             assert out.links[0].title == "IT Systems Administrator"
             assert out.links[0].total == 4 and out.links[0].pages == 1
-            assert out.links[0].dropped == ["location", "sortBy"]
+            assert out.links[0].dropped == ["location", "f_E", "sortBy"]
             assert "_links" not in (out.looked_at or {})
 
 

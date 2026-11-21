@@ -68,7 +68,7 @@ describe("Local companies checked", () => {
     const head = await screen.findByRole("button", {
       name: /Local companies checked \(2\)/,
     });
-    expect(head).toHaveTextContent("1 had openings last time");
+    expect(head).toHaveTextContent("1 had jobs listed last time");
     await user.click(head);
     expect(screen.getByRole("link", { name: /Brambleworks/ })).toHaveAttribute(
       "href",
