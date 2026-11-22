@@ -299,8 +299,13 @@ async def scan_inbox(
             raise HTTPException(status_code=502, detail=account.last_error) from None
 
         detected = await detect_events(db, account, result.messages)
+        # Updates the scan couldn't place, now and from earlier scans, that
+        # point at one saved job: put them on it (and move it, with auto-move).
+        placed = await job_links.promote_unsaved(db, account.user_id)
         moved = (
-            await email_review.auto_apply(db, account.user_id, detected.created)
+            await email_review.auto_apply(
+                db, account.user_id, [*detected.created, *placed]
+            )
             if account.auto_move
             else []
         )

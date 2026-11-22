@@ -1,7 +1,7 @@
 /**
  * Email Updates — what your inbox says about your applications, in plain words.
  *
- * When an email names the job exactly (its link, job ID, or a hiring site's
+ * When the app is sure which job an email is about (its link, job ID, a hiring site's
  * own template), the card has already moved: "Moved for you" sums those up by
  * stage and lists the newest as slim rows that open for the email, the job,
  * and Undo (Settings can turn this off). Other important updates (interview,
@@ -160,9 +160,9 @@ export default function EmailUpdatesPage() {
 
       {unsaved.length > 0 && (
         <Section
-          title="Not in your saved jobs"
+          title="Not sure which job"
           count={unsaved.length}
-          hint="These won't change any card. Add one to My Jobs, or dismiss it."
+          hint="The app couldn't tell which job these are about. Pick the job, or add it as a new one."
         >
           {unsaved.map((u) => (
             <UnsavedRow key={u.lead.id} group={u} />
@@ -478,7 +478,7 @@ function MovedSection({ events }: { events: DetectedEvent[] }) {
       <Heading
         title="Moved for you"
         count={events.length}
-        hint="These emails named the job exactly, so the card moved by itself. Tap one to see the email or undo it."
+        hint="The app was sure which job these were about, so the card moved by itself. Tap one to see the email, or undo it if it's the wrong job."
       />
       <div className="mb-3 flex flex-wrap gap-1.5" role="group" aria-label="Show by stage">
         <Chip active={stage === null} onClick={() => pick(null)}>
@@ -536,6 +536,11 @@ function Chip({
 /** One slim line per moved card; tap it for the email, the job, and Undo. */
 function MovedRow({ ev }: { ev: DetectedEvent }) {
   const review = useReviewEvent();
+  const unlink = useUnlinkEvent();
+  // Placed by the company alone (or by the user): Undo also lists the email
+  // again, so it can go on the right job.
+  const guessed = ev.match_evidence === "likely_job" || ev.match_evidence === "user_link";
+  const undoing = guessed ? unlink : review;
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState(false);
   const [undone, setUndone] = useState(false);
@@ -545,7 +550,9 @@ function MovedRow({ ev }: { ev: DetectedEvent }) {
     return (
       <li className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
         <Undo2 className="h-4 w-4" aria-hidden />
-        Put back where it was.
+        {guessed
+          ? "Put back. Pick the right job under \u201cNot sure which job\u201d above."
+          : "Put back where it was."}
       </li>
     );
   return (
@@ -598,22 +605,24 @@ function MovedRow({ ev }: { ev: DetectedEvent }) {
             <Button
               size="sm"
               variant="outline"
-              disabled={review.isPending}
+              disabled={undoing.isPending}
               onClick={() =>
-                review.mutate({ id: ev.id, action: "undo" }, { onSuccess: () => setUndone(true) })
+                guessed
+                  ? unlink.mutate({ lead: ev.id, repeats: [] }, { onSuccess: () => setUndone(true) })
+                  : review.mutate({ id: ev.id, action: "undo" }, { onSuccess: () => setUndone(true) })
               }
             >
-              {review.isPending ? (
+              {undoing.isPending ? (
                 <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
               ) : (
                 <Undo2 className="h-3.5 w-3.5" aria-hidden />
               )}
-              Undo
+              {guessed ? "Wrong job" : "Undo"}
             </Button>
           </div>
-          {review.isError && (
+          {undoing.isError && (
             <p className="text-xs text-destructive">
-              {errorText(review.error, "That didn't work. Try again.")}
+              {errorText(undoing.error, "That didn't work. Try again.")}
             </p>
           )}
           <EmailViewer
@@ -663,8 +672,10 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
   const ev = u.lead;
   const groupAct = useGroupAction();
   const review = useReviewEvent();
+  const unlink = useUnlinkEvent();
   const [done, setDone] = useState(false);
-  const busy = groupAct.isPending || review.isPending;
+  const busy = groupAct.isPending || review.isPending || unlink.isPending;
+  const guessed = ev.match_evidence === "likely_job";
   const act = (action: "apply" | "dismiss") =>
     groupAct.mutate(
       { lead: ev, repeats: u.repeats, action },
@@ -689,9 +700,20 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
                 ? "Got it"
                 : `Move to ${ev.target_stage}`}
           </Button>
-          <Button size="sm" variant="ghost" onClick={() => act("dismiss")} disabled={busy}>
-            Not this
-          </Button>
+          {guessed ? (
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => unlink.mutate({ lead: ev.id, repeats: [] })}
+            >
+              Wrong job
+            </Button>
+          ) : (
+            <Button size="sm" variant="ghost" onClick={() => act("dismiss")} disabled={busy}>
+              Not this
+            </Button>
+          )}
         </>
       }
     >
@@ -700,9 +722,9 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
           Your “{ev.target_stage}” stage no longer exists, so this can't be applied.
         </p>
       )}
-      {(groupAct.isError || review.isError) && (
+      {(groupAct.isError || review.isError || unlink.isError) && (
         <p className="mt-1 text-xs text-destructive">
-          {errorText(groupAct.error ?? review.error, "That didn't work. Try again.")}
+          {errorText(groupAct.error ?? review.error ?? unlink.error, "That didn't work. Try again.")}
         </p>
       )}
     </SlimRow>
@@ -772,9 +794,10 @@ function QuestionRow({ ev }: { ev: DetectedEvent }) {
   );
 }
 
-/** An important update about a job the scan couldn't place: put it on one of
- * the user's saved jobs, add it as a new job, or dismiss it. When the email
- * points at one saved job, that guess is offered first. */
+/** An important update about a job the scan couldn't place. One clear
+ * choice: pick the saved job it's about (the main button; likely jobs are
+ * listed first), add it as a new job, or dismiss it. Updates the app can
+ * place by the company alone never get here: each scan puts them on the job. */
 function UnsavedRow({ group: u }: { group: UpdateGroup }) {
   const ev = u.lead;
   const track = useTrackEvent();
@@ -788,17 +811,14 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
   const [linked, setLinked] = useState<{ done: DetectedEvent; repeats: string[] } | null>(
     null,
   );
-  // The picker: "One of my jobs", or the check before adding a new job.
-  const [picking, setPicking] = useState<"link" | "check" | null>(null);
+  const [picking, setPicking] = useState(false);
   const busy = track.isPending || link.isPending || groupAct.isPending;
   const more = u.repeats.length;
-  const guess = ev.likely_job;
   // Repeats are the same job only when the email named the role; otherwise
   // they may be other roles at the company, so they stay on the page.
   const sameJob = ev.title ? u.repeats : [];
 
   const addNew = () => {
-    setPicking(null);
     if (!company.trim() || !title.trim()) {
       setEditing(true);
       return;
@@ -808,18 +828,12 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
       { onSuccess: (done) => setAdded(done) },
     );
   };
-  // Before making a new job, ask about the saved one the email points at.
-  const add = () => {
-    if (!guess || editing) return addNew();
-    link.reset();
-    setPicking("check");
-  };
   const linkTo = (savedJobId: string) =>
     link.mutate(
       { lead: ev, repeats: sameJob, savedJobId },
       {
         onSuccess: (result) => {
-          setPicking(null);
+          setPicking(false);
           setLinked(result);
         },
       },
@@ -868,71 +882,67 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
       ev={ev}
       extra={more > 0 ? `${more + 1} emails` : undefined}
       actions={
-        <>
-          <Button size="sm" variant="outline" onClick={add} disabled={busy}>
-            {track.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-            {editing ? "Save to My Jobs" : "Add to My Jobs"}
-          </Button>
-          <Button
-            size="sm"
-            variant="outline"
-            className="gap-1"
-            disabled={busy}
-            onClick={() => {
-              link.reset();
-              setPicking("link");
-            }}
-          >
-            <Link2 className="h-3.5 w-3.5" aria-hidden />
-            One of my jobs
-          </Button>
-          <Button
-            size="sm"
-            variant="ghost"
-            disabled={busy}
-            onClick={() => groupAct.mutate({ lead: ev, repeats: u.repeats, action: "dismiss" })}
-          >
-            Not this
-          </Button>
-        </>
+        editing ? (
+          <>
+            <Button size="sm" onClick={addNew} disabled={busy}>
+              {track.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+              Save to My Jobs
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setEditing(false)} disabled={busy}>
+              Cancel
+            </Button>
+          </>
+        ) : (
+          <>
+            {/* The main choice gets the whole first line on a phone. */}
+            <Button
+              size="sm"
+              className="gap-1 max-sm:basis-full"
+              disabled={busy}
+              onClick={() => {
+                link.reset();
+                setPicking(true);
+              }}
+            >
+              <Link2 className="h-3.5 w-3.5" aria-hidden />
+              Pick the job
+            </Button>
+            <Button size="sm" variant="outline" onClick={addNew} disabled={busy}>
+              {track.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+              Add as new job
+            </Button>
+            <Button
+              size="sm"
+              variant="ghost"
+              disabled={busy}
+              onClick={() => groupAct.mutate({ lead: ev, repeats: u.repeats, action: "dismiss" })}
+            >
+              Dismiss
+            </Button>
+          </>
+        )
       }
     >
-      {guess?.saved_job_id && !editing && (
-        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
-          <span className="min-w-0">
-            Looks like your <span className="font-medium">{guess.title}</span> job at{" "}
-            {guess.company}.
-          </span>
-          <Button
-            size="sm"
-            variant="secondary"
-            disabled={busy}
-            onClick={() => linkTo(guess.saved_job_id!)}
-          >
-            {link.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
-            Yes, link it
-          </Button>
-        </div>
-      )}
       <JobPicker
         source={{ event: ev.id }}
-        open={picking !== null}
-        onOpenChange={(open) => !open && setPicking(null)}
-        title={picking === "check" ? "Is it one of your saved jobs?" : "Which job is this about?"}
-        description={
-          picking === "check"
-            ? "This email looks like it's about a job you already saved. Pick it, or add a new job."
-            : "Pick the job this email is about. Its card moves forward to match the email."
-        }
+        open={picking}
+        onOpenChange={setPicking}
+        title="Which job is this about?"
+        description="Pick the job this email is about. Its card moves forward to match the email, and later emails from this sender go there by themselves."
         onPick={(o) => linkTo(o.saved_job_id)}
         busy={busy}
         error={link.isError ? errorText(link.error, "Couldn't link that. Try again.") : null}
         footer={
-          picking === "check" ? (
-            <Button variant="ghost" onClick={addNew} disabled={busy}>
-              No, add it as a new job
-            </Button>
-          ) : undefined
+          <Button
+            variant="ghost"
+            disabled={busy}
+            onClick={() => {
+              setPicking(false);
+              addNew();
+            }}
+          >
+            It&apos;s not saved: add it as a new job
+          </Button>
         }
       />
       {editing && (

@@ -96,6 +96,8 @@ const REASONS: Record<string, string> = {
   known_sender: "This person wrote to you about this job before.",
   company_title: "The email names the company and the job title.",
   company_date: "It's from the company, and this is your only job there.",
+  likely_job: "The email names the company, and this is your only job there.",
+  user_link: "You put this email on this job.",
   title_only: "Only the job title matched; the company wasn't named.",
   several_roles: "You saved more than one job at this company.",
   several_jobs: "More than one saved job fits equally well.",

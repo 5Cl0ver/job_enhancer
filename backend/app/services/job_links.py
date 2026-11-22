@@ -31,7 +31,9 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
     STATUS_APPLIED,
+    STATUS_AUTO_APPLIED,
     STATUS_DISMISSED,
+    STATUS_HIDDEN,
     STATUS_PENDING,
     STATUS_UNSAVED,
     DetectedEvent,
@@ -41,6 +43,8 @@ from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import ORIGIN_EMAIL, SavedJob
 from app.schemas.job_link import JobOption, LinkResult, LinkUndo, MovedEvent
 from app.services.email_match import (
+    LIKELY_JOB,
+    NOT_THIS_JOB,
     _company_terms,
     _domain_labels,
     _same_company,
@@ -128,6 +132,7 @@ async def active_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
             select(
                 SavedJob.id,
                 SavedJob.job_listing_id,
+                SavedJob.pipeline_stage_id,
                 SavedJob.applied_at,
                 SavedJob.created_at,
                 SavedJob.origin,
@@ -149,6 +154,7 @@ async def active_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
         {
             "id": r.id,
             "job_listing_id": r.job_listing_id,
+            "pipeline_stage_id": r.pipeline_stage_id,
             "company": r.company,
             "title": r.title,
             "location": r.location,
@@ -350,6 +356,8 @@ async def _unsaved_event(
 def likely_job(event: DetectedEvent, jobs: list[dict]) -> dict | None:
     """The one saved job an unsaved update most likely belongs to, if the
     emails clearly point at one (a tie points at none)."""
+    if event.match_evidence == NOT_THIS_JOB:
+        return None  # the user already said the guess was wrong
     ranked = rank_jobs(
         jobs,
         company=event.job_company or "",
@@ -359,6 +367,52 @@ def likely_job(event: DetectedEvent, jobs: list[dict]) -> dict | None:
     )
     likely = [j for j in ranked if j["likely"]]
     return likely[0] if len(likely) == 1 else None
+
+
+async def promote_unsaved(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEvent]:
+    """After a scan, put each unsaved update the app can now place on its job.
+
+    An update whose names point at exactly one saved job's company becomes a
+    pending update on that job (``LIKELY_JOB``); with auto-move on, the scan
+    then moves the card like any sure match. Older updates are placed too, so
+    saving a job later clears the leftovers about it. One the job is already at
+    or past is kept with the job (hidden), since there's nothing to move.
+    Returns the new pending updates."""
+    events = list(
+        await db.scalars(
+            select(DetectedEvent)
+            .where(
+                DetectedEvent.user_id == user_id,
+                DetectedEvent.status == STATUS_UNSAVED,
+            )
+            .order_by(DetectedEvent.email_date.asc().nulls_first())
+        )
+    )
+    if not events:
+        return []
+    jobs = await active_jobs(db, user_id)
+    by_name, by_id = await _stage_orders(db, user_id)
+    # Where each card will be once the earlier updates move it.
+    reached = {j["id"]: by_id.get(j["pipeline_stage_id"]) for j in jobs}
+    pending = []
+    for ev in events:
+        guess = likely_job(ev, jobs)
+        if guess is None:
+            continue
+        move, _ = card_action(
+            ev.target_stage, by_name, current_order=reached[guess["id"]], reminder=False
+        )
+        ev.saved_job_id = guess["id"]
+        ev.previous_stage_id = guess["pipeline_stage_id"]
+        ev.match_evidence = LIKELY_JOB
+        if move and ev.target_stage in by_name:
+            ev.status = STATUS_PENDING
+            reached[guess["id"]] = by_name[ev.target_stage]
+            pending.append(ev)
+        else:
+            ev.status = STATUS_HIDDEN
+    await db.flush()
+    return pending
 
 
 async def event_options(
@@ -411,8 +465,10 @@ async def link_event(
 async def unlink_event(
     db: AsyncSession, user_id: uuid.UUID, event_id: uuid.UUID
 ) -> DetectedEvent:
-    """Undo :func:`link_event`: the card goes back, and the email is an
-    unsaved update again, to link elsewhere or add as a new job."""
+    """Wrong job: undo the user's own link (:func:`link_event`) or the app's
+    guess (:func:`promote_unsaved`). The card goes back if the update moved
+    it and it hasn't moved since, and the email is an unsaved update again,
+    to put on the right job or add as a new one. It's never guessed again."""
     ev = await db.scalar(
         select(DetectedEvent).where(
             DetectedEvent.id == event_id, DetectedEvent.user_id == user_id
@@ -420,17 +476,27 @@ async def unlink_event(
     )
     if ev is None:
         raise HTTPException(status_code=404, detail="Update not found")
-    if ev.status != STATUS_APPLIED or ev.match_evidence != LINKED:
+    if ev.match_evidence not in (LINKED, LIKELY_JOB) or ev.status not in (
+        STATUS_APPLIED,
+        STATUS_AUTO_APPLIED,
+        STATUS_PENDING,
+        STATUS_HIDDEN,
+    ):
         raise HTTPException(status_code=409, detail="Nothing to undo")
     job = await _own_job(db, user_id, ev.saved_job_id)
-    _, order = await _stage_orders(db, user_id)
-    back = ev.previous_stage_id
-    if back != job.pipeline_stage_id:
-        await move_job_to_stage(db, job.id, back if back in order else None, user_id)
+    if ev.status in (STATUS_APPLIED, STATUS_AUTO_APPLIED):
+        by_name, order = await _stage_orders(db, user_id)
+        back = ev.previous_stage_id
+        # Only while the card is still where this update put it.
+        here = order.get(job.pipeline_stage_id)
+        if here is not None and here == by_name.get(ev.target_stage or ""):
+            await move_job_to_stage(
+                db, job.id, back if back in order else None, user_id
+            )
     ev.saved_job_id = None
     ev.previous_stage_id = None
     ev.status = STATUS_UNSAVED
     ev.applied_at = None
-    ev.match_evidence = None
+    ev.match_evidence = NOT_THIS_JOB
     await db.flush()
     return ev

@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.models.detected_event import STATUS_PENDING, DetectedEvent
+from app.models.email_account import EmailAccount
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.services import email_sync
@@ -182,7 +183,11 @@ class TestRank:
 
         def ev(company="", title="", subject="Next steps", sender="a@gmail.com"):
             return SimpleNamespace(
-                job_company=company, job_title=title, subject=subject, from_addr=sender
+                job_company=company,
+                job_title=title,
+                subject=subject,
+                from_addr=sender,
+                match_evidence=None,
             )
 
         assert likely_job(ev(sender="Rowan <r@dhs.example.gov>"), jobs)["id"] == 2
@@ -450,3 +455,103 @@ class TestSameJobAs:
             f"/v1/saved-jobs/{dup.id}/unlink", json={"target_id": str(sj.id)}
         )
         assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+class TestPlacedAutomatically:
+    """After each scan, updates the app couldn't place that point at one saved
+    job's company go on that job by themselves (spec 014)."""
+
+    async def _leftover(self, client, db_session, test_user, monkeypatch, **names):
+        await _scan(client, monkeypatch)  # connects the inbox; no mail yet
+        account = await db_session.scalar(select(EmailAccount))
+        ev = DetectedEvent(
+            id=uuid.uuid4(),
+            user_id=test_user.id,
+            email_account_id=account.id,
+            event_type="interview",
+            target_stage="Interview",
+            from_addr="Rowan Pike <rowan.pike@gmail.com>",
+            subject="Next phase of our recruitment process",
+            message_uid=uuid.uuid4().hex[:8],
+            status="unsaved",
+            job_company=names.get("company", "Harbor Services, Department of"),
+            job_title=names.get("title"),
+        )
+        db_session.add(ev)
+        await db_session.flush()
+        return account, ev
+
+    async def test_a_leftover_update_moves_its_card_on_the_next_scan(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor, Inc.")
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        body = await _scan(client, monkeypatch)
+        assert body["moved"] == 1
+        await db_session.refresh(ev)
+        await db_session.refresh(sj)
+        assert ev.status == "auto_applied" and ev.saved_job_id == sj.id
+        assert ev.match_evidence == "likely_job"
+        assert (
+            sj.pipeline_stage_id
+            == (await _stage(db_session, test_user, "Interview")).id
+        )
+
+        # Wrong job: the card goes back, the update is listed again, and the
+        # app never guesses it again.
+        r = await client.post(f"/v1/email/events/{ev.id}/unlink")
+        assert r.status_code == 200 and r.json()["status"] == "unsaved"
+        await db_session.refresh(sj)
+        assert (
+            sj.pipeline_stage_id == (await _stage(db_session, test_user, "Applied")).id
+        )
+        assert r.json()["likely_job"] is None
+        await _scan(client, monkeypatch)
+        await db_session.refresh(ev)
+        assert ev.status == "unsaved" and ev.saved_job_id is None
+
+    async def test_without_auto_move_it_waits_for_a_tap(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        account, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        account.auto_move = False
+        await db_session.flush()
+        await _scan(client, monkeypatch)
+        await db_session.refresh(ev)
+        assert ev.status == "pending" and ev.saved_job_id == sj.id
+
+    async def test_nothing_to_move_keeps_it_with_the_job(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        sj.pipeline_stage_id = (await _stage(db_session, test_user, "Offer")).id
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        await _scan(client, monkeypatch)
+        await db_session.refresh(ev)
+        await db_session.refresh(sj)
+        assert ev.status == "hidden" and ev.saved_job_id == sj.id
+        assert sj.pipeline_stage_id == (await _stage(db_session, test_user, "Offer")).id
+
+    async def test_two_jobs_there_or_no_company_stay_for_the_user(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        await _applied_job(db_session, test_user, company="Vellacor", title="Analyst")
+        await _applied_job(db_session, test_user, company="Vellacor", title="Engineer")
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        _, title_only = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="", title="Analyst"
+        )
+        await _scan(client, monkeypatch)
+        for row in (ev, title_only):
+            await db_session.refresh(row)
+            assert row.status == "unsaved" and row.saved_job_id is None

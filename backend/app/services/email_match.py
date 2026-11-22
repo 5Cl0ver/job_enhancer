@@ -57,6 +57,12 @@ COMPANY_ONLY = "company_only"
 CONFLICT = "conflicting_evidence"
 # A hiring system's own template named the company (and job).
 TEMPLATE = "template"
+# Set after a scan: an unsaved update whose names point at exactly one saved
+# job's company (services/job_links.promote_unsaved).
+LIKELY_JOB = "likely_job"
+# The user said a guess (or their own link) was the wrong job: never guess
+# this email again.
+NOT_THIS_JOB = "not_this_job"
 
 _TIER = {JOB_URL: 1, JOB_ID: 1, KNOWN_SENDER: 2, COMPANY_TITLE: 3, COMPANY_DATE: 4}
 
