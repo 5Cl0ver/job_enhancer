@@ -7,6 +7,7 @@ optimistic updates where useful.
 | File | Exported hooks | Backend endpoint(s) |
 |---|---|---|
 | `useJobs.ts` | `useJobSearch`, `useJob` | `GET /v1/jobs` |
+| `useJobLinks.ts` | `useLinkOptions`, `useLinkJob`, `useUnlinkJob`, `useLinkEvent` | `/v1/saved-jobs/{id}/link*`, `/v1/email/events/{id}/link*` |
 | `useSavedJobs.ts` | `useCollections`, `useCreateCollection`, `useDeleteCollection`, `useSavedJobs`, `useSavedJobId`, `useSaveJob`, `useJobSource` (where a job came from), `useRenameJob`, `useUpdateSavedJob`, `useUnsaveJob` | `/v1/collections`, `/v1/saved-jobs` |
 | `useTracker.ts` | `usePipelineStages`, `useKanbanJobs`, `useMoveJobStage`, `useCreateStage`, `useDeleteStage` | `/v1/pipeline-stages` |
 | `useSavedSearches.ts` | `useSavedSearches`, `useCreateSavedSearch`, `useDeleteSavedSearch`, `useNewMatches`, `useMarkMatchesSeen` | `/v1/saved-searches` |

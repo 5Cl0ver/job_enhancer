@@ -37,7 +37,7 @@ const JOB = {
   job_listing: {
     id: "l1",
     title: "next phase of our recruitment process in the Platform Engineer",
-    company: "Nancy Karnas",
+    company: "Wren Calloway",
     location: "Not specified",
     apply_url: "https://mail.yahoo.com/d/folders/1/messages/abc",
   },

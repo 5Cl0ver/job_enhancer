@@ -10,6 +10,7 @@ from app.middleware.auth import get_current_user
 from app.models.job_listing import JobListing
 from app.models.saved_job import ORIGIN_EXTENSION
 from app.models.user import User
+from app.schemas.job_link import JobOption, LinkJobRequest, LinkResult, LinkUndo
 from app.schemas.saved_job import (
     ApplicationSyncRequest,
     ApplicationSyncResult,
@@ -28,7 +29,7 @@ from app.schemas.saved_job import (
     SavedJobSummaryResponse,
     SavedJobUpdate,
 )
-from app.services import job_source
+from app.services import job_links, job_source
 from app.services import saved_jobs as svc
 
 router = APIRouter()
@@ -211,6 +212,42 @@ async def rename_listing(
     await db.commit()
     sj = await svc.get_saved_job(db, sj.id, user.id, with_description=False)
     return SavedJobListItem.model_validate(sj)
+
+
+@router.get("/{saved_job_id}/link-options", response_model=list[JobOption])
+async def link_options(
+    saved_job_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[JobOption]:
+    """The saved jobs a job made from an email could really be, likeliest first."""
+    return await job_links.job_options(db, user.id, saved_job_id)
+
+
+@router.post("/{saved_job_id}/link", response_model=LinkResult)
+async def link_job(
+    saved_job_id: uuid.UUID,
+    data: LinkJobRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> LinkResult:
+    """This job made from an email is really another saved job: its emails move
+    there, that card moves forward if needed, and this copy is removed."""
+    result = await job_links.link_job(db, user.id, saved_job_id, data.target_id)
+    await db.commit()
+    return result
+
+
+@router.post("/{saved_job_id}/unlink", status_code=204)
+async def unlink_job(
+    saved_job_id: uuid.UUID,
+    data: LinkUndo,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> None:
+    """Undo a link: the copy comes back with its emails."""
+    await job_links.unlink_job(db, user.id, saved_job_id, data)
+    await db.commit()
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobListItem)

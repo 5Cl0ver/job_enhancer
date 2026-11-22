@@ -204,9 +204,9 @@ class TestNamesThatAreNotNames:
         "raw,expected",
         [
             (
-                "next phase of our recruitment process in the Productivity "
+                "next phase of our recruitment process in the Workflow "
                 "Platform Engineer",
-                "Productivity Platform Engineer",
+                "Workflow Platform Engineer",
             ),
             (
                 "the next step of the hiring process for the Data Analyst",
@@ -266,9 +266,9 @@ class TestNamesThatAreNotNames:
         assert (company, role) == ("Morgan Stanley", "Data Analyst")
 
     def test_a_subject_that_names_the_sender_is_not_the_company(self):
-        sender = "Nancy Karnas <nancy.karnas@vellacor.example>"
+        sender = "Wren Calloway <wren.calloway@vellacor.example>"
         company, role = job_names(
-            "Interview with Nancy Karnas",
+            "Interview with Wren Calloway",
             sender,
             "We'd like to move you to the next phase of our recruitment process "
             "for the Platform Engineer role.",
@@ -279,18 +279,18 @@ class TestNamesThatAreNotNames:
     @pytest.mark.parametrize(
         "name,sender,person",
         [
-            ("Nancy Karnas", "Nancy Karnas <nancy.karnas@vellacor.example>", True),
-            ("Nancy Karnas", "Nancy Karnas <nkarnas@vellacor.example>", True),
-            ("Nancy Karnas", "Nancy Karnas <nancy@vellacor.example>", True),
+            ("Wren Calloway", "Wren Calloway <wren.calloway@vellacor.example>", True),
+            ("Wren Calloway", "Wren Calloway <wcalloway@vellacor.example>", True),
+            ("Wren Calloway", "Wren Calloway <wren@vellacor.example>", True),
             # The employer's mailbox at a hiring system, or a run-together name.
             ("Wells Fargo", "Wells Fargo <wellsfargo@myworkday.com>", False),
             ("Wells Fargo", "Wells Fargo <wells.fargo@myworkday.com>", False),
-            ("Nancy Karnas", "Nancy Karnas <nancykarnas@vellacor.example>", False),
+            ("Wren Calloway", "Wren Calloway <wrencalloway@vellacor.example>", False),
             # A company's two-word name, sent from a team mailbox.
             ("Tidelock Systems", "Tidelock Systems <jobs@tidelock.example>", False),
             ("Tidelock Systems", "x@mailhost.example", False),
             ("Vellacor", "Vellacor <hr@vellacor.example>", False),
-            ("Nancy Karnas", "Vellacor Careers <careers@vellacor.example>", False),
+            ("Wren Calloway", "Vellacor Careers <careers@vellacor.example>", False),
         ],
     )
     def test_who_is_a_person(self, name, sender, person):

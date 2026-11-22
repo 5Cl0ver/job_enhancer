@@ -46,8 +46,15 @@ from app.schemas.email_account import (
     ScanResult,
     TrackEventRequest,
 )
+from app.schemas.job_link import JobOption, LinkEventRequest
 from app.services import email_accounts as svc
-from app.services import email_review, email_sync, email_sync_state, email_view
+from app.services import (
+    email_review,
+    email_sync,
+    email_sync_state,
+    email_view,
+    job_links,
+)
 from app.services.email_classify import UNSURE
 from app.services.email_imap import ImapAuthError
 from app.services.email_job_names import clean_role, is_sender_person
@@ -74,9 +81,9 @@ async def _events_out(
 ) -> list[DetectedEventOut]:
     """Enrich stored events with a link to the job in the app (job_listing_id),
     the card's current stage, a link to the email in webmail (built from
-    provider + subject), and — for a
-    needs-review item — its candidate jobs' names. A candidate the user has
-    since archived or deleted is left out."""
+    provider + subject), for a needs-review item its candidate jobs' names,
+    and for an unsaved update the saved job it most likely belongs to. A
+    candidate the user has since archived or deleted is left out."""
     if not events:
         return []
     ids: set[uuid.UUID] = {e.saved_job_id for e in events if e.saved_job_id}
@@ -106,9 +113,18 @@ async def _events_out(
             select(PipelineStage.name).where(PipelineStage.user_id == events[0].user_id)
         )
     )
+    unsaved = [e for e in events if e.status == STATUS_UNSAVED]
+    active = await job_links.active_jobs(db, events[0].user_id) if unsaved else []
     out: list[DetectedEventOut] = []
     for e in events:
         d = DetectedEventOut.model_validate(e)
+        if e.status == STATUS_UNSAVED and (guess := job_links.likely_job(e, active)):
+            d.likely_job = MatchCandidateOut(
+                company=guess["company"],
+                title=guess["title"],
+                job_listing_id=guess["job_listing_id"],
+                saved_job_id=guess["id"],
+            )
         d.category = category_of(e)
         d.job_listing_id = listing_of.get(e.saved_job_id)
         if (j := job_of.get(e.saved_job_id)) is not None:
@@ -382,6 +398,32 @@ async def track_event(
     )
     await db.commit()
     (out,) = await _events_out(db, provider, [ev])
+    return out
+
+
+@router.get("/events/{event_id}/link-options", response_model=list[JobOption])
+async def event_link_options(
+    event_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[JobOption]:
+    """The saved jobs an unsaved update could be about, likeliest first."""
+    return await job_links.event_options(db, user.id, event_id)
+
+
+@router.post("/events/{event_id}/link", response_model=DetectedEventOut)
+async def link_event(
+    event_id: uuid.UUID,
+    data: LinkEventRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """The update is about one of the user's saved jobs: put it there and move
+    that card forward. Undo reverses it like any applied update."""
+    ev = await job_links.link_event(db, user.id, event_id, data.saved_job_id)
+    await db.commit()
+    account = await svc.get_account(db, user.id)
+    (out,) = await _events_out(db, account.provider if account else "", [ev])
     return out
 
 

@@ -55,6 +55,8 @@ export interface DetectedEvent {
   review_reason?: ReviewReason | null;
   /** needs_review only: the saved jobs it could be about. */
   candidates?: MatchCandidate[];
+  /** unsaved only: the saved job it most likely belongs to, if one stands out. */
+  likely_job?: MatchCandidate | null;
   from_addr: string;
   subject: string;
   status:

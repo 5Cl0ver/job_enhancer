@@ -79,7 +79,7 @@ _PROCESS_ROLE = re.compile(
     r"(?:the\s+|our\s+)?([A-Z][\w/&,.()' -]{2,70}?)"
     r"(?:\s+(?:position|role|opening|job)\b|\s+at\b|\s+with\b|[.,;:!\n]|$)"
 )
-# A personal name: two or three capitalised words ("Nancy Karnas").
+# A personal name: two or three capitalised words ("Wren Calloway").
 _PERSON = re.compile(r"^[A-Z][a-z'’-]+(?:\s+[A-Z][a-z'’-]+){1,2}$")
 
 
@@ -129,8 +129,8 @@ def clean_role(raw: str | None, *, strict: bool = True) -> str | None:
 
 
 def is_sender_person(name: str | None, from_addr: str) -> bool:
-    """True when ``name`` is the person who sent the email ("Nancy Karnas"
-    writing from nancy.karnas@…), not the company they work for. A shape alone
+    """True when ``name`` is the person who sent the email ("Wren Calloway"
+    writing from wren.calloway@…), not the company they work for. A shape alone
     isn't enough ("Tidelock Systems"): the address must be a person's (first
     name, first.last, flast, …) and not a hiring system's mailbox, where
     "Wells Fargo <wellsfargo@…workday…>" is the employer."""
@@ -152,7 +152,7 @@ def is_sender_person(name: str | None, from_addr: str) -> bool:
     parts = [p.lower() for p in name.split()]
     first, last = parts[0], parts[-1]
     local = address.split("@")[0].lower()
-    # nancy, nancy.karnas, karnas_n, nkarnas, nancyk; not "nancykarnas", which
+    # wren, wren.calloway, calloway_n, wcalloway, wrenc; not "wrencalloway", which
     # is as likely a company's mailbox as a person's.
     pieces = set(re.split(r"[._+-]+", local))
     return bool(pieces & {first, last}) or local in {
@@ -181,7 +181,7 @@ def _subject_name(subject: str) -> str | None:
 def company_name(subject: str, from_addr: str) -> str | None:
     """The employer an email is from/about, or None."""
     m = _SUBJECT_COMPANY.search(subject or "")
-    # "Interview with Nancy Karnas", sent by Nancy: that's the recruiter.
+    # "Interview with Wren Calloway", sent by Wren: that's the recruiter.
     if m and (name := _tidy(m.group(1))) and not is_sender_person(name, from_addr):
         return name
     if name := _org_display_name(from_addr):

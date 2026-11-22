@@ -19,7 +19,7 @@ from tests.api.test_scout_tracks import _other_user
 MANUAL = {
     "url": "https://mail.yahoo.com/d/folders/1/messages/abc",
     "title": "next phase of our recruitment process in the Platform Engineer",
-    "company": "Nancy Karnas",
+    "company": "Wren Calloway",
 }
 
 
@@ -248,7 +248,7 @@ class TestDoubtfulNames:
             db_session,
             test_user,
             uuid.UUID(person["id"]),
-            "Nancy Karnas <nancy.karnas@vellacor.example>",
+            "Wren Calloway <wren.calloway@vellacor.example>",
         )
         # A hiring system sending as the employer is not a person.
         for sender in (
@@ -338,4 +338,4 @@ class TestOwnNameIsUsed:
         assert r.status_code == 200, r.text
         prompt = r.json()["prompt"]
         assert "Platform Engineer" in prompt and "Vellacor" in prompt
-        assert "Nancy Karnas" not in prompt
+        assert "Wren Calloway" not in prompt
