@@ -69,7 +69,9 @@ export function useLinkJob() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ id, targetId }: { id: string; targetId: string }) =>
-      api.post<LinkResult>(`/v1/saved-jobs/${id}/link`, { target_id: targetId }),
+      api.post<LinkResult>(`/v1/saved-jobs/${id}/link`, {
+        target_id: targetId,
+      }),
     onSettled: () => refresh(qc),
   });
 }
@@ -85,7 +87,8 @@ export function useUnlinkJob() {
 }
 
 /** "It's one of my jobs": put an update on a saved job and move its card.
- * Repeats of the same update are cleared in the same step. */
+ * Repeats of the same update go on the same job, so Undo can bring them all
+ * back. Resolves to the lead and the repeats that were linked. */
 export function useLinkEvent() {
   const qc = useQueryClient();
   return useMutation({
@@ -98,13 +101,38 @@ export function useLinkEvent() {
       repeats: DetectedEvent[];
       savedJobId: string;
     }) => {
-      const done = await api.post<DetectedEvent>(`/v1/email/events/${lead.id}/link`, {
-        saved_job_id: savedJobId,
-      });
+      const body = { saved_job_id: savedJobId };
+      const done = await api.post<DetectedEvent>(
+        `/v1/email/events/${lead.id}/link`,
+        body,
+      );
+      const linked: string[] = [];
       for (const r of repeats) {
-        await api.post<DetectedEvent>(`/v1/email/events/${r.id}/dismiss`, {});
+        await api.post<DetectedEvent>(`/v1/email/events/${r.id}/link`, body);
+        linked.push(r.id);
       }
-      return done;
+      return { done, repeats: linked };
+    },
+    onSettled: () => refresh(qc),
+  });
+}
+
+/** Undo "It's one of my jobs": the card goes back and the update (with its
+ * repeats) is listed again. */
+export function useUnlinkEvent() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: async ({
+      lead,
+      repeats,
+    }: {
+      lead: string;
+      repeats: string[];
+    }) => {
+      // Repeats first: the lead's Undo is the one that moves the card back.
+      for (const id of repeats)
+        await api.post(`/v1/email/events/${id}/unlink`, {});
+      return api.post<DetectedEvent>(`/v1/email/events/${lead}/unlink`, {});
     },
     onSettled: () => refresh(qc),
   });

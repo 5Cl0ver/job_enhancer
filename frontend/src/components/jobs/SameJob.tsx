@@ -53,7 +53,9 @@ function OptionRow({
       >
         <span className="min-w-0 flex-1">
           <span className="block truncate font-medium">{o.title}</span>
-          <span className="block truncate text-xs text-muted-foreground">{facts}</span>
+          <span className="block truncate text-xs text-muted-foreground">
+            {facts}
+          </span>
         </span>
         {o.likely && (
           <Badge variant="secondary" className="shrink-0">
@@ -65,29 +67,46 @@ function OptionRow({
   );
 }
 
-/** The user's saved jobs to choose from, likeliest first. */
-export function JobPicker({
-  source,
-  open,
-  onOpenChange,
-  title,
-  description,
-  onPick,
-  busy = false,
-  error = null,
-  footer,
-}: {
+interface PickerProps {
   source: LinkSource;
-  open: boolean;
-  onOpenChange: (open: boolean) => void;
   title: string;
   description: string;
   onPick: (o: JobOption) => void;
   busy?: boolean;
   error?: string | null;
   footer?: ReactNode;
-}) {
-  const { data: options = [], isLoading, isError } = useLinkOptions(source, open);
+}
+
+/** The user's saved jobs to choose from, likeliest first. Each opening starts
+ * fresh: no search left over from last time. */
+export function JobPicker({
+  open,
+  onOpenChange,
+  ...props
+}: PickerProps & { open: boolean; onOpenChange: (open: boolean) => void }) {
+  return (
+    <Dialog open={open} onOpenChange={onOpenChange}>
+      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-md">
+        {open && <PickerBody {...props} />}
+      </DialogContent>
+    </Dialog>
+  );
+}
+
+function PickerBody({
+  source,
+  title,
+  description,
+  onPick,
+  busy = false,
+  error = null,
+  footer,
+}: PickerProps) {
+  const {
+    data: options = [],
+    isLoading,
+    isError,
+  } = useLinkOptions(source, true);
   const [query, setQuery] = useState("");
   const [all, setAll] = useState(false);
 
@@ -103,55 +122,68 @@ export function JobPicker({
   }, [options, query, all]);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-h-[88vh] overflow-y-auto sm:max-w-md">
-        <DialogHeader>
-          <DialogTitle>{title}</DialogTitle>
-          <DialogDescription>{description}</DialogDescription>
-        </DialogHeader>
-        <div className="relative">
-          <Search
-            className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
-            aria-hidden
-          />
-          <Input
-            aria-label="Search your jobs"
-            placeholder="Search your jobs"
-            className="pl-8"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-        </div>
-        {isLoading ? (
-          <p className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading your jobs…
-          </p>
-        ) : isError ? (
-          <p className="text-sm text-destructive">Couldn&apos;t load your jobs. Try again.</p>
-        ) : shown.length === 0 ? (
-          <p className="text-sm text-muted-foreground">
-            {query ? "No saved job matches that." : "You have no other saved jobs."}
-          </p>
-        ) : (
-          <ul className="space-y-2" aria-label="Your jobs">
-            {shown.map((o) => (
-              <OptionRow key={o.saved_job_id} o={o} disabled={busy} onPick={onPick} />
-            ))}
-          </ul>
-        )}
-        {!query && !all && options.length > shown.length && (
-          <Button variant="ghost" size="sm" className="self-start" onClick={() => setAll(true)}>
-            Show all {options.length}
-          </Button>
-        )}
-        {error && (
-          <p role="alert" className="text-sm text-destructive">
-            {error}
-          </p>
-        )}
-        {footer && <DialogFooter className="gap-2">{footer}</DialogFooter>}
-      </DialogContent>
-    </Dialog>
+    <>
+      <DialogHeader>
+        <DialogTitle>{title}</DialogTitle>
+        <DialogDescription>{description}</DialogDescription>
+      </DialogHeader>
+      <div className="relative">
+        <Search
+          className="pointer-events-none absolute left-2.5 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground"
+          aria-hidden
+        />
+        <Input
+          aria-label="Search your jobs"
+          placeholder="Search your jobs"
+          className="pl-8"
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+        />
+      </div>
+      {isLoading ? (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Loading your
+          jobs…
+        </p>
+      ) : isError ? (
+        <p className="text-sm text-destructive">
+          Couldn&apos;t load your jobs. Try again.
+        </p>
+      ) : shown.length === 0 ? (
+        <p className="text-sm text-muted-foreground">
+          {query
+            ? "No saved job matches that."
+            : "You have no other saved jobs."}
+        </p>
+      ) : (
+        <ul className="space-y-2" aria-label="Your jobs">
+          {shown.map((o) => (
+            <OptionRow
+              key={o.saved_job_id}
+              o={o}
+              disabled={busy}
+              onPick={onPick}
+            />
+          ))}
+        </ul>
+      )}
+      {!query && !all && options.length > shown.length && (
+        <Button
+          variant="ghost"
+          size="sm"
+          className="self-start"
+          onClick={() => setAll(true)}
+        >
+          Show all {options.length}
+        </Button>
+      )}
+      {error && (
+        <p role="alert" className="text-sm text-destructive">
+          {error}
+        </p>
+      )}
+      {footer && <DialogFooter className="gap-2">{footer}</DialogFooter>}
+    </>
   );
 }
 
@@ -179,11 +211,12 @@ export function SameJobButton({
             {
               action: {
                 label: "Undo",
+                // The button may be gone by now (the page moved to the real
+                // job), so the failure is caught here, not in mutate's options.
                 onClick: () =>
-                  unlink.mutate(
-                    { id: savedJob.id, undo: result.undo },
-                    { onError: () => toast.error("Couldn't undo that. Try again.") },
-                  ),
+                  unlink
+                    .mutateAsync({ id: savedJob.id, undo: result.undo })
+                    .catch(() => toast.error("Couldn't undo that. Try again.")),
               },
             },
           );
@@ -215,7 +248,11 @@ export function SameJobButton({
         description="Pick the job this email is about. Its emails move there, the card moves forward if the email got further, and this copy is removed."
         onPick={pick}
         busy={link.isPending}
-        error={link.isError ? errorText(link.error, "Couldn't link that. Try again.") : null}
+        error={
+          link.isError
+            ? errorText(link.error, "Couldn't link that. Try again.")
+            : null
+        }
       />
     </>
   );

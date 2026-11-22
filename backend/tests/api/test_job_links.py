@@ -12,11 +12,16 @@ from cryptography.fernet import Fernet
 from sqlalchemy import select
 
 from app.config import settings
-from app.models.detected_event import DetectedEvent
+from app.models.detected_event import STATUS_PENDING, DetectedEvent
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.services import email_sync
-from app.services.email_match import MATCHED, company_initials, match_job
+from app.services.email_match import (
+    MATCHED,
+    company_initials,
+    match_job,
+    sender_is_saved_company,
+)
 from app.services.email_scan import EmailMessage
 from app.services.job_links import likely_job, rank_jobs
 from tests.api.test_email import _as_sync, _create_saved_job
@@ -103,6 +108,28 @@ class TestInitials:
         )
         assert m.status != MATCHED
 
+    def test_capitals_in_the_body_never_count(self):
+        # Another company's interview for the same title, whose job text
+        # happens to use the saved company's initials.
+        jobs = [
+            {"id": 1, "company": "Amberline Web Services", "title": "Data Engineer"}
+        ]
+        m = match_job(
+            jobs,
+            subject="Interview: Data Engineer",
+            from_addr="Rowan Pike <rowan.pike@copperline.example>",
+            text=f"{INTERVIEW} Experience with AWS is a plus.",
+        )
+        assert m.status != MATCHED
+
+    def test_domain_parts_are_never_initials(self):
+        assert company_initials("Central Office Mechanics") == ""  # "com"
+        assert company_initials("Equal Employment Office") == ""  # "eeo"
+        assert not sender_is_saved_company(
+            [{"id": 1, "company": "Central Office Mechanics", "title": "Clerk"}],
+            "a@shop.com.au",
+        )
+
 
 class TestRank:
     def test_evidence_first_then_newest_application(self):
@@ -131,13 +158,21 @@ class TestRank:
             {"id": 1, "company": "Vellacor", "title": "Data Engineer"},
             {"id": 2, "company": AGENCY, "title": TITLE},
         ]
+        # The title puts a job first, but only its company makes it "likely".
         by_subject = rank_jobs(jobs, subjects=[f"Re: {TITLE} interview"])
-        assert by_subject[0]["id"] == 2 and by_subject[0]["likely"]
+        assert by_subject[0]["id"] == 2 and not by_subject[0]["likely"]
         by_name = rank_jobs(jobs, title="Data Engineer")
-        assert by_name[0]["id"] == 1 and by_name[0]["likely"]
+        assert by_name[0]["id"] == 1 and not by_name[0]["likely"]
+        both = rank_jobs(jobs, company="Vellacor", title="Data Engineer")
+        assert both[0]["id"] == 1 and both[0]["likely"]
         # One shared word is not the title.
         loose = rank_jobs(jobs, subjects=["The engineer team says hi"])
         assert not any(j["likely"] for j in loose)
+
+    def test_one_common_word_is_not_the_company(self):
+        jobs = [{"id": 1, "company": AGENCY, "title": TITLE}]
+        assert not rank_jobs(jobs, company="Services")[0]["likely"]
+        assert not rank_jobs(jobs, title="Analyst")[0]["likely"]
 
     def test_likely_job_is_one_clear_guess(self):
         jobs = [
@@ -225,13 +260,19 @@ class TestLinkUnsavedUpdate:
         )
         assert again.status_code == 409
 
-        assert (
-            await client.post(f"/v1/email/events/{ev['id']}/undo")
-        ).status_code == 200
+        # Undo: the card goes back and the update is listed again, to link
+        # elsewhere or add as a new job.
+        r = await client.post(f"/v1/email/events/{ev['id']}/unlink")
+        assert r.status_code == 200 and r.json()["status"] == "unsaved"
+        assert r.json()["saved_job_id"] is None
         await db_session.refresh(sj)
         assert (
             sj.pipeline_stage_id == (await _stage(db_session, test_user, "Applied")).id
         )
+        listed = [e["id"] for e in (await client.get("/v1/email/events")).json()]
+        assert ev["id"] in listed
+        again = await client.post(f"/v1/email/events/{ev['id']}/unlink")
+        assert again.status_code == 409
 
     async def test_the_sender_is_remembered(
         self, client, db_session, test_user, enc_key, monkeypatch
@@ -340,8 +381,59 @@ class TestSameJobAs:
         )
         assert r.json()["stage"] == "Offer" and r.json()["undo"]["stage_moved"] is False
 
+    async def test_a_waiting_update_behind_the_real_job_is_set_aside(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj, dup, ev = await self._pair(client, db_session, test_user, monkeypatch)
+        first = await db_session.get(DetectedEvent, uuid.UUID(ev["id"]))
+        waiting = DetectedEvent(
+            id=uuid.uuid4(),
+            user_id=test_user.id,
+            email_account_id=first.email_account_id,
+            saved_job_id=dup.id,
+            event_type="applied",
+            target_stage="Applied",
+            message_uid="77",
+            status=STATUS_PENDING,
+        )
+        db_session.add(waiting)
+        await db_session.flush()
+        out = (
+            await client.post(
+                f"/v1/saved-jobs/{dup.id}/link", json={"target_id": str(sj.id)}
+            )
+        ).json()
+        await db_session.refresh(waiting)
+        # Approving it would move the real job (now Interview) back to Applied.
+        assert waiting.status == "dismissed" and waiting.saved_job_id == sj.id
+        await client.post(f"/v1/saved-jobs/{dup.id}/unlink", json=out["undo"])
+        await db_session.refresh(waiting)
+        assert waiting.status == STATUS_PENDING and waiting.saved_job_id == dup.id
+
+    async def test_the_applied_date_comes_from_the_copy(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj, dup, _ = await self._pair(client, db_session, test_user, monkeypatch)
+        when = datetime(2026, 10, 2, tzinfo=UTC)
+        sj.applied_at, dup.applied_at = None, when
+        await db_session.flush()
+        out = (
+            await client.post(
+                f"/v1/saved-jobs/{dup.id}/link", json={"target_id": str(sj.id)}
+            )
+        ).json()
+        await db_session.refresh(sj)
+        assert sj.applied_at.replace(tzinfo=UTC) == when
+        await client.post(f"/v1/saved-jobs/{dup.id}/unlink", json=out["undo"])
+        await db_session.refresh(sj)
+        assert sj.applied_at is None
+
     async def test_guards(self, client, db_session, test_user, enc_key, monkeypatch):
         sj, dup, _ = await self._pair(client, db_session, test_user, monkeypatch)
+        r = await client.post(
+            f"/v1/saved-jobs/{dup.id}/unlink", json={"target_id": str(dup.id)}
+        )
+        assert r.status_code == 422
         url = f"/v1/saved-jobs/{dup.id}/link"
         assert (
             await client.post(url, json={"target_id": str(dup.id)})

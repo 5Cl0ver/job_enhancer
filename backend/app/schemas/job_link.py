@@ -1,7 +1,6 @@
 """Linking an email to the saved job it's really about (see services/job_links)."""
 
 import uuid
-from datetime import datetime
 
 from pydantic import BaseModel, Field
 
@@ -28,6 +27,7 @@ class LinkEventRequest(BaseModel):
 class MovedEvent(BaseModel):
     id: uuid.UUID
     previous_stage_id: uuid.UUID | None = None
+    status: str | None = None
 
 
 class LinkUndo(BaseModel):
@@ -37,7 +37,7 @@ class LinkUndo(BaseModel):
     events: list[MovedEvent] = Field(default_factory=list, max_length=500)
     previous_stage_id: uuid.UUID | None = None
     stage_moved: bool = False
-    previous_applied_at: datetime | None = None
+    applied_set: bool = False  # the link gave the real job its applied date
 
 
 class LinkResult(BaseModel):

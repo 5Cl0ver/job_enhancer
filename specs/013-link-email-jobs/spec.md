@@ -22,12 +22,18 @@ way to say "this is the same job".
    - The real job moves forward to the copy's stage, never backward.
    - The copy is archived.
    - A message says where the job is now, with **Undo**.
+   - An update that was waiting on the copy is set aside if the real job is
+     already at or past its stage, so approving it can never move the real job
+     backward. Undo puts it back.
 2. **"One of my jobs"** on an update the app couldn't place (Email page). The
    same picker puts the email on the chosen job and moves its card forward,
-   like an approved update. The row's Undo reverses it.
+   like an approved update. The row's Undo moves the card back and lists the
+   update again, so it can go on another job or become a new one.
 3. **A guess on the row.**
-   - When the email clearly points at one saved job, the row says "Looks like
-     your *Title* job at *Company*", with **Yes, link it**.
+   - When the email clearly points at one saved job's company, the row says
+     "Looks like your *Title* job at *Company*", with **Yes, link it**. A
+     matching title alone, or one common word ("Services"), is never enough
+     for a guess.
    - With a guess, **Add to My Jobs** first asks "Is it one of your saved
      jobs?" and offers **No, add it as a new job**.
 4. **The sender is remembered.** A linked email counts as an approved update,
@@ -39,11 +45,14 @@ The app now recognises the initials of a company name of three or more words.
 "DHS" stands for "Department of Harbor Services":
 - as the sender's domain (`dhs.example.gov`), it counts like the company's own
   domain
-- written in capitals in the subject or the text, it counts like the company's
-  name
-- written in lower case, it never counts
+- written in capitals in the subject or the sender's name, it counts like the
+  company's name
+- in capitals in the body it never counts, because job descriptions are full of
+  acronyms ("AWS is a plus"), and in lower case it never counts
 
-Two-word names have no initials, because two letters match too much.
+Two-word names have no initials, because two letters match too much. Initials
+that are really domain parts or everyday acronyms ("com", "gov", "EEO", "PTO")
+never count.
 
 ## Rules
 
@@ -68,6 +77,7 @@ Two-word names have no initials, because two letters match too much.
 | POST | `/v1/saved-jobs/{id}/unlink` `undo` | Undo the link (204) |
 | GET | `/v1/email/events/{id}/link-options` | Saved jobs an unsaved update could be about |
 | POST | `/v1/email/events/{id}/link` `{saved_job_id}` | Put the update on that job and move its card forward |
+| POST | `/v1/email/events/{id}/unlink` | Undo that: the card goes back and the update is unsaved again |
 
 `GET /v1/email/events` adds `likely_job` to unsaved updates when exactly one
 saved job stands out.

@@ -267,12 +267,23 @@ def company_initials(name: str) -> str:
     agencies and large employers sign their mail. Shorter names have none:
     two letters match far too much."""
     core, _, _ = _company_terms(name)
-    return "".join(t[0] for t in core) if len(core) >= 3 else ""
+    initials = "".join(t[0] for t in core) if len(core) >= 3 else ""
+    return "" if initials in _NOT_INITIALS else initials
+
+
+# Never a company's initials: domain parts (shop.com.au) and the capitals
+# emails use for other things.
+_NOT_INITIALS = {
+    "com", "org", "net", "gov", "edu", "mil", "int", "www", "eeo", "ada", "pto",
+    "faq", "api", "sql", "usa", "ceo", "cto", "cfo", "llc", "inc", "pdf", "ats",
+}  # fmt: skip
 
 
 def _initials_in(initials: str, labels: list[str], upper: set[str]) -> bool:
     """The initials are the sender's domain (dhs.example.gov) or written in
-    capitals ("DHS Recruiting"); lowercase "dhs" in a sentence never counts."""
+    capitals in the subject or the sender's name ("DHS Recruiting"). Capitals
+    in the body never count (job descriptions are full of them), and nor does
+    lowercase "dhs" in a sentence."""
     return bool(initials) and (initials in labels or initials.upper() in upper)
 
 
@@ -316,7 +327,8 @@ class _Haystack:
     phrase: str  # " word word … " for whole-phrase search
     urls: set[str]
     raw: str
-    upper: set[str] = field(default_factory=set)  # words written in capitals
+    # Words written in capitals in the subject and sender name (not the body).
+    upper: set[str] = field(default_factory=set)
 
 
 _UPPER = re.compile(r"\b[A-Z]{3,8}\b")
@@ -330,7 +342,7 @@ def _haystack(subject: str, display: str, text: str) -> _Haystack:
         phrase=" " + " ".join(toks) + " ",
         urls={_norm_url(u)[0] for u in _URL.findall(raw)},
         raw=raw.lower(),
-        upper=set(_UPPER.findall(raw)),
+        upper=set(_UPPER.findall(f"{subject}\n{display}")),
     )
 
 

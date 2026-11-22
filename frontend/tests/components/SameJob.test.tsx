@@ -159,10 +159,11 @@ function emailPage(events: DetectedEvent[]) {
   post.mockImplementation((path: string) =>
     Promise.resolve({
       ...UNSAVED,
-      status: "applied",
       saved_job_id: "real",
       company: "Department of Harbor Services",
       title: "Workflow Platform Engineer",
+      current_stage: path.endsWith("/unlink") ? null : "Interview",
+      status: path.endsWith("/unlink") ? "unsaved" : "applied",
       path,
     }),
   );
@@ -180,9 +181,14 @@ describe("an update about a job the app couldn't place", () => {
       await within(dialog).findByRole("button", { name: /Workflow Platform Engineer/ }),
     );
     expect(post).toHaveBeenCalledWith("/v1/email/events/ev1/link", { saved_job_id: "real" });
-    expect(
-      await screen.findByText(/Department of Harbor Services: moved to Interview/),
-    ).toBeInTheDocument();
+    const row = (
+      await screen.findByText("Put on Workflow Platform Engineer, now in Interview.")
+    ).closest("li")!;
+
+    // Undo lists the update again, to link elsewhere or add as a new job.
+    await user.click(within(row).getByRole("button", { name: "Undo" }));
+    expect(post).toHaveBeenLastCalledWith("/v1/email/events/ev1/unlink", {});
+    expect(await screen.findByRole("button", { name: /One of my jobs/ })).toBeInTheDocument();
   });
 
   it("offers the likely job in one tap, and asks before adding a new one", async () => {

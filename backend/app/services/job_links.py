@@ -29,7 +29,13 @@ from rapidfuzz import fuzz
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.models.detected_event import STATUS_APPLIED, STATUS_UNSAVED, DetectedEvent
+from app.models.detected_event import (
+    STATUS_APPLIED,
+    STATUS_DISMISSED,
+    STATUS_PENDING,
+    STATUS_UNSAVED,
+    DetectedEvent,
+)
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import ORIGIN_EMAIL, SavedJob
@@ -44,20 +50,22 @@ from app.services.email_scan import _stage_orders, card_action
 from app.services.tracker import move_job_to_stage
 
 LIKELY = 3  # the score at which a job is shown as a likely match
+LINKED = "user_link"  # match_evidence of an update the user put on a job
 _RECENT = timedelta(days=120)
 
 
 def _score(
     job: dict, *, company: str, title: str, subjects: str, labels: list[str]
-) -> int:
-    """How well one saved job fits what the emails say (0 = no sign)."""
+) -> tuple[int, bool]:
+    """How well one saved job fits what the emails say, and whether anything
+    points at its company (a title alone is never enough for "likely")."""
     score = 0
     name = job.get("company") or ""
     _, rare, squashed = _company_terms(name)
     initials = company_initials(name)
     if company and _same_company(company, name):
         score += 4
-    elif company and fuzz.token_set_ratio(company.lower(), name.lower()) >= 85:
+    elif company and fuzz.token_sort_ratio(company.lower(), name.lower()) >= 90:
         score += 3
     # The sender's own domain: careers.vellacor.example, dhs.example.gov.
     if any(
@@ -71,6 +79,7 @@ def _score(
         rare and all(t in words for t in rare)
     ):
         score += 3
+    named = score > 0
     # The title: what the email's name says, or the whole title in a subject.
     job_title = re.findall(r"[a-z0-9]+", (job.get("title") or "").lower())
     said = re.findall(r"[a-z0-9]+", subjects.lower())
@@ -81,7 +90,7 @@ def _score(
     applied = job.get("applied_at")
     if score and applied and applied >= datetime.now(tz=UTC) - _RECENT:
         score += 1  # a recent application is likelier to get a reply
-    return score
+    return score, named
 
 
 def rank_jobs(
@@ -108,8 +117,8 @@ def rank_jobs(
             applied or saved or datetime.min.replace(tzinfo=UTC),
         )
 
-    scored.sort(key=lambda sj: (sj[0], newest(sj[1])), reverse=True)
-    return [{**j, "likely": s >= LIKELY} for s, j in scored]
+    scored.sort(key=lambda sj: (sj[0][0], newest(sj[1])), reverse=True)
+    return [{**j, "likely": named and s >= LIKELY} for (s, named), j in scored]
 
 
 async def active_jobs(db: AsyncSession, user_id: uuid.UUID) -> list[dict]:
@@ -228,21 +237,37 @@ async def link_job(
     if dup.is_archived or target.is_archived:
         raise HTTPException(status_code=409, detail="That job was already removed")
 
-    before_stage, before_applied = target.pipeline_stage_id, target.applied_at
-    _, order = await _stage_orders(db, user_id)
+    before_stage = target.pipeline_stage_id
+    applied_set = target.applied_at is None and dup.applied_at is not None
+    if applied_set:  # the copy's date, before a move to Applied stamps "now"
+        target.applied_at = dup.applied_at
+    by_name, order = await _stage_orders(db, user_id)
     mine, theirs = order.get(dup.pipeline_stage_id), order.get(target.pipeline_stage_id)
     moved_stage = mine is not None and (theirs is None or mine > theirs)
     if moved_stage:
         await move_job_to_stage(db, target.id, dup.pipeline_stage_id, user_id)
-    if target.applied_at is None and dup.applied_at is not None:
-        target.applied_at = dup.applied_at
 
     moved = []
     for ev in await _events_of(db, user_id, dup.id):
-        moved.append(MovedEvent(id=ev.id, previous_stage_id=ev.previous_stage_id))
+        moved.append(
+            MovedEvent(
+                id=ev.id, previous_stage_id=ev.previous_stage_id, status=ev.status
+            )
+        )
         ev.saved_job_id = target.id
         # The email's own Undo now puts the REAL job back where it was.
         ev.previous_stage_id = before_stage
+        # A waiting update that the real job is already at or past would
+        # drag it back if approved: it's done with.
+        if ev.status == STATUS_PENDING:
+            _, why = card_action(
+                ev.target_stage,
+                by_name,
+                current_order=order.get(target.pipeline_stage_id),
+                reminder=False,
+            )
+            if why == "already_at_or_past_stage":
+                ev.status = STATUS_DISMISSED
     dup.is_archived = True
     await db.flush()
     return LinkResult(
@@ -254,7 +279,7 @@ async def link_job(
             events=moved,
             previous_stage_id=before_stage if moved_stage else None,
             stage_moved=moved_stage,
-            previous_applied_at=before_applied,
+            applied_set=applied_set,
         ),
     )
 
@@ -264,6 +289,8 @@ async def unlink_job(
 ) -> None:
     """Undo :func:`link_job`: the copy comes back with its emails, and the real
     job goes back to the stage it had (unless it has moved since)."""
+    if job_id == undo.target_id:
+        raise HTTPException(status_code=422, detail="Nothing to undo")
     dup = await _own_job(db, user_id, job_id)
     target = await _own_job(db, user_id, undo.target_id)
     if dup.origin != ORIGIN_EMAIL or not dup.is_archived:
@@ -280,12 +307,15 @@ async def unlink_job(
         if ev is None:
             continue
         ev.saved_job_id = dup.id
-        if item.previous_stage_id is None or item.previous_stage_id in order:
-            ev.previous_stage_id = item.previous_stage_id
+        # A stage deleted since is no place to go back to.
+        back = item.previous_stage_id
+        ev.previous_stage_id = back if back in order else None
+        if item.status == STATUS_PENDING and ev.status == STATUS_DISMISSED:
+            ev.status = STATUS_PENDING  # set aside by the link: waiting again
     if undo.stage_moved and target.pipeline_stage_id == dup.pipeline_stage_id:
         back = undo.previous_stage_id
         await move_job_to_stage(db, target.id, back if back in order else None, user_id)
-    if undo.previous_applied_at is None:  # it had no applied date before
+    if undo.applied_set:  # the link gave it the copy's applied date
         target.applied_at = None
     dup.is_archived = False
     await db.flush()
@@ -373,5 +403,34 @@ async def link_event(
     ev.saved_job_id = job.id
     ev.status = STATUS_APPLIED
     ev.applied_at = datetime.now(tz=UTC)
+    ev.match_evidence = LINKED  # so Undo can make it an unsaved update again
+    await db.flush()
+    return ev
+
+
+async def unlink_event(
+    db: AsyncSession, user_id: uuid.UUID, event_id: uuid.UUID
+) -> DetectedEvent:
+    """Undo :func:`link_event`: the card goes back, and the email is an
+    unsaved update again, to link elsewhere or add as a new job."""
+    ev = await db.scalar(
+        select(DetectedEvent).where(
+            DetectedEvent.id == event_id, DetectedEvent.user_id == user_id
+        )
+    )
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Update not found")
+    if ev.status != STATUS_APPLIED or ev.match_evidence != LINKED:
+        raise HTTPException(status_code=409, detail="Nothing to undo")
+    job = await _own_job(db, user_id, ev.saved_job_id)
+    _, order = await _stage_orders(db, user_id)
+    back = ev.previous_stage_id
+    if back != job.pipeline_stage_id:
+        await move_job_to_stage(db, job.id, back if back in order else None, user_id)
+    ev.saved_job_id = None
+    ev.previous_stage_id = None
+    ev.status = STATUS_UNSAVED
+    ev.applied_at = None
+    ev.match_evidence = None
     await db.flush()
     return ev

@@ -427,6 +427,21 @@ async def link_event(
     return out
 
 
+@router.post("/events/{event_id}/unlink", response_model=DetectedEventOut)
+async def unlink_event(
+    event_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """Undo "It's one of my jobs": the card goes back and the update is listed
+    again, to link elsewhere or add as a new job."""
+    ev = await job_links.unlink_event(db, user.id, event_id)
+    await db.commit()
+    account = await svc.get_account(db, user.id)
+    (out,) = await _events_out(db, account.provider if account else "", [ev])
+    return out
+
+
 @router.get("/events/{event_id}/message", response_model=EmailMessageOut)
 async def view_event_email(
     event_id: uuid.UUID,

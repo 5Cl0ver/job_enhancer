@@ -53,7 +53,7 @@ import {
 } from "@/lib/emailUpdates";
 import { Button } from "@/components/ui/button";
 import { JobPicker } from "@/components/jobs/SameJob";
-import { useLinkEvent } from "@/hooks/useJobLinks";
+import { useLinkEvent, useUnlinkEvent } from "@/hooks/useJobLinks";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { InboxBar } from "@/components/settings/EmailConnectCard";
 import { ErrorState } from "@/components/common/ErrorState";
@@ -652,7 +652,7 @@ function SlimRow({
         <Details ev={ev} />
       </div>
       {/* On a phone the buttons share the row's full width, the main one first. */}
-      <div className="mt-1 flex items-center gap-2 max-sm:*:flex-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:flex-wrap sm:gap-1.5 sm:self-center">
+      <div className="mt-1 flex items-center gap-2 max-sm:flex-wrap max-sm:*:flex-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:flex-wrap sm:gap-1.5 sm:self-center">
         {actions}
       </div>
     </li>
@@ -779,13 +779,15 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
   const ev = u.lead;
   const track = useTrackEvent();
   const link = useLinkEvent();
+  const unlink = useUnlinkEvent();
   const groupAct = useGroupAction();
-  const review = useReviewEvent();
   const [editing, setEditing] = useState(false);
   const [company, setCompany] = useState(ev.company ?? "");
   const [title, setTitle] = useState(ev.title ?? "");
   const [added, setAdded] = useState<DetectedEvent | null>(null);
-  const [linked, setLinked] = useState<DetectedEvent | null>(null);
+  const [linked, setLinked] = useState<{ done: DetectedEvent; repeats: string[] } | null>(
+    null,
+  );
   // The picker: "One of my jobs", or the check before adding a new job.
   const [picking, setPicking] = useState<"link" | "check" | null>(null);
   const busy = track.isPending || link.isPending || groupAct.isPending;
@@ -807,28 +809,53 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
     );
   };
   // Before making a new job, ask about the saved one the email points at.
-  const add = () => (guess && !editing ? setPicking("check") : addNew());
+  const add = () => {
+    if (!guess || editing) return addNew();
+    link.reset();
+    setPicking("check");
+  };
   const linkTo = (savedJobId: string) =>
     link.mutate(
       { lead: ev, repeats: sameJob, savedJobId },
       {
-        onSuccess: (done) => {
+        onSuccess: (result) => {
           setPicking(null);
-          setLinked(done);
+          setLinked(result);
         },
       },
     );
 
-  if (linked)
+  if (linked) {
+    const job = linked.done;
     return (
-      <Done
-        ev={linked}
-        busy={review.isPending}
-        onUndo={() =>
-          review.mutate({ id: linked.id, action: "undo" }, { onSuccess: () => setLinked(null) })
-        }
-      />
+      <li className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground sm:px-4">
+        <span className="flex min-w-0 items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+          <span className="min-w-0">
+            Put on {job.title ?? "your job"}
+            {job.current_stage ? `, now in ${job.current_stage}` : ""}.
+            {unlink.isError && (
+              <span className="block text-xs text-destructive">Couldn&apos;t undo. Try again.</span>
+            )}
+          </span>
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="gap-1"
+          disabled={unlink.isPending}
+          onClick={() =>
+            unlink.mutate(
+              { lead: job.id, repeats: linked.repeats },
+              { onSuccess: () => setLinked(null) },
+            )
+          }
+        >
+          <Undo2 className="h-3.5 w-3.5" aria-hidden /> Undo
+        </Button>
+      </li>
     );
+  }
   if (added)
     return (
       <li className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
