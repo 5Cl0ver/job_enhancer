@@ -5,6 +5,7 @@ import { JobDetail } from "@/components/jobs/JobDetail";
 import { JobEmails } from "@/components/email/JobEmails";
 import { JobActions } from "@/components/jobs/JobActions";
 import { NameCheck, RenameButton } from "@/components/jobs/RenameJob";
+import { SameJobButton } from "@/components/jobs/SameJob";
 import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { JobResumeType } from "@/components/scout/JobResumeType";
 import { StagePicker } from "@/components/jobs/StagePicker";
@@ -72,7 +73,14 @@ export function JobDetailPage() {
                 {savedJob && (
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <StageSince savedJob={savedJob} />
-                    <RenameButton savedJob={savedJob} />
+                    <span className="flex flex-wrap gap-1">
+                      {/* A job made from an email may really be one already saved. */}
+                      <SameJobButton
+                        savedJob={savedJob}
+                        onLinked={(r) => navigate(`/jobs/${r.job_listing_id}`, { replace: true })}
+                      />
+                      <RenameButton savedJob={savedJob} />
+                    </span>
                   </div>
                 )}
                 {savedJob && <WhereFrom savedJob={savedJob} />}

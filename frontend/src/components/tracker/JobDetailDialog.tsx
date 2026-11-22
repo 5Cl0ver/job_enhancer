@@ -13,6 +13,7 @@ import {
 import { JobEmails } from "@/components/email/JobEmails";
 import { JobActions } from "@/components/jobs/JobActions";
 import { NameCheck, RenameButton } from "@/components/jobs/RenameJob";
+import { SameJobButton } from "@/components/jobs/SameJob";
 import { StagePicker } from "@/components/jobs/StagePicker";
 import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { usePipelineStages } from "@/hooks/useTracker";
@@ -99,7 +100,8 @@ export function JobDetailDialog({
           <div className="flex flex-wrap items-center gap-x-3 gap-y-2 pt-1">
             <StagePicker savedJob={savedJob} />
             <p className="text-xs text-muted-foreground">{facts.join(" · ")}</p>
-            <span className="ml-auto">
+            <span className="ml-auto flex flex-wrap gap-1">
+              <SameJobButton savedJob={savedJob} onLinked={() => onOpenChange(false)} />
               <RenameButton savedJob={savedJob} />
             </span>
           </div>

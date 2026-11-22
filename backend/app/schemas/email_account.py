@@ -86,6 +86,8 @@ class DetectedEventOut(BaseModel):
     # matcher's reason) and the saved jobs it could be about.
     review_reason: str | None = None
     candidates: list["MatchCandidateOut"] = []
+    # An unsaved update: the saved job it most likely belongs to, if any.
+    likely_job: "MatchCandidateOut | None" = None
     folder: str | None = None  # inbox / spam folder it was found in
     # How the Email Updates page groups it: important | confirmation |
     # question | unsaved (important, job not saved) | contact | hidden.

@@ -26,6 +26,7 @@ import {
   ClipboardList,
   ExternalLink,
   Gift,
+  Link2,
   Loader2,
   MailCheck,
   Undo2,
@@ -51,6 +52,8 @@ import {
   type UpdateGroup,
 } from "@/lib/emailUpdates";
 import { Button } from "@/components/ui/button";
+import { JobPicker } from "@/components/jobs/SameJob";
+import { useLinkEvent, useUnlinkEvent } from "@/hooks/useJobLinks";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { InboxBar } from "@/components/settings/EmailConnectCard";
 import { ErrorState } from "@/components/common/ErrorState";
@@ -649,7 +652,7 @@ function SlimRow({
         <Details ev={ev} />
       </div>
       {/* On a phone the buttons share the row's full width, the main one first. */}
-      <div className="mt-1 flex items-center gap-2 max-sm:*:flex-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:flex-wrap sm:gap-1.5 sm:self-center">
+      <div className="mt-1 flex items-center gap-2 max-sm:flex-wrap max-sm:*:flex-1 sm:col-start-2 sm:row-span-2 sm:row-start-1 sm:mt-0 sm:flex-wrap sm:gap-1.5 sm:self-center">
         {actions}
       </div>
     </li>
@@ -769,32 +772,90 @@ function QuestionRow({ ev }: { ev: DetectedEvent }) {
   );
 }
 
-/** An important update about a job that isn't saved: add it, or dismiss. */
+/** An important update about a job the scan couldn't place: put it on one of
+ * the user's saved jobs, add it as a new job, or dismiss it. When the email
+ * points at one saved job, that guess is offered first. */
 function UnsavedRow({ group: u }: { group: UpdateGroup }) {
   const ev = u.lead;
   const track = useTrackEvent();
+  const link = useLinkEvent();
+  const unlink = useUnlinkEvent();
   const groupAct = useGroupAction();
   const [editing, setEditing] = useState(false);
   const [company, setCompany] = useState(ev.company ?? "");
   const [title, setTitle] = useState(ev.title ?? "");
   const [added, setAdded] = useState<DetectedEvent | null>(null);
-  const busy = track.isPending || groupAct.isPending;
+  const [linked, setLinked] = useState<{ done: DetectedEvent; repeats: string[] } | null>(
+    null,
+  );
+  // The picker: "One of my jobs", or the check before adding a new job.
+  const [picking, setPicking] = useState<"link" | "check" | null>(null);
+  const busy = track.isPending || link.isPending || groupAct.isPending;
   const more = u.repeats.length;
+  const guess = ev.likely_job;
+  // Repeats are the same job only when the email named the role; otherwise
+  // they may be other roles at the company, so they stay on the page.
+  const sameJob = ev.title ? u.repeats : [];
 
-  const add = () => {
+  const addNew = () => {
+    setPicking(null);
     if (!company.trim() || !title.trim()) {
       setEditing(true);
       return;
     }
-    // Repeats are the same job only when the email named the role; otherwise
-    // they may be other roles at the company, so they stay on the page.
-    const sameJob = ev.title ? u.repeats : [];
     track.mutate(
       { lead: ev, repeats: sameJob, company: company.trim(), title: title.trim() },
       { onSuccess: (done) => setAdded(done) },
     );
   };
+  // Before making a new job, ask about the saved one the email points at.
+  const add = () => {
+    if (!guess || editing) return addNew();
+    link.reset();
+    setPicking("check");
+  };
+  const linkTo = (savedJobId: string) =>
+    link.mutate(
+      { lead: ev, repeats: sameJob, savedJobId },
+      {
+        onSuccess: (result) => {
+          setPicking(null);
+          setLinked(result);
+        },
+      },
+    );
 
+  if (linked) {
+    const job = linked.done;
+    return (
+      <li className="flex items-center justify-between gap-3 rounded-lg border border-dashed px-3 py-2 text-sm text-muted-foreground sm:px-4">
+        <span className="flex min-w-0 items-center gap-2">
+          <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" aria-hidden />
+          <span className="min-w-0">
+            Put on {job.title ?? "your job"}
+            {job.current_stage ? `, now in ${job.current_stage}` : ""}.
+            {unlink.isError && (
+              <span className="block text-xs text-destructive">Couldn&apos;t undo. Try again.</span>
+            )}
+          </span>
+        </span>
+        <Button
+          size="sm"
+          variant="ghost"
+          className="gap-1"
+          disabled={unlink.isPending}
+          onClick={() =>
+            unlink.mutate(
+              { lead: job.id, repeats: linked.repeats },
+              { onSuccess: () => setLinked(null) },
+            )
+          }
+        >
+          <Undo2 className="h-3.5 w-3.5" aria-hidden /> Undo
+        </Button>
+      </li>
+    );
+  }
   if (added)
     return (
       <li className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
@@ -814,6 +875,19 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
           </Button>
           <Button
             size="sm"
+            variant="outline"
+            className="gap-1"
+            disabled={busy}
+            onClick={() => {
+              link.reset();
+              setPicking("link");
+            }}
+          >
+            <Link2 className="h-3.5 w-3.5" aria-hidden />
+            One of my jobs
+          </Button>
+          <Button
+            size="sm"
             variant="ghost"
             disabled={busy}
             onClick={() => groupAct.mutate({ lead: ev, repeats: u.repeats, action: "dismiss" })}
@@ -823,6 +897,44 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
         </>
       }
     >
+      {guess?.saved_job_id && !editing && (
+        <div className="mt-2 flex flex-wrap items-center gap-x-2 gap-y-1.5 text-sm">
+          <span className="min-w-0">
+            Looks like your <span className="font-medium">{guess.title}</span> job at{" "}
+            {guess.company}.
+          </span>
+          <Button
+            size="sm"
+            variant="secondary"
+            disabled={busy}
+            onClick={() => linkTo(guess.saved_job_id!)}
+          >
+            {link.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+            Yes, link it
+          </Button>
+        </div>
+      )}
+      <JobPicker
+        source={{ event: ev.id }}
+        open={picking !== null}
+        onOpenChange={(open) => !open && setPicking(null)}
+        title={picking === "check" ? "Is it one of your saved jobs?" : "Which job is this about?"}
+        description={
+          picking === "check"
+            ? "This email looks like it's about a job you already saved. Pick it, or add a new job."
+            : "Pick the job this email is about. Its card moves forward to match the email."
+        }
+        onPick={(o) => linkTo(o.saved_job_id)}
+        busy={busy}
+        error={link.isError ? errorText(link.error, "Couldn't link that. Try again.") : null}
+        footer={
+          picking === "check" ? (
+            <Button variant="ghost" onClick={addNew} disabled={busy}>
+              No, add it as a new job
+            </Button>
+          ) : undefined
+        }
+      />
       {editing && (
         <p className="mt-2 text-xs text-muted-foreground">
           The email didn&apos;t say clearly. Check the company and the job title.
@@ -846,9 +958,9 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
           />
         </div>
       )}
-      {(track.isError || groupAct.isError) && (
+      {(track.isError || groupAct.isError || (link.isError && !picking)) && (
         <p className="mt-1 text-xs text-destructive">
-          {errorText(track.error ?? groupAct.error, "That didn't work. Try again.")}
+          {errorText(track.error ?? groupAct.error ?? link.error, "That didn't work. Try again.")}
         </p>
       )}
     </SlimRow>

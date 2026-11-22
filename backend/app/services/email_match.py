@@ -9,8 +9,9 @@ footer and any quoted job details too). Evidence is ranked:
    appears in the email.
 2. **Known sender** — this From/Reply-To address already sent an update about
    that job (shared relay and no-reply addresses never count).
-3. **Rare company + title** — the company's distinctive words and the exact job
-   title both appear.
+3. **Rare company + title** — the company's distinctive words (or its initials,
+   "DHS" for Department of Harbor Services) and the exact job title
+   both appear.
 4. **Company + date** — the company appears, it is the user's ONLY saved job
    there, and the email isn't from long before the job was saved.
 
@@ -260,6 +261,32 @@ def _company_terms(name: str) -> tuple[list[str], list[str], str]:
     return core, rare, "".join(core)
 
 
+def company_initials(name: str) -> str:
+    """ "Department of Harbor Services" -> "dhs": the first letters of a
+    name of three or more words (joiners and legal suffixes left out), the way
+    agencies and large employers sign their mail. Shorter names have none:
+    two letters match far too much."""
+    core, _, _ = _company_terms(name)
+    initials = "".join(t[0] for t in core) if len(core) >= 3 else ""
+    return "" if initials in _NOT_INITIALS else initials
+
+
+# Never a company's initials: domain parts (shop.com.au) and the capitals
+# emails use for other things.
+_NOT_INITIALS = {
+    "com", "org", "net", "gov", "edu", "mil", "int", "www", "eeo", "ada", "pto",
+    "faq", "api", "sql", "usa", "ceo", "cto", "cfo", "llc", "inc", "pdf", "ats",
+}  # fmt: skip
+
+
+def _initials_in(initials: str, labels: list[str], upper: set[str]) -> bool:
+    """The initials are the sender's domain (dhs.example.gov) or written in
+    capitals in the subject or the sender's name ("DHS Recruiting"). Capitals
+    in the body never count (job descriptions are full of them), and nor does
+    lowercase "dhs" in a sentence."""
+    return bool(initials) and (initials in labels or initials.upper() in upper)
+
+
 def _addresses(*fields: str) -> list[str]:
     return [a.lower() for _, a in getaddresses([f for f in fields if f]) if "@" in a]
 
@@ -300,6 +327,11 @@ class _Haystack:
     phrase: str  # " word word … " for whole-phrase search
     urls: set[str]
     raw: str
+    # Words written in capitals in the subject and sender name (not the body).
+    upper: set[str] = field(default_factory=set)
+
+
+_UPPER = re.compile(r"\b[A-Z]{3,8}\b")
 
 
 def _haystack(subject: str, display: str, text: str) -> _Haystack:
@@ -310,6 +342,7 @@ def _haystack(subject: str, display: str, text: str) -> _Haystack:
         phrase=" " + " ".join(toks) + " ",
         urls={_norm_url(u)[0] for u in _URL.findall(raw)},
         raw=raw.lower(),
+        upper=set(_UPPER.findall(f"{subject}\n{display}")),
     )
 
 
@@ -373,7 +406,10 @@ def _company_named(
             return True
         if len(label) >= 5 and label in rare:
             return True
-    if _has_phrase(_haystack(subject, display, ""), words):
+    head = _haystack(subject, display, "")
+    if _has_phrase(head, words):
+        return True
+    if _initials_in(company_initials(job.get("company") or ""), labels, head.upper):
         return True
     name = " ".join(words)
     body = " ".join(_tokens(text))
@@ -397,6 +433,8 @@ def _company_hit(job: dict, h: _Haystack, domain_labels: list[str]) -> bool:
             return True
         if len(squashed) >= 6 and squashed in label:
             return True
+    if _initials_in(company_initials(job.get("company") or ""), domain_labels, h.upper):
+        return True
     if rare and all(t in h.words for t in rare):
         return True
     return _has_phrase(h, core)  # all-common names must appear whole
@@ -477,7 +515,7 @@ def sender_is_saved_company(
     """True when the sender's own domain names one of the saved companies — a
     job signal even when the text has no job words ("can we move our call?")."""
     labels = _domain_labels(_addresses(from_addr, reply_to))
-    empty = _Haystack(set(), " ", set(), "")
+    empty = _Haystack(set(), " ", set(), "", set())
     return bool(labels) and any(_company_hit(j, empty, labels) for j in jobs)
 
 
