@@ -107,6 +107,10 @@ class DetectedEvent(Base):
     match_evidence: Mapped[str | None] = mapped_column(String(40))
     # needs_review: the saved jobs it could be about (ids as strings).
     review_candidates: Mapped[list | None] = mapped_column(JSON)
+    # Saved-job ids the user said this email is NOT about ("Wrong job"): it is
+    # never placed on them again, nor are later emails from the same sender or
+    # company (services/job_links).
+    not_jobs: Mapped[list | None] = mapped_column(JSON)
     # unsaved / contact: the company and role, read from the email itself.
     job_company: Mapped[str | None] = mapped_column(String(255))
     job_title: Mapped[str | None] = mapped_column(String(255))

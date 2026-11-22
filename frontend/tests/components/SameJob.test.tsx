@@ -171,10 +171,11 @@ function emailPage(events: DetectedEvent[]) {
 }
 
 describe("an update about a job the app couldn't place", () => {
-  it("can be put on one of my jobs", async () => {
+  it("has one main choice: pick the job", async () => {
     const user = userEvent.setup();
     emailPage([UNSAVED]);
-    await user.click(await screen.findByRole("button", { name: /One of my jobs/ }));
+    expect(await screen.findByText("Not sure which job")).toBeInTheDocument();
+    await user.click(await screen.findByRole("button", { name: /Pick the job/ }));
     const dialog = await screen.findByRole("dialog");
     expect(get).toHaveBeenCalledWith("/v1/email/events/ev1/link-options");
     await user.click(
@@ -188,52 +189,68 @@ describe("an update about a job the app couldn't place", () => {
     // Undo lists the update again, to link elsewhere or add as a new job.
     await user.click(within(row).getByRole("button", { name: "Undo" }));
     expect(post).toHaveBeenLastCalledWith("/v1/email/events/ev1/unlink", {});
-    expect(await screen.findByRole("button", { name: /One of my jobs/ })).toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: /Pick the job/ })).toBeInTheDocument();
   });
 
-  it("offers the likely job in one tap, and asks before adding a new one", async () => {
+  it("can be added as a new job instead", async () => {
     const user = userEvent.setup();
-    emailPage([
-      {
-        ...UNSAVED,
-        company: "Harbor Services",
-        title: "Platform Engineer",
-        likely_job: {
-          saved_job_id: "real",
-          job_listing_id: "l-real",
-          title: "Workflow Platform Engineer",
-          company: "Department of Harbor Services",
-        },
-      } as DetectedEvent,
-    ]);
-    expect(await screen.findByText(/Looks like your/)).toHaveTextContent(
-      "Looks like your Workflow Platform Engineer job at Department of Harbor Services.",
-    );
-    // Adding a new job first asks about the saved one.
-    await user.click(screen.getByRole("button", { name: "Add to My Jobs" }));
-    const dialog = await screen.findByRole("dialog");
-    expect(within(dialog).getByText("Is it one of your saved jobs?")).toBeInTheDocument();
-    await user.click(within(dialog).getByRole("button", { name: "No, add it as a new job" }));
+    emailPage([{ ...UNSAVED, company: "Harbor Services", title: "Platform Engineer" }]);
+    await user.click(await screen.findByRole("button", { name: "Add as new job" }));
     expect(post).toHaveBeenCalledWith("/v1/email/events/ev1/track", {
       company: "Harbor Services",
       title: "Platform Engineer",
     });
   });
 
-  it("links the likely job straight from the row", async () => {
+  it("asks for the names when the email didn't say them", async () => {
+    const user = userEvent.setup();
+    emailPage([UNSAVED]);
+    await user.click(await screen.findByRole("button", { name: /Pick the job/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(
+      within(dialog).getByRole("button", { name: /not saved: add it as a new job/ }),
+    );
+    expect(await screen.findByLabelText("Company")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Save to My Jobs" })).toBeInTheDocument();
+    expect(post).not.toHaveBeenCalled();
+  });
+});
+
+describe("an update the app placed by its company", () => {
+  const PLACED = {
+    ...UNSAVED,
+    saved_job_id: "real",
+    job_listing_id: "l-real",
+    match_evidence: "likely_job",
+    company: "Department of Harbor Services",
+    title: "Workflow Platform Engineer",
+    current_stage: "Applied",
+  };
+
+  it("waiting: Move to Interview, or Wrong job", async () => {
+    const user = userEvent.setup();
+    emailPage([{ ...PLACED, status: "pending", category: "important" } as DetectedEvent]);
+    expect(
+      await screen.findByRole("button", { name: "Move to Interview" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Wrong job" }));
+    expect(post).toHaveBeenCalledWith("/v1/email/events/ev1/unlink", {});
+    expect(await screen.findByText(/Sent back/)).toBeInTheDocument();
+  });
+
+  it("moved by itself: Wrong job puts it back and asks again", async () => {
     const user = userEvent.setup();
     emailPage([
       {
-        ...UNSAVED,
-        likely_job: {
-          saved_job_id: "real",
-          job_listing_id: "l-real",
-          title: "Workflow Platform Engineer",
-          company: "Department of Harbor Services",
-        },
+        ...PLACED,
+        status: "auto_applied",
+        category: "moved",
+        current_stage: "Interview",
       } as DetectedEvent,
     ]);
-    await user.click(await screen.findByRole("button", { name: "Yes, link it" }));
-    expect(post).toHaveBeenCalledWith("/v1/email/events/ev1/link", { saved_job_id: "real" });
+    await user.click(await screen.findByRole("button", { name: /Department of Harbor/ }));
+    await user.click(screen.getByRole("button", { name: "Wrong job" }));
+    expect(post).toHaveBeenCalledWith("/v1/email/events/ev1/unlink", {});
+    expect(await screen.findByText(/Pick the right job/)).toBeInTheDocument();
   });
 });

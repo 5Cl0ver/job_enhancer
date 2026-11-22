@@ -42,7 +42,7 @@ from app.services.email_classify import (
     UNSURE,
     stage_for_event,
 )
-from app.services.email_match import JOB_ID, JOB_URL, TEMPLATE
+from app.services.email_match import JOB_ID, JOB_URL, LIKELY_JOB, TEMPLATE
 from app.services.email_scan import (
     IMPORTANT_EVENTS,
     _stage_orders,
@@ -70,7 +70,9 @@ async def _get_event(
 # Evidence that names the job exactly: its link, its job ID, or a hiring
 # site's own template naming the company and role. Only these move a card
 # without a click; anything looser waits for the user.
-SURE_EVIDENCE = (JOB_URL, JOB_ID, TEMPLATE)
+# A likely job is one the email's names point at alone (its company), so it
+# moves too; Undo on such a move asks which job it really was.
+SURE_EVIDENCE = (JOB_URL, JOB_ID, TEMPLATE, LIKELY_JOB)
 AUTO_EVENTS = (APPLIED, INTERVIEW, ASSESSMENT, OFFER, REJECTED)
 # How long the "Moved for you" list keeps an automatic move on the page.
 MOVED_SHOWN_DAYS = 30

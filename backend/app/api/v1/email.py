@@ -81,9 +81,8 @@ async def _events_out(
 ) -> list[DetectedEventOut]:
     """Enrich stored events with a link to the job in the app (job_listing_id),
     the card's current stage, a link to the email in webmail (built from
-    provider + subject), for a needs-review item its candidate jobs' names,
-    and for an unsaved update the saved job it most likely belongs to. A
-    candidate the user has since archived or deleted is left out."""
+    provider + subject), and — for a needs-review item — its candidate jobs'
+    names. A candidate the user has since archived or deleted is left out."""
     if not events:
         return []
     ids: set[uuid.UUID] = {e.saved_job_id for e in events if e.saved_job_id}
@@ -113,18 +112,9 @@ async def _events_out(
             select(PipelineStage.name).where(PipelineStage.user_id == events[0].user_id)
         )
     )
-    unsaved = [e for e in events if e.status == STATUS_UNSAVED]
-    active = await job_links.active_jobs(db, events[0].user_id) if unsaved else []
     out: list[DetectedEventOut] = []
     for e in events:
         d = DetectedEventOut.model_validate(e)
-        if e.status == STATUS_UNSAVED and (guess := job_links.likely_job(e, active)):
-            d.likely_job = MatchCandidateOut(
-                company=guess["company"],
-                title=guess["title"],
-                job_listing_id=guess["job_listing_id"],
-                saved_job_id=guess["id"],
-            )
         d.category = category_of(e)
         d.job_listing_id = listing_of.get(e.saved_job_id)
         if (j := job_of.get(e.saved_job_id)) is not None:
@@ -299,8 +289,13 @@ async def scan_inbox(
             raise HTTPException(status_code=502, detail=account.last_error) from None
 
         detected = await detect_events(db, account, result.messages)
+        # Updates the scan couldn't place, now and from earlier scans, that
+        # point at one saved job: put them on it (and move it, with auto-move).
+        placed = await job_links.promote_unsaved(db, account.user_id)
         moved = (
-            await email_review.auto_apply(db, account.user_id, detected.created)
+            await email_review.auto_apply(
+                db, account.user_id, [*detected.created, *placed]
+            )
             if account.auto_move
             else []
         )

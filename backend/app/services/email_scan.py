@@ -49,6 +49,7 @@ from app.services.email_classify import (
 from app.services.email_job_names import clean_role, is_sender_person, job_names
 from app.services.email_match import (
     FUZZY_COMPANY,
+    LIKELY_JOB,
     NONE,
     REVIEW,
     looks_like_digest,
@@ -311,9 +312,16 @@ class _Seen:
         # Address -> saved jobs it sent updates about that the USER approved (a
         # matching signal; the matcher ignores relay and no-reply addresses).
         # Pending guesses don't count: a wrong one would teach a wrong sender.
+        # Nor do the app's own placements by company (likely_job), even moved:
+        # only the user's approval or a sure match teaches a sender.
         self.senders: dict[str, set] = {}
         for r in rows:
-            if r.status in APPROVED_STATUSES and r.saved_job_id and r.from_addr:
+            if (
+                r.status in APPROVED_STATUSES
+                and r.saved_job_id
+                and r.from_addr
+                and r.match_evidence != LIKELY_JOB
+            ):
                 addr = parseaddr(r.from_addr)[1].lower()
                 if addr:
                     self.senders.setdefault(addr, set()).add(r.saved_job_id)

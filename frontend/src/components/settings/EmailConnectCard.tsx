@@ -136,9 +136,9 @@ export function EmailConnectCard() {
         </CardTitle>
         <CardDescription>
           Let Job Enhancer read your inbox to spot application updates and move
-          your tracker cards for you. Read-only: cards move by themselves only when an
-          email names the job exactly, everything else waits for your click, and
-          every move can be undone.
+          your tracker cards for you. Read-only: cards move by themselves only when the
+          app is sure which job an email is about, everything else waits for your
+          click, and every move can be undone.
         </CardDescription>
       </CardHeader>
       <CardContent className="space-y-4">
@@ -394,6 +394,14 @@ const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
 
 /** What the scan is doing now, or what it found — in plain words. */
 function ScanStatus({ scan }: { scan: FullScan }) {
+  if (scan.running && scan.retrying)
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
+        <Loader2 className="h-3.5 w-3.5 shrink-0 animate-spin" aria-hidden />
+        The connection dropped. Trying again in a moment… ({plural(scan.read, "email")} read
+        so far are saved.)
+      </p>
+    );
   if (scan.running)
     return (
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground" aria-live="polite">
@@ -413,8 +421,11 @@ function ScanStatus({ scan }: { scan: FullScan }) {
   return (
     <div className="rounded-md border bg-muted/30 p-2.5 text-xs" aria-live="polite">
       <span className="font-medium">
+        {/* Older updates placed on a job can move a card with nothing new found. */}
         {scan.found === 0
-          ? "No new updates."
+          ? scan.moved
+            ? `No new updates, but moved ${plural(scan.moved, "card")} for you.`
+            : "No new updates."
           : `Found ${plural(scan.found, "new update")}` +
             (scan.moved ? `, and moved ${plural(scan.moved, "card")} for you.` : ".")}
       </span>{" "}
@@ -474,7 +485,7 @@ export function InboxBar() {
   );
 }
 
-/** On: an email that names the job exactly moves its card by itself. */
+/** On: an email the app is sure about moves its card by itself. */
 function AutoMoveSwitch({ account }: { account: EmailAccount }) {
   const settings = useEmailSettings();
   const on = account.auto_move ?? true;
@@ -485,7 +496,8 @@ function AutoMoveSwitch({ account }: { account: EmailAccount }) {
           Move cards automatically
         </Label>
         <span className="block text-xs text-muted-foreground">
-          Only when an email names the job exactly. You can undo any move.
+          Only when the app is sure which job an email is about. You can undo any
+          move.
         </span>
         {settings.isError && (
           <span className="block text-xs text-destructive">

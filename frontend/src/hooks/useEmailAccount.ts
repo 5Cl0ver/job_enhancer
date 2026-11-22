@@ -4,7 +4,7 @@
  * review the pipeline updates the scan detects (approve / dismiss / undo), and
  * resolve the items it couldn't decide (pick the job, or dismiss).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { scanIsDone } from "@/lib/emailUpdates";
@@ -55,8 +55,6 @@ export interface DetectedEvent {
   review_reason?: ReviewReason | null;
   /** needs_review only: the saved jobs it could be about. */
   candidates?: MatchCandidate[];
-  /** unsaved only: the saved job it most likely belongs to, if one stands out. */
-  likely_job?: MatchCandidate | null;
   from_addr: string;
   subject: string;
   status:
@@ -99,7 +97,10 @@ export type MatchEvidence =
   | "fuzzy_company"
   | "company_only"
   | "conflicting_evidence"
-  | "template";
+  | "template"
+  | "likely_job"
+  | "user_link"
+  | "not_this_job";
 
 export type ReviewReason = MatchEvidence | "unsure" | "no_match";
 
@@ -246,6 +247,21 @@ export function useDetectedEvents() {
 
 /** Most passes one click runs; each pass reads about a minute of mail. */
 const MAX_PASSES = 30;
+/** A dropped connection (the server restarting, a flaky network) is tried
+ * again this many times, this far apart: about two minutes in all. What a
+ * pass read before the drop is saved, so a retry picks up where it stopped. */
+const RETRIES = 6;
+const RETRY_MS = 20_000;
+
+/** Worth trying again: no answer at all, or the server restarting (502–504).
+ * A 409 ("a scan is already running") is worth waiting out only right after
+ * this pass lost its answer: the server may still be finishing it. On its own
+ * it means another scan is running, which is said at once. */
+function retryable(e: unknown, afterDrop: boolean): boolean {
+  if (!(e instanceof ApiError)) return true;
+  if (e.status === 409) return afterDrop;
+  return e.status === 502 || e.status === 503 || e.status === 504;
+}
 
 export interface FullScan {
   running: boolean;
@@ -256,6 +272,8 @@ export interface FullScan {
   windowDays: number;
   done: boolean;
   error: string | null;
+  /** The connection dropped; trying again in a moment. */
+  retrying: boolean;
 }
 
 const IDLE: FullScan = {
@@ -267,6 +285,7 @@ const IDLE: FullScan = {
   windowDays: 0,
   done: false,
   error: null,
+  retrying: false,
 };
 
 /** One click reads the whole inbox: scan passes run back to back until every
@@ -274,21 +293,42 @@ const IDLE: FullScan = {
 export function useFullScan() {
   const qc = useQueryClient();
   const [state, setState] = useState<FullScan>(IDLE);
+  // Leaving the page stops the loop after the pass in flight.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const run = async () => {
     let s: FullScan = { ...IDLE, running: true };
     setState(s);
+    let tries = 0;
     for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      if (!alive.current) return;
       let r: ScanResult;
       try {
         r = await api.post<ScanResult>("/v1/email/scan", {});
+        tries = 0;
       } catch (e) {
+        if (retryable(e, tries > 0) && tries < RETRIES) {
+          tries++;
+          s = { ...s, retrying: true };
+          setState(s);
+          await new Promise((done) => setTimeout(done, RETRY_MS));
+          s = { ...s, retrying: false };
+          setState(s);
+          pass--; // the same pass again
+          continue;
+        }
         const error =
           e instanceof ApiError && e.status === 429
             ? "Yahoo asked us to slow down. What's read so far is saved — scan again in a few minutes."
-            : e instanceof ApiError
+            : e instanceof ApiError && !retryable(e, tries > 0)
               ? e.message
-              : "The scan stopped. Try again.";
+              : "Couldn't reach the app for a few minutes. What's read so far is saved — scan again soon.";
         s = { ...s, running: false, error };
         break;
       }

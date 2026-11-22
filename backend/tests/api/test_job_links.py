@@ -13,6 +13,7 @@ from sqlalchemy import select
 
 from app.config import settings
 from app.models.detected_event import STATUS_PENDING, DetectedEvent
+from app.models.email_account import EmailAccount
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.services import email_sync
@@ -23,7 +24,7 @@ from app.services.email_match import (
     sender_is_saved_company,
 )
 from app.services.email_scan import EmailMessage
-from app.services.job_links import likely_job, rank_jobs
+from app.services.job_links import _event_facts, place, rank_jobs
 from tests.api.test_email import _as_sync, _create_saved_job
 
 AGENCY = "Department of Harbor Services"
@@ -174,22 +175,93 @@ class TestRank:
         assert not rank_jobs(jobs, company="Services")[0]["likely"]
         assert not rank_jobs(jobs, title="Analyst")[0]["likely"]
 
-    def test_likely_job_is_one_clear_guess(self):
-        jobs = [
-            {"id": 1, "company": "Vellacor", "title": "Data Engineer"},
-            {"id": 2, "company": AGENCY, "title": TITLE},
+
+def _ev(company="", title="", subject="Next steps", sender="a@gmail.com", date=None):
+    return _event_facts(
+        SimpleNamespace(
+            id="e",
+            job_company=company,
+            job_title=title,
+            subject=subject,
+            from_addr=sender,
+            email_date=date,
+            target_stage="Interview",
+        )
+    )
+
+
+def _placed(ev, jobs, excluded=None):
+    return place([ev], jobs, excluded or {}).get("e", {}).get("id")
+
+
+class TestPlace:
+    """Which updates go on a saved job by themselves: only those that fit one
+    job exactly (spec 014)."""
+
+    JOBS = [
+        {"id": 1, "company": "Vellacor Robotics", "title": "Platform Engineer"},
+        {"id": 2, "company": AGENCY, "title": TITLE},
+    ]
+
+    def test_the_company_named_or_its_own_domain(self):
+        assert _placed(_ev(company="Vellacor Robotics, Inc."), self.JOBS) == 1
+        assert _placed(_ev(sender="Rowan <r@dhs.example.gov>"), self.JOBS) == 2
+        # Its whole name in the subject, when the email named no company.
+        assert _placed(_ev(subject=f"{AGENCY}: next steps"), self.JOBS) == 2
+        assert _placed(_ev(), self.JOBS) is None  # nothing points anywhere
+
+    def test_another_role_at_the_company_is_not_this_job(self):
+        ev = _ev(company="Vellacor Robotics", title="Senior Accountant")
+        assert _placed(ev, self.JOBS) is None
+        same = _ev(company="Vellacor Robotics", title="Platform Engineer")
+        assert _placed(same, self.JOBS) == 1
+
+    def test_look_alike_companies_and_loose_words_never_count(self):
+        assert _placed(_ev(company="Vellacorp Robotics"), self.JOBS) is None
+        # One word of a saved company in the subject, from another company.
+        jobs = [{"id": 3, "company": "Target", "title": "Analyst"}]
+        ev = _ev(
+            company="Quillfeather",
+            subject="Interview: target start date",
+            sender="r@quillfeather.example",
+        )
+        assert _placed(ev, jobs) is None
+        assert _placed(_ev(subject="Interview: target start date"), jobs) is None
+
+    def test_a_job_site_saved_as_the_company_never_collects_updates(self):
+        jobs = [{"id": 4, "company": "Indeed", "title": "Analyst"}]
+        assert _placed(_ev(company="Indeed"), jobs) is None
+
+    def test_the_sender_as_company_is_ignored(self):
+        ev = _ev(company="Rowan Pike", sender="Rowan Pike <rowan.pike@dhs.example.gov>")
+        assert ev["company"] == "" and _placed(ev, self.JOBS) == 2
+
+    def test_not_from_long_before_the_job_was_saved(self):
+        jobs = [{**self.JOBS[0], "saved_at": datetime(2026, 11, 1, tzinfo=UTC)}]
+        old = _ev(company="Vellacor Robotics", date=datetime(2025, 6, 1, tzinfo=UTC))
+        assert _placed(old, jobs) is None
+        recent = _ev(
+            company="Vellacor Robotics", date=datetime(2026, 10, 20, tzinfo=UTC)
+        )
+        assert _placed(recent, jobs) == 1
+
+    def test_ties_wrong_jobs_and_duplicate_saves(self):
+        twins = [
+            *self.JOBS,
+            {"id": 5, "company": "Vellacor Robotics", "title": "Analyst"},
         ]
-
-        def ev(company="", title="", subject="Next steps", sender="a@gmail.com"):
-            return SimpleNamespace(
-                job_company=company, job_title=title, subject=subject, from_addr=sender
-            )
-
-        assert likely_job(ev(sender="Rowan <r@dhs.example.gov>"), jobs)["id"] == 2
-        assert likely_job(ev(company="Vellacor, Inc."), jobs)["id"] == 1
-        assert likely_job(ev(), jobs) is None  # nothing points anywhere
-        twins = [*jobs, {"id": 3, "company": "Vellacor", "title": "Analyst"}]
-        assert likely_job(ev(company="Vellacor"), twins) is None  # a tie is no guess
+        assert _placed(_ev(company="Vellacor Robotics"), twins) is None  # which one?
+        assert _placed(_ev(company="Vellacor Robotics"), self.JOBS, {"e": {1}}) is None
+        dupes = [
+            {**self.JOBS[0], "saved_at": datetime(2026, 1, 1, tzinfo=UTC)},
+            {
+                "id": 6,
+                "company": "Vellacor Robotics, Inc.",
+                "title": "Platform Engineer",
+                "saved_at": datetime(2026, 2, 1, tzinfo=UTC),
+            },
+        ]
+        assert _placed(_ev(company="Vellacor Robotics"), dupes) == 6  # the newest
 
 
 @pytest.mark.asyncio
@@ -228,7 +300,6 @@ class TestLinkUnsavedUpdate:
         self, client, db_session, test_user, enc_key, monkeypatch
     ):
         sj, ev = await self._unsaved(client, db_session, test_user, monkeypatch)
-        assert ev["likely_job"] is None  # the email names nothing
         opts = (await client.get(f"/v1/email/events/{ev['id']}/link-options")).json()
         assert str(sj.id) in [o["saved_job_id"] for o in opts]
         assert {"title", "company", "stage", "likely"} <= set(opts[0])
@@ -450,3 +521,170 @@ class TestSameJobAs:
             f"/v1/saved-jobs/{dup.id}/unlink", json={"target_id": str(sj.id)}
         )
         assert r.status_code == 409
+
+
+@pytest.mark.asyncio
+class TestPlacedAutomatically:
+    """After each scan, updates the app couldn't place that point at one saved
+    job's company go on that job by themselves (spec 014)."""
+
+    async def _leftover(self, client, db_session, test_user, monkeypatch, **names):
+        await _scan(client, monkeypatch)  # connects the inbox; no mail yet
+        account = await db_session.scalar(select(EmailAccount))
+        ev = DetectedEvent(
+            id=uuid.uuid4(),
+            user_id=test_user.id,
+            email_account_id=account.id,
+            event_type=names.get("kind", "interview"),
+            target_stage=names.get("stage", "Interview"),
+            from_addr="Rowan Pike <rowan.pike@gmail.com>",
+            subject="Next phase of our recruitment process",
+            message_uid=uuid.uuid4().hex[:8],
+            status="unsaved",
+            job_company=names.get("company", "Harbor Services, Department of"),
+            job_title=names.get("title"),
+        )
+        db_session.add(ev)
+        await db_session.flush()
+        return account, ev
+
+    async def test_a_leftover_update_moves_its_card_on_the_next_scan(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor, Inc.")
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        body = await _scan(client, monkeypatch)
+        assert body["moved"] == 1
+        await db_session.refresh(ev)
+        await db_session.refresh(sj)
+        assert ev.status == "auto_applied" and ev.saved_job_id == sj.id
+        assert ev.match_evidence == "likely_job"
+        assert (
+            sj.pipeline_stage_id
+            == (await _stage(db_session, test_user, "Interview")).id
+        )
+
+        # Wrong job: the card goes back, the update is listed again, and the
+        # app never guesses it again.
+        r = await client.post(f"/v1/email/events/{ev.id}/unlink")
+        assert r.status_code == 200 and r.json()["status"] == "unsaved"
+        await db_session.refresh(sj)
+        assert (
+            sj.pipeline_stage_id == (await _stage(db_session, test_user, "Applied")).id
+        )
+        await db_session.refresh(ev)
+        assert ev.not_jobs == [str(sj.id)]
+        await _scan(client, monkeypatch)
+        await db_session.refresh(ev)
+        assert ev.status == "unsaved" and ev.saved_job_id is None
+
+    async def test_without_auto_move_it_waits_for_a_tap(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        account, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        account.auto_move = False
+        await db_session.flush()
+        await _scan(client, monkeypatch)
+        await db_session.refresh(ev)
+        assert ev.status == "pending" and ev.saved_job_id == sj.id
+
+    async def test_nothing_to_move_keeps_it_with_the_job(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        sj.pipeline_stage_id = (await _stage(db_session, test_user, "Offer")).id
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        await _scan(client, monkeypatch)
+        await db_session.refresh(ev)
+        await db_session.refresh(sj)
+        assert ev.status == "hidden" and ev.saved_job_id == sj.id
+        assert sj.pipeline_stage_id == (await _stage(db_session, test_user, "Offer")).id
+
+    async def test_two_jobs_there_or_no_company_stay_for_the_user(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        await _applied_job(db_session, test_user, company="Vellacor", title="Analyst")
+        await _applied_job(db_session, test_user, company="Vellacor", title="Engineer")
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        _, title_only = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="", title="Analyst"
+        )
+        await _scan(client, monkeypatch)
+        for row in (ev, title_only):
+            await db_session.refresh(row)
+            assert row.status == "unsaved" and row.saved_job_id is None
+
+    async def test_wrong_job_covers_the_senders_other_updates_and_sticks(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        _, interview = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        _, rejected = await self._leftover(
+            client,
+            db_session,
+            test_user,
+            monkeypatch,
+            company="Vellacor",
+            kind="rejected",
+            stage="Rejected",
+        )
+        await _scan(client, monkeypatch)  # both placed and moved (the helper scans too)
+        await db_session.refresh(sj)
+        assert (
+            sj.pipeline_stage_id == (await _stage(db_session, test_user, "Rejected")).id
+        )
+
+        # One "Wrong job" undoes both placements and puts the card back to
+        # where it was before either.
+        r = await client.post(f"/v1/email/events/{interview.id}/unlink")
+        assert r.status_code == 200
+        for row in (sj, interview, rejected):
+            await db_session.refresh(row)
+        assert (
+            sj.pipeline_stage_id == (await _stage(db_session, test_user, "Applied")).id
+        )
+        for row in (interview, rejected):
+            assert row.status == "unsaved" and row.not_jobs == [str(sj.id)]
+
+        # A later email from the same recruiter isn't put on that job either.
+        _, later = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        later.match_evidence = None
+        await db_session.flush()
+        await _scan(client, monkeypatch)
+        await db_session.refresh(later)
+        assert later.status == "unsaved" and later.saved_job_id is None
+
+    async def test_a_placement_never_teaches_the_sender(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        await _applied_job(db_session, test_user, company="Vellacor")
+        await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        await _scan(client, monkeypatch)
+        # A later email from the same person that names nothing stays unplaced:
+        # the app's own guess isn't proof of who that sender writes about.
+        await _scan(
+            client,
+            monkeypatch,
+            _mail("9", "Rowan Pike <rowan.pike@gmail.com>", subject="Quick question"),
+        )
+        rows = (
+            await db_session.scalars(
+                select(DetectedEvent).where(DetectedEvent.message_uid == "9")
+            )
+        ).all()
+        assert all(r.match_evidence != "known_sender" for r in rows)
