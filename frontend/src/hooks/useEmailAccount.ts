@@ -4,7 +4,7 @@
  * review the pipeline updates the scan detects (approve / dismiss / undo), and
  * resolve the items it couldn't decide (pick the job, or dismiss).
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api, ApiError } from "@/lib/api";
 import { scanIsDone } from "@/lib/emailUpdates";
@@ -55,8 +55,6 @@ export interface DetectedEvent {
   review_reason?: ReviewReason | null;
   /** needs_review only: the saved jobs it could be about. */
   candidates?: MatchCandidate[];
-  /** unsaved only: the saved job it most likely belongs to, if one stands out. */
-  likely_job?: MatchCandidate | null;
   from_addr: string;
   subject: string;
   status:
@@ -255,11 +253,14 @@ const MAX_PASSES = 30;
 const RETRIES = 6;
 const RETRY_MS = 20_000;
 
-/** Worth trying again: no answer at all, the server restarting (502–504), or
- * the server still finishing the pass whose answer was lost (409). */
-function retryable(e: unknown): boolean {
+/** Worth trying again: no answer at all, or the server restarting (502–504).
+ * A 409 ("a scan is already running") is worth waiting out only right after
+ * this pass lost its answer: the server may still be finishing it. On its own
+ * it means another scan is running, which is said at once. */
+function retryable(e: unknown, afterDrop: boolean): boolean {
   if (!(e instanceof ApiError)) return true;
-  return e.status === 409 || e.status === 502 || e.status === 503 || e.status === 504;
+  if (e.status === 409) return afterDrop;
+  return e.status === 502 || e.status === 503 || e.status === 504;
 }
 
 export interface FullScan {
@@ -292,18 +293,27 @@ const IDLE: FullScan = {
 export function useFullScan() {
   const qc = useQueryClient();
   const [state, setState] = useState<FullScan>(IDLE);
+  // Leaving the page stops the loop after the pass in flight.
+  const alive = useRef(true);
+  useEffect(() => {
+    alive.current = true;
+    return () => {
+      alive.current = false;
+    };
+  }, []);
 
   const run = async () => {
     let s: FullScan = { ...IDLE, running: true };
     setState(s);
     let tries = 0;
     for (let pass = 1; pass <= MAX_PASSES; pass++) {
+      if (!alive.current) return;
       let r: ScanResult;
       try {
         r = await api.post<ScanResult>("/v1/email/scan", {});
         tries = 0;
       } catch (e) {
-        if (retryable(e) && tries < RETRIES) {
+        if (retryable(e, tries > 0) && tries < RETRIES) {
           tries++;
           s = { ...s, retrying: true };
           setState(s);
@@ -316,7 +326,7 @@ export function useFullScan() {
         const error =
           e instanceof ApiError && e.status === 429
             ? "Yahoo asked us to slow down. What's read so far is saved — scan again in a few minutes."
-            : e instanceof ApiError && !retryable(e)
+            : e instanceof ApiError && !retryable(e, tries > 0)
               ? e.message
               : "Couldn't reach the app for a few minutes. What's read so far is saved — scan again soon.";
         s = { ...s, running: false, error };

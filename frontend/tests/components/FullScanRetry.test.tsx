@@ -88,6 +88,34 @@ describe("a scan whose connection drops", () => {
     expect(result.current.error).toMatch(/What's read so far is saved/);
   });
 
+  it("says at once when another scan is already running", async () => {
+    post.mockRejectedValue(new ApiError(409, "A scan is already running."));
+    const { result } = renderHook(() => useFullScan(), { wrapper });
+    await act(async () => {
+      await result.current.run();
+    });
+    expect(post).toHaveBeenCalledTimes(1);
+    expect(result.current.error).toBe("A scan is already running.");
+  });
+
+  it("waits out a 409 right after a drop (the lost pass is finishing)", async () => {
+    post
+      .mockRejectedValueOnce(new TypeError("Failed to fetch"))
+      .mockRejectedValueOnce(new ApiError(409, "A scan is already running."))
+      .mockResolvedValueOnce(DONE);
+    const { result } = renderHook(() => useFullScan(), { wrapper });
+    let running!: Promise<void>;
+    act(() => {
+      running = result.current.run();
+    });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(40_000);
+      await running;
+    });
+    expect(post).toHaveBeenCalledTimes(3);
+    expect(result.current.done).toBe(true);
+  });
+
   it("doesn't retry what retrying can't fix", async () => {
     post.mockRejectedValue(new ApiError(400, "Login failed — check your app password."));
     const { result } = renderHook(() => useFullScan(), { wrapper });

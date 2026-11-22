@@ -421,8 +421,11 @@ function ScanStatus({ scan }: { scan: FullScan }) {
   return (
     <div className="rounded-md border bg-muted/30 p-2.5 text-xs" aria-live="polite">
       <span className="font-medium">
+        {/* Older updates placed on a job can move a card with nothing new found. */}
         {scan.found === 0
-          ? "No new updates."
+          ? scan.moved
+            ? `No new updates, but moved ${plural(scan.moved, "card")} for you.`
+            : "No new updates."
           : `Found ${plural(scan.found, "new update")}` +
             (scan.moved ? `, and moved ${plural(scan.moved, "card")} for you.` : ".")}
       </span>{" "}

@@ -235,6 +235,7 @@ describe("an update the app placed by its company", () => {
     ).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Wrong job" }));
     expect(post).toHaveBeenCalledWith("/v1/email/events/ev1/unlink", {});
+    expect(await screen.findByText(/Sent back/)).toBeInTheDocument();
   });
 
   it("moved by itself: Wrong job puts it back and asks again", async () => {

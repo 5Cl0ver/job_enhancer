@@ -6,9 +6,13 @@ Two places the user can say "this is the same job":
   emails onto the real job, moves that job forward to the further stage of the
   two (never back), and archives the email-made copy. :func:`unlink_job` puts
   everything back.
-- **An update about a job that isn't saved** ("It's one of my jobs"):
+- **An update about a job that isn't saved** ("Pick the job"):
   :func:`link_event` puts the email on the chosen job and moves its card
-  forward, like an approved update. The Email page's Undo reverses it.
+  forward, like an approved update. :func:`unlink_event` reverses it.
+- **After every scan**, :func:`promote_unsaved` places the updates that fit
+  exactly one saved job (exact company, same role, not from long before the
+  job was saved) by itself; "Wrong job" (:func:`unlink_event`) undoes that and
+  remembers the answer.
 
 Either way the email becomes an approved update on the real job, so the
 sender is remembered: their next email goes to that job by itself.
@@ -19,6 +23,7 @@ kept about the emails (sender, subject, the names it read), never the body.
 
 from __future__ import annotations
 
+import asyncio
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -26,7 +31,7 @@ from email.utils import parseaddr
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -42,12 +47,19 @@ from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import ORIGIN_EMAIL, SavedJob
 from app.schemas.job_link import JobOption, LinkResult, LinkUndo, MovedEvent
+from app.services.email_job_names import clean_role, is_sender_person
 from app.services.email_match import (
+    _DATE_SLACK,
+    FUZZY_COMPANY,
     LIKELY_JOB,
     NOT_THIS_JOB,
     _company_terms,
     _domain_labels,
+    _is_platform_company,
+    _name_words,
     _same_company,
+    _title_close,
+    collapse_duplicates,
     company_initials,
 )
 from app.services.email_scan import _stage_orders, card_action
@@ -353,37 +365,131 @@ async def _unsaved_event(
     return ev
 
 
-def likely_job(event: DetectedEvent, jobs: list[dict]) -> dict | None:
-    """The one saved job an unsaved update most likely belongs to, if the
-    emails clearly point at one (a tie points at none)."""
-    if event.match_evidence == NOT_THIS_JOB:
-        return None  # the user already said the guess was wrong
-    ranked = rank_jobs(
-        jobs,
-        company=event.job_company or "",
-        title=event.job_title or "",
-        subjects=[event.subject],
-        senders=[event.from_addr],
+def _event_facts(ev: DetectedEvent) -> dict:
+    """What placement reads about an update: the company and role it named
+    (never the sender's own name, never a sentence), sender and subject."""
+    company = (ev.job_company or "").strip()
+    if not company[:1].isalnum() or is_sender_person(company, ev.from_addr):
+        company = ""
+    title = clean_role(ev.job_title, strict=False) if ev.job_title else None
+    addr = parseaddr(ev.from_addr or "")[1].lower()
+    return {
+        "id": ev.id,
+        "company": company,
+        "title": title or "",
+        "subject": ev.subject or "",
+        "addr": addr,
+        "labels": _domain_labels([addr]) if addr else [],
+        "date": _aware(ev.email_date),
+        "target": ev.target_stage,
+    }
+
+
+def _company_of(ev: dict, job: dict) -> bool:
+    """The email is about THIS job's company, exactly: the company it named is
+    the job's, or, when it named none, the sender writes from the company's own
+    domain or the subject has its whole (two-word or longer) name. One word
+    in a subject ("Target start date") is never enough, and a job site saved
+    as the company (Indeed) never counts."""
+    name = job.get("company") or ""
+    if _is_platform_company(job):
+        return False
+    if ev["company"]:
+        return _same_company(ev["company"], name)
+    _, rare, squashed = _company_terms(name)
+    initials = company_initials(name)
+    for label in ev["labels"]:
+        if label in (squashed, initials) or (len(label) >= 5 and label in rare):
+            return True
+    words = _name_words(name)
+    said = " " + " ".join(re.findall(r"[a-z0-9]+", ev["subject"].lower())) + " "
+    return len(words) >= 2 and f" {' '.join(words)} " in said
+
+
+def _fits(ev: dict, job: dict) -> bool:
+    """Company exact, the role (if the email named one) is this job's, and the
+    email isn't from long before the job was saved."""
+    if not _company_of(ev, job):
+        return False
+    if ev["title"] and not _title_close(ev["title"], job.get("title") or ""):
+        return False  # another role at the company
+    saved, when = job.get("saved_at"), ev["date"]
+    return not (saved and when and when < saved - _DATE_SLACK)
+
+
+def place(events: list[dict], jobs: list[dict], excluded: dict) -> dict:
+    """event id -> the one saved job it is about, for the updates that fit
+    exactly one job (duplicate saves count as one). ``excluded`` maps an event
+    id to jobs the user said it's not. Pure, so a scan runs it off the event
+    loop."""
+    reps, _ = collapse_duplicates(jobs)
+    out = {}
+    for ev in events:
+        fits = [
+            j
+            for j in reps
+            if j["id"] not in excluded.get(ev["id"], ()) and _fits(ev, j)
+        ]
+        if len(fits) == 1:
+            out[ev["id"]] = fits[0]
+    return out
+
+
+def _company_key(name: str | None) -> str:
+    return _company_terms(name or "")[2]
+
+
+async def _exclusions(
+    db: AsyncSession, user_id: uuid.UUID, events: list[DetectedEvent]
+) -> dict:
+    """Jobs the user said each update is NOT about: its own "Wrong job"
+    answers, plus those for any other email from the same sender or company,
+    so one answer covers that recruiter's later emails too."""
+    said_no = list(
+        await db.scalars(
+            select(DetectedEvent).where(
+                DetectedEvent.user_id == user_id,
+                DetectedEvent.not_jobs.is_not(None),
+            )
+        )
     )
-    likely = [j for j in ranked if j["likely"]]
-    return likely[0] if len(likely) == 1 else None
+    by_addr: dict[str, set] = {}
+    by_company: dict[str, set] = {}
+    for r in said_no:
+        jobs = {uuid.UUID(str(j)) for j in r.not_jobs or []}
+        if addr := parseaddr(r.from_addr or "")[1].lower():
+            by_addr.setdefault(addr, set()).update(jobs)
+        if key := _company_key(r.job_company):
+            by_company.setdefault(key, set()).update(jobs)
+    out = {}
+    for ev in events:
+        addr = parseaddr(ev.from_addr or "")[1].lower()
+        out[ev.id] = by_addr.get(addr, set()) | by_company.get(
+            _company_key(ev.job_company), set()
+        )
+    return out
 
 
 async def promote_unsaved(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEvent]:
     """After a scan, put each unsaved update the app can now place on its job.
 
-    An update whose names point at exactly one saved job's company becomes a
-    pending update on that job (``LIKELY_JOB``); with auto-move on, the scan
-    then moves the card like any sure match. Older updates are placed too, so
-    saving a job later clears the leftovers about it. One the job is already at
-    or past is kept with the job (hidden), since there's nothing to move.
-    Returns the new pending updates."""
+    An update goes on a saved job only when it fits that job alone (see
+    :func:`place`), never when the scan judged it a look-alike company, and
+    never once the user said "Wrong job". It becomes a pending update
+    (``LIKELY_JOB``); with auto-move on the scan then moves the card like any
+    sure match. Older updates are placed too, so saving a job later clears the
+    leftovers about it. One the job is already at or past is kept with the job
+    (hidden): nothing to move. Returns the new pending updates."""
     events = list(
         await db.scalars(
             select(DetectedEvent)
             .where(
                 DetectedEvent.user_id == user_id,
                 DetectedEvent.status == STATUS_UNSAVED,
+                or_(
+                    DetectedEvent.match_evidence.is_(None),
+                    DetectedEvent.match_evidence.not_in((FUZZY_COMPANY, NOT_THIS_JOB)),
+                ),
             )
             .order_by(DetectedEvent.email_date.asc().nulls_first())
         )
@@ -392,22 +498,25 @@ async def promote_unsaved(db: AsyncSession, user_id: uuid.UUID) -> list[Detected
         return []
     jobs = await active_jobs(db, user_id)
     by_name, by_id = await _stage_orders(db, user_id)
+    excluded = await _exclusions(db, user_id, events)
+    facts = [_event_facts(ev) for ev in events if ev.target_stage in by_name]
+    placed = await asyncio.to_thread(place, facts, jobs, excluded)
     # Where each card will be once the earlier updates move it.
     reached = {j["id"]: by_id.get(j["pipeline_stage_id"]) for j in jobs}
     pending = []
     for ev in events:
-        guess = likely_job(ev, jobs)
-        if guess is None:
+        job = placed.get(ev.id)
+        if job is None:
             continue
         move, _ = card_action(
-            ev.target_stage, by_name, current_order=reached[guess["id"]], reminder=False
+            ev.target_stage, by_name, current_order=reached[job["id"]], reminder=False
         )
-        ev.saved_job_id = guess["id"]
-        ev.previous_stage_id = guess["pipeline_stage_id"]
+        ev.saved_job_id = job["id"]
+        ev.previous_stage_id = job["pipeline_stage_id"]
         ev.match_evidence = LIKELY_JOB
-        if move and ev.target_stage in by_name:
+        if move:
             ev.status = STATUS_PENDING
-            reached[guess["id"]] = by_name[ev.target_stage]
+            reached[job["id"]] = by_name[ev.target_stage]
             pending.append(ev)
         else:
             ev.status = STATUS_HIDDEN
@@ -466,9 +575,13 @@ async def unlink_event(
     db: AsyncSession, user_id: uuid.UUID, event_id: uuid.UUID
 ) -> DetectedEvent:
     """Wrong job: undo the user's own link (:func:`link_event`) or the app's
-    guess (:func:`promote_unsaved`). The card goes back if the update moved
-    it and it hasn't moved since, and the email is an unsaved update again,
-    to put on the right job or add as a new one. It's never guessed again."""
+    placement (:func:`promote_unsaved`). The email is an unsaved update again,
+    to put on the right job or add as a new one, and is never placed on this
+    job again (nor are later emails from the same sender or company).
+
+    Undoing a placement also undoes the app's other placements on this job
+    from the same sender or company, and puts the card back where it was
+    before any of them, as long as it hasn't been moved since."""
     ev = await db.scalar(
         select(DetectedEvent).where(
             DetectedEvent.id == event_id, DetectedEvent.user_id == user_id
@@ -484,19 +597,51 @@ async def unlink_event(
     ):
         raise HTTPException(status_code=409, detail="Nothing to undo")
     job = await _own_job(db, user_id, ev.saved_job_id)
-    if ev.status in (STATUS_APPLIED, STATUS_AUTO_APPLIED):
-        by_name, order = await _stage_orders(db, user_id)
-        back = ev.previous_stage_id
-        # Only while the card is still where this update put it.
-        here = order.get(job.pipeline_stage_id)
-        if here is not None and here == by_name.get(ev.target_stage or ""):
-            await move_job_to_stage(
-                db, job.id, back if back in order else None, user_id
-            )
-    ev.saved_job_id = None
-    ev.previous_stage_id = None
-    ev.status = STATUS_UNSAVED
-    ev.applied_at = None
-    ev.match_evidence = NOT_THIS_JOB
+    undo = [ev]
+    if ev.match_evidence == LIKELY_JOB:
+        addr = parseaddr(ev.from_addr or "")[1].lower()
+        company = _company_key(ev.job_company)
+        for other in await _events_of(db, user_id, job.id):
+            if other.id == ev.id or other.match_evidence != LIKELY_JOB:
+                continue
+            if (addr and parseaddr(other.from_addr or "")[1].lower() == addr) or (
+                company and _company_key(other.job_company) == company
+            ):
+                undo.append(other)
+
+    stages = {
+        s.name: s
+        for s in await db.scalars(
+            select(PipelineStage).where(PipelineStage.user_id == user_id)
+        )
+    }
+    order = {s.id: s.sort_order for s in stages.values()}
+    # Latest stage first: each step back lands where the earlier one put it.
+    undo.sort(
+        key=lambda e: (
+            -(stages[e.target_stage].sort_order if e.target_stage in stages else -1)
+        )
+    )
+    for one in undo:
+        moved = one.status in (STATUS_APPLIED, STATUS_AUTO_APPLIED)
+        target = stages.get(one.target_stage or "")
+        back = one.previous_stage_id if one.previous_stage_id in order else None
+        if moved and target is not None and job.pipeline_stage_id == target.id:
+            if back != job.pipeline_stage_id:
+                await move_job_to_stage(db, job.id, back, user_id)
+        elif moved and target is not None:
+            # The card has moved on since: whatever this update put in its
+            # place's Undo now points past it, to where the card was before.
+            for later in await _events_of(db, user_id, job.id):
+                if later.id != one.id and later.previous_stage_id == target.id:
+                    later.previous_stage_id = back
+        one.saved_job_id = None
+        one.previous_stage_id = None
+        one.status = STATUS_UNSAVED
+        one.applied_at = None
+        # A placement the user rejected is never guessed again; their own
+        # pick, undone, may still be placed elsewhere later.
+        one.match_evidence = NOT_THIS_JOB if one.match_evidence == LIKELY_JOB else None
+        one.not_jobs = sorted({*(one.not_jobs or []), str(job.id)})
     await db.flush()
     return ev

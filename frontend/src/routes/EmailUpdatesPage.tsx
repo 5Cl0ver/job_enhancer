@@ -537,9 +537,9 @@ function Chip({
 function MovedRow({ ev }: { ev: DetectedEvent }) {
   const review = useReviewEvent();
   const unlink = useUnlinkEvent();
-  // Placed by the company alone (or by the user): Undo also lists the email
+  // Placed by the app from the company alone: Undo also lists the email
   // again, so it can go on the right job.
-  const guessed = ev.match_evidence === "likely_job" || ev.match_evidence === "user_link";
+  const guessed = ev.match_evidence === "likely_job";
   const undoing = guessed ? unlink : review;
   const [open, setOpen] = useState(false);
   const [viewing, setViewing] = useState(false);
@@ -674,6 +674,7 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
   const review = useReviewEvent();
   const unlink = useUnlinkEvent();
   const [done, setDone] = useState(false);
+  const [sentBack, setSentBack] = useState(false);
   const busy = groupAct.isPending || review.isPending || unlink.isPending;
   const guessed = ev.match_evidence === "likely_job";
   const act = (action: "apply" | "dismiss") =>
@@ -685,6 +686,13 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
     review.mutate({ id: ev.id, action: "undo" }, { onSuccess: () => setDone(false) });
 
   if (done) return <Done ev={ev} onUndo={undo} busy={busy} />;
+  if (sentBack)
+    return (
+      <li className="flex items-center gap-2 rounded-lg border border-dashed px-3 py-2.5 text-sm text-muted-foreground sm:px-4">
+        <Undo2 className="h-4 w-4" aria-hidden />
+        Sent back. Pick the right job under “Not sure which job”.
+      </li>
+    );
   const more = u.repeats.length;
   return (
     <SlimRow
@@ -705,7 +713,9 @@ function UpdateRow({ group: u }: { group: UpdateGroup }) {
               size="sm"
               variant="ghost"
               disabled={busy}
-              onClick={() => unlink.mutate({ lead: ev.id, repeats: [] })}
+              onClick={() =>
+                unlink.mutate({ lead: ev.id, repeats: [] }, { onSuccess: () => setSentBack(true) })
+              }
             >
               Wrong job
             </Button>
@@ -897,7 +907,7 @@ function UnsavedRow({ group: u }: { group: UpdateGroup }) {
             {/* The main choice gets the whole first line on a phone. */}
             <Button
               size="sm"
-              className="gap-1 max-sm:basis-full"
+              className="gap-1 max-sm:basis-full!"
               disabled={busy}
               onClick={() => {
                 link.reset();
