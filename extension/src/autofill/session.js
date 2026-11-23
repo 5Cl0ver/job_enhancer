@@ -115,10 +115,12 @@ export function createSession(deps) {
   const aiAsked = new Set();
 
   const scan = () => {
+    const all = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter((f) => !skipField(f));
+    // An open pop-up with a form of its own is filled alone; one whose fields
+    // aren't really showing (a hidden drawer, a date picker) doesn't count.
     const inside = deps.scope?.() || null;
-    const list = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter(
-      (f) => !skipField(f) && (!inside || within(inside, f.el)),
-    );
+    const scoped = inside ? all.filter((f) => within(inside, f.el)) : all;
+    const list = scoped.length >= 2 ? scoped : all;
     fields = new Map(list.map((f) => [f.id, f]));
     return list;
   };
@@ -213,7 +215,8 @@ export function createSession(deps) {
    * Upload the résumé before anything else: many applicant systems read it
    * and rewrite the form (spec 016, research R7). True when one was uploaded.
    */
-  async function uploadResume(copy) {
+  async function uploadResume(copy, { auto = false } = {}) {
+    if (!auto) declined.clear(); // a press means: fill again, undone ones too
     if (!copy.resumeFile) return false;
     let done = false;
     for (const field of scan()) {

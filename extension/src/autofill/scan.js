@@ -91,12 +91,17 @@ export function questionFor(el) {
     const t = byIds(root, lb);
     if (t) return t;
   }
+  const al = clean(el.getAttribute?.("aria-label"));
+  if (al && !/^(select|choose|open|toggle|clear)\b/i.test(al)) return al;
   // A floating label drawn right after its box: "<div><input><label>Email</label></div>"
   // (the box first in its wrapper, so a flat "label, input, label, input" list
-  // never hands a box the NEXT field's label).
+  // never hands a box the NEXT field's label; an error or hint line never counts).
   const after = el.nextElementSibling;
+  const cls = after?.getAttribute?.("class") || "";
   if (
-    (after?.tagName === "LABEL" || /(^|[\s_-])(floating-?)?label\b/i.test(after?.getAttribute?.("class") || "")) &&
+    (after?.tagName === "LABEL" || /(^|[\s_-])(floating-?)?label\b/i.test(cls)) &&
+    !/error|invalid|hint|help|count|message|feedback/i.test(cls) &&
+    after?.getAttribute?.("role") !== "alert" &&
     !el.previousElementSibling &&
     (!after.htmlFor || after.htmlFor === el.id) &&
     !after.querySelector(CONTROL) &&
@@ -105,8 +110,6 @@ export function questionFor(el) {
     const t = textOf(after);
     if (t) return t;
   }
-  const al = clean(el.getAttribute?.("aria-label"));
-  if (al && !/^(select|choose|open|toggle|clear)\b/i.test(al)) return al;
   // Text right beside the control wins; text found further up (a page heading)
   // only when the control has no placeholder of its own.
   const placeholder = clean(el.getAttribute?.("placeholder"));

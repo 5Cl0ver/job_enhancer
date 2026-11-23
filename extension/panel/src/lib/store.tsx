@@ -141,15 +141,19 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   // The tab changed, or one of its frames filled / fixed / undid something.
   React.useEffect(() => {
     setFill(NO_FILL); // "looking at this page" until it answers
-    loadFill(tabId);
     // Ask the tab's frames to report their forms again (a page loaded before
-    // the panel opened, or before the extension was updated).
+    // the panel opened, or before the extension was updated), then read —
+    // never a flash of "no form" on a page that has one.
     if (tabId != null) send({ type: "probeTab", tabId });
+    const first = setTimeout(() => loadFill(tabId), tabId != null ? 400 : 0);
     const onMessage = (msg: { type?: string; tabId?: number }) => {
       if (msg?.type === "sessionChanged" && msg.tabId === tabId) loadFill(tabId);
     };
     chrome.runtime.onMessage.addListener(onMessage);
-    return () => chrome.runtime.onMessage.removeListener(onMessage);
+    return () => {
+      clearTimeout(first);
+      chrome.runtime.onMessage.removeListener(onMessage);
+    };
   }, [tabId, loadFill]);
 
   const setStaged = React.useCallback(async (docId: string | null, filename?: string) => {

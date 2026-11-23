@@ -43,13 +43,21 @@ function send(msg) {
 
 const MODALS =
   'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"], mat-dialog-container, sdf-dialog, sdf-modal, sdf-focus-pane[data-sdf-modal]';
-// Boxes a person types into: a cookie-preferences pop-up (only switches) never counts.
-const TEXTISH =
-  'input:not([type]), input[type=text], input[type=email], input[type=tel], input[type=url], input[type=number], input[type=date], textarea, select, [role=combobox]';
+// Boxes a person types into: a cookie-preferences pop-up (only switches) or a
+// date picker (month and year lists) never counts.
+const TEXTISH = "input:not([type]), input[type=text], input[type=email], input[type=tel], input[type=url], textarea";
+
+/** Really on screen: not hidden, not see-through, not parked off the page. */
+function showing(el) {
+  const r = el.getBoundingClientRect();
+  if (r.width < 2 || r.height < 2 || r.bottom < 0 || r.right < 0 || r.top > innerHeight || r.left > innerWidth) return false;
+  const s = getComputedStyle(el);
+  return s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) > 0.05;
+}
 
 function openModal() {
   const shown = [...document.querySelectorAll(MODALS)].filter(
-    (el) => el.getClientRects().length && [...el.querySelectorAll(TEXTISH)].filter((c) => c.getClientRects().length).length >= 2,
+    (el) => showing(el) && [...el.querySelectorAll(TEXTISH)].filter(showing).length >= 2,
   );
   // The innermost, last-opened one (a pop-up inside a page-wide wrapper).
   return shown.filter((el) => !shown.some((o) => o !== el && el.contains(o))).pop() || null;
@@ -200,6 +208,10 @@ async function run({ auto = false } = {}) {
   state = "busy";
   try {
     return await fill(auto);
+  } catch {
+    // Never leave the panel saying "Filling…": say what to do instead.
+    status({ phase: "problem", problem: "refresh" }, { now: true });
+    return { ok: false };
   } finally {
     state = "idle";
   }
@@ -218,7 +230,7 @@ async function fill(auto) {
   }
 
   // The résumé first: many applicant systems read it and rewrite the form.
-  if (await session.uploadResume(copy)) {
+  if (await session.uploadResume(copy, { auto })) {
     status({ phase: "filling", done: 0, total: 0, note: "Uploading your résumé…" }, { now: true });
     await settle();
   }
@@ -249,8 +261,15 @@ async function fill(auto) {
   }
   if (leftovers.length) {
     const n = Math.min(leftovers.length, 40);
-    status({ phase: "filling", done: lastReport.filled, total: lastReport.filled + n, note: `Asking the AI about ${n} question${n === 1 ? "" : "s"}…` }, { now: true });
-    await session.fillWithAi(leftovers);
+    const asking = { phase: "filling", done: lastReport.filled, total: lastReport.filled + n, note: `Asking the AI about ${n} question${n === 1 ? "" : "s"}…` };
+    status(asking, { now: true });
+    // Still working: the panel's "taking too long" only fires on real silence.
+    const alive = setInterval(() => status(asking, { now: true }), 5000);
+    try {
+      await session.fillWithAi(leftovers);
+    } finally {
+      clearInterval(alive);
+    }
     report();
   }
   status({ phase: "done", filled: lastReport.filled, need: lastReport.need }, { now: true });
@@ -373,4 +392,15 @@ if (document.body && isCurrent()) {
   });
   observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "hidden", "aria-hidden", "style", "class"] });
   watchForSubmit({ isCurrent, onSubmit: (job) => send({ type: "markApplied", job }) });
+  // A frame going away (a pop-up's frame closed) takes its form with it.
+  window.addEventListener("pagehide", () => {
+    if (lastSent) send({ type: "formPresence", presence: { form: false } });
+  });
+  // ...and back from the back/forward cache: say so again.
+  window.addEventListener("pageshow", (e) => {
+    if (!e.persisted) return;
+    lastSig = "";
+    lastSent = "";
+    check();
+  });
 }

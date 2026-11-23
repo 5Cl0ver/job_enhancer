@@ -90,6 +90,18 @@ export function createFillPresence({ notify }) {
     });
   }
 
+  /** Drop frames that no longer answer. */
+  function forget(tabId, frameIds) {
+    return queue(async () => {
+      const key = formKey(tabId);
+      const { [key]: held } = await chrome.storage.session.get(key);
+      if (!held) return;
+      for (const id of frameIds) delete held.frames[id];
+      await chrome.storage.session.set({ [key]: held });
+      await badge(tabId);
+    });
+  }
+
   function setStatus(tabId, status) {
     return queue(async () => {
       await chrome.storage.session.set({ [statusKey(tabId)]: { ...status, at: Date.now() } });
@@ -136,14 +148,24 @@ export function createFillPresence({ notify }) {
       if (targets.some((f) => f.p.inModal)) targets = targets.filter((f) => f.p.inModal);
       const ids = targets.length ? targets.map((f) => f.id) : [0];
       await setStatus(tabId, { phase: "filling", done: 0, total: 0, note: "Starting…" });
-      const replies = await Promise.all(
-        ids.map((frameId) =>
-          Promise.race([
-            chrome.tabs.sendMessage(tabId, { type: "runAutofill", force: true }, { frameId }).catch(() => null),
-            new Promise((r) => setTimeout(() => r({ ok: false, slow: true }), FRAME_TIMEOUT_MS)),
-          ]),
-        ),
-      );
+      const ask = (list) =>
+        Promise.all(
+          list.map((frameId) =>
+            Promise.race([
+              chrome.tabs.sendMessage(tabId, { type: "runAutofill", force: true }, { frameId }).catch(() => null),
+              new Promise((r) => setTimeout(() => r({ ok: false, slow: true }), FRAME_TIMEOUT_MS)),
+            ]),
+          ),
+        );
+      let replies = await ask(ids);
+      // Every target gone (a frame closed without saying so): forget them and
+      // try the other frames with a form, or the page itself.
+      if (replies.every((r) => r == null)) {
+        await forget(tabId, ids);
+        const rest = frames.filter((f) => f.p.form && !ids.includes(f.id)).map((f) => f.id);
+        const retry = rest.length ? rest : ids.includes(0) ? [] : [0];
+        if (retry.length) replies = await ask(retry);
+      }
       const ok = replies.filter((r) => r?.ok);
       const filled = ok.reduce((n, r) => n + (r.filled || 0), 0);
       const need = ok.reduce((n, r) => n + (r.need || 0), 0);

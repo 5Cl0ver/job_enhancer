@@ -68,7 +68,15 @@ export function Apply({
     await send({ type: "pressAutofill", tabId: tab.id });
     setBusy(false);
   }
-  const filling = busy || fill.presence?.status?.phase === "filling";
+  // A status that went silent (STUCK_MS) no longer holds the button: press again.
+  const st = fill.presence?.status;
+  const [, wake] = React.useState(0);
+  React.useEffect(() => {
+    if (st?.phase !== "filling") return;
+    const t = setTimeout(() => wake((n) => n + 1), Math.max(0, st.at + STUCK_MS - Date.now()) + 50);
+    return () => clearTimeout(t);
+  }, [st?.phase, st?.at]);
+  const filling = busy || (st?.phase === "filling" && Date.now() - st.at < STUCK_MS);
 
   async function undoAll() {
     if (!tab.id) return;

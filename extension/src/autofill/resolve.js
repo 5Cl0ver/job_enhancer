@@ -23,8 +23,16 @@ export function isResumeUpload(field) {
  */
 export function nationalNumber(phone) {
   const s = String(phone || "").trim();
-  if (s.startsWith("+")) return s.replace(/^\+\d{1,3}[\s.-]*/, "");
-  if (s.replace(/\D/g, "").length === 11 && /^1/.test(s)) return s.replace(/^1[\s.-]*/, "");
+  const digits = s.replace(/\D/g, "");
+  if (s.startsWith("+")) {
+    // "+1 555…", "+44-20…", "+1(555)…": the code is what comes before the first break.
+    const m = /^\+\d{1,3}(?=[\s.(-])[\s.-]*/.exec(s);
+    if (m) return s.slice(m[0].length);
+    // "+15550102345": only a North American number is safe to split unseparated.
+    if (digits.length === 11 && digits.startsWith("1")) return digits.slice(1);
+    return s;
+  }
+  if (digits.length === 11 && /^1/.test(s)) return s.replace(/^1[\s.-]*/, "");
   return s;
 }
 

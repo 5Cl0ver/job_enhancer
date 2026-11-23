@@ -102,6 +102,11 @@ describe("reading the question, in every common label style", () => {
     expect(questionFor(doc.querySelector("#b"))).toBe("Last name");
   });
 
+  it("an error or hint line after the box is never its question", () => {
+    expect(q(`<div><input aria-label="First name"><span class="error-label">This field is required</span></div>`)).toBe("First name");
+    expect(q(`<div><label for="z">First name</label><div><input id="z"><label class="char-count-label">0/50</label></div></div>`)).toBe("First name");
+  });
+
   it("a label of symbols only (':' or '*') gives way to the placeholder", () => {
     expect(q(`<div><span>:</span><input placeholder="City"></div>`)).toBe("City");
   });
@@ -113,6 +118,10 @@ describe("phone beside a country-code picker", () => {
     expect(nationalNumber("+44 20 7946 0000")).toBe("20 7946 0000");
     expect(nationalNumber("15550104477")).toBe("5550104477");
     expect(nationalNumber("555-010-4477")).toBe("555-010-4477");
+    // Stored without spaces (review of PR #33): never cut into the number.
+    expect(nationalNumber("+15550104477")).toBe("5550104477");
+    expect(nationalNumber("+447700900123")).toBe("+447700900123"); // unsure where the code ends: whole
+    expect(nationalNumber("+1(555) 010-4477")).toBe("(555) 010-4477");
   });
 
   it("sees the picker, a '+1' in front, or '+1' already in the box", () => {
@@ -160,5 +169,14 @@ describe("the résumé goes first; an open pop-up is filled alone", () => {
     await s.fillKnown(copy());
     expect(doc.querySelector("#fn").value).toBe("Wren");
     expect(doc.querySelector("#n0").value).toBe(""); // behind the pop-up: left alone
+  });
+
+  it("a 'pop-up' without a form of its own (a date picker) never hides the page's form", async () => {
+    const doc = parse(`<form><label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln"><label for="em">Email</label><input id="em" type="email"></form>
+      <div role="dialog" id="picker"><label for="day">Day</label><input id="day"></div>`);
+    const s = session(doc, { scope: () => doc.querySelector("#picker") });
+    expect(s.presence()).toMatchObject({ form: true, fields: 4 });
+    await s.fillKnown(copy());
+    expect(doc.querySelector("#fn").value).toBe("Wren");
   });
 });
