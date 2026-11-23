@@ -25,11 +25,31 @@ describe("claimPage", () => {
   });
 
   it("a page that wipes the claim doesn't silence the live copy", () => {
+    globalThis.chrome = { runtime: { id: "job-catcher" } };
     const live = claimPage("content");
     document.documentElement.removeAttribute("data-je-content");
     expect(live()).toBe(true);
     // ...and it holds the page again, so an older copy still loses.
     expect(document.documentElement.getAttribute("data-je-content")).toBeTruthy();
+    delete globalThis.chrome;
+  });
+
+  it("a copy that was replaced never becomes current again", () => {
+    globalThis.chrome = { runtime: { id: "job-catcher" } };
+    const old = claimPage("content");
+    const live = claimPage("content");
+    expect(old()).toBe(false);
+    document.documentElement.removeAttribute("data-je-content");
+    expect(old()).toBe(false); // it saw a newer copy: it never re-claims
+    expect(live()).toBe(true);
+    delete globalThis.chrome;
+  });
+
+  it("a dead copy (its extension updated away) never claims a wiped page", () => {
+    const dead = claimPage("content"); // no chrome.runtime here: a dead copy
+    document.documentElement.removeAttribute("data-je-content");
+    expect(dead()).toBe(false);
+    expect(document.documentElement.getAttribute("data-je-content")).toBeNull();
   });
 });
 

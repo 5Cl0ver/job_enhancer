@@ -195,6 +195,18 @@ async def _find_saved_listing(
     listing = await db.scalar(
         select(JobListing).where(JobListing.content_hash == content_hash)
     )
+    if listing is not None and is_mail_link(listing.apply_url):
+        # Maybe someone else's email-made job: this user's own copy has its own hash.
+        own = await db.scalar(
+            select(JobListing).where(
+                JobListing.content_hash
+                == _own_hash(
+                    normalize(title), normalize(company), normalize(location), user_id
+                )
+            )
+        )
+        if own is not None:
+            listing = own
     if listing is not None:
         saved_id = await db.scalar(
             select(SavedJob.id).where(
@@ -285,8 +297,9 @@ def _link_forms(url: str) -> list[str]:
 async def _private_to_another(
     db: AsyncSession, listing: JobListing, user_id: uuid.UUID
 ) -> bool:
-    """A listing whose link is someone else's mailbox: email-made by another
-    user, and not saved by this one."""
+    """A listing whose link is someone else's mailbox (email-made), that this
+    user hasn't saved. Private even when its maker has since deleted the job:
+    the link still carries their email's subject and sender."""
     if not is_mail_link(listing.apply_url):
         return False
     mine = await db.scalar(
@@ -294,7 +307,13 @@ async def _private_to_another(
             SavedJob.user_id == user_id, SavedJob.job_listing_id == listing.id
         )
     )
-    return mine is None and await _held_by_others(db, listing.id, user_id)
+    return mine is None
+
+
+def _own_hash(title_norm: str, company_norm: str, location_norm: str, user_id) -> str:
+    """The content hash of this user's own copy of a job whose shared listing
+    is someone else's email-made one (see save_manual_job)."""
+    return job_content_hash(title_norm, company_norm, f"{location_norm}|own:{user_id}")
 
 
 def listing_needs_details(listing: JobListing) -> bool:
@@ -321,14 +340,19 @@ async def backfill_job_details(
     )
     if listing is None:
         return []
-    # job_listings is a shared pool: never change a row another user relies on.
-    if await _held_by_others(db, listing.id, user_id):
+    # job_listings is a shared pool. A row another user also saved changes only
+    # when it is a job board's listing matched exactly, and then only by
+    # upgrading its public posting (description, pay, type) — never a typed-in
+    # (manual) row, a link-only match, or its location / remote-ness.
+    shared = await _held_by_others(db, listing.id, user_id)
+    if shared and (by_link or listing.source == "manual"):
         return []
 
     updated: list[str] = []
     # Saved before its page was read: take the page's real location.
     if (
-        listing.location in (None, "", "Not specified")
+        not shared
+        and listing.location in (None, "", "Not specified")
         and data.location
         and data.location != "Not specified"
     ):
@@ -358,7 +382,7 @@ async def backfill_job_details(
     # on-site jobs as Remote (full-page text scan); the capture sent from the
     # job's own page is the trustworthy signal.
     # (Not on a link-only match: the page may still be drawing the job.)
-    if not by_link and data.is_remote != listing.is_remote:
+    if not by_link and not shared and data.is_remote != listing.is_remote:
         listing.is_remote = data.is_remote
         updated.append("is_remote")
 
@@ -439,9 +463,7 @@ async def save_manual_job(
     if listing is not None and await _private_to_another(db, listing, user_id):
         # Another user's email-made job: its link opens THEIR mailbox (subject,
         # sender). Give this user their own listing instead of sharing it.
-        content_hash = job_content_hash(
-            title_norm, company_norm, f"{location_norm}|own:{user_id}"
-        )
+        content_hash = _own_hash(title_norm, company_norm, location_norm, user_id)
         listing = await db.scalar(
             select(JobListing).where(JobListing.content_hash == content_hash)
         )

@@ -15,7 +15,7 @@ import { fileURLToPath } from "node:url";
 export const ROOT = dirname(dirname(dirname(fileURLToPath(import.meta.url)))); // extension/
 export const FIXTURES = join(ROOT, "test", "fixtures");
 
-const SKIP = new Set(["node_modules", "e2e", "test", "test-results", "src", ".vite"]);
+const SKIP = new Set(["node_modules", "e2e", "test", "test-results", "src", ".vite", ".legacy"]);
 
 /** The lab's pages are served over http on these hosts (two origins). */
 const LAB_MATCHES = ["http://localhost/*", "http://127.0.0.1/*"];

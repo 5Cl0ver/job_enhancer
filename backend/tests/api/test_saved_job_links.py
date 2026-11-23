@@ -1,6 +1,8 @@
 """Spec 015 (PR #29 review): matching a saved job by its posting link, and
 never sharing what isn't the user's. Invented people and jobs only."""
 
+import uuid
+
 import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
@@ -8,6 +10,7 @@ from sqlalchemy import select
 from app.models.job_listing import JobListing
 from app.models.saved_job import SavedJob
 from app.schemas.saved_job import ManualJobCreate
+from app.services.dedup import job_content_hash, normalize
 from app.services.saved_jobs import save_manual_job
 from tests.api.test_scout_tracks import _other_user
 
@@ -122,3 +125,88 @@ class TestEmailJobsStayPrivate:
             select(SavedJob).where(SavedJob.user_id == other.id)
         )
         assert theirs.job_listing_id != mine["job_listing_id"]
+
+
+async def _board_listing(db, *users, title="Network Technician"):
+    """A job board's (shared, public) listing, saved by these users."""
+    listing = JobListing(
+        id=uuid.uuid4(),
+        external_id=uuid.uuid4().hex,
+        source="adzuna",
+        title=title,
+        company="Quillstone",
+        location="Harborview, OR",
+        apply_url="https://board.example/jobs/77",
+        description="Short feed snippet.",
+        content_hash=job_content_hash(
+            normalize(title), normalize("Quillstone"), normalize("Harborview, OR")
+        ),
+        company_normalized="quillstone",
+        title_normalized=normalize(title),
+    )
+    db.add(listing)
+    await db.flush()
+    for u in users:
+        db.add(SavedJob(id=uuid.uuid4(), user_id=u.id, job_listing_id=listing.id))
+    await db.flush()
+    return listing
+
+
+@pytest.mark.asyncio
+class TestSharedBoardListings:
+    async def test_a_shared_job_board_listing_still_gets_its_posting(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        other = await _other_user(db_session)
+        listing = await _board_listing(db_session, other, test_user)
+        filled = await client.post(
+            "/v1/saved-jobs/backfill",
+            json={
+                "url": "https://board.example/jobs/77",
+                "title": "Network Technician",
+                "company": "Quillstone",
+                "location": "Harborview, OR",
+                "description": POSTING,
+                "is_remote": True,
+            },
+        )
+        assert filled.json()["fields"] == ["description"]
+        await db_session.refresh(listing)
+        assert listing.description == POSTING
+        assert listing.is_remote is False  # never changed on a shared row
+
+
+@pytest.mark.asyncio
+class TestEmailJobsStayPrivateAfterDelete:
+    async def test_a_deleted_email_job_is_still_not_shared(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        other = await _other_user(db_session)
+        mailbox = "https://mail.google.com/mail/u/0/#search/Offer%20from%20Rowan"
+        theirs = await save_manual_job(
+            db_session,
+            other.id,
+            ManualJobCreate(url=mailbox, title="Help Desk Analyst", company="Vellacor"),
+        )
+        await db_session.delete(theirs)  # they deleted it; the listing stays
+        await db_session.flush()
+        mine = await _save(
+            client,
+            url="https://careers.vellacor.example/jobs/3",
+            title="Help Desk Analyst",
+            company="Vellacor",
+        )
+        assert (
+            mine["job_listing"]["apply_url"]
+            == "https://careers.vellacor.example/jobs/3"
+        )
+        # ...and their own copy is found again as "already saved" (its own key).
+        check = await client.post(
+            "/v1/saved-jobs/check",
+            json={
+                "title": "Help Desk Analyst",
+                "company": "Vellacor",
+                "location": "Not specified",
+            },
+        )
+        assert check.json()["saved"] is True

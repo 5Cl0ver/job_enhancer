@@ -18,17 +18,21 @@ export function claimPage(scope) {
   const attr = `data-je-${scope}`;
   const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
   document.documentElement.setAttribute(attr, token);
+  let superseded = false;
   return () => {
+    if (superseded) return false; // once replaced, never current again
     const root = document.documentElement;
     const held = root?.getAttribute(attr);
-    // Superseded only when ANOTHER copy's token is there. A page that wiped
-    // the attribute (re-rendered <html>, document.write) doesn't silence the
-    // live copy: it claims the page again.
     if (held == null) {
+      // A page that wiped the attribute (re-rendered <html>, document.write)
+      // doesn't silence the live copy: it claims the page again. A dead copy
+      // (its extension updated away) never does.
+      if (runtimeGone()) return false;
       root?.setAttribute(attr, token);
       return true;
     }
-    return held === token;
+    if (held !== token) superseded = true;
+    return !superseded;
   };
 }
 
