@@ -62,6 +62,8 @@ export async function startFakeApi() {
     claudeProjectUrl: "",
     documents: [], // what the panel saved or generated
     syncs: [], // Indeed applications the panel synced
+    bundleVersion: 1, // bumped whenever the profile or answers change
+    aiAnswers: {}, // question label -> {value, confidence} the fake AI gives
     resume: { filename: "wren-calloway.pdf", bytes: Buffer.from("%PDF-1.4\n% invented résumé\n") },
   };
   const log = []; // {method, path, body, at}
@@ -86,6 +88,7 @@ export async function startFakeApi() {
     "GET /v1/users/me/application-profile": () => ({ body: state.profile }),
     "PUT /v1/users/me/application-profile": (b) => {
       state.profile = { ...state.profile, ...b };
+      state.bundleVersion++;
       return { body: state.profile };
     },
     "GET /v1/users/me/custom-answers": () => ({ body: state.answers }),
@@ -94,6 +97,7 @@ export async function startFakeApi() {
         state.answers = state.answers.filter((x) => x.question_key !== a.question_key);
         state.answers.push(a);
       }
+      state.bundleVersion++;
       return { body: b?.answers || [] };
     },
     "POST /v1/users/me/custom-answers/used": () => ({ status: 204 }),
@@ -101,7 +105,38 @@ export async function startFakeApi() {
       raw: state.resume.bytes,
       headers: { "content-type": "application/pdf", "X-Resume-Filename": state.resume.filename },
     }),
-    "POST /v1/ai/autofill-map": () => ({ body: { mappings: {}, confidence: {} } }),
+    "POST /v1/ai/autofill-map": (b) => {
+      const mappings = {};
+      const confidence = {};
+      for (const f of b?.fields || []) {
+        const a = state.aiAnswers[f.label];
+        if (a) {
+          mappings[f.id] = a.value;
+          confidence[f.id] = a.confidence ?? 0.9;
+        }
+      }
+      return { body: { mappings, confidence } };
+    },
+    "GET /v1/autofill/bundle": (_b, req) => {
+      const version = `b${state.bundleVersion}`;
+      if (new URL(req.url, "http://x").searchParams.get("version") === version) {
+        return { body: { changed: false, version } };
+      }
+      return {
+        body: {
+          changed: true,
+          version,
+          email: state.email,
+          profile: state.profile,
+          answers: state.answers,
+          history: null,
+          history_pending: false,
+          resume: state.resume
+            ? { id: "resume-1", filename: state.resume.filename, mime: "application/pdf", updated_at: "2026-11-23T08:00:00Z" }
+            : null,
+        },
+      };
+    },
     "POST /v1/ai/work-history": () => ({ body: { entries: [] } }),
     "GET /v1/saved-jobs/summary": (_b, req) => {
       const asked = new URL(req.url, "http://x").searchParams.get("version");

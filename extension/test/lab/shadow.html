@@ -1,0 +1,29 @@
+<!doctype html>
+<!-- Lab page (invented company): a form built entirely from web components
+     whose insides are hidden in shadow roots, one open and one closed. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Apply: Lab Technician at Tidewell Labs</title></head>
+  <body>
+    <h1>Lab Technician</h1>
+    <form>
+      <name-fields></name-fields>
+      <contact-fields></contact-fields>
+    </form>
+    <script>
+      customElements.define("name-fields", class extends HTMLElement {
+        constructor() { super(); this.attachShadow({ mode: "open" }).innerHTML =
+          '<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">'; }
+      });
+      window.__closed = {};
+      customElements.define("contact-fields", class extends HTMLElement {
+        constructor() { super(); const r = this.attachShadow({ mode: "closed" }); window.__closed.root = r;
+          r.innerHTML = '<label for="em">Email</label><input id="em" type="email"><label for="ci">City</label><input id="ci">'; }
+      });
+      window.__formData = () => {
+        const o = document.querySelector("name-fields").shadowRoot, c = window.__closed.root;
+        return { first: o.getElementById("fn").value, last: o.getElementById("ln").value,
+                 email: c.getElementById("em").value, city: c.getElementById("ci").value };
+      };
+    </script>
+  </body>
+</html>

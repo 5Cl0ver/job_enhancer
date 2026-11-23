@@ -207,12 +207,27 @@ Rules (follow EXACTLY):
 _AUTOFILL_KEEP_CONFIDENCE = {"high", "medium"}
 
 
+# How sure the model was, as the number the extension compares (spec 015):
+# it fills an answer at 0.75 or more and only suggests anything less.
+_CONFIDENCE_SCORE = {"high": 0.9, "medium": 0.6}
+
+
 async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
+    """Grounded field mapping, values only (see ``map_fields_scored``)."""
+    mappings, _ = await map_fields_scored(user_data, fields)
+    return mappings
+
+
+async def map_fields_scored(
+    user_data: str, fields: list[dict]
+) -> tuple[dict[str, str], dict[str, float]]:
     """Grounded, schema-constrained field mapping: given the user's data and the
-    form fields the deterministic pass couldn't fill, return {field_id: value}
-    using ONLY that data. Any failure returns {} (autofill degrades gracefully)."""
+    form fields the deterministic pass couldn't fill, return ({field_id: value},
+    {field_id: confidence 0..1}) using ONLY that data. Low-confidence guesses
+    are dropped; a choice that isn't one of a field's options is dropped. Any
+    failure returns empty maps (autofill degrades gracefully)."""
     if not fields:
-        return {}
+        return {}, {}
     user = (
         f"USER DATA:\n{user_data}\n\n"
         f"FORM FIELDS (JSON):\n{json.dumps(fields, ensure_ascii=False)}\n\n"
@@ -222,38 +237,44 @@ async def map_fields(user_data: str, fields: list[dict]) -> dict[str, str]:
         content, _ = await _invoke(_AUTOFILL_SYSTEM, user)
     except Exception as exc:  # never let AI mapping break autofill
         logger.warning("autofill map_fields failed: %s", exc)
-        return {}
+        return {}, {}
 
     # Extract the JSON object from the reply (models sometimes wrap it).
     match = re.search(r"\{.*\}", content, re.DOTALL)
     if not match:
-        return {}
+        return {}, {}
     try:
         data = json.loads(match.group(0))
     except (ValueError, TypeError):
-        return {}
+        return {}, {}
     if not isinstance(data, dict):
-        return {}
+        return {}, {}
     # Keep only string-ish values, capped, keyed by known field ids — and only
     # when the model was confident (see _AUTOFILL_KEEP_CONFIDENCE).
-    ids = {f.get("id") for f in fields}
+    by_id = {f.get("id"): f for f in fields}
     out: dict[str, str] = {}
+    scores: dict[str, float] = {}
     for k, v in data.items():
-        if k not in ids:
+        if k not in by_id:
             continue
         if isinstance(v, dict):
             # Confidence-tagged format {"value": ..., "confidence": ...}.
-            if (
-                str(v.get("confidence", "medium")).lower()
-                not in _AUTOFILL_KEEP_CONFIDENCE
-            ):
+            level = str(v.get("confidence", "medium")).lower()
+            if level not in _AUTOFILL_KEEP_CONFIDENCE:
                 continue  # low-confidence guess — leave it for the user
             value = v.get("value")
         else:
-            value = v  # back-compat: a bare value counts as confident
-        if isinstance(value, (str, int, float, bool)) and str(value).strip():
-            out[k] = str(value).strip()[:500]
-    return out
+            level = "medium"  # a bare value: not sure enough to fill by itself
+            value = v
+        if not isinstance(value, (str, int, float, bool)) or not str(value).strip():
+            continue
+        value = str(value).strip()[:500]
+        options = by_id[k].get("options") or []
+        if options and value.lower() not in {str(o).strip().lower() for o in options}:
+            continue  # not one of the field's choices
+        out[k] = value
+        scores[k] = _CONFIDENCE_SCORE[level]
+    return out, scores
 
 
 _WORK_HISTORY_SYSTEM = """You extract EVERY job from a person's resume into structured JSON.

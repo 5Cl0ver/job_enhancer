@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Lab page (invented company): the parts of an application only the person
+     answers — self-identification, agreements and an essay. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Apply: Field Service Technician at Tidewell Labs</title></head>
+  <body>
+    <form>
+      <label for="fn">First name</label><input id="fn">
+      <label for="em">Email</label><input id="em" type="email">
+      <label for="g">Gender</label><select id="g"><option value="">Select…</option><option>Female</option><option>Male</option><option>Decline to answer</option></select>
+      <fieldset><legend>Are you a protected veteran?</legend>
+        <label><input type="radio" name="vet" value="yes">Yes</label><label><input type="radio" name="vet" value="no">No</label></fieldset>
+      <label for="race">Race / Ethnicity</label><select id="race"><option value="">Select…</option><option>Decline to answer</option></select>
+      <label><input type="checkbox" id="agree"> I certify that the information I provided is true and complete.</label>
+      <label for="why">Why do you want to work at Tidewell Labs?</label><textarea id="why"></textarea>
+    </form>
+  </body>
+</html>

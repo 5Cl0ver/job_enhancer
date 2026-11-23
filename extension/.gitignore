@@ -6,3 +6,5 @@ playwright-report/
 .playwright/
 # Old versions built by the browser tests to check real upgrades (e2e/support).
 .legacy/
+# The lab's React form is built by the browser tests (e2e/support/lab-server.js).
+test/lab/react-form/app.js

@@ -126,8 +126,8 @@ async def test_generate_requires_existing_resume(client: AsyncClient):
 async def test_autofill_map(client: AsyncClient):
     """The AI field mapper returns {id: value}; the LLM is mocked."""
     with patch(
-        "app.api.v1.ai.ai_service.map_fields",
-        new=AsyncMock(return_value={"f0": "Bachelor's degree"}),
+        "app.api.v1.ai.ai_service.map_fields_scored",
+        new=AsyncMock(return_value=({"f0": "Bachelor's degree"}, {"f0": 0.9})),
     ):
         r = await client.post(
             "/v1/ai/autofill-map",
@@ -144,6 +144,7 @@ async def test_autofill_map(client: AsyncClient):
         )
     assert r.status_code == 200
     assert r.json()["mappings"]["f0"] == "Bachelor's degree"
+    assert r.json()["confidence"] == {"f0": 0.9}
 
 
 @pytest.mark.asyncio
@@ -178,6 +179,37 @@ async def test_map_fields_drops_low_confidence():
             [{"id": "f0"}, {"id": "f1"}, {"id": "f2"}, {"id": "f3"}],
         )
     assert out == {"f0": "Bachelor's", "f1": "Yes", "f3": "3 years"}
+
+
+@pytest.mark.asyncio
+async def test_map_fields_scores_confidence_and_checks_choices():
+    """Spec 015: high → 0.9 (the extension fills it), medium or a bare value →
+    0.6 (only a suggestion); a value that isn't one of the choices is dropped."""
+    import json
+
+    from app.services import ai_service
+
+    reply = json.dumps(
+        {
+            "f0": {"value": "Bachelor's degree", "confidence": "high"},
+            "f1": {"value": "Yes", "confidence": "medium"},
+            "f2": {"value": "Maybe", "confidence": "high"},  # not a choice
+            "f3": "3 years",
+        }
+    )
+    fields = [
+        {"id": "f0", "options": ["High school", "Bachelor's degree"]},
+        {"id": "f1", "options": ["Yes", "No"]},
+        {"id": "f2", "options": ["Yes", "No"]},
+        {"id": "f3", "options": []},
+    ]
+    with patch(
+        "app.services.ai_service._invoke",
+        new=AsyncMock(return_value=(reply, None)),
+    ):
+        out, scores = await ai_service.map_fields_scored("USER DATA", fields)
+    assert out == {"f0": "Bachelor's degree", "f1": "Yes", "f3": "3 years"}
+    assert scores == {"f0": 0.9, "f1": 0.6, "f3": 0.6}
 
 
 @pytest.mark.asyncio

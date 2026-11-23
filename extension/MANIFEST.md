@@ -35,6 +35,26 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `config.example.js` / `config.js` | Public client config (`config.js` **gitignored**): `API_BASE`, `APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` |
 | `icons/` | Toolbar/store icons (16/48/128) |
 
+## Autofill (`src/autofill/`, spec 015 Stories 1–2)
+
+One press fills every field the app knows, **instantly** (from the copy of the user's details the
+background holds — never a server wait), checks each one took, then the app's AI answers what's left.
+Never submits; never overwrites the user; never touches self-ID, agreements, essays.
+
+| File | Purpose |
+|---|---|
+| `src/autofill.entry.js` | Content script, every frame of every https page: the pill (only on pages that look like an application), run, messages from the panel (Fix / Undo / Show / Remember), submit tracking |
+| `src/autofill/scan.js` | Every field a person would fill — including inside shadow DOM (open and closed) — and the question it asks (label, aria, legend, nearby text, placeholder) |
+| `src/autofill/classify/profileKeys.js` | Which profile answer a question wants (autocomplete first, then words), the guards (self-ID, consent, essays, noise), and the profile's answers in the forms dropdowns use ("OR"/"Oregon") |
+| `src/autofill/classify/answers.js` | Remembered-answer matching (with the country / number / "not" guard) and option matching ("Yes" ↔ "Yes, I am authorized") |
+| `src/autofill/resolve.js` | Field + copy → what to write and where it came from, or why not |
+| `src/autofill/widgets.js` | One writer per kind (text, dates, selects, radios, Yes/No buttons, checkbox lists, search dropdowns incl. typeaheads, files) that acts like a person and **reads back**; snapshot/restore for Undo |
+| `src/autofill/session.js` | A frame's fill: known answers, then one AI request; Fix (custom fixes are remembered), Undo, Show, typed answers |
+| `src/autofill/workday.js` | Workday's Work Experience blocks from the résumé |
+| `src/autofill/track.js` | Submit → the saved job moves to Applied |
+| `src/background/autofillCopy.js` | The copy autofill fills from (`GET /v1/autofill/bundle` with a version check, résumé bytes, the staged tailored résumé); wiped on sign-out / another account |
+| `panel/src/views/Apply.tsx` | The review: Needs you, Check these (AI), Filled (collapsed) — Fix with the page's real options, Show, Undo, Undo all, Remember what I typed |
+
 ## Side panel (`panel/`, spec 015 Story 7)
 
 Vite + React 19 + Tailwind v4 + lucide, the same stack and tokens as `frontend/`; built to

@@ -11,6 +11,7 @@
 import { friendlyApiError } from "./errors.js";
 import { parseSummary } from "./savedSync.js";
 import { reinjectOpenTabs } from "./background/reinject.js";
+import { createAutofillCopy } from "./background/autofillCopy.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -224,61 +225,64 @@ async function scoutCapture(job) {
   return { active: true, stored: !!d.stored };
 }
 
-// Everything ATS autofill needs, in one message: the profile vault, the
-// user's email, and the resume file (base64 — messages are JSON-serialized).
-async function getAutofillData() {
-  const token = await getValidToken();
-  if (!token) return { signedIn: false };
-  const headers = { Authorization: `Bearer ${token}` };
+// Everything autofill needs, held by the extension (spec 015): a press never
+// waits on the server. See background/autofillCopy.js.
+const autofill = createAutofillCopy({
+  api: cfg.API_BASE,
+  token: () => getValidToken(),
+  wakeFetch: (url, opts) => wakeFetch(url, opts),
+  toB64: bytesToB64,
+});
 
-  const profRes = await fetch(`${cfg.API_BASE}/v1/users/me/application-profile`, {
-    headers,
+// Per-tab fill sessions (what each frame filled), for the side panel's review.
+// Kept in storage.session: they survive the worker sleeping, and go with the
+// browser session.
+const fillKey = (tabId) => `je_fill:${tabId}`;
+
+// One write at a time: frames reporting together must not overwrite each
+// other's read-modify-write.
+let fillWrites = Promise.resolve();
+function storeFillSession(tabId, frameId, session) {
+  fillWrites = fillWrites.catch(() => {}).then(async () => {
+    const key = fillKey(tabId);
+    const { [key]: held = { frames: {} } } = await chrome.storage.session.get(key);
+    held.frames[frameId] = { ...session, at: Date.now() };
+    await chrome.storage.session.set({ [key]: held });
+    chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
   });
-  const profile = profRes.ok ? await profRes.json() : null;
+  return fillWrites;
+}
 
-  let { je_email: email } = await chrome.storage.local.get("je_email");
-  if (!email) {
-    const me = await fetch(`${cfg.API_BASE}/v1/users/me`, { headers });
-    if (me.ok) email = (await me.json()).email;
-  }
+async function getFillSession(tabId) {
+  const key = fillKey(tabId);
+  const { [key]: held } = await chrome.storage.session.get(key);
+  return held || { frames: {} };
+}
 
-  let resume = null;
-  // Prefer a STAGED tailored résumé — the one the user just generated for this
-  // job in the panel — so autofill uploads THAT straight into the file field
-  // (no download, no file-picker hunt). Falls back to the active résumé.
-  const { je_staged_resume } = await chrome.storage.local.get("je_staged_resume");
-  if (je_staged_resume?.docId) {
-    const p = await fetch(
-      `${cfg.API_BASE}/v1/ai/documents/${je_staged_resume.docId}/pdf`,
-      { headers },
-    );
-    if (p.ok) {
-      resume = {
-        b64: bytesToB64(await p.arrayBuffer()),
-        filename: je_staged_resume.filename || "resume.pdf",
-        mime: "application/pdf",
-      };
-    }
-  }
-  if (!resume) {
-    const fileRes = await fetch(`${cfg.API_BASE}/v1/ai/resumes/active/file`, {
-      headers,
-    });
-    if (fileRes.ok) {
-      resume = {
-        b64: bytesToB64(await fileRes.arrayBuffer()),
-        filename: fileRes.headers.get("X-Resume-Filename") || "resume.pdf",
-        mime: fileRes.headers.get("Content-Type") || "application/pdf",
-      };
-    }
-  }
+async function clearFillSession(tabId) {
+  await chrome.storage.session.remove(fillKey(tabId)).catch(() => {});
+  chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+}
 
-  // Learn-as-you-go memory: answers to questions the profile can't map.
-  let customAnswers = [];
-  const caRes = await fetch(`${cfg.API_BASE}/v1/users/me/custom-answers`, { headers });
-  if (caRes.ok) customAnswers = await caRes.json().catch(() => []);
+try {
+  chrome.tabs.onRemoved.addListener((tabId) => clearFillSession(tabId));
+  // A new page in the tab: last page's review no longer applies.
+  chrome.tabs.onUpdated.addListener((tabId, info) => {
+    if (info.url) clearFillSession(tabId);
+  });
+} catch {
+  /* tabs API unavailable */
+}
 
-  return { signedIn: true, profile, email: email || "", resume, customAnswers };
+// The keyboard shortcut (chrome://extensions/shortcuts): fill the active tab.
+try {
+  chrome.commands.onCommand.addListener(async (command) => {
+    if (command !== "autofill") return;
+    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "runAutofill" }).catch(() => {});
+  });
+} catch {
+  /* commands API unavailable */
 }
 
 // AI field mapper: send the fields the deterministic pass couldn't fill; the
@@ -623,14 +627,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
       if (msg.type === "login") {
+        // Another account's copy must never fill this one's forms.
+        const { je_email: before } = await chrome.storage.local.get("je_email");
         await login(msg.email, msg.password);
+        if ((before || "").toLowerCase() !== (msg.email || "").toLowerCase()) await autofill.wipe();
+        autofill.refresh();
         sendResponse({ ok: true });
       } else if (msg.type === "authStatus") {
         const token = await getValidToken();
         const { je_email } = await chrome.storage.local.get("je_email");
         sendResponse({ ok: true, signedIn: !!token, email: je_email || "" });
       } else if (msg.type === "signOut") {
-        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email"]);
+        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email", "je_staged_resume"]);
+        await autofill.wipe();
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
@@ -640,8 +649,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });
       } else if (msg.type === "backfillJob") {
         sendResponse({ ok: true, ...(await backfillJob(msg.job)) });
-      } else if (msg.type === "getAutofillData") {
-        sendResponse({ ok: true, ...(await getAutofillData()) });
+      } else if (msg.type === "getAutofillCopy") {
+        sendResponse({ ok: true, ...(await autofill.get()) });
+      } else if (msg.type === "refreshAutofillCopy") {
+        sendResponse({ ok: await autofill.refresh() });
+      } else if (msg.type === "sessionUpdate") {
+        if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
+        sendResponse({ ok: true });
+      } else if (msg.type === "getFillSession") {
+        sendResponse({ ok: true, ...(await getFillSession(msg.tabId)) });
+      } else if (msg.type === "fillAction") {
+        // From the side panel, to the frame that owns the field.
+        const opts = msg.frameId != null ? { frameId: msg.frameId } : undefined;
+        const out = await chrome.tabs
+          .sendMessage(msg.tabId, { type: "fillAction", action: msg.action, id: msg.id, value: msg.value }, opts)
+          .catch(() => null);
+        sendResponse({ ok: !!out, ...(out || {}) });
+      } else if (msg.type === "openReview") {
+        // A click on the page's pill: Chrome allows opening the panel then.
+        if (sender.tab?.id != null) await chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
+        sendResponse({ ok: true });
       } else if (msg.type === "aiMapFields") {
         sendResponse({ ok: true, ...(await aiMapFields(msg.fields || [])) });
       } else if (msg.type === "getWorkHistory") {
@@ -652,6 +679,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(await saveClaudeProjectUrl(msg.url || ""));
       } else if (msg.type === "saveCustomAnswers") {
         const out = await saveCustomAnswers(msg.answers || []);
+        if (!out.error) autofill.refresh(); // the next fill knows them
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "markAnswersUsed") {
         sendResponse(await markAnswersUsed(msg.question_keys || []));
