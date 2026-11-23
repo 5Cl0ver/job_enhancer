@@ -533,6 +533,8 @@ export interface FindingItem {
   outcome: Outcome;
   facts_from: "copy" | "claude";
   can_save: boolean;
+  /** No page copy, but Claude read a title and company (spec 015). */
+  can_save_anyway?: boolean;
   saved_job_id: string | null;
   job_listing_id: string | null;
   found_at: string;

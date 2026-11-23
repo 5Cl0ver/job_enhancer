@@ -361,6 +361,34 @@ export function FindingCard({
             Save to My Jobs
           </Button>
         )}
+        {f.status === "new" && !f.can_save && f.can_save_anyway && (
+          <Button
+            size="sm"
+            variant="outline"
+            className="gap-1.5 pointer-coarse:min-h-11"
+            disabled={save.isPending}
+            onClick={() =>
+              save.mutate(
+                { findingId: f.id, anyway: true },
+                {
+                  onSuccess: (r) =>
+                    toast.success(
+                      r.already
+                        ? "That job was already in My Jobs."
+                        : `Saved to My Jobs › ${r.folder.name}. The full posting is added when you open it.`,
+                    ),
+                  onError: (e) =>
+                    toast.error(errorText(e, "Couldn't save that job.")),
+                },
+              )
+            }
+          >
+            {save.isPending && (
+              <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />
+            )}
+            Save anyway
+          </Button>
+        )}
         {f.status !== "saved" && (
           <a
             href={f.url}

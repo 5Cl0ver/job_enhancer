@@ -286,6 +286,8 @@ export interface ConfirmResult {
 interface WhereBody {
   collection_id?: string;
   new_collection_name?: string;
+  /** Save a job whose page wasn't copied (spec 015). */
+  anyway?: boolean;
 }
 
 /** Everything a save from Scout touches: the run, My Jobs, the collections

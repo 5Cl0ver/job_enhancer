@@ -15,12 +15,28 @@ import { shouldBackfill } from "./backfill.js";
 import { SCOUT_MAX_FAILS, scoutDone, scoutPayload } from "./scoutCapture.js";
 import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
 import { readApplications } from "./extract/indeed-myjobs.js";
+import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
+
+// This copy now owns the page. A copy from before an update (still running,
+// orphaned) sees it lost the claim and stops; buttons it drew are removed —
+// including any of OUR ids, which can only belong to an older copy right now.
+const isCurrent = claimPage("content");
+for (const el of document.querySelectorAll("#jec-save, #jec-apply-badge, #jec-apply-save, #jec-sync, #jec-sync-panel")) {
+  el.remove();
+}
+sweepLegacy("#je-save-btn, #je-apply-badge, #je-apply-save, #je-sync-btn, #je-sync-panel, #je-style");
+
 const host = location.hostname;
 const IS_INDEED = /(^|\.)indeed\./i.test(host);
 const IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
 const IS_ZIPRECRUITER = /(^|\.)ziprecruiter\./i.test(host);
 
-const BTN_ID = "je-save-btn";
+const BTN_ID = "jec-save";
+// Indeed "My jobs" sync button + review panel. Declared up here: the My jobs
+// block below runs while the module loads, and reading these before their
+// line used to throw, so the on-page Sync button never appeared.
+const SYNC_BTN_ID = "jec-sync";
+const SYNC_PANEL_ID = "jec-sync-panel";
 const LABEL = "＋ Save to Job Enhancer";
 const STALE_LABEL = "↻ Refresh page — extension updated";
 
@@ -35,12 +51,9 @@ let scoutInFlight = false;
 // running in an open tab is ORPHANED — chrome.runtime dies and every
 // sendMessage throws "Extension context invalidated". That sync throw used to
 // wedge the button on "Saving…" forever. Detect it and say what to do instead.
+// A copy superseded by a newer one (injected on update) counts as orphaned too.
 function orphaned() {
-  try {
-    return !chrome.runtime?.id;
-  } catch {
-    return true;
-  }
+  return !isCurrent() || runtimeGone();
 }
 
 /** sendMessage that NEVER throws synchronously — always yields a promise. */
@@ -77,7 +90,7 @@ if (ON_INDEED_APPLY) {
     injectStyles();
     if (!badge || !document.contains(badge)) {
       badge = document.createElement("div");
-      badge.id = "je-apply-badge";
+      badge.id = "jec-apply-badge";
       badge.className = "je-btn je-fab je-fab-left";
       document.body.appendChild(badge);
     }
@@ -121,7 +134,7 @@ if (ON_INDEED_APPLY) {
     if (saveBtn && document.contains(saveBtn)) return;
     injectStyles();
     saveBtn = document.createElement("button");
-    saveBtn.id = "je-apply-save";
+    saveBtn.id = "jec-apply-save";
     saveBtn.type = "button";
     saveBtn.className = "je-btn je-fab je-fab-left";
     saveBtn.style.bottom = "66px"; // stack above the badge (bottom: 20px), both left
@@ -197,6 +210,7 @@ if (ON_INDEED_MYJOBS) {
   document.addEventListener(
     "click",
     (e) => {
+      if (!isCurrent()) return; // a newer copy handles the page now
       const t = e.target;
       if (t && t.closest && t.closest("#" + SYNC_BTN_ID)) handleSyncClick();
     },
@@ -208,6 +222,7 @@ if (ON_INDEED_MYJOBS) {
   try {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg?.type !== "readApplications") return;
+      if (!isCurrent()) return;
       try {
         sendResponse({ ok: true, applications: readApplications(document) });
       } catch (e) {
@@ -219,10 +234,15 @@ if (ON_INDEED_MYJOBS) {
     /* orphaned */
   }
   let _st;
-  new MutationObserver(() => {
+  const syncObserver = new MutationObserver(() => {
+    if (!isCurrent()) {
+      syncObserver.disconnect(); // a newer copy took over (an update)
+      return;
+    }
     clearTimeout(_st);
     _st = setTimeout(ensureSyncButton, 500);
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  syncObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 // The normal Save button runs on job/search pages — NOT the apply flow (there's
@@ -263,7 +283,9 @@ if ((IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS) || IS_LINKEDIN || IS_ZI
       // Stop everything and tell the user the one action that fixes it.
       clearInterval(poll);
       observer.disconnect();
-      if (btn) setState(btn, "stale", STALE_LABEL);
+      // A newer copy took over (an update): leave the page to it. Only a copy
+      // with no successor shows the one action that fixes it.
+      if (btn && isCurrent()) setState(btn, "stale", STALE_LABEL);
       return;
     }
     sync();
@@ -275,6 +297,7 @@ function keyFor(job) {
 }
 
 function sync() {
+  if (!isCurrent()) return; // superseded by a newer copy (an update)
   const job = extractJob(document, location.href);
 
   ensureButton();
@@ -346,9 +369,11 @@ function scoutCapture(job) {
 }
 
 function ensureButton() {
+  if (!isCurrent()) return;
   if (btn && document.contains(btn)) return;
   btn = document.getElementById(BTN_ID) || document.createElement("button");
   btn.id = BTN_ID;
+  btn.setAttribute("data-je-save", "");
   btn.type = "button";
   if (!btn._wired) {
     btn.className = "je-btn";
@@ -421,8 +446,6 @@ function setState(el, state, text) {
 
 // ---- Indeed "My jobs" → sync applications into the tracker ----------------
 
-const SYNC_BTN_ID = "je-sync-btn";
-const SYNC_PANEL_ID = "je-sync-panel";
 // Offered as stage overrides in the review panel (matches the default pipeline).
 const STAGE_OPTIONS = [
   "Interested",
@@ -464,6 +487,7 @@ function handleSyncClick() {
 }
 
 function ensureSyncButton() {
+  if (!isCurrent()) return;
   let sb = document.getElementById(SYNC_BTN_ID);
   const apps = readApplications(document);
   if (!apps.length) {
@@ -716,9 +740,9 @@ function showSyncResult(panel, res) {
 }
 
 function injectStyles() {
-  if (document.getElementById("je-style")) return;
+  if (document.getElementById("jec-style")) return;
   const style = document.createElement("style");
-  style.id = "je-style";
+  style.id = "jec-style";
   style.textContent = `
     .je-btn {
       display: inline-flex; align-items: center; gap: 6px;

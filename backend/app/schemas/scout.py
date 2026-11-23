@@ -343,7 +343,9 @@ class ConfirmIn(_Where):
 
 
 class SaveFindingIn(_Where):
-    pass
+    # "Save anyway" (spec 015): save a job whose page wasn't copied, from the
+    # title, company and link Claude read; the posting is added later.
+    anyway: bool = False
 
 
 class FindingSaved(BaseModel):
@@ -431,6 +433,8 @@ class FindingItem(BaseModel):
     # "copy": title and company from the page; "claude": as Claude read them.
     facts_from: str = "copy"
     can_save: bool = False
+    # Spec 015: no page copy, but Claude read a title and company ("Save anyway").
+    can_save_anyway: bool = False
     saved_job_id: uuid.UUID | None = None
     job_listing_id: uuid.UUID | None = None
     found_at: datetime

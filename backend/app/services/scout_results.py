@@ -186,6 +186,7 @@ def _item(f: ScoutFinding, c: dict, listing_id, copied: set[str]) -> dict:
         "outcome": f.outcome,
         "facts_from": f.facts_from,
         "can_save": f.outcome in review.SAVEABLE and f.url_key in copied,
+        "can_save_anyway": f.url_key not in copied and review.can_save_anyway(f),
         "saved_job_id": f.saved_job_id,
         "job_listing_id": listing_id,
         "found_at": f.created_at,

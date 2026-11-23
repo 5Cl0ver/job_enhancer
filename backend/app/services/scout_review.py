@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collection import Collection
-from app.models.saved_job import ORIGIN_SCOUT
+from app.models.saved_job import ORIGIN_SCOUT, SavedJob
 from app.models.scout import (
     BELOW_BAR,
     DUPLICATE,
@@ -195,28 +195,28 @@ async def save_finding_job(
     track_id: uuid.UUID | None,
     folder_id: uuid.UUID,
     capture: ScoutCapture | None = None,
+    anyway: bool = False,
 ) -> str:
     """Put one finding's job in My Jobs from its page copy (never from anything
     Claude wrote). Returns "saved", "already" (the user had this job; the
-    finding now points at it) or "no_copy"."""
+    finding now points at it) or "no_copy".
+
+    ``anyway`` (the user's "Save anyway", spec 015): with no page copy, save
+    the title, company and link Claude read, with no description. The job then
+    counts as needing details, and Job Catcher adds the posting the next time
+    the user opens it."""
     capture = capture or await _capture(db, user_id, finding.url_key)
-    if capture is None:
-        return "no_copy"
-    location = capture.location or "Not specified"
-    had_it = (
-        await sj_svc.get_saved_listing(
-            db, user_id, capture.title, capture.company, location
-        )
-        is not None
+    found = (
+        f"Found by Claude Scout on "
+        f"{FOUND_ON.get(source) or SOURCE_LABEL.get(source, source)}. "
+        f"Claude's fit score: {finding.fit_score}/10."
     )
-    sj = await sj_svc.save_manual_job(
-        db,
-        user_id,
-        ManualJobCreate(
+    if capture is not None:
+        job = ManualJobCreate(
             url=posting_link(capture.url),
             title=capture.title,
             company=capture.company,
-            location=location,
+            location=capture.location or "Not specified",
             is_remote=capture.is_remote,
             description=capture.description,
             salary_min=capture.salary_min,
@@ -224,14 +224,45 @@ async def save_finding_job(
             salary_period=capture.salary_period,
             job_type=capture.job_type,
             collection_id=folder_id,
+            notes=found,
+        )
+    elif anyway and can_save_anyway(finding):
+        job = ManualJobCreate(
+            url=posting_link(finding.url),
+            title=finding.title[:500],
+            company=finding.company[:255],
+            location=(finding.location or "Not specified")[:255],
+            collection_id=folder_id,
             notes=(
-                f"Found by Claude Scout on "
-                f"{FOUND_ON.get(source) or SOURCE_LABEL.get(source, source)}. "
-                f"Claude's fit score: {finding.fit_score}/10."
+                f"{found} Saved before its page was copied: open the posting "
+                "with Job Catcher on and the full description is added."
             ),
-        ),
-        origin=ORIGIN_SCOUT,
+        )
+    else:
+        return "no_copy"
+    if capture is None:
+        # Saved before from its own page? Its location rarely matches Claude's
+        # wording, so look it up by its link too, and point at it.
+        known = await sj_svc.get_saved_listing(
+            db, user_id, job.title, job.company, job.location, job.url
+        )
+        if known is not None:
+            mine = await db.scalar(
+                select(SavedJob.id).where(
+                    SavedJob.user_id == user_id, SavedJob.job_listing_id == known.id
+                )
+            )
+            finding.saved_job_id = mine
+            finding.outcome = DUPLICATE
+            finding.app_note = "Already in your tracker"
+            return "already"
+    had_it = (
+        await sj_svc.get_saved_listing(
+            db, user_id, job.title, job.company, job.location
+        )
+        is not None
     )
+    sj = await sj_svc.save_manual_job(db, user_id, job, origin=ORIGIN_SCOUT)
     finding.saved_job_id = sj.id
     if had_it:
         finding.outcome = DUPLICATE
@@ -315,6 +346,16 @@ async def confirm_run(
     return out
 
 
+def can_save_anyway(finding: ScoutFinding) -> bool:
+    """A finding with no page copy can still be saved ("Save anyway") when
+    Claude read its title and company."""
+    return (
+        finding.outcome in SAVEABLE
+        and bool((finding.title or "").strip())
+        and bool((finding.company or "").strip())
+    )
+
+
 async def save_one(
     db: AsyncSession, user_id: uuid.UUID, finding_id: uuid.UUID, data: SaveFindingIn
 ) -> SaveFindingOut:
@@ -343,7 +384,7 @@ async def save_one(
         if finding.outcome in SAVEABLE
         else None
     )
-    if capture is None:
+    if capture is None and not (data.anyway and can_save_anyway(finding)):
         raise HTTPException(status_code=409, detail=NO_COPY_REASON)
     folder = await resolve_folder(
         db,
@@ -360,6 +401,7 @@ async def save_one(
         track_id=job_track(run, finding),
         folder_id=folder.id,
         capture=capture,
+        anyway=data.anyway,
     )
     await db.flush()
     return SaveFindingOut(

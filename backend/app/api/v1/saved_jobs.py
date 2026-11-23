@@ -138,7 +138,7 @@ async def check_saved(
     an 'already saved' state before the user clicks. `needs_details` invites a
     passive backfill when the extension can see the full posting."""
     listing = await svc.get_saved_listing(
-        db, user.id, data.title, data.company, data.location
+        db, user.id, data.title, data.company, data.location, data.url
     )
     if listing is None:
         return JobSavedResult(saved=False)

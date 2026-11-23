@@ -24,6 +24,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `src/content.entry.js` → `dist/content.js` | Injects the **Save** button on Indeed/LinkedIn/ZipRecruiter job pages (`#je-save-btn`); re-syncs when you switch jobs; asks the background `checkSaved` to show **blue "✓ Already saved"** proactively; falls back to a floating `#je-fab` if no header is found. While a **Claude Scout** run is open, sends each job page word for word (`scoutCapture`) |
 | `src/scoutCapture.js` | Pure: `scoutPayload` (the capture to send, or null while the description is a snippet), `scoutDone`; for companies' own sites `withPageFallback` (company from the site's name, description from the page's main text, only on a page that looks like a posting), `pageText`, `siteName`, `looksLikePosting` |
 | `src/scoutpage.entry.js` → `dist/scoutpage.js` | On other https sites (not the three boards, Google, Claude, the app or webmail): only while a Google Jobs or Local companies run is going (the background's cached `scoutAnySite`), sends the open job page word for word. The app refuses copies from other sites at any other time |
+| `src/orphan.js` | After an update: each content script claims the page (`claimPage`), stops when a newer copy takes over, and sweeps buttons left by copies from 0.27 and older |
+| `src/background/reinject.js` | On install/update, injects the current content scripts into already-open tabs (`matchesPattern`/`scriptsForUrl` honour the manifest's matches + exclusions; the page-world bridge is skipped) |
 | `src/inject.js` | Pure DOM helpers (title selectors, `findTitleEl`, `headingFor`) for anchoring the button — unit-tested against fixtures |
 | `src/capture.entry.js` → `dist/capture.js` | Injected on demand by the panel's **Capture this page**; runs `extractJob`, stashes result in `chrome.storage` |
 | `src/background.entry.js` → `dist/background.js` | Service worker (bundled) — the **only** caller of Supabase Auth + the API. Login, **serialized token refresh**, `saveJob`, `checkSaved`, `listSaved`; on a thin Indeed save it fetches the `/viewjob` page and **enriches** with the full description/salary/type before storing |
@@ -39,7 +41,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 |---|---|
 | `build.mjs` | esbuild: bundles `src/*.entry.js` (+ `src/extract/*`) → `dist/`. `npm run build` / `npm run dev` |
 | `test/extract.spec.js` + `test/fixtures/` | Vitest unit tests: extractors vs saved HTML. `npm test` |
-| `e2e/extension.spec.js` | Playwright: loads the built extension in real Chromium, asserts capture → storage. `npm run test:e2e` |
+| `e2e/support/` | `launch.js` (test copy of the built extension + test `config.js`, never the repo's), `fake-api.js` (fake app server, invented applicant, recorded calls), `lab-server.js` (serves `test/lab/` + `test/fixtures/` on two origins) |
+| `e2e/*.spec.js` | Playwright in real Chromium against the fake server: bridge, side panel, Scout copies, updates without refresh (`reinject.spec.js`). `npm run test:e2e`; CI runs them under xvfb |
 
 **How it connects:** the **background** worker is the single API caller (Supabase Auth
 with token refresh → `POST /v1/saved-jobs/manual`, Bearer). The content script and side

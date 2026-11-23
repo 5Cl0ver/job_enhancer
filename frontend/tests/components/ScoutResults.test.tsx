@@ -23,6 +23,7 @@ vi.mock("@/lib/api", () => ({
   API_BASE: "http://localhost:8000",
 }));
 
+import { toast } from "sonner";
 import { ScoutResults } from "@/components/scout/ScoutResults";
 import type { FindingItem, FindingPage } from "@/lib/scout";
 
@@ -67,6 +68,7 @@ const PAGE: FindingPage = {
       company: "Quillstone",
       fit: 7,
       can_save: false,
+      can_save_anyway: true,
       outcome: "no_copy",
       facts_from: "claude",
     }),
@@ -178,6 +180,39 @@ describe("Scout Results", () => {
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/v1/scout/findings/a/pass", {}),
     );
+  });
+
+  it("saves a job whose page wasn't copied with Save anyway", async () => {
+    const success = vi.spyOn(toast, "success");
+    post.mockResolvedValue({
+      finding_id: "b",
+      saved_job_id: "s2",
+      already: false,
+      folder: { id: "c1", name: "IT Admin" },
+    });
+    show();
+    const row = (await screen.findByText("IT Support Specialist")).closest(
+      "li",
+    )!;
+    expect(
+      within(row).queryByRole("button", { name: "Save to My Jobs" }),
+    ).toBeNull();
+    await userEvent.click(
+      within(row).getByRole("button", { name: "Save anyway" }),
+    );
+    expect(post).toHaveBeenCalledWith("/v1/scout/findings/b/save", {
+      anyway: true,
+    });
+    await waitFor(() =>
+      expect(success).toHaveBeenCalledWith(
+        "Saved to My Jobs › IT Admin. The full posting is added when you open it.",
+      ),
+    );
+    // Copied jobs don't offer it.
+    const copied = screen.getByText("Systems Administrator").closest("li")!;
+    expect(
+      within(copied).queryByRole("button", { name: "Save anyway" }),
+    ).toBeNull();
   });
 
   it("filters by status, with counts", async () => {
