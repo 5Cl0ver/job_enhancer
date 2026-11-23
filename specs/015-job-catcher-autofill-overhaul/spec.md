@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-23
 
-**Status**: Draft
+**Status**: Built (PRs #29, #30, #31 and this one)
 
 **Input**: User description: "Extension not working! We need to really overhaul it: same features, everything, but make it 20 times better. I really want it to help me autofill things on pages super fast, but I still get to review everything. Every application page will be different for the most part, and our extension is not dynamic and built weirdly. Really test it, on fake data only, until I try it." Follow-up: "Why can't I just save [a Scout result] to the app?"
 

@@ -63,6 +63,7 @@ export async function startFakeApi() {
     documents: [], // what the panel saved or generated
     syncs: [], // Indeed applications the panel synced
     bundleVersion: 1, // bumped whenever the profile or answers change
+    history: null, // the résumé read into {work, education}
     aiAnswers: {}, // question label -> {value, confidence} the fake AI gives
     resume: { filename: "wren-calloway.pdf", bytes: Buffer.from("%PDF-1.4\n% invented résumé\n") },
   };
@@ -129,7 +130,7 @@ export async function startFakeApi() {
           email: state.email,
           profile: state.profile,
           answers: state.answers,
-          history: null,
+          history: state.history,
           history_pending: false,
           resume: state.resume
             ? { id: "resume-1", filename: state.resume.filename, mime: "application/pdf", updated_at: "2026-11-23T08:00:00Z" }
@@ -137,7 +138,7 @@ export async function startFakeApi() {
         },
       };
     },
-    "POST /v1/ai/work-history": () => ({ body: { entries: [] } }),
+    "POST /v1/ai/work-history": () => ({ body: { entries: state.history?.work || [] } }),
     "GET /v1/saved-jobs/summary": (_b, req) => {
       const asked = new URL(req.url, "http://x").searchParams.get("version");
       const version = `v${state.jobsVersion}`;

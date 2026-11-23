@@ -29,8 +29,27 @@ export interface FillNeed {
   reason: string;
   options: string[];
 }
-export type Fill = { entries: FillEntry[]; needYou: FillNeed[]; frameIds: number[] };
-const NO_FILL: Fill = { entries: [], needYou: [], frameIds: [] };
+/** An unsure AI answer, offered with "Use". */
+export interface FillSuggestion {
+  id: string;
+  frameId: number;
+  label: string;
+  value: string;
+}
+/** What the user typed that could be remembered (saved only on their press). */
+export interface Pending {
+  answers: { question_key: string; question_text: string; answer: string }[];
+  profile: Record<string, string | number | boolean>;
+}
+export type Fill = {
+  entries: FillEntry[];
+  needYou: FillNeed[];
+  suggestions: FillSuggestion[];
+  frameIds: number[];
+  pending: Pending;
+  keep: boolean;
+};
+const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false };
 type Saved = { jobs: SavedJob[]; loaded: boolean; error: string | null };
 type Tab = { id: number | null; url: string; title: string; ctx: PageContext };
 
@@ -76,15 +95,27 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
     if (id == null) return setFill(NO_FILL);
     const res = await send({ type: "getFillSession", tabId: id });
     if (fillFor.current !== id) return; // the panel moved to another tab
-    const frames = (res?.frames || {}) as Record<string, { entries?: Omit<FillEntry, "frameId">[]; need_you?: Omit<FillNeed, "frameId">[] }>;
+    const frames = (res?.frames || {}) as Record<
+      string,
+      { entries?: Omit<FillEntry, "frameId">[]; need_you?: Omit<FillNeed, "frameId">[]; suggestions?: Omit<FillSuggestion, "frameId">[] }
+    >;
     const entries: FillEntry[] = [];
     const needYou: FillNeed[] = [];
+    const suggestions: FillSuggestion[] = [];
     for (const [fid, f] of Object.entries(frames)) {
       const frameId = Number(fid);
       for (const e of f.entries || []) entries.push({ ...e, frameId });
       for (const n of f.need_you || []) needYou.push({ ...n, frameId });
+      for (const g of f.suggestions || []) suggestions.push({ ...g, frameId });
     }
-    setFill({ entries, needYou, frameIds: Object.keys(frames).map(Number) });
+    setFill({
+      entries,
+      needYou,
+      suggestions,
+      frameIds: Object.keys(frames).map(Number),
+      pending: (res?.pending as Pending) || { answers: [], profile: {} },
+      keep: !!res?.keep,
+    });
   }, []);
 
   // The tab changed, or one of its frames filled / fixed / undid something.

@@ -41,6 +41,12 @@ const session = createSession({
 
 let state = "idle"; // idle | busy | done | error
 let lastReport = { filled: 0, need: 0 };
+// Keep filling (spec 015, Story 4): after one press, each later step of the
+// same application fills as it appears. Remembered per tab and site by the
+// background, so it carries across page loads; switchable in the panel.
+let keepOn = false;
+let lastStep = "";
+let lastCopy = null; // the profile's answers, for noticing typed ones
 
 // ---- The pill --------------------------------------------------------------
 
@@ -121,8 +127,17 @@ function looksLikeApplicationNow() {
 
 function ensurePill() {
   if (!isCurrent()) return;
-  if (state !== "idle" || looksLikeApplicationNow()) pill();
+  const app = looksLikeApplicationNow();
+  if (state !== "idle" || app) pill();
   else uiRoot("autofill").getElementById("jec-pill")?.remove();
+  // A new step of an application being filled: fill it too.
+  if (app && keepOn && state !== "busy") {
+    const step = session.stepFingerprint();
+    if (step && step !== lastStep) {
+      lastStep = step;
+      run({ auto: true });
+    }
+  }
 }
 
 // ---- Filling ----------------------------------------------------------------
@@ -148,14 +163,16 @@ async function loadCopy() {
     }
   }
   const copy = res.copy || {};
-  return {
-    values: profileValues(copy.profile, copy.email),
+  lastCopy = {
+    values: profileValues(copy.profile, copy.email, new Date(), copy.history),
     answers: copy.answers || [],
+    history: copy.history || null,
     resumeFile,
   };
+  return lastCopy;
 }
 
-async function run() {
+async function run({ auto = false } = {}) {
   if (state === "busy" || !isCurrent()) return { ok: false };
   if (runtimeGone()) {
     setPill("error", "↻ Refresh the page");
@@ -173,23 +190,68 @@ async function run() {
     return { ok: false, signedIn: !copy.signedOut, unreachable: !!copy.unreachable };
   }
 
-  // Workday's Work Experience: one block per job on the résumé.
+  // Workday's Work Experience: one block per job on the résumé (read once
+  // and held in the copy; asked for only if the copy doesn't have it yet).
   if (isWorkdayExperience(document)) {
-    setPill("busy", "Reading your résumé…");
-    const wh = await send({ type: "getWorkHistory" });
-    if (wh?.entries?.length) await fillAllWorkExperience(document, wh.entries);
+    let work = copy.history?.work;
+    if (!work?.length) {
+      setPill("busy", "Reading your résumé…");
+      work = (await send({ type: "getWorkHistory" }))?.entries;
+    }
+    if (work?.length) await fillAllWorkExperience(document, work);
     setPill("busy");
   }
 
   const { leftovers } = await session.fillKnown(copy);
   report();
   setPill("done");
+  lastStep = session.stepFingerprint();
+  if (!auto && !keepOn) {
+    keepOn = true; // on by default after a press (switch it off in the panel)
+    send({ type: "setKeepFilling", on: true });
+  }
   if (leftovers.length) {
     await session.fillWithAi(leftovers);
     report();
     setPill("done");
   }
   return { ok: true, ...lastReport };
+}
+
+// ---- Learning (spec 015, Story 3) -------------------------------------------
+// When the user moves on (Next, Continue, Submit, leaving the page), what they
+// typed into questions the app didn't know — and profile answers it didn't have
+// — is offered in the side panel to remember. Nothing is saved without a press.
+
+const ADVANCE = /^(next|continue|save (and|&) continue|save|review|submit( (my )?application)?|apply|send( application)?|proceed)\b/i;
+
+let noticedAt = 0;
+function notice() {
+  if (!isCurrent() || Date.now() - noticedAt < 500) return;
+  noticedAt = Date.now();
+  if (!looksLikeApplicationNow()) return;
+  const answers = session.typedAnswers();
+  if (answers.length) send({ type: "answersNoticed", answers });
+  if (lastCopy) {
+    const fields = session.typedProfile(lastCopy.values);
+    if (Object.keys(fields).length) send({ type: "profileNoticed", fields });
+  }
+}
+
+function watchForAdvance() {
+  document.addEventListener(
+    "click",
+    (e) => {
+      const path = e.composedPath?.() || [];
+      if (path.some((n) => /^JEC-UI-/i.test(n?.tagName || ""))) return; // our own pill
+      const b = path.find((n) => n?.matches?.('button, [role="button"], input[type="submit"]'));
+      const label = (b?.value || b?.textContent || "").replace(/\s+/g, " ").trim();
+      if (label && label.length <= 40 && ADVANCE.test(label)) notice();
+    },
+    true,
+  );
+  document.addEventListener("submit", notice, true);
+  window.addEventListener("pagehide", notice);
 }
 
 // ---- Messages from the panel / background -----------------------------------
@@ -210,10 +272,15 @@ try {
         if (msg.action === "undo") return { undone: await session.undo(msg.id || null) };
         if (msg.action === "show") return { ok: session.show(msg.id) };
         if (msg.action === "typed") return { answers: session.typedAnswers() };
+        if (msg.action === "use") return { ok: (await session.useSuggestion(msg.id)).ok };
+        if (msg.action === "keep") {
+          keepOn = !!msg.value;
+          return { ok: true };
+        }
         return { ok: false };
       };
       act().then((r) => {
-        if (msg.action !== "show" && msg.action !== "typed") {
+        if (!["show", "typed", "keep"].includes(msg.action)) {
           report();
           setPill(session.filledCount ? "done" : "idle");
         }
@@ -229,6 +296,12 @@ try {
 // ---- Start ----------------------------------------------------------------
 
 if (document.body && isCurrent()) {
+  // Keep filling carries over from the last step's page (same tab, same site).
+  send({ type: "getKeepFilling" }).then((r) => {
+    keepOn = !!r?.on;
+    if (keepOn) ensurePill();
+  });
+  watchForAdvance();
   ensurePill();
   const observer = new MutationObserver(() => {
     if (!isCurrent()) {

@@ -89,6 +89,13 @@ const RULES = [
   },
   { key: "requires_sponsorship", re: /sponsor/i },
   { key: "willing_to_relocate", re: /relocat/i },
+  // From the résumé (education, the most recent job) — spec 015 R2.
+  { key: "graduation_year", re: /graduat(ion|ed)?[\s_-]*(year|date)|year of graduation|completion[\s_-]*(year|date)|year (completed|graduated)/i },
+  { key: "field_of_study", re: /field[\s_-]*of[\s_-]*study|\bmajor\b|discipline|area of study|concentration|course of study/i },
+  { key: "degree", re: /^\W*degree\b|degree (type|level|earned|obtained|received)|level of education|highest (level of )?(education|degree)|education level/i },
+  { key: "school", re: /^\W*(school|university|college|institution)\b|school (or|\/) university|name of (school|university|college|institution)|school name|university name/i },
+  { key: "current_title", re: /current (job[\s_-]*)?title|current (position|role)|most recent (job[\s_-]*)?(title|position|role)/i },
+  { key: "current_company", re: /current (company|employer)|most recent (company|employer)|present employer/i },
   // Before the address rules: "Please state your salary…" is about salary.
   { key: "desired_salary", re: /desired[\s_-]*(salary|pay|compensation)|salary[\s_-]*(expectation|requirement)|expected[\s_-]*(salary|pay|compensation)|compensation[\s_-]*expect|^salary$/i },
   { key: "notice_period", re: /notice[\s_-]*period|(earliest|available)[\s_-]*start|start[\s_-]*date|when can you start|availability to start/i },
@@ -169,13 +176,30 @@ function countryForms(v) {
 
 const yn = (v) => (v === true ? "Yes" : v === false ? "No" : null);
 
+/** The ways forms word a degree ("Associate of Science" → "Associate's Degree"…). */
+export function degreeForms(degree) {
+  const d = String(degree || "").trim();
+  if (!d) return [];
+  const forms = [d];
+  const add = (...xs) => forms.push(...xs);
+  if (/associate|\ba\.?\s?[as]\.?\b/i.test(d)) add("Associate's Degree", "Associate Degree", "Associates", "Associate");
+  else if (/bachelor|\bb\.?\s?[as]\.?\b|\bbs\b|\bba\b/i.test(d)) add("Bachelor's Degree", "Bachelor Degree", "Bachelors", "Bachelor");
+  else if (/master|\bm\.?\s?[as]\.?\b|\bmba\b/i.test(d)) add("Master's Degree", "Master Degree", "Masters", "Master");
+  else if (/doctor|ph\.?\s?d/i.test(d)) add("Doctorate", "Doctoral Degree", "PhD");
+  else if (/high school|diploma|ged/i.test(d)) add("High School Diploma", "High School", "GED");
+  else if (/certificat/i.test(d)) add("Certificate", "Certification");
+  return forms;
+}
+
 /**
  * Every profile key's answer(s): the first is what's typed into a text box;
  * the rest are other ways a dropdown may word it ("OR" / "Oregon").
  * @returns {Record<string, string[]>}
  */
-export function profileValues(profile, email, today = new Date()) {
+export function profileValues(profile, email, today = new Date(), history = null) {
   const p = profile || {};
+  const edu = history?.education?.[0] || {};
+  const job = history?.work?.[0] || {};
   const list = (...vals) => vals.filter((x) => x != null && String(x).trim() !== "").map(String);
   const city = p.city || "";
   const stateFull = stateForms(p.state)[0] || "";
@@ -210,5 +234,12 @@ export function profileValues(profile, email, today = new Date()) {
     desired_salary: list(p.desired_salary),
     notice_period: list(p.notice_period),
     today_date: list(today.toISOString().slice(0, 10)),
+    school: list(edu.school),
+    degree: degreeForms(edu.degree),
+    field_of_study: list(edu.field_of_study),
+    graduation_year: list(edu.end_year),
+    // Only while that job is the current one.
+    current_company: list(job.current ? job.company : null),
+    current_title: list(job.current ? job.title : null),
   };
 }

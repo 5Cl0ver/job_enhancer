@@ -381,3 +381,41 @@ describe("PR #31 re-review", () => {
     expect(APPLY_URL.test("https://github.com/vellacor/repo/issues/1")).toBe(false);
   });
 });
+
+describe("part 4: education, current job, learning the profile", () => {
+  const history = {
+    work: [{ title: "Field Service Technician", company: "Tidewell Labs", current: true }],
+    education: [{ school: "Harborview Community College", degree: "Associate of Science", field_of_study: "Electronics", end_year: 2021 }],
+  };
+  const values = profileValues(PROFILE, EMAIL, new Date(), history);
+
+  it.each([
+    ["School or University", "school", "Harborview Community College"],
+    ["Degree", "degree", "Associate of Science"],
+    ["Field of Study", "field_of_study", "Electronics"],
+    ["Graduation year", "graduation_year", "2021"],
+    ["Current employer", "current_company", "Tidewell Labs"],
+    ["Current job title", "current_title", "Field Service Technician"],
+  ])("'%s' → %s from the résumé", (q, key, value) => {
+    expect(profileKeyFor({ question: q, hints: {} })).toBe(key);
+    expect(values[key][0]).toBe(value);
+  });
+
+  it("a degree matches how forms word it", () => {
+    expect(matchOption(values.degree[1], [{ label: "High School Diploma" }, { label: "Associate's Degree" }, { label: "Bachelor's Degree" }])).toBe(1);
+    expect(profileKeyFor({ question: "Do you have a bachelor's degree?", hints: {} })).toBeNull();
+  });
+
+  it("notices profile answers the user typed that the profile lacks", () => {
+    const doc = parse(`<label for="a1">Address line 1</label><input id="a1">
+      <label for="ph">Phone</label><input id="ph" type="tel">
+      <fieldset><legend>Are you willing to relocate?</legend>
+        <label><input type="radio" name="r" value="Yes">Yes</label><label><input type="radio" name="r" value="No">No</label></fieldset>`);
+    const s = session(doc);
+    doc.querySelector("#a1").value = "40 Pier Road";
+    doc.querySelector("#ph").value = PROFILE.phone; // already in the profile
+    doc.querySelector("input[name=r][value=No]").checked = true;
+    const known = profileValues({ ...PROFILE, address_line1: null }, EMAIL);
+    expect(s.typedProfile(known)).toEqual({ address_line1: "40 Pier Road", willing_to_relocate: false });
+  });
+});

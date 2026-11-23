@@ -6,9 +6,9 @@ unchanged account answers ``{"changed": false}`` after reading only a few
 timestamps, never the answers themselves.
 
 The bundle: profile, email, remembered answers, and the active résumé's name
-(its bytes come from ``GET /v1/ai/resumes/active/file`` only when it changes).
-Work history and education join it in spec 015 PR D; until then ``history``
-is null.
+(its bytes come from ``GET /v1/ai/resumes/active/file`` only when it changes),
+and the résumé read into work history + education (services/resume_history.py;
+``history_pending`` while that reading hasn't happened yet).
 """
 
 import hashlib
@@ -39,12 +39,13 @@ async def bundle_version(db: AsyncSession, user_id: uuid.UUID, email: str) -> st
     ).one()
     resume = (
         await db.execute(
-            select(Resume.id, Resume.created_at).where(
-                Resume.user_id == user_id, Resume.is_active.is_(True)
-            )
+            select(Resume.id, Resume.created_at, Resume.parsed_history_at)
+            .where(Resume.user_id == user_id, Resume.is_active.is_(True))
+            .order_by(Resume.created_at.desc())
+            .limit(1)
         )
     ).first()
-    parts = [email, profile_at, count, answers_at, *(resume or (None, None))]
+    parts = [email, profile_at, count, answers_at, *(resume or (None, None, None))]
     raw = "|".join("" if p is None else str(p) for p in parts)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -60,13 +61,13 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
             .order_by(CustomAnswer.question_key)
         )
     )
-    resume = (
-        await db.execute(
-            select(Resume.id, Resume.filename, Resume.mime_type, Resume.created_at)
-            .where(Resume.user_id == user_id, Resume.is_active.is_(True))
-            .limit(1)
-        )
-    ).first()
+    resume = await db.scalar(
+        select(Resume)
+        .where(Resume.user_id == user_id, Resume.is_active.is_(True))
+        .order_by(Resume.created_at.desc())
+        .limit(1)
+    )
+    read = resume is not None and resume.parsed_history_at is not None
     return {
         "changed": True,
         "version": await bundle_version(db, user_id, email),
@@ -84,8 +85,11 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
             }
             for a in answers
         ],
-        "history": None,
-        "history_pending": False,
+        "history": (resume.parsed_history or None) if read else None,
+        "history_pending": resume is not None
+        and not read
+        and bool(resume.extracted_text),
+        "resume_id": resume.id if resume is not None else None,
         "resume": (
             {
                 "id": str(resume.id),

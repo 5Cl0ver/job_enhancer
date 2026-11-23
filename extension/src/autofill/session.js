@@ -2,7 +2,7 @@
 // what's left; plus Fix, Undo and Show for the review in the side panel.
 // Nothing is ever submitted, nothing the user typed is overwritten, and
 // self-identification, agreements and essays are never touched.
-import { normalizeQuestion } from "./classify/answers.js";
+import { normalizeQuestion, yesNo } from "./classify/answers.js";
 import { PRIVATE, profileKeyFor } from "./classify/profileKeys.js";
 import { collectFields, looksLikeApplication } from "./scan.js";
 import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
@@ -39,6 +39,14 @@ function unmark(field) {
   (field.mark || field.el)?.removeAttribute?.("data-jec-fill");
 }
 
+// Profile answers a typed value can teach (email is the account's own).
+const LEARNABLE_PROFILE = new Set([
+  "first_name", "last_name", "phone", "address_line1", "address_line2", "city", "state",
+  "postal_code", "country", "linkedin_url", "github_url", "portfolio_url",
+  "authorized_to_work", "requires_sponsorship", "willing_to_relocate", "desired_salary", "notice_period",
+]);
+const BOOL_PROFILE = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
+
 const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
@@ -59,6 +67,8 @@ export function createSession(deps) {
   const needYou = new Map();
   /** id → field from the latest scan */
   let fields = new Map();
+  /** id → {field, item}: the AI's unsure answers, offered with "Use" */
+  const suggestions = new Map();
 
   const scan = () => {
     const list = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter((f) => !skipField(f));
@@ -145,9 +155,12 @@ export function createSession(deps) {
     for (const { f } of asked) {
       const v = mappings[f.id];
       if (v == null || v === "" || hasValue(f)) continue;
-      // Only a sure answer fills; an unsure (or unscored) one is left for the
-      // user (spec 015, Story 5).
-      if ((confidence[f.id] ?? 0.5) < 0.75) continue;
+      // Only a sure answer fills; an unsure (or unscored) one is offered as a
+      // suggestion the user can Use (spec 015, Story 5).
+      if ((confidence[f.id] ?? 0.5) < 0.75) {
+        suggestions.set(f.id, { field: f, item: { id: f.id, label: shortLabel(f.question), value: String(v), kind: f.kind } });
+        continue;
+      }
       const r = await fillOne(f, [String(v)], "ai");
       if (r.ok) n++;
     }
@@ -159,8 +172,55 @@ export function createSession(deps) {
     return {
       url: doc.location?.href || "",
       entries: [...filled.values()].map((x) => x.entry),
-      need_you: [...needYou.values()].filter((x) => !hasValue(x.field)).map((x) => x.item),
+      need_you: [...needYou.values()].filter((x) => !hasValue(x.field) && !suggestions.has(x.field.id)).map((x) => x.item),
+      suggestions: [...suggestions.values()].filter((x) => !hasValue(x.field)).map((x) => x.item),
     };
+  }
+
+  /** Use an AI suggestion (the user's tap): it fills like a sure answer. */
+  async function useSuggestion(id) {
+    const s = suggestions.get(id);
+    if (!s) return { ok: false };
+    const res = await fillOne(s.field, [s.item.value], "ai");
+    if (res.ok) suggestions.delete(id);
+    return res;
+  }
+
+  /** Which step of the application is showing (its questions, in order). */
+  function stepFingerprint() {
+    return scan()
+      .map((f) => f.key)
+      .filter(Boolean)
+      .join("|");
+  }
+
+  /**
+   * Profile answers the user typed (or Chrome's own autofill put in) that the
+   * profile doesn't have, or has differently — offered as "Save to my
+   * profile" (spec 015, FR-013a). Nothing is saved without a press.
+   * @param {Record<string, string[]>} known  the profile's answers (profileValues)
+   */
+  function typedProfile(known) {
+    const out = {};
+    for (const field of scan()) {
+      const key = profileKeyFor(field);
+      if (!LEARNABLE_PROFILE.has(key)) continue;
+      const ours = filled.get(field.id);
+      const value = readField(field).trim();
+      if (!value || value.length > 200) continue;
+      if (ours && same(value, ours.entry.value)) continue; // ours, untouched
+      if ((known[key] || []).some((k) => same(value, k))) continue; // already saved
+      if (BOOL_PROFILE.has(key)) {
+        const b = yesNo(value);
+        if (b) out[key] = b === "yes";
+      } else if (key === "desired_salary") {
+        const n = Number(value.replace(/[^\d.]/g, ""));
+        if (n > 0) out[key] = Math.round(n);
+      } else if (key === "state" && value.length > 2) {
+        out[key] = value;
+      } else out[key] = value;
+    }
+    return out;
   }
 
   const find = (id) => filled.get(id)?.field || needYou.get(id)?.field || fields.get(id) || scan().find((f) => f.id === id);
@@ -251,5 +311,21 @@ export function createSession(deps) {
     return out;
   }
 
-  return { scan, isApplication, fillKnown, fillWithAi, report, fix, undo, show, typedAnswers, get filledCount() { return filled.size; } };
+  return {
+    scan,
+    isApplication,
+    fillKnown,
+    fillWithAi,
+    report,
+    fix,
+    undo,
+    show,
+    typedAnswers,
+    typedProfile,
+    useSuggestion,
+    stepFingerprint,
+    get filledCount() {
+      return filled.size;
+    },
+  };
 }
