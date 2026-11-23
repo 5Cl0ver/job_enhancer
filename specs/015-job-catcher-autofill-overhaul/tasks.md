@@ -50,10 +50,10 @@ Delivery is three PRs, as in [plan.md](plan.md):
 
 ## Phase 4: Foundational for autofill (PR C)
 
-- [ ] T013 (moved to PR D, with the résumé reading) Migration l0a1b2c3d4e6, adding resumes.parsed_history (JSON) and parsed_history_at, in backend/alembic/versions/ and backend/app/models/resume.py
+- [X] T013 Migration l0a1b2c3d4e6, adding resumes.parsed_history (JSON) and parsed_history_at, in backend/alembic/versions/ and backend/app/models/resume.py
 - [X] T014 [P] pytest for the bundle (full, unchanged, version changes, isolation, history_pending, 401) in backend/tests/api/test_autofill_bundle.py
 - [X] T015 Bundle service + version in backend/app/services/autofill_bundle.py; router GET /v1/autofill/bundle in backend/app/api/v1/autofill.py; registered in backend/app/main.py
-- [ ] T016 (PR D) parse_resume_history (work + education) in backend/app/services/ai_service.py; run it on résumé upload and lazily from the bundle; serve /v1/ai/work-history from the cache, in backend/app/api/v1/ai.py
+- [X] T016 parse_resume_history (work + education) in backend/app/services/ai_service.py; run it on résumé upload and lazily from the bundle; serve /v1/ai/work-history from the cache, in backend/app/api/v1/ai.py
 - [X] T017 The background autofill copy (change check, résumé bytes, wipe on sign-out or account change, refresh on panel open and on press, at most every 60 s) in extension/src/background/autofillCopy.js
 - [X] T018 The session relay (storage.session per tab/frame, merge, sessionChanged broadcast, frame-addressed panel actions) in extension/src/background/sessions.js
 
@@ -90,32 +90,32 @@ Delivery is three PRs, as in [plan.md](plan.md):
 
 **Independent test**: an empty profile; fill a lab form by hand, press Next, Save; a different lab form fills profile fields and the reworded custom question.
 
-- [ ] T038 [P] [US3] Browser tests for learning (answers + profile, nothing saved without Save, the pivot guard, option matching) in extension/e2e/autofill-learn.spec.js
-- [ ] T039 [US3] Notice answers and profile values on Next/Continue/Submit/pagehide (including Chrome-autofilled values) in extension/src/autofill/session.js
-- [ ] T040 [US3] answersNoticed, profileNoticed, savePendingAnswers and savePendingProfile (merge PUT) in extension/src/background/sessions.js and extension/src/background.entry.js
-- [ ] T041 [US3] "New answers to remember" + "Save to my profile" (old → new) cards in extension/panel/src/views/Apply.tsx
+- [X] T038 [P] [US3] Browser tests for learning (answers + profile, nothing saved without Save, the pivot guard, option matching) in extension/e2e/autofill-learn.spec.js
+- [X] T039 [US3] Notice answers and profile values on Next/Continue/Submit/pagehide (including Chrome-autofilled values) in extension/src/autofill/session.js
+- [X] T040 [US3] answersNoticed, profileNoticed, savePendingAnswers and savePendingProfile (merge PUT) in extension/src/background/sessions.js and extension/src/background.entry.js
+- [X] T041 [US3] "New answers to remember" + "Save to my profile" (old → new) cards in extension/panel/src/views/Apply.tsx
 
 ## Phase 8: User Story 4 — multi-step + Workday (P2, PR D)
 
 **Independent test**: the lab Workday 4-step app; one press; each step fills; 3 experience blocks + education; self-ID untouched; keyboard shortcut.
 
-- [ ] T042 [P] [US4] Lab Workday-shaped 4-step app + Easy-Apply pop-up in extension/test/lab/workday/ and extension/test/lab/easy-apply.html
-- [ ] T043 [P] [US4] Browser tests for keep-filling, Workday blocks and dates, education, the shortcut and the Easy-Apply steps in extension/e2e/autofill-steps.spec.js
-- [ ] T044 [US4] Keep-filling (observer, fingerprint, same-site, per-tab flag) in extension/src/autofill/session.js
-- [ ] T045 [US4] Workday adapter (experience + education blocks, Add Another, date sections, listbox buttons), moved from workday.js, in extension/src/autofill/sites/workday.js and extension/src/autofill/sites/index.js
+- [X] T042 [P] [US4] Lab Workday-shaped 4-step app + Easy-Apply pop-up in extension/test/lab/workday/ and extension/test/lab/easy-apply.html
+- [X] T043 [P] [US4] Browser tests for keep-filling, Workday blocks and dates, education, the shortcut and the Easy-Apply steps in extension/e2e/autofill-steps.spec.js
+- [X] T044 [US4] Keep-filling (observer, fingerprint, same-site, per-tab flag) in extension/src/autofill/session.js
+- [X] T045 [US4] Workday adapter (experience + education blocks, Add Another, date sections, listbox buttons), moved from workday.js, in extension/src/autofill/sites/workday.js and extension/src/autofill/sites/index.js
 
 ## Phase 9: User Story 5 — AI fills what's left (P3, PR D)
 
-- [ ] T046 [P] [US5] pytest for autofill-map confidence (new shape, old shape, option check, failure) in backend/tests/api/test_ai_autofill_map.py
-- [ ] T047 [P] [US5] Browser tests for the AI (confident → purple, unsure → suggestion + Use, AI down → no change, one request per step) in extension/e2e/autofill-ai.spec.js
-- [ ] T048 [US5] Confidence in the map_fields prompt, parsing and response, in backend/app/services/ai_service.py, backend/app/api/v1/ai.py and backend/app/schemas/
-- [ ] T049 [US5] The AI tier per step fingerprint in extension/src/autofill/session.js
+- [X] T046 [P] [US5] pytest for autofill-map confidence (new shape, old shape, option check, failure) in backend/tests/api/test_ai_autofill_map.py
+- [X] T047 [P] [US5] Browser tests for the AI (confident → purple, unsure → suggestion + Use, AI down → no change, one request per step) in extension/e2e/autofill-ai.spec.js
+- [X] T048 [US5] Confidence in the map_fields prompt, parsing and response, in backend/app/services/ai_service.py, backend/app/api/v1/ai.py and backend/app/schemas/
+- [X] T049 [US5] The AI tier per step fingerprint in extension/src/autofill/session.js
 
 ## Phase 10: Polish & regression (every PR)
 
-- [ ] T050 [P] Regression browser tests (board Save button + Already saved, capture, Pick manually, Scout copy, submit → markApplied, staged résumé uploaded by autofill) in extension/e2e/regression.spec.js
-- [ ] T051 [P] Update extension/MANIFEST.md, extension/README.md (Testing, the lab), backend/app/services/MANIFEST.md and docs/FEATURES.md
-- [ ] T052 Bump the extension version in extension/manifest.json; run quickstart.md; run an independent review before each PR
+- [X] T050 [P] Regression browser tests (board Save button + Already saved, capture, Pick manually, Scout copy, submit → markApplied, staged résumé uploaded by autofill) in extension/e2e/regression.spec.js
+- [X] T051 [P] Update extension/MANIFEST.md, extension/README.md (Testing, the lab), backend/app/services/MANIFEST.md and docs/FEATURES.md
+- [X] T052 Bump the extension version in extension/manifest.json; run quickstart.md; run an independent review before each PR
 
 ## Dependencies
 

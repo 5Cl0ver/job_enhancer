@@ -1,0 +1,112 @@
+<!doctype html>
+<!-- Lab page (invented company): a 4-step application shaped like Workday's —
+     one page that swaps steps in place, data-automation-id markup, dropdowns
+     drawn as buttons with a popup list, a Work Experience block with month/year
+     dates, Education, Application Questions and Voluntary Disclosures.
+     window.__formData() holds every answer the PAGE has taken. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Field Service Technician - Vellacor Robotics Careers</title>
+    <style>
+      [role=listbox] { border: 1px solid #888; margin: 0; padding: 0; list-style: none; }
+      [role=option] { padding: 3px 6px; cursor: pointer; }
+      .field { margin: 8px 0; } legend { font-weight: bold; }
+    </style>
+  </head>
+  <body>
+    <h1 data-automation-id="jobPostingHeader">Field Service Technician</h1>
+    <h2 id="step-title"></h2>
+    <div id="step"></div>
+    <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      let n = 0;
+
+      const text = (id, label, extra = "") =>
+        `<div class="field" data-automation-id="formField-${id}"><label for="${id}">${label}</label><input id="${id}" ${extra}></div>`;
+      const pick = (id, label, options) =>
+        `<div class="field" data-automation-id="formField-${id}"><fieldset><legend><span data-automation-id="richText">${label}</span></legend>
+          <button type="button" aria-haspopup="listbox" id="${id}" data-options="${options.join("|")}">Select One</button></fieldset></div>`;
+
+      const STEPS = [
+        ["My Information", () =>
+          text("legalNameSection_firstName", "First Name") +
+          text("legalNameSection_lastName", "Last Name") +
+          text("email", "Email Address", 'type="email"') +
+          text("phone-number", "Phone Number", 'type="tel"') +
+          pick("country", "Country", ["Canada", "United Kingdom", "United States Minor Outlying Islands", "United States of America"]) +
+          text("addressSection_addressLine1", "Address Line 1") +
+          text("addressSection_city", "City")],
+        ["My Experience", () => `
+          <section><h3>Work Experience</h3>
+            <div data-fkit-id="workExperience-1--null">
+              <div data-automation-id="formField-jobTitle"><label>Job Title</label><input id="wx-title"></div>
+              <div data-automation-id="formField-companyName"><label>Company</label><input id="wx-company"></div>
+              <div data-automation-id="formField-location"><label>Location</label><input id="wx-location"></div>
+              <div data-automation-id="formField-currentlyWorkHere"><label><input type="checkbox" id="wx-current"> I currently work here</label></div>
+              <div data-automation-id="formField-startDate"><label>From</label>
+                <input data-automation-id="dateSectionMonth-input" id="wx-sm" placeholder="MM">
+                <input data-automation-id="dateSectionYear-input" id="wx-sy" placeholder="YYYY"></div>
+              <div data-automation-id="formField-roleDescription"><label>Role Description</label><textarea id="wx-desc"></textarea></div>
+            </div></section>
+          <section><h3>Education</h3>` +
+          text("schoolName", "School or University") +
+          pick("degree", "Degree", ["High School Diploma", "Associate's Degree", "Bachelor's Degree", "Master's Degree"]) +
+          text("fieldOfStudy", "Field of Study") +
+          `</section>`],
+        ["Application Questions", () =>
+          pick("q-auth", "Are you legally authorized to work in the country in which this job is located?", ["Yes", "No"]) +
+          pick("q-sponsor", "Will you now or in the future require sponsorship for employment visa status?", ["Yes", "No"]) +
+          pick("q-heard", "How did you hear about this opportunity?", ["LinkedIn", "Indeed", "Company Website", "Employee Referral"])],
+        ["Voluntary Disclosures", () =>
+          pick("gender", "Gender", ["Female", "Male", "I do not wish to answer"]) +
+          pick("veteran", "Veteran Status", ["I am not a protected veteran", "I identify as one or more of the protected veteran classifications", "I do not wish to answer"])],
+        ["Review", () => "<p>Check your application, then submit it.</p>"],
+      ];
+
+      function wire() {
+        for (const input of document.querySelectorAll("#step input, #step textarea")) {
+          const save = () => (data[input.id] = input.type === "checkbox" ? input.checked : input.value);
+          input.addEventListener("input", save);
+          input.addEventListener("change", save);
+        }
+        for (const btn of document.querySelectorAll('#step button[aria-haspopup="listbox"]')) {
+          btn.addEventListener("click", () => {
+            const open = document.getElementById(btn.id + "-list");
+            if (open) return open.remove();
+            const list = document.createElement("ul");
+            list.setAttribute("role", "listbox");
+            list.id = btn.id + "-list";
+            for (const o of btn.dataset.options.split("|")) {
+              const li = document.createElement("li");
+              li.setAttribute("role", "option");
+              li.setAttribute("data-automation-id", "promptOption");
+              li.textContent = o;
+              li.addEventListener("click", () => {
+                btn.textContent = o;
+                data[btn.id] = o;
+                list.remove();
+              });
+              list.appendChild(li);
+            }
+            btn.after(list);
+          });
+          btn.addEventListener("keydown", (e) => e.key === "Escape" && document.getElementById(btn.id + "-list")?.remove());
+        }
+      }
+
+      function show(i) {
+        n = i;
+        const [title, body] = STEPS[i];
+        document.getElementById("step-title").textContent = title;
+        document.getElementById("step").innerHTML = body();
+        document.getElementById("next").textContent = i === STEPS.length - 1 ? "Submit" : "Save and Continue";
+        wire();
+      }
+      document.getElementById("next").addEventListener("click", () => n < STEPS.length - 1 && show(n + 1));
+      show(0);
+    </script>
+  </body>
+</html>

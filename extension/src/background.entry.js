@@ -255,8 +255,60 @@ function storeFillSession(tabId, frameId, session) {
 
 async function getFillSession(tabId) {
   const key = fillKey(tabId);
-  const { [key]: held } = await chrome.storage.session.get(key);
-  return held || { frames: {} };
+  const pk = pendingKey(tabId);
+  const kk = keepKey(tabId);
+  const { [key]: held, [pk]: pending, [kk]: keep } = await chrome.storage.session.get([key, pk, kk]);
+  return { ...(held || { frames: {} }), pending: pending || { answers: [], profile: {} }, keep: !!keep?.on };
+}
+
+// What the user typed that the app could remember (answers and profile
+// answers), noticed when they moved on — kept per tab until saved or dismissed.
+// Never saved without the user's press in the side panel.
+const pendingKey = (tabId) => `je_pending:${tabId}`;
+const keepKey = (tabId) => `je_keep:${tabId}`;
+
+// Hosts that serve many companies' applications: the company is in the path.
+const SHARED_HOSTS = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|workable\.com|jobvite\.com)$/i;
+const KEEP_MS = 2 * 60 * 60 * 1000; // keep filling lasts an application, not forever
+
+/** Which application a page belongs to: its host (one company's Workday is
+ *  vellacor.wd5.myworkdayjobs.com), plus the company's path on shared hosts. */
+function siteOf(url) {
+  try {
+    const u = new URL(url);
+    if (SHARED_HOSTS.test(u.hostname)) return `${u.hostname}/${u.pathname.split("/")[1] || ""}`;
+    return u.hostname;
+  } catch {
+    return "";
+  }
+}
+
+let pendingWrites = Promise.resolve();
+function updatePending(tabId, change) {
+  pendingWrites = pendingWrites
+    .catch(() => {})
+    .then(async () => {
+      const key = pendingKey(tabId);
+      const { [key]: held = { answers: [], profile: {} } } = await chrome.storage.session.get(key);
+      change(held);
+      await chrome.storage.session.set({ [key]: held });
+      chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+    });
+  return pendingWrites;
+}
+
+/** Merge profile fields onto the saved profile (never wiping other fields). */
+async function saveProfileFields(fields) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  // Only the chosen fields: the profile save merges, so nothing else changes.
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me/application-profile`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
+  });
+  if (res.ok) return { ok: true };
+  return { error: res.status === 422 ? "One of those values isn't valid. Uncheck it and try again." : "Couldn't save your profile" };
 }
 
 async function clearFillSession(tabId) {
@@ -265,7 +317,10 @@ async function clearFillSession(tabId) {
 }
 
 try {
-  chrome.tabs.onRemoved.addListener((tabId) => clearFillSession(tabId));
+  chrome.tabs.onRemoved.addListener((tabId) => {
+    clearFillSession(tabId);
+    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId)]).catch(() => {});
+  });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (info.url) clearFillSession(tabId);
@@ -656,6 +711,75 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "sessionUpdate") {
         if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
         sendResponse({ ok: true });
+      } else if (msg.type === "answersNoticed") {
+        if (sender.tab?.id != null) {
+          await updatePending(sender.tab.id, (held) => {
+            for (const a of msg.answers || []) {
+              if (!a?.question_key || !a.answer) continue;
+              held.answers = held.answers.filter((x) => x.question_key !== a.question_key);
+              held.answers.push({ question_key: String(a.question_key).slice(0, 255), question_text: String(a.question_text || "").slice(0, 500), answer: String(a.answer).slice(0, 2000) });
+            }
+            held.answers = held.answers.slice(-40);
+          });
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === "profileNoticed") {
+        if (sender.tab?.id != null) {
+          await updatePending(sender.tab.id, (held) => {
+            held.profile = { ...held.profile, ...(msg.fields || {}) };
+          });
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === "savePendingAnswers") {
+        const out = await saveCustomAnswers(msg.answers || []);
+        if (!out.error) {
+          autofill.refresh();
+          const keys = new Set((msg.answers || []).map((a) => a.question_key));
+          await updatePending(msg.tabId, (held) => {
+            held.answers = held.answers.filter((a) => !keys.has(a.question_key) && !(msg.dismiss || []).includes(a.question_key));
+          });
+        }
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
+      } else if (msg.type === "savePendingProfile") {
+        const fields = msg.fields || {};
+        const out = Object.keys(fields).length ? await saveProfileFields(fields) : { ok: true };
+        if (out.ok) {
+          autofill.refresh();
+          await updatePending(msg.tabId, (held) => {
+            held.profile = {};
+          });
+        }
+        sendResponse(out.ok ? { ok: true } : { ok: false, error: out.error });
+      } else if (msg.type === "dismissPending") {
+        await updatePending(msg.tabId, (held) => {
+          if (msg.kind === "profile") held.profile = {};
+          else held.answers = [];
+        });
+        sendResponse({ ok: true });
+      } else if (msg.type === "setKeepFilling") {
+        // From the page (after a press) or the panel's switch.
+        const tabId = msg.tabId ?? sender.tab?.id;
+        const url = msg.tabId != null ? (await chrome.tabs.get(msg.tabId).catch(() => null))?.url : sender.tab?.url;
+        if (tabId != null) {
+          await chrome.storage.session.set({
+            [keepKey(tabId)]: msg.on
+              ? { on: true, site: siteOf(url || ""), until: Date.now() + KEEP_MS }
+              : { on: false, userOff: msg.tabId != null, site: siteOf(url || "") },
+          });
+          if (msg.tabId != null) chrome.tabs.sendMessage(tabId, { type: "fillAction", action: "keep", value: !!msg.on }).catch(() => {});
+          chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === "getKeepFilling") {
+        const tabId = sender.tab?.id;
+        const { [keepKey(tabId)]: keep } = tabId != null ? await chrome.storage.session.get(keepKey(tabId)) : {};
+        // Only on the same site: the application, not wherever the tab goes next.
+        const here = siteOf(sender.tab?.url || sender.url || "");
+        sendResponse({
+          ok: true,
+          on: !!keep?.on && keep.site === here && (keep.until || 0) > Date.now(),
+          userOff: !!keep?.userOff && keep.site === here,
+        });
       } else if (msg.type === "getFillSession") {
         sendResponse({ ok: true, ...(await getFillSession(msg.tabId)) });
       } else if (msg.type === "fillAction") {

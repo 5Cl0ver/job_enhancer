@@ -108,3 +108,123 @@ class TestBundle:
 
     async def test_needs_sign_in(self, anon_client: AsyncClient):
         assert (await anon_client.get("/v1/autofill/bundle")).status_code in (401, 403)
+
+
+WORK = [
+    {
+        "title": "Field Service Technician",
+        "company": "Tidewell Labs",
+        "location": "Harborview, OR",
+        "start_month": 3,
+        "start_year": 2023,
+        "end_month": None,
+        "end_year": None,
+        "current": True,
+        "description": "Repaired lab equipment.",
+    }
+]
+EDU = [
+    {
+        "school": "Harborview Community College",
+        "degree": "Associate of Science",
+        "field_of_study": "Electronics",
+        "start_year": 2019,
+        "end_year": 2021,
+    }
+]
+
+
+@pytest.mark.asyncio
+class TestResumeReading:
+    async def _resume(self, db, user):
+        r = Resume(
+            id=uuid.uuid4(),
+            user_id=user.id,
+            filename="wren.pdf",
+            mime_type="application/pdf",
+            file_size_bytes=10,
+            extracted_text="WREN CALLOWAY …",
+            is_active=True,
+        )
+        db.add(r)
+        await db.flush()
+        return r
+
+    async def test_unread_resume_is_read_in_the_background(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        r = await self._resume(db_session, test_user)
+        with patch(
+            "app.api.v1.autofill.resume_history.read_in_background", new=AsyncMock()
+        ) as bg:
+            b = (await client.get("/v1/autofill/bundle")).json()
+        assert b["history"] is None and b["history_pending"] is True
+        assert "resume_id" not in b
+        bg.assert_awaited_once_with(r.id)
+
+    async def test_a_read_resume_comes_with_the_bundle_and_is_never_read_twice(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        from unittest.mock import AsyncMock, patch
+
+        from app.services import resume_history
+
+        r = await self._resume(db_session, test_user)
+        v1 = (await client.get("/v1/autofill/bundle")).json()["version"]
+        work = AsyncMock(return_value=WORK)
+        edu = AsyncMock(return_value=EDU)
+        with (
+            patch("app.services.ai_service.parse_work_history", new=work),
+            patch("app.services.ai_service.parse_education", new=edu),
+        ):
+            await resume_history.read_resume(r)
+            await db_session.flush()
+            b = (await client.get(f"/v1/autofill/bundle?version={v1}")).json()
+            assert b["changed"] is True  # the reading changed the version
+            assert b["history"] == {"work": WORK, "education": EDU}
+            assert b["history_pending"] is False
+            # Workday's work-history call serves the stored reading.
+            wh = (await client.post("/v1/ai/work-history")).json()
+            assert wh["entries"][0]["company"] == "Tidewell Labs"
+        work.assert_awaited_once()
+        edu.assert_awaited_once()
+
+    async def test_no_resume_nothing_pending(self, client: AsyncClient):
+        b = (await client.get("/v1/autofill/bundle")).json()
+        assert b["history"] is None and b["history_pending"] is False
+
+    async def test_a_reading_that_found_nothing_is_tried_again(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        """The AI down (an empty reading) must not freeze the résumé as empty."""
+        from unittest.mock import AsyncMock, patch
+
+        from app.services import resume_history
+
+        r = await self._resume(db_session, test_user)
+        with (
+            patch(
+                "app.services.ai_service.parse_work_history",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.services.ai_service.parse_education",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            await resume_history.read_resume(r)
+        assert r.parsed_history_at is None
+        with (
+            patch(
+                "app.services.ai_service.parse_work_history",
+                new=AsyncMock(return_value=WORK),
+            ),
+            patch(
+                "app.services.ai_service.parse_education",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            await resume_history.read_resume(r)
+        assert r.parsed_history == {"work": WORK, "education": []}

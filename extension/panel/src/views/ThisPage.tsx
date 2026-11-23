@@ -18,7 +18,10 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   if (ctx.kind === "indeed-myjobs") return <IndeedSync key={tab.url} />;
   return (
     <div className="flex flex-col gap-3">
-      {(ctx.kind === "application" || fill.entries.length + fill.needYou.length > 0) && (
+      {(ctx.kind === "application" ||
+        fill.entries.length + fill.needYou.length > 0 ||
+        fill.pending.answers.length > 0 ||
+        Object.keys(fill.pending.profile).length > 0) && (
         <Apply site={ctx.site} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onWrite={onWrite} />
       )}
       {/* A fresh card per page: nothing carries over from the last one. */}

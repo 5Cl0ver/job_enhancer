@@ -14,11 +14,11 @@ import {
   Undo2,
   Zap,
 } from "lucide-react";
-import { Alert, Badge, Button, Card, Input, Muted, SectionTitle, Select } from "@/ui";
+import { Alert, Badge, Button, Card, Input, Muted, SectionTitle, Select, Switch } from "@/ui";
 import { cn } from "@/lib/utils";
 import { send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
-import { usePanel, type FillEntry, type FillNeed } from "@/lib/store";
+import { usePanel, type FillEntry, type FillNeed, type FillSuggestion } from "@/lib/store";
 
 const SOURCE: Record<string, { label: string; tone: string }> = {
   profile: { label: "Profile", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
@@ -53,8 +53,9 @@ export function Apply({
   const [marking, setMarking] = React.useState(false);
   const [showFilled, setShowFilled] = React.useState(false);
 
-  const { entries, needYou } = fill;
+  const { entries, needYou, suggestions } = fill;
   const toCheck = entries.filter((e) => e.source === "ai" && !e.fixed);
+  const checkCount = toCheck.length + suggestions.length;
   const sure = entries.filter((e) => !(e.source === "ai" && !e.fixed));
 
   async function autofill() {
@@ -108,12 +109,27 @@ export function Apply({
         {entries.length + needYou.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>
-            {toCheck.length > 0 && <span className="text-violet-700 dark:text-violet-300"> · {toCheck.length} to check</span>}
+            {checkCount > 0 && <span className="text-violet-700 dark:text-violet-300"> · {checkCount} to check</span>}
             {needYou.length > 0 && <span className="text-amber-700 dark:text-amber-300"> · {needYou.length} for you</span>}
             <span className="text-muted-foreground"> · nothing was submitted</span>
           </p>
         )}
+        {entries.length > 0 && (
+          <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
+            <span>
+              <b className="font-medium">Keep filling this application</b>
+              <span className="block text-muted-foreground">Each next step fills as it appears.</span>
+            </span>
+            <Switch
+              checked={fill.keep}
+              label="Keep filling this application"
+              onCheckedChange={(on) => tab.id && send({ type: "setKeepFilling", tabId: tab.id, on })}
+            />
+          </label>
+        )}
       </Card>
+
+      <Learned />
 
       {needYou.length > 0 && (
         <Section title="Needs you" count={needYou.length} tone="text-amber-700 dark:text-amber-300">
@@ -123,8 +139,11 @@ export function Apply({
         </Section>
       )}
 
-      {toCheck.length > 0 && (
-        <Section title="Check these" count={toCheck.length} tone="text-violet-700 dark:text-violet-300">
+      {checkCount > 0 && (
+        <Section title="Check these" count={checkCount} tone="text-violet-700 dark:text-violet-300">
+          {suggestions.map((g) => (
+            <SuggestionRow key={`${g.frameId}:${g.id}`} suggestion={g} />
+          ))}
           {toCheck.map((e) => (
             <EntryRow key={`${e.frameId}:${e.id}`} entry={e} />
           ))}
@@ -207,7 +226,7 @@ function Section({ title, count, tone, children }: { title: string; count: numbe
 function useAction() {
   const { tab } = usePanel();
   return React.useCallback(
-    (frameId: number, action: "fix" | "undo" | "show", id: string, value?: string) =>
+    (frameId: number, action: "fix" | "undo" | "show" | "use", id: string, value?: string) =>
       tab.id ? send({ type: "fillAction", tabId: tab.id, frameId, action, id, value }) : Promise.resolve(null),
     [tab.id],
   );
@@ -413,6 +432,170 @@ function Remember() {
             </Button>
             <Button variant="ghost" onClick={() => setRows(null)}>
               Cancel
+            </Button>
+          </div>
+        </Card>
+      )}
+    </>
+  );
+}
+
+/** An unsure AI answer: shown, never filled until the user taps Use. */
+function SuggestionRow({ suggestion }: { suggestion: FillSuggestion }) {
+  const act = useAction();
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <li className="flex items-center gap-2 px-4 py-2.5">
+      <div className="min-w-0 flex-1">
+        <p className="truncate text-xs text-muted-foreground">{suggestion.label}</p>
+        <p className="truncate font-medium">
+          <span className="text-muted-foreground">Suggested: </span>
+          {suggestion.value}
+        </p>
+      </div>
+      <Button
+        variant="ghost"
+        size="icon-sm"
+        aria-label={`Show ${suggestion.label} on the page`}
+        title="Show on the page"
+        onClick={() => act(suggestion.frameId, "show", suggestion.id)}
+      >
+        <LocateFixed />
+      </Button>
+      <Button
+        variant="outline"
+        size="sm"
+        busy={busy}
+        aria-label={`Use the suggestion for ${suggestion.label}`}
+        onClick={async () => {
+          setBusy(true);
+          await act(suggestion.frameId, "use", suggestion.id);
+          setBusy(false);
+        }}
+      >
+        Use
+      </Button>
+    </li>
+  );
+}
+
+const PROFILE_LABELS: Record<string, string> = {
+  first_name: "First name",
+  last_name: "Last name",
+  phone: "Phone",
+  address_line1: "Address",
+  address_line2: "Address line 2",
+  city: "City",
+  state: "State",
+  postal_code: "ZIP / postal code",
+  country: "Country",
+  linkedin_url: "LinkedIn",
+  github_url: "GitHub",
+  portfolio_url: "Website",
+  authorized_to_work: "Authorized to work",
+  requires_sponsorship: "Needs sponsorship",
+  willing_to_relocate: "Willing to relocate",
+  desired_salary: "Desired salary",
+  notice_period: "Notice / start",
+};
+const show = (v: string | number | boolean) => (v === true ? "Yes" : v === false ? "No" : String(v));
+
+/** What the user typed as they moved on: remember it (their press) or not. */
+function Learned() {
+  const { tab, fill } = usePanel();
+  const { answers, profile } = fill.pending;
+  const profileKeys = Object.keys(profile);
+  const [keepA, setKeepA] = React.useState<Record<string, boolean>>({});
+  const [edits, setEdits] = React.useState<Record<string, string>>({});
+  const [keepP, setKeepP] = React.useState<Record<string, boolean>>({});
+  const [busy, setBusy] = React.useState<"" | "a" | "p">("");
+  const [note, setNote] = React.useState("");
+  if (!tab.id || (!answers.length && !profileKeys.length && !note)) return null;
+
+  async function saveAnswers() {
+    const chosen = answers
+      .filter((x) => keepA[x.question_key] !== false)
+      .map((x) => ({ ...x, answer: (edits[x.question_key] ?? x.answer).trim() }))
+      .filter((x) => x.answer);
+    const dismiss = answers.filter((x) => keepA[x.question_key] === false).map((x) => x.question_key);
+    setBusy("a");
+    const r = await send({ type: "savePendingAnswers", tabId: tab.id, answers: chosen, dismiss });
+    setBusy("");
+    setNote(r?.ok ? `Remembered ${chosen.length}. They fill in next time.` : "Couldn't save them. Try again.");
+  }
+
+  async function saveProfile() {
+    const fields = Object.fromEntries(profileKeys.filter((k) => keepP[k] !== false).map((k) => [k, profile[k]]));
+    setBusy("p");
+    const r = await send({ type: "savePendingProfile", tabId: tab.id, fields });
+    setBusy("");
+    setNote(r?.ok ? "Saved to your profile. Every application uses it now." : "Couldn't save your profile. Try again.");
+  }
+
+  return (
+    <>
+      {note && <Alert tone="success">{note}</Alert>}
+      {answers.length > 0 && (
+        <Card className="flex flex-col gap-2.5">
+          <SectionTitle className="text-sm">New answers to remember</SectionTitle>
+          <Muted>From what you typed. Uncheck any you don't want kept.</Muted>
+          <ul className="flex flex-col gap-2.5">
+            {answers.map((x) => (
+              <li key={x.question_key} className="flex flex-col gap-1">
+                <label className="flex cursor-pointer items-start gap-2 text-xs font-medium">
+                  <input
+                    type="checkbox"
+                    className="mt-0.5 size-4 accent-[var(--primary)]"
+                    checked={keepA[x.question_key] !== false}
+                    onChange={(e) => setKeepA((k) => ({ ...k, [x.question_key]: e.target.checked }))}
+                  />
+                  {x.question_text}
+                </label>
+                <Input
+                  aria-label={`Answer to ${x.question_text}`}
+                  className="ml-6 w-auto"
+                  value={edits[x.question_key] ?? x.answer}
+                  onChange={(e) => setEdits((m) => ({ ...m, [x.question_key]: e.target.value }))}
+                />
+              </li>
+            ))}
+          </ul>
+          <div className="flex gap-2">
+            <Button onClick={saveAnswers} busy={busy === "a"} className="flex-1">
+              Remember these
+            </Button>
+            <Button variant="ghost" onClick={() => send({ type: "dismissPending", tabId: tab.id, kind: "answers" })}>
+              Not now
+            </Button>
+          </div>
+        </Card>
+      )}
+      {profileKeys.length > 0 && (
+        <Card className="flex flex-col gap-2.5">
+          <SectionTitle className="text-sm">Save to my profile?</SectionTitle>
+          <Muted>You typed these; your profile doesn't have them yet (or has them differently).</Muted>
+          <ul className="flex flex-col gap-1.5">
+            {profileKeys.map((k) => (
+              <li key={k}>
+                <label className="flex cursor-pointer items-center gap-2 text-sm">
+                  <input
+                    type="checkbox"
+                    className="size-4 accent-[var(--primary)]"
+                    checked={keepP[k] !== false}
+                    onChange={(e) => setKeepP((m) => ({ ...m, [k]: e.target.checked }))}
+                  />
+                  <span className="text-muted-foreground">{PROFILE_LABELS[k] || k}</span>
+                  <b className="min-w-0 truncate font-medium">{show(profile[k])}</b>
+                </label>
+              </li>
+            ))}
+          </ul>
+          <div className="flex gap-2">
+            <Button onClick={saveProfile} busy={busy === "p"} className="flex-1">
+              Save to my profile
+            </Button>
+            <Button variant="ghost" onClick={() => send({ type: "dismissPending", tabId: tab.id, kind: "profile" })}>
+              Not now
             </Button>
           </div>
         </Card>

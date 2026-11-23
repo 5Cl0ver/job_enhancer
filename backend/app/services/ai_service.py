@@ -383,3 +383,59 @@ async def generate_cover_letter(
     )
     content, ms = await _invoke(_COVER_LETTER_SYSTEM_PROMPT, user_content)
     return content, _MODEL_ID, ms
+
+
+_EDUCATION_SYSTEM = """You extract EVERY school from a person's resume into structured JSON.
+
+Rules (follow EXACTLY):
+- Use ONLY what is written in the RESUME. NEVER invent schools, degrees, or dates.
+- Return a JSON ARRAY, most recent first. Each element has these keys:
+  "school"         the school's name exactly as written,
+  "degree"         the degree as written ("Associate of Science", "B.S.", "Certificate"…), or "",
+  "field_of_study" the major / field as written, or "",
+  "start_year"     4-digit or null,
+  "end_year"       4-digit (graduation or expected) or null.
+- Certifications and courses without a school are NOT education entries.
+- Respond with ONLY the JSON array. No prose, no markdown, no explanation."""
+
+
+async def parse_education(resume_text: str) -> list[dict]:
+    """The résumé's schools, most recent first (spec 015). Grounded — only
+    what's written; any failure returns []."""
+    if not resume_text or not resume_text.strip():
+        return []
+    user = (
+        f"RESUME:\n{resume_text.strip()[:8000]}\n\n"
+        "Return ONLY the JSON array of education, most recent first."
+    )
+    try:
+        content, _ = await _invoke(_EDUCATION_SYSTEM, user)
+    except Exception as exc:  # never let this break autofill
+        logger.warning("parse_education failed: %s", exc)
+        return []
+    match = re.search(r"\[.*\]", content, re.DOTALL)
+    if not match:
+        return []
+    try:
+        data = json.loads(match.group(0))
+    except (ValueError, TypeError):
+        return []
+    if not isinstance(data, list):
+        return []
+    out: list[dict] = []
+    for item in data[:6]:
+        if not isinstance(item, dict):
+            continue
+        school = str(item.get("school") or "").strip()[:200]
+        if not school:
+            continue
+        out.append(
+            {
+                "school": school,
+                "degree": str(item.get("degree") or "").strip()[:200],
+                "field_of_study": str(item.get("field_of_study") or "").strip()[:200],
+                "start_year": _clamp_int(item.get("start_year"), 1900, 2100),
+                "end_year": _clamp_int(item.get("end_year"), 1900, 2100),
+            }
+        )
+    return out

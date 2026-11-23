@@ -11,6 +11,7 @@ import uuid
 from datetime import datetime
 
 from sqlalchemy import (
+    JSON,
     Boolean,
     DateTime,
     ForeignKey,
@@ -46,6 +47,10 @@ class Resume(Base):
     # existed have text only — re-upload restores the file).
     file_data: Mapped[bytes | None] = mapped_column(LargeBinary)
     is_active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    # The résumé read once into {"work": [...], "education": [...]} for autofill
+    # (spec 015; services/resume_history.py). Null until read.
+    parsed_history: Mapped[dict | None] = mapped_column(JSON)
+    parsed_history_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

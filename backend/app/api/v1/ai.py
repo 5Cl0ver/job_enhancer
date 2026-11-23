@@ -7,6 +7,7 @@ from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
+    BackgroundTasks,
     Depends,
     File,
     HTTPException,
@@ -18,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from slowapi import Limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
@@ -40,7 +42,7 @@ from app.schemas.resume import (
     WorkExperienceEntry,
     WorkHistoryResponse,
 )
-from app.services import ai_service, resume_parser
+from app.services import ai_service, resume_history, resume_parser
 from app.services import saved_jobs as sj_svc
 from app.services.match import skills_in_resume
 from app.utils.rate_limit import rate_limit_key
@@ -66,6 +68,7 @@ _MAX_FILE_SIZE = 10 * 1024 * 1024  # 10 MB
 
 @router.post("/resumes", response_model=ResumeSchema, status_code=201)
 async def upload_resume(
+    background: BackgroundTasks,
     file: UploadFile = File(...),
     # False: keep the current main resume (an upload for one resume type). The
     # first resume a user uploads always becomes the main one.
@@ -107,6 +110,9 @@ async def upload_resume(
     )
     db.add(resume)
     await db.commit()
+    # Read it into work history + education for autofill, after responding.
+    if activate:
+        background.add_task(resume_history.read_in_background, resume.id)
     return ResumeSchema.model_validate(resume)
 
 
@@ -354,18 +360,23 @@ async def work_history(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> WorkHistoryResponse:
-    """Parse the user's active résumé into a structured, ordered work-experience
-    list — the extension uses it to fill 'Work Experience' sections (Workday et
-    al.). Grounded: only what's actually in the résumé."""
-    resume_text = await db.scalar(
-        select(Resume.extracted_text).where(
-            Resume.user_id == user.id, Resume.is_active.is_(True)
-        )
+    """The user's active résumé as a structured, ordered work-experience list —
+    the extension fills 'Work Experience' sections (Workday et al.) from it.
+    Read once and stored (services/resume_history.py). Grounded: only what's
+    actually in the résumé."""
+    resume = await db.scalar(
+        select(Resume)
+        .options(defer(Resume.file_data))
+        .where(Resume.user_id == user.id, Resume.is_active.is_(True))
+        .order_by(Resume.created_at.desc())
+        .limit(1)
     )
-    if not resume_text:
+    if resume is None or not resume.extracted_text:
         return WorkHistoryResponse(entries=[])
-    entries = await ai_service.parse_work_history(resume_text)
-    return WorkHistoryResponse(entries=[WorkExperienceEntry(**e) for e in entries])
+    history = await resume_history.history_of(db, resume)
+    return WorkHistoryResponse(
+        entries=[WorkExperienceEntry(**e) for e in history.get("work", [])]
+    )
 
 
 @router.post(
