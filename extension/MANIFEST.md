@@ -35,7 +35,7 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `config.example.js` / `config.js` | Public client config (`config.js` **gitignored**): `API_BASE`, `APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` |
 | `icons/` | Toolbar/store icons (16/48/128) |
 
-## Autofill (`src/autofill/`, spec 015 Stories 1–2)
+## Autofill (`src/autofill/`, specs 015 and 016)
 
 One press fills every field the app knows, **instantly** (from the copy of the user's details the
 background holds — never a server wait), checks each one took, then the app's AI answers what's left.
@@ -43,8 +43,10 @@ Never submits; never overwrites the user; never touches self-ID, agreements, ess
 
 | File | Purpose |
 |---|---|
-| `src/autofill.entry.js` | Content script, every frame of every https page: the pill (only on pages that look like an application), run, messages from the panel (Fix / Undo / Show / Remember), submit tracking |
-| `src/autofill/scan.js` | Every field a person would fill — including inside shadow DOM (open and closed) — and the question it asks (label, aria, legend, nearby text, placeholder) |
+| `src/autofill.entry.js` | Content script, every frame of every https page. Draws nothing but the filled-field outlines (spec 016: everything is managed from the panel). Reports whether the frame holds a form (`formPresence`) and its progress (`fillStatus`), fills on a press (`runAutofill`), résumé first; only the open pop-up's fields while one is open; messages from the panel (Fix / Undo / Show / Remember); submit tracking |
+| `src/autofill/hosts.js` | The one list of applicant systems (Workday, Greenhouse, Lever, Paycom, Paylocity, UKG, ADP, Dayforce, BambooHR, iCIMS, JazzHR, Rippling…), used by the page and the panel |
+| `src/background/fillPresence.js` | Per tab: which frames hold a form, the status line's state, the toolbar badge (⚡ / filled count / !), and the press — every frame with a form, from the panel button, the toolbar or Alt+Shift+J |
+| `src/autofill/scan.js` | Every field a person would fill — including inside shadow DOM (open and closed) — and the question it asks (label, aria, floating label after the box, legend, nearby text, table cell, placeholder); "is there a form here" (`hasFormHere`: 3+ fields, no sign-in box); a phone box beside a country-code picker |
 | `src/autofill/classify/profileKeys.js` | Which profile answer a question wants (autocomplete first, then words), the guards (self-ID, consent, essays, noise), and the profile's answers in the forms dropdowns use ("OR"/"Oregon") |
 | `src/autofill/classify/answers.js` | Remembered-answer matching (with the country / number / "not" guard) and option matching ("Yes" ↔ "Yes, I am authorized") |
 | `src/autofill/resolve.js` | Field + copy → what to write and where it came from, or why not |
@@ -65,7 +67,7 @@ Vite + React 19 + Tailwind v4 + lucide, the same stack and tokens as `frontend/`
 | File | Purpose |
 |---|---|
 | `panel/src/App.tsx` | Shell: header, the four views, bottom bar; sign-in gate |
-| `panel/src/views/ThisPage.tsx` | Applying → **Autofill this page**, Mark applied, Write for this job · a posting → **Save this job** (read → check details → save, duplicate warning) · Indeed My jobs → read, choose stages, **Sync** · elsewhere → what Job Catcher is for |
+| `panel/src/views/ThisPage.tsx` | Any page with a form → **Autofill this page** (first on an application, under Save otherwise) with its status line and real shortcut; no form → says so, with **Fill anyway** · Mark applied, Write for this job · a posting → **Save this job** (read → check details → save, duplicate warning) · Indeed My jobs → read, choose stages, **Sync** · elsewhere → what Job Catcher is for |
 | `panel/src/views/MyJobs.tsx` | Saved jobs (search, Mark applied, open) from the cheap change check |
 | `panel/src/views/Write.tsx` | Cover letter / tailored résumé by the free AI or **My Claude** (prompt copied → paste answer back → PDF); a tailored résumé is uploaded by the next Autofill |
 | `panel/src/views/Settings.tsx` · `SignIn.tsx` | Account, Claude Project link (synced with the app), version · sign-in |

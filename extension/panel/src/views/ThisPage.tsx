@@ -16,16 +16,51 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
 
   if (ctx.kind === "none") return <Elsewhere />;
   if (ctx.kind === "indeed-myjobs") return <IndeedSync key={tab.url} />;
+
+  // Autofill is offered on EVERY page with a form, whatever its address
+  // (spec 016): first when it's an application or a fill is under way,
+  // under "Save this job" for any other form.
+  const p = fill.presence;
+  const working =
+    fill.entries.length + fill.needYou.length > 0 ||
+    fill.pending.answers.length > 0 ||
+    Object.keys(fill.pending.profile).length > 0 ||
+    !!p?.status;
+  const applying = ctx.kind === "application" || !!p?.app || working;
+  const apply = (applying || p?.form) && (
+    <Apply site={ctx.site} isApplication={applying} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onWrite={onWrite} />
+  );
   return (
     <div className="flex flex-col gap-3">
-      {(ctx.kind === "application" ||
-        fill.entries.length + fill.needYou.length > 0 ||
-        fill.pending.answers.length > 0 ||
-        Object.keys(fill.pending.profile).length > 0) && (
-        <Apply site={ctx.site} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onWrite={onWrite} />
-      )}
+      {applying && apply}
       {/* A fresh card per page: nothing carries over from the last one. */}
-      <SaveJob key={tab.url} compact={ctx.kind === "application" || fill.entries.length > 0} site={ctx.site} match={match} />
+      <SaveJob key={tab.url} compact={applying || fill.entries.length > 0} site={ctx.site} match={match} />
+      {!applying && (apply || <NoForm known={!!p} />)}
+    </div>
+  );
+}
+
+/** No form here (yet): say so plainly, and still let the user try. */
+function NoForm({ known }: { known: boolean }) {
+  const { tab } = usePanel();
+  const [busy, setBusy] = React.useState(false);
+  return (
+    <div className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground" role="status">
+      <span>{known ? "No form on this page yet. Open the application and Autofill appears here." : "Looking at this page…"}</span>
+      {known && tab.id != null && (
+        <Button
+          variant="ghost"
+          size="sm"
+          busy={busy}
+          onClick={async () => {
+            setBusy(true);
+            await send({ type: "pressAutofill", tabId: tab.id });
+            setBusy(false);
+          }}
+        >
+          Fill anyway
+        </Button>
+      )}
     </div>
   );
 }

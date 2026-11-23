@@ -6,6 +6,7 @@
 // the extension — closed). Frames are NOT walked: each frame runs its own copy
 // of the script, and one press fills them all.
 import { normalizeQuestion } from "./classify/answers.js";
+import { applicantHost, isApplyUrl } from "./hosts.js";
 
 /** A shadow root, including closed ones where the extension API allows. */
 export function shadowOf(el) {
@@ -92,10 +93,28 @@ export function questionFor(el) {
   }
   const al = clean(el.getAttribute?.("aria-label"));
   if (al && !/^(select|choose|open|toggle|clear)\b/i.test(al)) return al;
+  // A floating label drawn right after its box: "<div><input><label>Email</label></div>"
+  // (the box first in its wrapper, so a flat "label, input, label, input" list
+  // never hands a box the NEXT field's label; an error or hint line never counts).
+  const after = el.nextElementSibling;
+  const cls = after?.getAttribute?.("class") || "";
+  if (
+    (after?.tagName === "LABEL" || /(^|[\s_-])(floating-?)?label\b/i.test(cls)) &&
+    !/error|invalid|hint|help|count|message|feedback/i.test(cls) &&
+    after?.getAttribute?.("role") !== "alert" &&
+    !el.previousElementSibling &&
+    (!after.htmlFor || after.htmlFor === el.id) &&
+    !after.querySelector(CONTROL) &&
+    !["radio", "checkbox"].includes(el.type)
+  ) {
+    const t = textOf(after);
+    if (t) return t;
+  }
   // Text right beside the control wins; text found further up (a page heading)
   // only when the control has no placeholder of its own.
   const placeholder = clean(el.getAttribute?.("placeholder"));
   const near = nearbyText(el, 4, true);
+  if (!/[\p{L}\p{N}]/u.test(near.text)) near.text = ""; // ":" or "*" alone is no label
   if (near.text && (near.depth <= 1 || !placeholder)) return near.text;
   return placeholder || near.text || clean(el.getAttribute?.("title"));
 }
@@ -197,6 +216,9 @@ export function collectFields(root, opts = {}) {
   const buttonSets = new Map(); // parent -> pressable buttons
   const add = (f) => {
     f.key = normalizeQuestion(f.question);
+    if (f.kind === "text" && PHONEISH.test([f.hints.type, f.hints.name, f.hints.id, f.hints.autocomplete, f.question].join(" "))) {
+      f.hints.dialCode = dialCodeBeside(f.el);
+    }
     fields.push(f);
   };
   const hintsOf = (el) => ({
@@ -302,6 +324,34 @@ export function collectFields(root, opts = {}) {
   return fields.sort((a, b) => (order.get(a.el) ?? 0) - (order.get(b.el) ?? 0));
 }
 
+const PHONEISH = /\btel\b|phone|mobile|\bcell\b/i;
+const DIAL_ONLY = /^\+\s?\d{1,4}$/;
+const DIAL_WORDS = /country\s*code|dial(ing)?\s*code|\+\d{1,4}\b/i;
+
+/**
+ * Is a country dial code drawn beside this phone box — a "+1" in front of it,
+ * a code picker in the same small group, or "+1" already in the box
+ * (react-phone-number-input)? Then the box takes the national number only
+ * (spec 016, research R8).
+ */
+export function dialCodeBeside(el) {
+  if (DIAL_ONLY.test((el.value || "").trim())) return true;
+  let box = el.parentElement;
+  for (let hop = 0; box && hop < 3; hop++, box = box.parentElement) {
+    const controls = [...box.querySelectorAll("input:not([type=hidden]), select, button, [role=combobox]")];
+    if (controls.length > 3) break; // a whole form row, not the phone's own group
+    for (const c of controls) {
+      if (c === el) continue;
+      const t = c.tagName === "SELECT" ? textOf(c.options[c.selectedIndex] || c) || c.value : textOf(c) || c.value || c.getAttribute("aria-label") || "";
+      if (t.length <= 60 && DIAL_WORDS.test(t)) return true;
+    }
+    for (const s of box.children) {
+      if (!s.matches(CONTROL) && !s.querySelector(CONTROL) && DIAL_ONLY.test(textOf(s))) return true;
+    }
+  }
+  return false;
+}
+
 /** The visible box of an input combobox: a known control wrapper, or its
  *  parent when that holds nothing else (never a whole form or its label). */
 export function comboBox(el) {
@@ -333,9 +383,26 @@ export function looksLikeApplication(fields, { isIdentity, isMapped }) {
   // A question-only step (Workday's "Application Questions", "Voluntary
   // Disclosures"…) on an application's own address.
   const href = root?.defaultView?.location?.href || "";
-  return APPLY_URL.test(href) && fields.length >= 2;
+  return isApplyUrl(href) && fields.length >= 2;
 }
 
-/** Addresses that are applications (applicant systems, or a path with apply). */
-export const APPLY_URL =
-  /\/(apply|application|applications|candidate)\b|myworkdayjobs\.com|greenhouse\.io|lever\.co|ashbyhq\.com|icims\.com|smartrecruiters\.com|jobvite\.com|workable\.com|taleo\.net|successfactors|smartapply\.indeed\.com/i;
+// Address parts a site marks with autocomplete (a form about a person).
+const PERSON_AUTOCOMPLETE = /\b(name|given-name|family-name|email|tel|tel-national|street-address|address-line1|postal-code|address-level[12])\b/i;
+
+/**
+ * Is there a form worth filling here (spec 016, research R2)? Decides whether
+ * the side panel offers Autofill — never a guess about the address alone:
+ * 3+ fillable fields; or 2+ fields the site marks with autocomplete, or on an
+ * applicant system; or an application. A visible password box means a sign-in
+ * page, unless it's one of the sign-up-and-apply forms with 6+ other fields.
+ */
+export function hasFormHere(fields, { isApplication }) {
+  const root = fields[0]?.el?.ownerDocument;
+  if (!root) return false;
+  const password = [...root.querySelectorAll('input[type="password"]')].some((el) => isVisible(el));
+  if (password) return fields.length >= 6;
+  if (fields.length >= 3) return true;
+  if (fields.filter((f) => PERSON_AUTOCOMPLETE.test(f.hints?.autocomplete || "")).length >= 2) return true;
+  if (fields.length >= 2 && applicantHost(root.defaultView?.location?.href || "")) return true;
+  return isApplication();
+}

@@ -97,6 +97,7 @@ export async function launchExtension({ apiUrl, signedIn = true, from = ROOT }) 
   });
   let worker = context.serviceWorkers()[0] || (await context.waitForEvent("serviceworker"));
   const extensionId = new URL(worker.url()).host;
+  let remote = null; // an extension page that talks to the background for the tests
 
   const ext = {
     context,
@@ -141,6 +142,44 @@ export async function launchExtension({ apiUrl, signedIn = true, from = ROOT }) 
     async upgrade() {
       installBuild(dir, ROOT);
       return ext.reload();
+    },
+    /** Send the background a message the way the side panel does (from an extension page). */
+    async bg(msg) {
+      if (!remote || remote.isClosed()) {
+        remote = await context.newPage();
+        await remote.goto(`chrome-extension://${extensionId}/dist/panel/index.html`);
+      }
+      return remote.evaluate((m) => chrome.runtime.sendMessage(m), msg);
+    },
+    async tabIdOf(page) {
+      // Two tabs on one address: the newest (the page a test just opened).
+      return worker.evaluate(
+        async (u) => (await chrome.tabs.query({})).filter((t) => t.url === u).sort((a, b) => b.id - a.id)[0]?.id ?? null,
+        page.url(),
+      );
+    },
+    /** What the panel knows about a tab: does it have a form, and the status line's state. */
+    async fillState(page) {
+      const tabId = await ext.tabIdOf(page);
+      return tabId == null ? null : (await ext.bg({ type: "getFillSession", tabId }))?.presence || null;
+    },
+    /**
+     * Press Autofill as the panel's button does, once the page has reported a
+     * form (as a person would see "Form found"). Resolves when the press is done.
+     * @returns {Promise<{ok: boolean, filled: number, need: number, problem?: string, ms: number}>}
+     */
+    async autofill(page, { waitForForm = true } = {}) {
+      const tabId = await ext.tabIdOf(page);
+      if (waitForForm) {
+        const until = Date.now() + 10_000;
+        while (!(await ext.fillState(page))?.form) {
+          if (Date.now() > until) throw new Error(`no form reported on ${page.url()}`);
+          await new Promise((r) => setTimeout(r, 150));
+        }
+      }
+      const t0 = Date.now();
+      const res = await ext.bg({ type: "pressAutofill", tabId });
+      return { ...res, ms: Date.now() - t0 };
     },
     async close() {
       await context.close();

@@ -35,12 +35,14 @@ async function filledWithPanel() {
   const url = lab.url("/lab/react-form/index.html");
   const page = await ext.context.newPage();
   await page.goto(url);
-  await page.locator("#jec-autofill").click();
-  await expect(page.locator("#jec-autofill")).toHaveText(/filled/, { timeout: 15000 });
   const tabId = await ext.worker.evaluate(async (u) => (await chrome.tabs.query({ url: u }))[0].id, url);
   const panel = await ext.context.newPage();
   await panel.setViewportSize({ width: 380, height: 900 });
   await panel.goto(`chrome-extension://${ext.extensionId}/dist/panel/index.html?tab=${tabId}`);
+  // What a person does: the panel says it found the form; one press fills it.
+  await expect(panel.getByTestId("fill-status")).toHaveText(/Form found/, { timeout: 10000 });
+  await panel.getByRole("button", { name: "Autofill this page" }).click();
+  await expect(panel.getByTestId("fill-status")).toHaveText(/Done/, { timeout: 15000 });
   const form = () => page.evaluate(() => window.__formData());
   return { page, panel, form };
 }
@@ -119,7 +121,7 @@ test("Remember what I typed: answers given on the page are kept after a press", 
   // ...and the next application fills it by itself.
   const next = await ext.context.newPage();
   await next.goto(lab.url("/lab/react-form/index.html"));
-  await next.locator("#jec-autofill").click();
+  await ext.autofill(next);
   await expect.poll(() => next.evaluate(() => window.__formData().hearAbout), { timeout: 15000 }).toBe("Career fair");
   expect(PERSON.email).toBeTruthy();
   await Promise.all([page.close(), panel.close(), next.close()]);

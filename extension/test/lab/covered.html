@@ -1,0 +1,35 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 016: the application opens in a NATIVE
+     modal <dialog> (showModal: drawn above every layer, the rest of the page
+     made unclickable), with a cookie banner and a chat bubble filling the
+     bottom corners. Nothing Job Catcher draws on a page could be pressed here;
+     the side panel still finds the form and fills it. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Opening 42 - Quillstone</title>
+    <style>
+      .cookie { position: fixed; left: 0; right: 0; bottom: 0; height: 120px; background: #333; color: #fff; z-index: 2147483647; }
+      .chat { position: fixed; right: 16px; bottom: 136px; width: 64px; height: 64px; border-radius: 50%; background: #06c; z-index: 2147483647; }
+    </style>
+  </head>
+  <body>
+    <h1>Help Desk Analyst</h1>
+    <button id="open" type="button">Apply for this job</button>
+    <dialog id="dlg">
+      <form method="dialog">
+        <p><label for="fn">First name</label><input id="fn"></p>
+        <p><label for="ln">Last name</label><input id="ln"></p>
+        <p><label for="em">Email</label><input id="em" type="email"></p>
+        <p><label for="ph">Phone</label><input id="ph" type="tel"></p>
+        <p><label><input type="checkbox" id="terms"> I agree to the terms</label></p>
+        <button>Close</button>
+      </form>
+    </dialog>
+    <div class="chat" aria-label="Chat with us"></div>
+    <div class="cookie">We use cookies. <button type="button">OK</button></div>
+    <script>
+      document.getElementById("open").addEventListener("click", () => document.getElementById("dlg").showModal());
+    </script>
+  </body>
+</html>

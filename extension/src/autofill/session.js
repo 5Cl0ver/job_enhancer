@@ -4,7 +4,7 @@
 // self-identification, agreements and essays are never touched.
 import { normalizeQuestion, yesNo } from "./classify/answers.js";
 import { PRIVATE, profileKeyFor } from "./classify/profileKeys.js";
-import { collectFields, looksLikeApplication } from "./scan.js";
+import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
 import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
 import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
 
@@ -79,6 +79,12 @@ export function profileValue(key, value) {
   return value;
 }
 
+/** Is `el` inside `box`, across shadow-root boundaries? */
+function within(box, el) {
+  for (let n = el; n; n = n.parentNode || n.host) if (n === box) return true;
+  return false;
+}
+
 const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
@@ -87,7 +93,9 @@ const shortLabel = (q) => (q.length > 90 ? q.slice(0, 89) + "…" : q) || "Unlab
 
 /**
  * @param {{doc?: Document, send: (msg: object) => Promise<any>, onChange?: () => void,
- *          getShadow?: Function, visible?: Function, skipField?: (f) => boolean}} deps
+ *          getShadow?: Function, visible?: Function, skipField?: (f) => boolean,
+ *          scope?: () => Element|null}} deps
+ *   scope: when it returns an element (an open pop-up), only fields inside it count.
  */
 export function createSession(deps) {
   const doc = deps.doc || document;
@@ -107,16 +115,31 @@ export function createSession(deps) {
   const aiAsked = new Set();
 
   const scan = () => {
-    const list = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter((f) => !skipField(f));
+    const all = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter((f) => !skipField(f));
+    // An open pop-up with a form of its own is filled alone; one whose fields
+    // aren't really showing (a hidden drawer, a date picker) doesn't count.
+    const inside = deps.scope?.() || null;
+    const scoped = inside ? all.filter((f) => within(inside, f.el)) : all;
+    const list = scoped.length >= 2 ? scoped : all;
     fields = new Map(list.map((f) => [f.id, f]));
     return list;
   };
 
-  const isApplication = () =>
-    looksLikeApplication(scan(), {
-      isIdentity: (f) => IDENTITY.has(profileKeyFor(f) || "") || (f.kind === "file" && isResumeUpload(f)),
-      isMapped: (f) => !!profileKeyFor(f) || (f.kind === "file" && isResumeUpload(f)),
-    });
+  const appCheck = {
+    isIdentity: (f) => IDENTITY.has(profileKeyFor(f) || "") || (f.kind === "file" && isResumeUpload(f)),
+    isMapped: (f) => !!profileKeyFor(f) || (f.kind === "file" && isResumeUpload(f)),
+  };
+  const isApplication = () => looksLikeApplication(scan(), appCheck);
+
+  /** A form worth filling here (the side panel offers Autofill when one is). */
+  const hasForm = () => presence().form;
+
+  /** One scan: is there a form, is it an application, how many fields. */
+  function presence() {
+    const list = scan();
+    const app = looksLikeApplication(list, appCheck);
+    return { form: app || hasFormHere(list, { isApplication: () => app }), app, fields: list.length };
+  }
 
   function entryFor(field, source, actual, snap) {
     return {
@@ -158,14 +181,17 @@ export function createSession(deps) {
    * @param {import("./resolve.js").Copy} copy
    * @returns {Promise<{leftovers: object[]}>}
    */
-  async function fillKnown(copy, { auto = false } = {}) {
+  async function fillKnown(copy, { auto = false, onProgress } = {}) {
     const leftovers = [];
     if (!auto) declined.clear(); // a press means: fill again, undone ones too
     // A suggestion whose field left the page (a new step) is gone.
     for (const [id, x] of suggestions) if (!x.field.el.isConnected) suggestions.delete(id);
     // Education and the current job go into the FIRST block that asks.
     const once = new Set();
-    for (const field of scan()) {
+    const list = scan();
+    let i = 0;
+    for (const field of list) {
+      onProgress?.(++i, list.length);
       if (filled.has(field.id) || declined.has(field.id)) continue;
       if (field.kind !== "file" && hasValue(field)) continue;
       if (field.kind === "file" && field.el.files?.length) continue;
@@ -183,6 +209,25 @@ export function createSession(deps) {
       if (!res.ok) leave(field, res.reason || "rejected");
     }
     return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)) };
+  }
+
+  /**
+   * Upload the résumé before anything else: many applicant systems read it
+   * and rewrite the form (spec 016, research R7). True when one was uploaded.
+   */
+  async function uploadResume(copy, { auto = false } = {}) {
+    if (!auto) declined.clear(); // a press means: fill again, undone ones too
+    if (!copy.resumeFile) return false;
+    let done = false;
+    for (const field of scan()) {
+      if (field.kind !== "file" || field.el.files?.length || filled.has(field.id) || declined.has(field.id)) continue;
+      if (!isResumeUpload(field)) continue;
+      const d = resolve(field, copy);
+      if (d.skip) continue;
+      const res = await fillOne(field, d.values, d.source);
+      if (res.ok) done = true;
+    }
+    return done;
   }
 
   /** One request for everything left: the app's AI answers from the user's data. */
@@ -368,6 +413,9 @@ export function createSession(deps) {
   return {
     scan,
     isApplication,
+    hasForm,
+    presence,
+    uploadResume,
     fillKnown,
     fillWithAi,
     report,

@@ -41,6 +41,24 @@ export interface Pending {
   answers: { question_key: string; question_text: string; answer: string }[];
   profile: Record<string, string | number | boolean>;
 }
+/** What a press is doing, or did (background/fillPresence.js). */
+export interface FillStatus {
+  phase: "filling" | "done" | "problem";
+  done?: number;
+  total?: number;
+  note?: string;
+  filled?: number;
+  need?: number;
+  problem?: "signed_out" | "asleep" | "refresh" | "slow";
+  at: number;
+}
+/** Does the tab have a form (any frame), and the latest status. null: not known yet. */
+export interface Presence {
+  form: boolean;
+  app: boolean;
+  fields: number;
+  status: FillStatus | null;
+}
 export type Fill = {
   entries: FillEntry[];
   needYou: FillNeed[];
@@ -48,8 +66,9 @@ export type Fill = {
   frameIds: number[];
   pending: Pending;
   keep: boolean;
+  presence: Presence | null;
 };
-const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false };
+const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null };
 type Saved = { jobs: SavedJob[]; loaded: boolean; error: string | null };
 type Tab = { id: number | null; url: string; title: string; ctx: PageContext };
 
@@ -115,17 +134,26 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
       frameIds: Object.keys(frames).map(Number),
       pending: (res?.pending as Pending) || { answers: [], profile: {} },
       keep: !!res?.keep,
+      presence: (res?.presence as Presence) || { form: false, app: false, fields: 0, status: null },
     });
   }, []);
 
   // The tab changed, or one of its frames filled / fixed / undid something.
   React.useEffect(() => {
-    loadFill(tabId);
+    setFill(NO_FILL); // "looking at this page" until it answers
+    // Ask the tab's frames to report their forms again (a page loaded before
+    // the panel opened, or before the extension was updated), then read —
+    // never a flash of "no form" on a page that has one.
+    if (tabId != null) send({ type: "probeTab", tabId });
+    const first = setTimeout(() => loadFill(tabId), tabId != null ? 400 : 0);
     const onMessage = (msg: { type?: string; tabId?: number }) => {
       if (msg?.type === "sessionChanged" && msg.tabId === tabId) loadFill(tabId);
     };
     chrome.runtime.onMessage.addListener(onMessage);
-    return () => chrome.runtime.onMessage.removeListener(onMessage);
+    return () => {
+      clearTimeout(first);
+      chrome.runtime.onMessage.removeListener(onMessage);
+    };
   }, [tabId, loadFill]);
 
   const setStaged = React.useCallback(async (docId: string | null, filename?: string) => {

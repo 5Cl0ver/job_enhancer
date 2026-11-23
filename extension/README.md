@@ -47,7 +47,11 @@ select this `extension/` folder → pin the icon. Make sure the backend is runni
 2. **On Indeed / LinkedIn / ZipRecruiter:** click **Save to My Jobs** on a job.
 3. **Anywhere else:** in the panel, **This page › Save this job** → check the
    details → **Save to My Jobs**.
-4. **On an application:** **This page › Autofill this page**, check the page, submit it yourself.
+4. **Autofill, on any page with a form:** the toolbar icon shows **⚡**. Click it → the side
+   panel's first button is **⚡ Autofill this page**. One press fills the form; one line
+   under the button always says what's happening ("Form found", "Filling… 7 of 15",
+   "Done", or what went wrong). Check the page, then submit it yourself. Shortcut:
+   **Alt+Shift+J** (the panel shows the key Chrome really gave it).
 5. **My jobs**, **Write** (cover letters, tailored résumés) and **Settings** are in the panel's bottom bar.
 
 ## Testing

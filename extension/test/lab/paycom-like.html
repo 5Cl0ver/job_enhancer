@@ -1,0 +1,106 @@
+<!doctype html>
+<!-- Lab page (invented company), shaped like a Paycom career page (spec 016):
+     a job posting whose "Apply" opens a pop-up (role=dialog, aria-modal) with
+     MUI-style labels — most linked by for, one floating AFTER its box — a
+     phone beside a "+1" country picker, a résumé uploader that rebuilds the
+     form once the résumé is read, a privacy acknowledgement and an SMS consent
+     question. A cookie banner covers the bottom of the page and the page has
+     its own search and job-alert boxes behind the pop-up. No "apply" in the
+     address. window.__formData() holds what the pop-up's form holds. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Field Service Technician - Vellacor Robotics Careers</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; padding: 24px 24px 140px; }
+      .cookie { position: fixed; left: 0; right: 0; bottom: 0; z-index: 99999; background: #222; color: #fff; padding: 28px; }
+      .backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 50%); z-index: 1300; display: flex; align-items: center; justify-content: center; }
+      .paper { background: #fff; width: 520px; max-height: 90vh; overflow: auto; padding: 20px; border-radius: 6px; }
+      .ui-field { position: relative; margin: 14px 0; }
+      .ui-field label, .ui-field .ui-floating-label { display: block; font-size: 12px; color: #555; }
+      .ui-field input, .ui-field select { width: 100%; padding: 8px; }
+      .phone { display: flex; gap: 6px; }
+      .phone select { width: 110px; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <form role="search"><label for="kw">Search jobs</label><input id="kw" name="keywords"><label for="loc">Location</label><input id="loc" name="location"></form>
+    </header>
+    <h1>Field Service Technician</h1>
+    <p>Vellacor Robotics · Harborview, OR · Full time</p>
+    <p>Repair and maintain robots at customer sites.</p>
+    <button id="apply" type="button">Apply</button>
+    <section><h2>Job alerts</h2><label for="alert">Email me jobs like this</label><input id="alert" type="email"></section>
+
+    <div class="cookie" role="region" aria-label="Cookie notice">
+      We use cookies. <button type="button" id="cookie-ok">Accept all</button>
+    </div>
+
+    <script>
+      const data = {};
+      window.__formData = () => {
+        const out = {};
+        for (const el of document.querySelectorAll("#quick-apply [name]")) {
+          if (el.type === "radio") { if (el.checked) out[el.name] = el.value; else if (!(el.name in out)) out[el.name] = ""; }
+          else if (el.type === "checkbox") out[el.name] = el.checked;
+          else if (el.type === "file") out[el.name] = el.files[0]?.name || "";
+          else out[el.name] = el.value;
+        }
+        return out;
+      };
+      window.__rebuilt = 0;
+
+      const field = (id, label, extra = "") =>
+        `<div class="ui-field"><label for="${id}" class="ui-input-label">${label}</label><input id="${id}" name="${id}" ${extra}></div>`;
+
+      function form() {
+        return `
+          <h2 id="qa-title">Quick Apply</h2>
+          <div class="ui-field"><label for="resume">Autofill with résumé</label>
+            <input id="resume" name="resume" type="file" accept=".pdf,.doc,.docx"></div>
+          ${field("firstName", "First Name *")}
+          ${field("lastName", "Last Name *")}
+          ${field("emailAddress", "Email Address *", 'type="email"')}
+          <div class="ui-field"><span class="ui-input-label">Phone *</span>
+            <div class="phone">
+              <select id="countryCode" name="countryCode" aria-label="Country"><option>🇺🇸 +1</option><option>🇨🇦 +1</option><option>🇬🇧 +44</option></select>
+              <input id="phoneNumber" name="phoneNumber" type="tel" aria-label="Phone">
+            </div></div>
+          ${field("address1", "Street Address")}
+          <div class="ui-field"><input id="city" name="city"><span class="ui-floating-label">City</span></div>
+          <div class="ui-field"><label for="state">State</label>
+            <select id="state" name="state"><option value=""></option><option>Ohio</option><option>Oregon</option></select></div>
+          ${field("zip", "Zip Code")}
+          <fieldset><legend>Do you consent to receive text messages about your application?</legend>
+            <label><input type="radio" name="smsConsent" value="yes"> Yes</label>
+            <label><input type="radio" name="smsConsent" value="no"> No</label></fieldset>
+          <div class="ui-field"><label><input type="checkbox" name="privacyAck"> I acknowledge the privacy policy and authorize Vellacor to process my data</label></div>
+          <button type="button" id="cancel">Cancel</button> <button type="button" id="submit">Submit</button>`;
+      }
+
+      function open() {
+        const back = document.createElement("div");
+        back.className = "backdrop";
+        back.innerHTML = `<div class="paper" role="dialog" aria-modal="true" aria-labelledby="qa-title"><form id="quick-apply"></form></div>`;
+        document.body.appendChild(back);
+        const f = back.querySelector("#quick-apply");
+        f.innerHTML = form();
+        // Like Paycom: reading the résumé rebuilds the form (fresh, empty boxes).
+        f.addEventListener("change", (e) => {
+          if (e.target.id !== "resume" || !e.target.files.length) return;
+          const file = e.target.files[0];
+          setTimeout(() => {
+            f.innerHTML = form();
+            const dt = new DataTransfer();
+            dt.items.add(file);
+            f.querySelector("#resume").files = dt.files;
+            window.__rebuilt++;
+          }, 250);
+        });
+        back.querySelector("#cancel").addEventListener("click", () => back.remove());
+      }
+      // The form opens a moment after the press, as a React app's does.
+      document.getElementById("apply").addEventListener("click", () => setTimeout(open, 200));
+    </script>
+  </body>

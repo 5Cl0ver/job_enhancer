@@ -30,14 +30,12 @@ test.beforeEach(async () => {
   api.state.aiAnswers = {};
 });
 
-const pill = (page) => page.locator("#jec-autofill");
-
+// The panel's Autofill button (a real message to the background), once the
+// page has reported its form; resolves when the press is done.
 async function press(page) {
-  await expect(pill(page)).toBeVisible({ timeout: 8000 });
-  const t0 = Date.now();
-  await pill(page).click();
-  await expect(pill(page)).toHaveText(/filled/, { timeout: 15000 });
-  return Date.now() - t0;
+  const res = await ext.autofill(page);
+  expect(res.ok).toBe(true);
+  return res.ms;
 }
 
 test("a plain form: everything known is filled, the essay is left alone", async () => {
@@ -96,18 +94,18 @@ test("a form embedded from another site in a frame", async () => {
   const form = lab.url("/lab/classic.html");
   await page.goto(lab.otherOrigin(`/lab/embed-host.html?form=${encodeURIComponent(form)}`));
   const frame = page.frameLocator("#apply");
-  await expect(frame.locator("#jec-autofill")).toBeVisible({ timeout: 8000 });
-  await frame.locator("#jec-autofill").click();
+  await press(page); // the frame reported its form; the press fills it
   await expect(frame.locator("#first")).toHaveValue("Wren", { timeout: 10000 });
   await expect(frame.locator("#email2")).toHaveValue(PERSON.email);
   await page.close();
 });
 
-test("no pill on sign-in, search and newsletter forms", async () => {
+test("sign-in, search and newsletter forms: no form offered, nothing drawn on the page", async () => {
   const page = await ext.context.newPage();
   await page.goto(lab.url("/lab/noise.html"));
   await page.waitForTimeout(2000);
-  await expect(pill(page)).toHaveCount(0);
+  expect((await ext.fillState(page))?.form).toBe(false);
+  await expect(page.locator("jec-ui-autofill, #jec-autofill, #jec-pill")).toHaveCount(0);
   await page.close();
 });
 
