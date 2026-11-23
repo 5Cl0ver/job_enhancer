@@ -19,6 +19,8 @@ import { Alert, Badge, Button, Card, Input, Muted, SectionTitle, Select, Switch 
 import { cn } from "@/lib/utils";
 import { send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
+import { Trouble } from "@/views/Trouble";
+import { startPointing } from "@/views/Point";
 import { usePanel, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence } from "@/lib/store";
 
 const SOURCE: Record<string, { label: string; tone: string }> = {
@@ -29,6 +31,7 @@ const SOURCE: Record<string, { label: string; tone: string }> = {
 
 const WHY: Record<string, string> = {
   sensitive: "Only you answer this",
+  consent: "A checkbox only you can tick",
   essay: "Written answer: yours to write",
   no_data: "Not in your profile yet",
   no_option: "None of its choices matched",
@@ -107,7 +110,7 @@ export function Apply({
           {!filling && <Zap />}
           {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
         </Button>
-        <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} />
+        <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} tabId={tab.id} />
         <ShortcutHint />
         {staged && !entries.length && (
           <Muted>
@@ -237,11 +240,13 @@ function StatusLine({
   busy,
   filledNow,
   needNow,
+  tabId,
 }: {
   presence: Presence | null;
   busy: boolean;
   filledNow: number;
   needNow: number;
+  tabId: number | null;
 }) {
   const status: FillStatus | null = presence?.status || null;
   const [now, setNow] = React.useState(Date.now());
@@ -266,7 +271,12 @@ function StatusLine({
   } else if (status?.phase === "done") {
     if (!filledNow && !(status.filled || 0)) {
       tone = "warn";
-      text = needNow ? "Nothing here matched your profile. The questions are listed below for you." : "Nothing here matched your profile.";
+      text =
+        status.seen === 0
+          ? "Job Catcher couldn't see any boxes here, even after reading the page again."
+          : needNow
+            ? "Nothing here matched your profile. The questions are listed below for you."
+            : "Nothing here matched your profile.";
     } else {
       tone = "ok";
       text = "Done. Check the page, then submit it yourself.";
@@ -279,7 +289,12 @@ function StatusLine({
   } else {
     text = "No form found yet. Press Autofill to try anyway.";
   }
+  // Every failure offers the way out; a finished fill offers it quietly.
+  const signedOut = status?.phase === "problem" && status.problem === "signed_out";
+  const trouble = !working && !signedOut && (tone === "warn" || (!!presence && !presence.form && !status));
+  const quiet = !working && status?.phase === "done" && tone === "ok";
   return (
+    <>
     <p
       role="status"
       aria-live="polite"
@@ -301,6 +316,8 @@ function StatusLine({
       />
       {text}
     </p>
+    {(trouble || quiet) && <Trouble key={presence?.status?.at ?? 0} tabId={tabId} quiet={quiet} onPoint={() => startPointing(tabId)} />}
+    </>
   );
 }
 
@@ -449,7 +466,7 @@ function EntryRow({ entry }: { entry: FillEntry }) {
 function NeedRow({ need }: { need: FillNeed }) {
   const act = useAction();
   const [editing, setEditing] = React.useState(false);
-  const canAnswer = need.reason !== "sensitive" && need.reason !== "essay" && need.kind !== "file";
+  const canAnswer = need.reason !== "sensitive" && need.reason !== "consent" && need.reason !== "essay" && need.kind !== "file";
   return (
     <li className="px-4 py-2.5">
       <div className="flex items-center gap-2">

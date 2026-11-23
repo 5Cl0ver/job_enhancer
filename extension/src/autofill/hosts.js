@@ -39,6 +39,24 @@ export const APPLICANT_HOSTS = [
   { name: "TriNet Hire", host: /^app\.trinethire\.com$/i },
 ];
 
+// Hosts that serve many companies' applications: the company is in the path.
+const SHARED_HOSTS = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|workable\.com|jobvite\.com|applytojob\.com|breezy\.hr)$/i;
+
+/**
+ * Which site a taught box belongs to: the host — plus the company's path on
+ * hosts that serve many companies (boards.greenhouse.io/vellacor), so one
+ * company's answers never fill another's boxes.
+ */
+export function siteKey(url) {
+  try {
+    const u = new URL(url);
+    if (SHARED_HOSTS.test(u.hostname)) return `${u.hostname}/${u.pathname.split("/")[1] || ""}`;
+    return u.hostname;
+  } catch {
+    return "";
+  }
+}
+
 /** The applicant system an address belongs to, or null. */
 export function applicantHost(url) {
   let u;

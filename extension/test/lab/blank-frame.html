@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 017: the application form is written by
+     the page's own script into a frame with no address (about:blank) — the
+     kind of frame content scripts skip unless told to match it. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Careers - Quillstone</title></head>
+  <body>
+    <h1>Help Desk Analyst</h1>
+    <iframe id="apply-frame" title="Application" style="width: 600px; height: 420px; border: 1px solid #ccc"></iframe>
+    <script>
+      const d = document.getElementById("apply-frame").contentDocument;
+      d.open();
+      d.write(`<!doctype html><body><form id="f">
+        <p><label for="fn">First name</label><input id="fn"></p>
+        <p><label for="ln">Last name</label><input id="ln"></p>
+        <p><label for="em">Email</label><input id="em" type="email"></p>
+        <p><label for="ph">Phone</label><input id="ph" type="tel"></p>
+      </form></body>`);
+      d.close();
+    </script>
+  </body>
+</html>

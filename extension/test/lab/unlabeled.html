@@ -1,0 +1,30 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 017: boxes no reader can name — no
+     label, no placeholder, no name — one plain, one inside a CLOSED page
+     component (shadow root), one inside a frame; plus an agreement checkbox.
+     Only "Point at a box" can teach Job Catcher what goes in them. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Quick apply - Brightfold</title>
+    <style>
+      .row { margin: 18px 0; }
+      input { width: 260px; padding: 8px; }
+      x-box { display: block; width: 280px; height: 40px; }
+    </style>
+  </head>
+  <body>
+    <h1>Quick apply</h1>
+    <div class="row"><input id="mystery"></div>
+    <div class="row"><x-box id="shadow-host"></x-box></div>
+    <div class="row"><iframe id="inner" src="unlabeled-frame.html" title="More" style="width: 320px; height: 80px; border: 0"></iframe></div>
+    <div class="row"><input id="other"></div>
+    <div class="row"><label><input type="checkbox" id="agree"> I agree to the terms</label></div>
+    <script>
+      const host = document.getElementById("shadow-host");
+      const root = host.attachShadow({ mode: "closed" });
+      root.innerHTML = '<input id="deep" style="width: 260px; padding: 8px">';
+      window.__deep = () => root.getElementById("deep").value;
+    </script>
+  </body>
+</html>

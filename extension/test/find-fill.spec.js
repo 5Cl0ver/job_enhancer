@@ -171,12 +171,15 @@ describe("the résumé goes first; an open pop-up is filled alone", () => {
     expect(doc.querySelector("#n0").value).toBe(""); // behind the pop-up: left alone
   });
 
-  it("a 'pop-up' without a form of its own (a date picker) never hides the page's form", async () => {
-    const doc = parse(`<form><label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln"><label for="em">Email</label><input id="em" type="email"></form>
-      <div role="dialog" id="picker"><label for="day">Day</label><input id="day"></div>`);
-    const s = session(doc, { scope: () => doc.querySelector("#picker") });
-    expect(s.presence()).toMatchObject({ form: true, fields: 4 });
-    await s.fillKnown(copy());
-    expect(doc.querySelector("#fn").value).toBe("Wren");
+  it("a pop-up holding a single box is filled alone; one whose boxes aren't showing leaves the page as is", async () => {
+    const doc = parse(`<form><label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln"></form>
+      <div role="dialog" aria-modal="true" id="pop"><label for="em">Email</label><input id="em" type="email"></div>
+      <div role="dialog" id="empty"></div>`);
+    const one = session(doc, { scope: () => doc.querySelector("#pop") });
+    await one.fillKnown(copy());
+    expect(doc.querySelector("#em").value).toBe("wren@example.com");
+    expect(doc.querySelector("#fn").value).toBe(""); // behind the pop-up
+    const none = session(doc, { scope: () => doc.querySelector("#empty") });
+    expect(none.presence().fields).toBe(3);
   });
 });

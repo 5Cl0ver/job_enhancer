@@ -7,6 +7,7 @@
 // of the script, and one press fills them all.
 import { normalizeQuestion } from "./classify/answers.js";
 import { applicantHost, isApplyUrl } from "./hosts.js";
+import { isOnScreen } from "./visible.js";
 
 /** A shadow root, including closed ones where the extension API allows. */
 export function shadowOf(el) {
@@ -38,7 +39,19 @@ const clean = (s) =>
 
 const CONTROL = "input, select, textarea, button, [role=combobox], [role=radio], [role=checkbox], [contenteditable=''], [contenteditable=true]";
 
-/** The visible text of a node, leaving out controls (a select's options...). */
+// What holds a control's VALUE, never its question: a dropdown's shown
+// choice (react-select's single-value, a combobox / listbox / textbox),
+// something typed into (contenteditable), a button's caption.
+const VALUE_HOLDER = /single-?value|singleValue|__value-container/;
+function holdsValue(el) {
+  const role = el.getAttribute?.("role") || "";
+  if (/^(combobox|listbox|textbox|option)$/.test(role) || el.tagName === "BUTTON") return true;
+  if (el.hasAttribute?.("contenteditable") && el.getAttribute("contenteditable") !== "false") return true;
+  return VALUE_HOLDER.test(el.getAttribute?.("class") || "");
+}
+
+/** The visible text of a node, leaving out controls and the values they
+ *  hold (a select's options, a dropdown's chosen answer, typed text...). */
 export function textOf(node, max = 1500) {
   let out = "";
   const walk = (n) => {
@@ -49,6 +62,7 @@ export function textOf(node, max = 1500) {
         const tag = c.tagName;
         if (/^(SCRIPT|STYLE|SELECT|OPTION|TEXTAREA|INPUT|SVG|TEMPLATE)$/.test(tag)) continue;
         if (c.getAttribute?.("aria-hidden") === "true") continue;
+        if (holdsValue(c)) continue;
         walk(c);
       }
     }
@@ -57,12 +71,14 @@ export function textOf(node, max = 1500) {
   return clean(out);
 }
 
-function byIds(root, ids) {
+/** The text of the elements `ids` name — leaving out the control itself and
+ *  what shows its value (MUI's Select names its own chosen-value element). */
+function byIds(root, ids, self = null) {
   return clean(
     String(ids || "")
       .split(/\s+/)
       .map((id) => (id && (root.getElementById?.(id) || root.ownerDocument?.getElementById?.(id))) || null)
-      .filter(Boolean)
+      .filter((n) => n && n !== self && !n.contains?.(self) && !self?.contains?.(n) && !holdsValue(n))
       .map(textOf)
       .join(" "),
   );
@@ -88,7 +104,7 @@ export function questionFor(el) {
   }
   const lb = el.getAttribute?.("aria-labelledby");
   if (lb) {
-    const t = byIds(root, lb);
+    const t = byIds(root, lb, el);
     if (t) return t;
   }
   const al = clean(el.getAttribute?.("aria-label"));
@@ -125,6 +141,7 @@ export function nearbyText(el, maxDepth = 4, withDepth = false) {
   let node = el;
   for (let depth = 0; node && depth < maxDepth; depth++, node = node.parentElement) {
     for (let sib = node.previousElementSibling; sib; sib = sib.previousElementSibling) {
+      if (holdsValue(sib)) continue; // a dropdown's shown choice: not the question
       if (sib.matches?.(CONTROL) || sib.querySelector?.(CONTROL)) return out("", depth);
       const t = textOf(sib);
       if (t) return out(t.length <= 300 ? t : "", depth);
@@ -161,14 +178,9 @@ function groupQuestion(members, optionLabels) {
   return "";
 }
 
-function isVisible(el) {
-  if (el.hidden || el.closest?.("[hidden], [aria-hidden=true], [inert]")) return false;
-  const view = el.ownerDocument?.defaultView;
-  const style = view?.getComputedStyle?.(el);
-  if (style && (style.visibility === "hidden" || style.display === "none")) return false;
-  const rects = el.getClientRects?.();
-  return !rects || rects.length > 0;
-}
+// On screen for a person, by rendering only (spec 017): never by aria-hidden
+// or inert on an ancestor, which pop-up libraries set on the pop-up itself.
+const isVisible = isOnScreen;
 
 /** Radios and checkboxes are often drawn by a label while the input is hidden. */
 function choiceVisible(el, visible) {

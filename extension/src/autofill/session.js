@@ -3,7 +3,9 @@
 // Nothing is ever submitted, nothing the user typed is overwritten, and
 // self-identification, agreements and essays are never touched.
 import { normalizeQuestion, yesNo } from "./classify/answers.js";
-import { PRIVATE, profileKeyFor } from "./classify/profileKeys.js";
+import { PRIVATE, guardReason, profileKeyFor } from "./classify/profileKeys.js";
+import { matchTaught } from "./fingerprint.js";
+import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
 import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
 import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
@@ -79,13 +81,36 @@ export function profileValue(key, value) {
   return value;
 }
 
+/**
+ * What a user may never point at and teach: self-identification and private
+ * details (ID, bank…), agreements and lone checkboxes, choices the scanner
+ * couldn't read. Everything else is the user's call ("Notification email").
+ */
+export function pointRefusal(field) {
+  const guard = guardReason(field.question, field.kind);
+  if (guard === "sensitive" || guard === "consent") return guard;
+  if (field.kind === "checkbox" || field.kind === "unknown_choice") return "consent";
+  return "";
+}
+
+/** What a taught box gets: its profile answer or its typed text — never past a guard. */
+function taughtDecision(field, t, copy) {
+  const guard = pointRefusal(field);
+  if (guard) return { skip: guard };
+  if (t.profile_key) {
+    const values = copy.values[t.profile_key] || [];
+    return values.length ? { values, source: "profile", key: t.profile_key } : { skip: "no_data", key: t.profile_key };
+  }
+  return t.answer ? { values: [t.answer], source: "learned" } : { skip: "unknown" };
+}
+
 /** Is `el` inside `box`, across shadow-root boundaries? */
 function within(box, el) {
   for (let n = el; n; n = n.parentNode || n.host) if (n === box) return true;
   return false;
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "consent", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 const optionLabels = (f) => (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60);
@@ -120,7 +145,7 @@ export function createSession(deps) {
     // aren't really showing (a hidden drawer, a date picker) doesn't count.
     const inside = deps.scope?.() || null;
     const scoped = inside ? all.filter((f) => within(inside, f.el)) : all;
-    const list = scoped.length >= 2 ? scoped : all;
+    const list = scoped.length ? scoped : all;
     fields = new Map(list.map((f) => [f.id, f]));
     return list;
   };
@@ -135,10 +160,12 @@ export function createSession(deps) {
   const hasForm = () => presence().form;
 
   /** One scan: is there a form, is it an application, how many fields. */
-  function presence() {
+  /** @param {object[]} [taught] boxes taught on this site: a frame holding one has a form. */
+  function presence(taught = []) {
     const list = scan();
     const app = looksLikeApplication(list, appCheck);
-    return { form: app || hasFormHere(list, { isApplication: () => app }), app, fields: list.length };
+    const form = app || hasFormHere(list, { isApplication: () => app }) || (taught.length > 0 && matchTaught(taught, list).size > 0);
+    return { form, app, fields: list.length };
   }
 
   function entryFor(field, source, actual, snap) {
@@ -189,13 +216,16 @@ export function createSession(deps) {
     // Education and the current job go into the FIRST block that asks.
     const once = new Set();
     const list = scan();
+    // Boxes the user pointed at and taught on this site come first (spec 017).
+    const site = siteKey(doc.location?.href || "");
+    const taught = matchTaught((copy.taught || []).filter((t) => t.site === site), list);
     let i = 0;
     for (const field of list) {
       onProgress?.(++i, list.length);
       if (filled.has(field.id) || declined.has(field.id)) continue;
       if (field.kind !== "file" && hasValue(field)) continue;
       if (field.kind === "file" && field.el.files?.length) continue;
-      const d = resolve(field, copy);
+      const d = taught.has(field.id) ? taughtDecision(field, taught.get(field.id), copy) : resolve(field, copy);
       if (d.skip) {
         if (d.skip === "unknown" && AI_KINDS.has(field.kind)) leftovers.push(field);
         leave(field, d.skip);
@@ -208,7 +238,7 @@ export function createSession(deps) {
       const res = await fillOne(field, d.values, d.source);
       if (!res.ok) leave(field, res.reason || "rejected");
     }
-    return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)) };
+    return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)), seen: list.length };
   }
 
   /**
@@ -228,6 +258,19 @@ export function createSession(deps) {
       if (res.ok) done = true;
     }
     return done;
+  }
+
+  /**
+   * Fill a box the user pointed at (spec 017) — even one the scanner left
+   * out — with a profile answer or typed text. Agreements, self-ID and
+   * private questions are never filled this way either.
+   */
+  async function fillPicked(field, values, source) {
+    const guard = pointRefusal(field);
+    if (guard) return { ok: false, reason: guard };
+    fields.set(field.id, field);
+    declined.delete(field.id);
+    return fillOne(field, values, source);
   }
 
   /** One request for everything left: the app's AI answers from the user's data. */
@@ -415,6 +458,7 @@ export function createSession(deps) {
     isApplication,
     hasForm,
     presence,
+    fillPicked,
     uploadResume,
     fillKnown,
     fillWithAi,

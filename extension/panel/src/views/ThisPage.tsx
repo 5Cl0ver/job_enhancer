@@ -8,6 +8,8 @@ import { send } from "@/lib/chrome";
 import { usePanel } from "@/lib/store";
 import { extractJobFromPage } from "@/lib/extractPage.js";
 import { Apply } from "@/views/Apply";
+import { Trouble } from "@/views/Trouble";
+import { Point, startPointing } from "@/views/Point";
 
 export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void }) {
   const { tab, saved, fill } = usePanel();
@@ -32,6 +34,7 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   );
   return (
     <div className="flex flex-col gap-3">
+      {fill.pick && <Point pick={fill.pick} />}
       {applying && apply}
       {/* A fresh card per page: nothing carries over from the last one. */}
       <SaveJob key={tab.url} compact={applying || fill.entries.length > 0} site={ctx.site} match={match} />
@@ -45,22 +48,26 @@ function NoForm({ known }: { known: boolean }) {
   const { tab } = usePanel();
   const [busy, setBusy] = React.useState(false);
   return (
-    <div className="flex items-center justify-between gap-2 px-1 text-xs text-muted-foreground" role="status">
-      <span>{known ? "No form on this page yet. Open the application and Autofill appears here." : "Looking at this page…"}</span>
-      {known && tab.id != null && (
-        <Button
-          variant="ghost"
-          size="sm"
-          busy={busy}
-          onClick={async () => {
-            setBusy(true);
-            await send({ type: "pressAutofill", tabId: tab.id });
-            setBusy(false);
-          }}
-        >
-          Fill anyway
-        </Button>
-      )}
+    <div className="flex flex-col gap-2 px-1">
+      <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
+        <span>{known ? "No form on this page yet. Open the application and Autofill appears here." : "Looking at this page…"}</span>
+        {known && tab.id != null && (
+          <Button
+            variant="ghost"
+            size="sm"
+            busy={busy}
+            onClick={async () => {
+              setBusy(true);
+              await send({ type: "pressAutofill", tabId: tab.id });
+              setBusy(false);
+            }}
+          >
+            Fill anyway
+          </Button>
+        )}
+      </div>
+      {/* Can see a form Job Catcher can't? Never stuck (spec 017). */}
+      {known && <Trouble key={tab.url} tabId={tab.id} onPoint={() => startPointing(tab.id)} />}
     </div>
   );
 }
