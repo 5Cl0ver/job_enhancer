@@ -56,6 +56,12 @@ export async function startFakeApi() {
     answers: [],
     scoutRun: { run_id: null, any_site: false },
     saved: [], // [{title, company, url}] — what /saved-jobs/check knows
+    // The saved-jobs list the panel shows (GET /v1/saved-jobs/summary).
+    jobs: [],
+    jobsVersion: 1,
+    claudeProjectUrl: "",
+    documents: [], // what the panel saved or generated
+    syncs: [], // Indeed applications the panel synced
     resume: { filename: "wren-calloway.pdf", bytes: Buffer.from("%PDF-1.4\n% invented résumé\n") },
   };
   const log = []; // {method, path, body, at}
@@ -70,8 +76,13 @@ export async function startFakeApi() {
         expires_at: Math.floor(Date.now() / 1000) + 3600,
       },
     }),
-    "GET /v1/users/me": () => ({ body: { email: state.email, claude_project_url: "" } }),
-    "PATCH /v1/users/me": () => ({ body: { email: state.email } }),
+    "GET /v1/users/me": () => ({
+      body: { email: state.email, claude_project_url: state.claudeProjectUrl },
+    }),
+    "PATCH /v1/users/me": (b) => {
+      if (typeof b?.claude_project_url === "string") state.claudeProjectUrl = b.claude_project_url;
+      return { body: { email: state.email, claude_project_url: state.claudeProjectUrl } };
+    },
     "GET /v1/users/me/application-profile": () => ({ body: state.profile }),
     "PUT /v1/users/me/application-profile": (b) => {
       state.profile = { ...state.profile, ...b };
@@ -92,7 +103,12 @@ export async function startFakeApi() {
     }),
     "POST /v1/ai/autofill-map": () => ({ body: { mappings: {}, confidence: {} } }),
     "POST /v1/ai/work-history": () => ({ body: { entries: [] } }),
-    "GET /v1/saved-jobs/summary": () => ({ body: { changed: true, version: "v1", jobs: [] } }),
+    "GET /v1/saved-jobs/summary": (_b, req) => {
+      const asked = new URL(req.url, "http://x").searchParams.get("version");
+      const version = `v${state.jobsVersion}`;
+      if (asked === version) return { body: { changed: false, version } };
+      return { body: { changed: true, version, jobs: state.jobs } };
+    },
     "POST /v1/saved-jobs/check": (b) => ({
       body: {
         saved: state.saved.some(
@@ -103,10 +119,67 @@ export async function startFakeApi() {
     }),
     "POST /v1/saved-jobs/manual": (b) => {
       state.saved.push({ title: b?.title, company: b?.company, url: b?.url });
-      return { status: 201, body: { id: "saved-1", ...b } };
+      const n = state.jobs.length + 1;
+      state.jobs.unshift({
+        id: `saved-${n}`,
+        job_listing_id: `listing-${n}`,
+        title: b?.title,
+        company: b?.company,
+        location: b?.location,
+        url: b?.url,
+        applied_at: null,
+      });
+      state.jobsVersion++;
+      return { status: 201, body: { id: `saved-${n}`, ...b } };
     },
     "POST /v1/saved-jobs/backfill": () => ({ body: { updated: false } }),
-    "POST /v1/saved-jobs/mark-applied": () => ({ body: { matched: true } }),
+    "POST /v1/saved-jobs/mark-applied": (b) => {
+      const job = state.jobs.find((j) => j.title === b?.title && j.company === b?.company);
+      if (job) {
+        job.applied_at = new Date().toISOString();
+        state.jobsVersion++;
+      }
+      return { body: { matched: !!job } };
+    },
+    "POST /v1/saved-jobs/sync-applications": (b) => {
+      const apps = b?.applications || [];
+      state.syncs.push(...apps);
+      return {
+        body: {
+          updated: 0,
+          imported: apps.length,
+          skipped: 0,
+          outcomes: apps.map((a) => ({ action: "imported", title: a.title, company: a.company, stage: a.stage })),
+        },
+      };
+    },
+    "GET /v1/ai/resumes": () => ({
+      body: [{ id: "resume-1", is_active: true, filename: "Wren_Calloway_Resume.pdf" }],
+    }),
+    "POST /v1/ai/generate": (b) => {
+      const doc = {
+        id: `doc-${state.documents.length + 1}`,
+        content:
+          b?.document_type === "resume"
+            ? "WREN CALLOWAY\nField Service Technician\n- Repaired lab equipment at 40 customer sites."
+            : "Dear Hiring Team,\nI'd like to bring five years of field repair work to Tidewell Labs.",
+        ...b,
+      };
+      state.documents.push(doc);
+      return { status: 201, body: doc };
+    },
+    "POST /v1/ai/prompt": (b) => ({
+      body: { prompt: `Write a ${b?.document_type} for the job.`, job_title: "Field Service Technician", company: "Tidewell Labs" },
+    }),
+    "POST /v1/ai/documents/manual": (b) => {
+      const doc = { id: `doc-${state.documents.length + 1}`, ...b };
+      state.documents.push(doc);
+      return { status: 201, body: doc };
+    },
+    "GET /v1/ai/documents/:id/pdf": () => ({
+      raw: Buffer.from("%PDF-1.4\n% invented document\n"),
+      headers: { "content-type": "application/pdf" },
+    }),
     "GET /v1/scout/runs/active": () => ({ body: state.scoutRun }),
     "POST /v1/scout/captures": () => ({ body: { stored: !!state.scoutRun.run_id } }),
   };
@@ -115,7 +188,8 @@ export async function startFakeApi() {
     const path = (req.url || "/").split("?")[0];
     const body = await readBody(req);
     log.push({ method: req.method, path, body, at: Date.now() });
-    const key = `${req.method} ${path}`;
+    let key = `${req.method} ${path}`;
+    if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
     const o = overrides.get(path) ?? overrides.get(key);
     const wait = (typeof o === "object" && o?.delay) || delay;
     if (wait) await new Promise((r) => setTimeout(r, wait));

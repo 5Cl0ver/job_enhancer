@@ -13,40 +13,40 @@ Delivery is three PRs, as in [plan.md](plan.md):
 
 ## Phase 1: Setup — the test lab harness (PR A)
 
-- [ ] T001 Create the fake app server, with configurable per-route delay, failure and AI answers plus recorded calls, in extension/e2e/support/fake-api.js
-- [ ] T002 Create the launcher in extension/e2e/support/launch.js. It copies the built extension to a temp dir, writes a test config.js pointing at the fake API, and adds http://localhost/* and http://127.0.0.1/* to the autofill and Scout script matches, in the copy only. It seeds a signed-in token and returns {context, worker, extensionId}.
-- [ ] T003 Create the lab static server (two origins: localhost and 127.0.0.1) serving extension/test/lab/ in extension/e2e/support/lab-server.js
-- [ ] T004 Move the existing extension/e2e/extension.spec.js onto the shared launcher, so Scout and bridge tests use the test copy and never the repo config.js
-- [ ] T005 Add an `extension` job (npm ci → build → vitest → playwright install chromium → xvfb-run playwright test) to .github/workflows/ci.yml
+- [X] T001 Create the fake app server, with configurable per-route delay, failure and AI answers plus recorded calls, in extension/e2e/support/fake-api.js
+- [X] T002 Create the launcher in extension/e2e/support/launch.js. It copies the built extension to a temp dir, writes a test config.js pointing at the fake API, and adds http://localhost/* and http://127.0.0.1/* to the autofill and Scout script matches, in the copy only. It seeds a signed-in token and returns {context, worker, extensionId}.
+- [X] T003 Create the lab static server (two origins: localhost and 127.0.0.1) serving extension/test/lab/ in extension/e2e/support/lab-server.js
+- [X] T004 Move the existing extension/e2e/extension.spec.js onto the shared launcher, so Scout and bridge tests use the test copy and never the repo config.js
+- [X] T005 Add an `extension` job (npm ci → build → vitest → playwright install chromium → xvfb-run playwright test) to .github/workflows/ci.yml
 
 ## Phase 2: Foundational (PR A)
 
-- [ ] T006 Add a per-version orphan guard (`window.__jeLoaded`, removal of stale `#je-*` nodes and hosts) as a shared helper in extension/src/orphan.js, and call it first in every *.entry.js content script
+- [X] T006 Add a per-version orphan guard (`window.__jeLoaded`, removal of stale `#je-*` nodes and hosts) as a shared helper in extension/src/orphan.js, and call it first in every *.entry.js content script
 
 ## Phase 3: User Story 6 (part) — updates never strand you + Save anyway (P1, PR A)
 
 **Independent test**: with a tab open on a board fixture, reload the extension, then start a Scout run. The page is copied with no refresh. Save anyway on a no_copy finding creates a thin saved job.
 
-- [ ] T007 [P] [US6] Browser test: open a LinkedIn-shaped fixture, reload the extension in the worker, then check the Scout copy still reaches the fake API without a tab refresh, in extension/e2e/reinject.spec.js
-- [ ] T008 [P] [US6] pytest: Save anyway (no_copy → thin saved job that needs details; still 409 without anyway; 404 for another user's finding; second save is `already`) in backend/tests/api/test_scout_save_anyway.py
-- [ ] T009 [P] [US6] Vitest: Save anyway shows only when !can_save, sends anyway:true and toasts, in frontend/tests/components/ScoutSaveAnyway.test.tsx
-- [ ] T010 [US6] Re-inject the content scripts into open tabs on install/update (with the MAIN world for the bridge) in extension/src/background/reinject.js, wired from extension/src/background.entry.js
-- [ ] T011 [US6] Add `anyway` to SaveFindingIn in backend/app/schemas/scout.py, and save from the finding's own fields when there's no copy in backend/app/services/scout_review.py
-- [ ] T012 [US6] Add a Save anyway button and mutation option in frontend/src/components/scout/ScoutResults.tsx and frontend/src/hooks (the Scout save hook)
+- [X] T007 [P] [US6] Browser test: open a LinkedIn-shaped fixture, reload the extension in the worker, then check the Scout copy still reaches the fake API without a tab refresh, in extension/e2e/reinject.spec.js
+- [X] T008 [P] [US6] pytest: Save anyway (no_copy → thin saved job that needs details; still 409 without anyway; 404 for another user's finding; second save is `already`) in backend/tests/api/test_scout_save_anyway.py
+- [X] T009 [P] [US6] Vitest: Save anyway shows only when !can_save, sends anyway:true and toasts, in frontend/tests/components/ScoutSaveAnyway.test.tsx
+- [X] T010 [US6] Re-inject the content scripts into open tabs on install/update (with the MAIN world for the bridge) in extension/src/background/reinject.js, wired from extension/src/background.entry.js
+- [X] T011 [US6] Add `anyway` to SaveFindingIn in backend/app/schemas/scout.py, and save from the finding's own fields when there's no copy in backend/app/services/scout_review.py
+- [X] T012 [US6] Add a Save anyway button and mutation option in frontend/src/components/scout/ScoutResults.tsx and frontend/src/hooks (the Scout save hook)
 
 ## Phase 3b: User Story 7 — it looks and feels like the app (P1, PR B)
 
 **Independent test**: open the new panel in every context and theme against the fake API. Every old action is reachable and works, there are no page errors, and contrast passes.
 
-- [ ] T053 [P] [US7] Browser tests for every panel context (signed out, application, posting, Indeed My jobs, elsewhere) x (light, dark), every old action (save + edit + duplicate warning, Pick manually, saved list + Mark applied + retry, Indeed sync, Write with both engines + PDF + use for upload, Claude Project link, sign out), and axe-core contrast, in extension/e2e/panel.spec.js
-- [ ] T054 [P] [US7] Token drift test (extension/panel/src/theme.css vs frontend/src/globals.css) in extension/test/theme-drift.spec.js
-- [ ] T055 [US7] Panel scaffold: Vite + React 19 + Tailwind v4 + lucide in extension/panel/ (index.html, vite.config.ts, src/main.tsx, src/theme.css); `npm run build` builds content scripts and the panel, in extension/package.json and extension/build.mjs
-- [ ] T056 [US7] UI kit (Button, Card, Input, Textarea, Select, Switch, Tabs, Badge) in extension/panel/src/ui/
-- [ ] T057 [US7] Typed background messaging + the context detector (moved from sidepanel.js detectContext) in extension/panel/src/lib/
-- [ ] T058 [US7] Views: SignIn, ThisPage (SaveJob with the capture/edit/duplicate warning, IndeedSync, Elsewhere, and an Apply placeholder until PR C), MyJobs (the savedSync change check), Write (generate / bridge / PDF / stage for upload), Settings, in extension/panel/src/views/
-- [ ] T059 [US7] Pick manually as an injectable module in the new on-page style, in extension/src/picker.entry.js (replaces picker.js)
-- [ ] T060 [US7] Shared on-page stylesheet + shadow-root host helper in extension/src/ui/; move the board Save button (extension/src/content.entry.js) onto it
-- [ ] T061 [US7] Point manifest side_panel at dist/panel/index.html; remove sidepanel.html, sidepanel.js and picker.js; update MANIFEST.md
+- [X] T053 [P] [US7] Browser tests for every panel context (signed out, application, posting, Indeed My jobs, elsewhere) x (light, dark), every old action (save + edit + duplicate warning, Pick manually, saved list + Mark applied + retry, Indeed sync, Write with both engines + PDF + use for upload, Claude Project link, sign out), and axe-core contrast, in extension/e2e/panel.spec.js
+- [X] T054 [P] [US7] Token drift test (extension/panel/src/theme.css vs frontend/src/globals.css) in extension/test/theme-drift.spec.js
+- [X] T055 [US7] Panel scaffold: Vite + React 19 + Tailwind v4 + lucide in extension/panel/ (index.html, vite.config.ts, src/main.tsx, src/theme.css); `npm run build` builds content scripts and the panel, in extension/package.json and extension/build.mjs
+- [X] T056 [US7] UI kit (Button, Card, Input, Textarea, Select, Switch, Tabs, Badge) in extension/panel/src/ui/
+- [X] T057 [US7] Typed background messaging + the context detector (moved from sidepanel.js detectContext) in extension/panel/src/lib/
+- [X] T058 [US7] Views: SignIn, ThisPage (SaveJob with the capture/edit/duplicate warning, IndeedSync, Elsewhere, and an Apply placeholder until PR C), MyJobs (the savedSync change check), Write (generate / bridge / PDF / stage for upload), Settings, in extension/panel/src/views/
+- [X] T059 [US7] ~~Pick manually~~ — dropped: picker.js was already gone before 015; highlighting the description before **Save this job** covers it
+- [X] T060 [US7] Shared on-page stylesheet + shadow-root host helper in extension/src/ui/; move the board Save button (extension/src/content.entry.js) onto it
+- [X] T061 [US7] Point manifest side_panel at dist/panel/index.html; remove sidepanel.html, sidepanel.js and picker.js; update MANIFEST.md
 
 ## Phase 4: Foundational for autofill (PR C)
 

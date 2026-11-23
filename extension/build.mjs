@@ -1,11 +1,12 @@
-// Bundles the scripts that need the shared extractor modules (src/extract/*)
-// into plain IIFE files Chrome can load directly. Everything else in the
-// extension (background.js, sidepanel.js/html, config.js, picker.js) is already
-// plain and is loaded as-is.
+// Builds everything Chrome loads into dist/:
+//   • content scripts + the background worker: esbuild, plain IIFE files
+//   • the side panel (panel/): Vite + React + Tailwind → dist/panel/
 //
 //   npm run build      one-shot build → dist/
 //   npm run dev        rebuild on change
 import { build, context } from "esbuild";
+import { fileURLToPath } from "node:url";
+import { build as viteBuild } from "vite";
 
 const options = {
   entryPoints: {
@@ -13,7 +14,6 @@ const options = {
     bridge: "src/bridge.entry.js", // MAIN-world: mirrors Indeed's page JSON to the DOM
     background: "src/background.entry.js", // service worker (API/auth/backfill)
     autofill: "src/autofill.entry.js", // ATS application pages (Greenhouse/Lever)
-    "sidepanel-sync": "src/sidepanel-sync.entry.js", // side panel's saved-jobs change check
     scoutpage: "src/scoutpage.entry.js", // Claude Scout page copies on companies' own sites
   },
   bundle: true,
@@ -23,10 +23,14 @@ const options = {
   logLevel: "info",
 };
 
+const panel = { configFile: fileURLToPath(new URL("./panel/vite.config.ts", import.meta.url)) };
+
 if (process.argv.includes("--watch")) {
   const ctx = await context(options);
   await ctx.watch();
-  console.log("esbuild: watching src/ …");
+  await viteBuild({ ...panel, build: { watch: {} } });
+  console.log("watching src/ and panel/ …");
 } else {
   await build(options);
+  await viteBuild(panel);
 }

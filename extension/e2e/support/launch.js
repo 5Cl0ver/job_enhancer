@@ -33,7 +33,7 @@ export function buildLegacy(ref) {
   mkdirSync(base, { recursive: true });
   const repo = dirname(ROOT);
   const git = (args) => execSync(`git ${args}`, { cwd: repo, maxBuffer: 64 * 1024 * 1024 });
-  const files = git(`ls-tree -r --name-only ${ref} -- extension/src extension/build.mjs extension/manifest.json`)
+  const files = git(`ls-tree -r --name-only ${ref} -- extension/src extension/build.mjs extension/manifest.json extension/sidepanel.html extension/sidepanel.js`)
     .toString()
     .split(/\r?\n/)
     .filter(Boolean);
@@ -51,6 +51,11 @@ export function buildLegacy(ref) {
 function installBuild(dir, from) {
   rmSync(join(dir, "dist"), { recursive: true, force: true });
   cpSync(join(from, "dist"), join(dir, "dist"), { recursive: true });
+  // Root files an old build's manifest points at (its side panel); a newer
+  // build simply doesn't use them.
+  for (const f of ["sidepanel.html", "sidepanel.js"]) {
+    if (existsSync(join(from, f))) cpSync(join(from, f), join(dir, f));
+  }
   const manifest = JSON.parse(readFileSync(join(from, "manifest.json"), "utf8"));
   for (const cs of manifest.content_scripts || []) {
     if (cs.js.some((f) => /autofill/.test(f))) cs.matches = [...cs.matches, ...LAB_MATCHES];

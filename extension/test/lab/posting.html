@@ -1,0 +1,33 @@
+<!doctype html>
+<!-- Lab page (invented company): a job posting on a company's own site, with
+     schema.org JobPosting data the way most careers sites publish it. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Field Service Technician · Tidewell Labs Careers</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "JobPosting",
+        "title": "Field Service Technician",
+        "hiringOrganization": { "@type": "Organization", "name": "Tidewell Labs" },
+        "jobLocation": {
+          "@type": "Place",
+          "address": { "@type": "PostalAddress", "addressLocality": "Harborview", "addressRegion": "OR" }
+        },
+        "baseSalary": {
+          "@type": "MonetaryAmount",
+          "currency": "USD",
+          "value": { "@type": "QuantitativeValue", "minValue": 52000, "maxValue": 64000, "unitText": "YEAR" }
+        },
+        "description": "<p>Install, test and repair lab equipment at customer sites across the region. You will own a territory, keep detailed service records, and train customers on safe use. Two years of hands-on repair work required; a valid driver's license is a must.</p>"
+      }
+    </script>
+  </head>
+  <body>
+    <h1>Field Service Technician</h1>
+    <p>Tidewell Labs · Harborview, OR</p>
+    <p>Install, test and repair lab equipment at customer sites across the region.</p>
+    <a href="/lab/classic.html">Apply now</a>
+  </body>
+</html>

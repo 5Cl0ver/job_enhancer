@@ -39,25 +39,25 @@ function harness({ active = true, responses = [] } = {}) {
 const changed = (version, jobs = [{ id: "a" }]) => ({ signedIn: true, changed: true, version, jobs });
 
 describe("the old poll is gone", () => {
-  const panel = read("../sidepanel.js");
+  // The side panel (panel/src/lib/store.tsx) owns every saved-jobs check.
+  const panel = read("../panel/src/lib/store.tsx");
 
-  it("has no 15-second (or any sub-minute) saved-jobs interval", () => {
-    expect(panel).not.toMatch(/setInterval\(\s*maybeRefresh/);
+  it("has no sub-minute saved-jobs interval", () => {
     expect(panel).not.toMatch(/setInterval\([^)]*15000/);
     const intervals = [...panel.matchAll(/setInterval\(([^,]+),\s*([^)]+)\)/g)].map((m) => [
       m[1].trim(),
       m[2].trim(),
     ]);
     expect(intervals).toEqual([
-      ["maybeCheck", "self.JobEnhancerSavedSync.MIN_INTERVAL_MS"],
-      ["refreshContext", "3000"], // context card only: tab info, no API call
+      ["maybe", "MIN_INTERVAL_MS"],
+      ["refreshTab", "3000"], // the tab beside the panel: no API call
     ]);
   });
 
   it("focus and visibility only run the throttled change check", () => {
-    const body = panel.slice(panel.indexOf("const maybeCheck"), panel.indexOf("setInterval(maybeCheck"));
-    expect(body).toContain("savedSync.check()");
-    expect(body).not.toMatch(/loadSaved\(|listSaved|force/);
+    const body = panel.slice(panel.indexOf("const maybe ="), panel.indexOf("setInterval(maybe"));
+    expect(body).toContain("sync.check()");
+    expect(body).not.toMatch(/force|listSaved/);
   });
 
   it("background asks the change-check endpoint, not the full list", () => {
@@ -68,10 +68,8 @@ describe("the old poll is gone", () => {
     expect(fn).not.toMatch(/saved-jobs\/`/); // the full list is only the 404 fallback
   });
 
-  it("the panel loads the bundled check before its own script", () => {
-    const html = read("../sidepanel.html");
-    expect(html.indexOf("dist/sidepanel-sync.js")).toBeGreaterThan(-1);
-    expect(html.indexOf("dist/sidepanel-sync.js")).toBeLessThan(html.indexOf('src="sidepanel.js"'));
+  it("the panel uses the tested change check", () => {
+    expect(read("../panel/src/lib/store.tsx")).toContain('from "../../../src/savedSync.js"');
   });
 });
 

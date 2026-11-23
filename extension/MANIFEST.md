@@ -1,7 +1,9 @@
 # Extension Manifest (`extension/`)
 
 Chrome MV3 **"Job Catcher"** — saves jobs to the tracker via a **Save button on
-Indeed/LinkedIn/ZipRecruiter job pages** *and* a persistent **side panel** that captures any page.
+Indeed/LinkedIn/ZipRecruiter job pages** *and* a persistent **side panel** (React + Tailwind, the web app's
+design system) built around the tab beside it: **This page** (fill an application, save a posting, sync
+Indeed), **My jobs**, **Write** (cover letter / tailored résumé), **Settings**.
 Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [README.md](README.md).
 
 ## Extraction (the core, and where the reliability lives)
@@ -27,13 +29,28 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `src/orphan.js` | After an update: each content script claims the page (`claimPage`), stops when a newer copy takes over, and sweeps buttons left by copies from 0.27 and older |
 | `src/background/reinject.js` | On install/update, injects the current content scripts into already-open tabs (`matchesPattern`/`scriptsForUrl` honour the manifest's matches + exclusions; the page-world bridge is skipped) |
 | `src/inject.js` | Pure DOM helpers (title selectors, `findTitleEl`, `headingFor`) for anchoring the button — unit-tested against fixtures |
-| `src/capture.entry.js` → `dist/capture.js` | Injected on demand by the panel's **Capture this page**; runs `extractJob`, stashes result in `chrome.storage` |
 | `src/background.entry.js` → `dist/background.js` | Service worker (bundled) — the **only** caller of Supabase Auth + the API. Login, **serialized token refresh**, `saveJob`, `checkSaved`, `listSaved`; on a thin Indeed save it fetches the `/viewjob` page and **enriches** with the full description/salary/type before storing |
 | `src/enrich.js` | Pull description/salary/job-type from a listing page's raw HTML (worker-safe, no DOM) via `src/extract/jsonld-map.js` |
-| `sidepanel.html` / `sidepanel.js` | Persistent UI: sign-in, **Capture this page**, **Pick manually**, review form, "saved this session", tracker link. Fills the form when a capture lands in storage |
-| `picker.js` | **Pick manually** mode — hover-highlight + click an element to capture |
+| `src/ui/onpage.js` | Everything drawn ON job sites (Save button, Indeed apply badge, My jobs Sync + review) lives in one shadow root per script, in the app's colors, light/dark — sites can't restyle it |
 | `config.example.js` / `config.js` | Public client config (`config.js` **gitignored**): `API_BASE`, `APP_URL`, `SUPABASE_URL`, `SUPABASE_ANON_KEY` |
 | `icons/` | Toolbar/store icons (16/48/128) |
+
+## Side panel (`panel/`, spec 015 Story 7)
+
+Vite + React 19 + Tailwind v4 + lucide, the same stack and tokens as `frontend/`; built to
+`dist/panel/` (manifest `side_panel`). It never calls the API: every request goes to the background.
+
+| File | Purpose |
+|---|---|
+| `panel/src/App.tsx` | Shell: header, the four views, bottom bar; sign-in gate |
+| `panel/src/views/ThisPage.tsx` | Applying → **Autofill this page**, Mark applied, Write for this job · a posting → **Save this job** (read → check details → save, duplicate warning) · Indeed My jobs → read, choose stages, **Sync** · elsewhere → what Job Catcher is for |
+| `panel/src/views/MyJobs.tsx` | Saved jobs (search, Mark applied, open) from the cheap change check |
+| `panel/src/views/Write.tsx` | Cover letter / tailored résumé by the free AI or **My Claude** (prompt copied → paste answer back → PDF); a tailored résumé is uploaded by the next Autofill |
+| `panel/src/views/Settings.tsx` · `SignIn.tsx` | Account, Claude Project link (synced with the app), version · sign-in |
+| `panel/src/lib/store.tsx` | Auth, saved jobs (`src/savedSync.js`), the tab beside the panel (`?tab=<id>` in tests) |
+| `panel/src/lib/context.ts` | Pure: page kind from the URL, best saved-job match, duplicate check, document file names |
+| `panel/src/lib/extractPage.js` | Self-contained page reader injected on sites without the content script |
+| `panel/src/theme.css` · `panel/src/ui/` | The app's tokens (drift-tested) and components |
 
 ## Build & test
 
@@ -42,7 +59,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `build.mjs` | esbuild: bundles `src/*.entry.js` (+ `src/extract/*`) → `dist/`. `npm run build` / `npm run dev` |
 | `test/extract.spec.js` + `test/fixtures/` | Vitest unit tests: extractors vs saved HTML. `npm test` |
 | `e2e/support/` | `launch.js` (test copy of the built extension + test `config.js`, never the repo's), `fake-api.js` (fake app server, invented applicant, recorded calls), `lab-server.js` (serves `test/lab/` + `test/fixtures/` on two origins) |
-| `e2e/*.spec.js` | Playwright in real Chromium against the fake server: bridge, side panel, Scout copies, updates without refresh (`reinject.spec.js`). `npm run test:e2e`; CI runs them under xvfb |
+| `e2e/*.spec.js` | Playwright in real Chromium against the fake server: the panel in every context + WCAG AA in both themes (`panel.spec.js`), the on-page Save button, bridge, Scout copies, a real 0.27 → current upgrade (`reinject.spec.js`). `npm run test:e2e`; CI runs them under xvfb |
+| `test/theme-drift.spec.js` | Fails if the panel's color tokens drift from the app's |
 
 **How it connects:** the **background** worker is the single API caller (Supabase Auth
 with token refresh → `POST /v1/saved-jobs/manual`, Bearer). The content script and side
