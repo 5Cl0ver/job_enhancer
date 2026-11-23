@@ -3,12 +3,10 @@ import * as React from "react";
 import { ExternalLink, LogOut } from "lucide-react";
 import { Button, Card, Field, Input, Muted, SectionTitle } from "@/ui";
 import { appUrl, send } from "@/lib/chrome";
-import { useClaudeUrl } from "@/lib/claudeUrl";
 import { usePanel } from "@/lib/store";
 
 export function Settings() {
-  const { auth, signedOut } = usePanel();
-  const [claudeUrl, setClaudeUrl] = useClaudeUrl();
+  const { auth, signedOut, claudeUrl, setClaudeUrl } = usePanel();
   const [leaving, setLeaving] = React.useState(false);
   const version = chrome.runtime.getManifest().version;
 

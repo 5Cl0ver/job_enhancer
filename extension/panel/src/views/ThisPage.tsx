@@ -14,13 +14,14 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   const match = bestJobMatch(tab.title, saved.jobs);
 
   if (ctx.kind === "none") return <Elsewhere />;
-  if (ctx.kind === "indeed-myjobs") return <IndeedSync />;
+  if (ctx.kind === "indeed-myjobs") return <IndeedSync key={tab.url} />;
   return (
     <div className="flex flex-col gap-3">
       {ctx.kind === "application" && (
         <ApplyCard site={ctx.site} autoTracked={ctx.autoTracked} match={match} onWrite={onWrite} />
       )}
-      <SaveJob compact={ctx.kind === "application"} site={ctx.site} match={match} />
+      {/* A fresh card per page: nothing carries over from the last one. */}
+      <SaveJob key={tab.url} compact={ctx.kind === "application"} site={ctx.site} match={match} />
     </div>
   );
 }
@@ -38,7 +39,7 @@ function ApplyCard({
   match: SavedJob | null;
   onWrite: (id: string) => void;
 }) {
-  const { tab, reloadSaved } = usePanel();
+  const { tab, reloadSaved, staged } = usePanel();
   const [fill, setFill] = React.useState<"idle" | "busy" | "done" | "failed">("idle");
   const [marking, setMarking] = React.useState(false);
 
@@ -73,6 +74,11 @@ function ApplyCard({
         {fill !== "busy" && <Zap />}
         {fill === "busy" ? "Filling…" : "Autofill this page"}
       </Button>
+      {staged && fill !== "done" && (
+        <Muted>
+          Uploads your tailored résumé <b className="break-all text-foreground">{staged}</b>.
+        </Muted>
+      )}
       {fill === "done" && <Alert tone="success">Filled. Check every field on the page, then submit it yourself.</Alert>}
       {fill === "failed" && (
         <Alert tone="warning">Couldn't reach the page. Refresh it once, then try again.</Alert>
@@ -146,12 +152,6 @@ function SaveJob({ compact, site, match }: { compact: boolean; site: string; mat
   const [saving, setSaving] = React.useState(false);
   const [note, setNote] = React.useState<{ tone: "info" | "success" | "warning" | "error"; text: string } | null>(null);
   const [open, setOpen] = React.useState(!compact);
-
-  // A new page: start over.
-  React.useEffect(() => {
-    setDraft(null);
-    setNote(null);
-  }, [tab.url]);
 
   const dup = draft ? findDuplicate(draft, saved.jobs) : null;
 
@@ -256,7 +256,8 @@ function SaveJob({ compact, site, match }: { compact: boolean; site: string; mat
               You already saved <b>{dup.title}</b> at {dup.company}. Saving again makes a second copy.
             </Alert>
           )}
-          <Field label="Job title">{(id) => <Input id={id} value={draft.title} onChange={(e) => set("title", e.target.value)} />}</Field>
+          {/* Focus moves to the form that replaced the button. */}
+          <Field label="Job title">{(id) => <Input id={id} autoFocus value={draft.title} onChange={(e) => set("title", e.target.value)} />}</Field>
           <Field label="Company">{(id) => <Input id={id} value={draft.company} onChange={(e) => set("company", e.target.value)} />}</Field>
           <div className="flex items-end gap-3">
             <Field label="Location" className="flex-1">
@@ -379,6 +380,7 @@ function IndeedSync() {
                 <label className="flex cursor-pointer items-start gap-2">
                   <input
                     type="checkbox"
+                    autoFocus={i === 0}
                     className="mt-0.5 size-4 accent-[var(--primary)]"
                     checked={r.keep}
                     onChange={(e) => update(i, { keep: e.target.checked })}

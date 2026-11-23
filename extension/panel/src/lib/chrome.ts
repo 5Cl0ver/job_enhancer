@@ -91,29 +91,43 @@ export async function openClaudeProject(projectUrl: string): Promise<"focused" |
   const url = /^https?:\/\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW;
   const [existing] = await claudeTabs();
   if (existing?.id) {
-    const base = url.split("?")[0].replace(/\/+$/, "");
-    const here = (existing.url || "").replace(/\/+$/, "");
-    if (here && here.startsWith(base)) {
-      await chrome.tabs.update(existing.id, { active: true });
-      return "focused";
+    try {
+      const base = url.split("?")[0].replace(/\/+$/, "");
+      const here = (existing.url || "").replace(/\/+$/, "");
+      if (here && here.startsWith(base)) {
+        await chrome.tabs.update(existing.id, { active: true });
+        return "focused";
+      }
+      await chrome.tabs.update(existing.id, { url, active: true });
+      return "navigated";
+    } catch {
+      /* the tab closed meanwhile: open a new one */
     }
-    await chrome.tabs.update(existing.id, { url, active: true });
-    return "navigated";
   }
-  const windowId = await currentWindowId();
-  await chrome.tabs.create(windowId != null ? { url, windowId } : { url });
+  await openTab(url);
   return "opened";
+}
+
+async function openTab(url: string) {
+  const windowId = await currentWindowId();
+  try {
+    await chrome.tabs.create(windowId != null ? { url, windowId } : { url });
+  } catch {
+    /* can't open tabs right now; the prompt is still on the clipboard */
+  }
 }
 
 /** Focus an open Claude tab, or open the user's project. */
 export async function openClaude(projectUrl: string): Promise<"focused" | "opened"> {
   const [existing] = await claudeTabs();
   if (existing?.id) {
-    await chrome.tabs.update(existing.id, { active: true });
-    return "focused";
+    try {
+      await chrome.tabs.update(existing.id, { active: true });
+      return "focused";
+    } catch {
+      /* the tab closed meanwhile: open a new one */
+    }
   }
-  const url = /^https?:\/\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW;
-  const windowId = await currentWindowId();
-  await chrome.tabs.create(windowId != null ? { url, windowId } : { url });
+  await openTab(/^https?:\/\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW);
   return "opened";
 }

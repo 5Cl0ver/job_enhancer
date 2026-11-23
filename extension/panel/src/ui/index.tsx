@@ -159,23 +159,41 @@ export function Segmented<T extends string>({
   onChange,
   options,
   label,
+  disabled,
 }: {
   value: T;
   onChange: (v: T) => void;
   options: { value: T; label: string; icon?: React.ReactNode }[];
   label: string;
+  disabled?: boolean;
 }) {
+  const refs = React.useRef<(HTMLButtonElement | null)[]>([]);
+  // The radiogroup pattern: one tab stop, arrow keys move the choice.
+  const onKeyDown = (e: React.KeyboardEvent) => {
+    const step = { ArrowRight: 1, ArrowDown: 1, ArrowLeft: -1, ArrowUp: -1 }[e.key];
+    if (!step || disabled) return;
+    e.preventDefault();
+    const i = options.findIndex((o) => o.value === value);
+    const next = (i + step + options.length) % options.length;
+    onChange(options[next].value);
+    refs.current[next]?.focus();
+  };
   return (
-    <div role="radiogroup" aria-label={label} className="grid grid-flow-col auto-cols-fr gap-1 rounded-lg bg-muted p-1">
-      {options.map((o) => (
+    <div role="radiogroup" aria-label={label} aria-disabled={disabled || undefined} onKeyDown={onKeyDown} className="grid grid-flow-col auto-cols-fr gap-1 rounded-lg bg-muted p-1">
+      {options.map((o, i) => (
         <button
           key={o.value}
+          ref={(el) => {
+            refs.current[i] = el;
+          }}
           type="button"
           role="radio"
+          disabled={disabled}
+          tabIndex={value === o.value ? 0 : -1}
           aria-checked={value === o.value}
           onClick={() => onChange(o.value)}
           className={cn(
-            "inline-flex h-7 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring [&_svg]:size-3.5",
+            "inline-flex h-7 cursor-pointer items-center justify-center gap-1.5 rounded-md px-2 text-xs font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-default disabled:opacity-60 [&_svg]:size-3.5",
             value === o.value
               ? "bg-background text-foreground shadow-sm dark:bg-card"
               : "text-muted-foreground hover:text-foreground",

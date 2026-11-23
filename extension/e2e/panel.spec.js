@@ -83,6 +83,9 @@ async function panelFor(url, { scheme = "light" } = {}) {
   return { tab, panel, errors };
 }
 
+/** The view on screen (the others stay mounted, hidden). */
+const shown = (panel) => panel.locator("main > div:not([hidden])");
+
 const nav = (panel, name) => panel.getByRole("navigation").getByRole("button", { name }).click();
 
 test("sign in, then sign out from Settings", async () => {
@@ -123,7 +126,7 @@ test("save a posting: read it, check the details, save to My Jobs", async () => 
     origin: "extension",
   });
   await nav(panel, "My jobs");
-  await expect(panel.getByText("Field Service Technician")).toBeVisible();
+  await expect(shown(panel).getByText("Field Service Technician")).toBeVisible();
   expect(errors).toEqual([]);
   await Promise.all([tab.close(), panel.close()]);
 });
@@ -155,15 +158,15 @@ test("My jobs: search, mark applied, and a failed load offers Retry", async () =
   await expect(panel.getByRole("alert")).toBeVisible();
   api.reset();
   await panel.getByRole("button", { name: "Retry" }).click();
-  await expect(panel.getByText("Help Desk Analyst")).toBeVisible();
+  await expect(shown(panel).getByText("Help Desk Analyst")).toBeVisible();
   await expect(panel.getByText("Applied", { exact: true })).toBeVisible();
 
   await panel.getByLabel("Search my jobs").fill("quill");
-  await expect(panel.getByText("Help Desk Analyst")).toHaveCount(0);
+  await expect(shown(panel).getByText("Help Desk Analyst")).toHaveCount(0);
   await panel.getByLabel("Search my jobs").fill("");
 
   const row = panel.getByRole("listitem").filter({ hasText: "Help Desk Analyst" });
-  await row.getByRole("button", { name: "Mark applied" }).click();
+  await row.getByRole("button", { name: "Mark Help Desk Analyst applied" }).click();
   await expect(row.getByText("Applied", { exact: true })).toBeVisible();
   expect(api.calls("/v1/saved-jobs/mark-applied")[0].body).toEqual({
     title: "Help Desk Analyst",
@@ -270,3 +273,36 @@ for (const scheme of ["light", "dark"]) {
     await Promise.all([tab.close(), panel.close()]);
   });
 }
+
+test("work in progress survives switching views", async () => {
+  const { tab, panel } = await panelFor(lab.url("/lab/posting.html"));
+  await nav(panel, "Write");
+  await panel.getByRole("button", { name: "Write my cover letter" }).click();
+  await expect(panel.getByLabel("Your cover letter")).toHaveValue(/Dear Hiring Team/);
+  await nav(panel, "This page");
+  await nav(panel, "My jobs");
+  await nav(panel, "Write");
+  await expect(panel.getByLabel("Your cover letter")).toHaveValue(/Dear Hiring Team/);
+  expect(api.calls("/v1/ai/generate")).toHaveLength(1); // nothing written twice
+  await Promise.all([tab.close(), panel.close()]);
+});
+
+test("Write picks the job you're applying to", async () => {
+  const { tab, panel } = await panelFor(APPLY_URL);
+  await nav(panel, "Write");
+  await expect(panel.getByLabel("Job", { exact: true })).toHaveValue("l1"); // Help Desk Analyst
+  await Promise.all([tab.close(), panel.close()]);
+});
+
+test("a failed lookup never overwrites the account's Claude link with an old one", async () => {
+  api.state.claudeProjectUrl = "https://claude.ai/project/new-one";
+  await ext.worker.evaluate(() => chrome.storage.local.set({ je_claude_url: "https://claude.ai/project/old-one" }));
+  api.override("GET /v1/users/me", { status: 503, body: { detail: "waking up" } });
+  const { tab, panel } = await panelFor(lab.url("/lab/posting.html"));
+  await nav(panel, "Settings");
+  await expect(panel.getByLabel("Claude Project link")).toHaveValue("https://claude.ai/project/old-one");
+  await panel.waitForTimeout(1500);
+  expect(api.state.claudeProjectUrl).toBe("https://claude.ai/project/new-one");
+  expect(api.calls("/v1/users/me").filter((c) => c.method === "PATCH")).toHaveLength(0);
+  await Promise.all([tab.close(), panel.close()]);
+});

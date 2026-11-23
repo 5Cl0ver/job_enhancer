@@ -6,18 +6,16 @@ import { Bot, ClipboardCopy, Download, ExternalLink, FileText, Mail, Paperclip, 
 import { Alert, Button, Card, Field, Muted, SectionTitle, Segmented, Select, Textarea } from "@/ui";
 import { copyText, hasClaudeTab, openClaude, openClaudeProject, pdfBlobUrl, send } from "@/lib/chrome";
 import { downloadFilename } from "@/lib/context";
-import { useClaudeUrl } from "@/lib/claudeUrl";
 import { usePanel } from "@/lib/store";
 
 type DocType = "cover_letter" | "resume";
 type Engine = "nvidia" | "claude";
 type Note = { tone: "info" | "success" | "warning" | "error"; text: string };
 
-export function Write({ initialJob }: { initialJob: string | null }) {
-  const { saved, signedOut } = usePanel();
-  const [claudeUrl] = useClaudeUrl();
+export function Write({ preferJob }: { preferJob: string | null }) {
+  const { saved, signedOut, claudeUrl, staged, setStaged } = usePanel();
   const jobs = saved.jobs.filter((j) => j.job_listing_id);
-  const [jobId, setJobId] = React.useState(initialJob || "");
+  const [jobId, setJobId] = React.useState(preferJob || "");
   const [docType, setDocType] = React.useState<DocType>("cover_letter");
   const [engine, setEngine] = React.useState<Engine>("nvidia");
   const [busy, setBusy] = React.useState<"write" | "save" | "pdf" | null>(null);
@@ -28,8 +26,8 @@ export function Write({ initialJob }: { initialJob: string | null }) {
   const [pasted, setPasted] = React.useState("");
   const [bridgeResumeId, setBridgeResumeId] = React.useState<string | null>(null);
   const [resumeFilename, setResumeFilename] = React.useState("");
-  const [staged, setStaged] = React.useState<string | null>(null);
-  const [copied, setCopied] = React.useState<"prompt" | "output" | null>(null);
+  const [copied, setCopied] = React.useState<"prompt" | "output" | "failed" | null>(null);
+  const outputRef = React.useRef<HTMLTextAreaElement>(null);
 
   // Default to the first saved job; keep the chosen one while it exists.
   React.useEffect(() => {
@@ -37,12 +35,14 @@ export function Write({ initialJob }: { initialJob: string | null }) {
     if (!jobId || !jobs.some((j) => j.job_listing_id === jobId)) setJobId(jobs[0].job_listing_id);
   }, [jobs, jobId]);
 
+  // The job the tab beside the panel is about (or "Write for this job"):
+  // follow it while nothing is being written.
   React.useEffect(() => {
-    chrome.storage.local.get("je_staged_resume").then(({ je_staged_resume }) => {
-      const s = je_staged_resume as { filename?: string } | undefined;
-      setStaged(s?.filename || null);
-    });
-  }, []);
+    if (preferJob && !busy && !output && !prompt && jobs.some((j) => j.job_listing_id === preferJob)) {
+      setJobId(preferJob);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [preferJob]);
 
   // Output belongs to one kind of document and one engine.
   const reset = () => {
@@ -55,8 +55,7 @@ export function Write({ initialJob }: { initialJob: string | null }) {
 
   async function stageAndPreview(id: string | null, filename: string) {
     if (!id) return;
-    await chrome.storage.local.set({ je_staged_resume: { docId: id, filename } });
-    setStaged(filename);
+    await setStaged(id, filename);
     const pdf = await send({ type: "getDocumentPdf", docId: id });
     if (pdf?.ok && pdf.b64) {
       const url = pdfBlobUrl(pdf.b64);
@@ -146,15 +145,19 @@ export function Write({ initialJob }: { initialJob: string | null }) {
   }
 
   async function copy(what: "prompt" | "output") {
-    if (await copyText(what === "prompt" ? prompt : output)) {
-      setCopied(what);
-      setTimeout(() => setCopied(null), 1800);
-    }
+    const ok = await copyText(what === "prompt" ? prompt : output);
+    if (!ok && what === "output") outputRef.current?.select(); // so Ctrl+C works
+    setCopied(ok ? what : "failed");
+    setTimeout(() => setCopied(null), 2200);
   }
 
-  async function unstage() {
-    await chrome.storage.local.remove("je_staged_resume");
-    setStaged(null);
+  if (!saved.loaded && saved.error) {
+    return (
+      <div className="flex flex-col items-center gap-2 px-4 py-10 text-center">
+        <SectionTitle>Your jobs didn't load</SectionTitle>
+        <Muted>Open My jobs and press Retry, then come back here.</Muted>
+      </div>
+    );
   }
 
   if (saved.loaded && !jobs.length) {
@@ -173,7 +176,7 @@ export function Write({ initialJob }: { initialJob: string | null }) {
       <Card className="flex flex-col gap-3">
         <Field label="Job">
           {(id) => (
-            <Select id={id} value={jobId} onChange={(e) => { setJobId(e.target.value); reset(); }}>
+            <Select id={id} value={jobId} disabled={!!busy} onChange={(e) => { setJobId(e.target.value); reset(); }}>
               {jobs.map((j) => (
                 <option key={j.job_listing_id} value={j.job_listing_id}>
                   {[j.title, j.company].filter(Boolean).join(" · ")}
@@ -184,6 +187,7 @@ export function Write({ initialJob }: { initialJob: string | null }) {
         </Field>
         <Segmented
           label="What to write"
+          disabled={!!busy}
           value={docType}
           onChange={(v) => { setDocType(v); reset(); }}
           options={[
@@ -193,6 +197,7 @@ export function Write({ initialJob }: { initialJob: string | null }) {
         />
         <Segmented
           label="Who writes it"
+          disabled={!!busy}
           value={engine}
           onChange={(v) => { setEngine(v); reset(); }}
           options={[
@@ -220,7 +225,7 @@ export function Write({ initialJob }: { initialJob: string | null }) {
             {prompt && (
               <Button variant="outline" onClick={() => copy("prompt")}>
                 <ClipboardCopy />
-                {copied === "prompt" ? "Copied" : "Copy prompt"}
+                {copied === "prompt" ? "Copied" : copied === "failed" ? "Press Ctrl+C" : "Copy prompt"}
               </Button>
             )}
             <Button variant="ghost" onClick={() => openClaude(claudeUrl)}>
@@ -234,11 +239,11 @@ export function Write({ initialJob }: { initialJob: string | null }) {
       {output && (
         <Card className="flex flex-col gap-2.5">
           <SectionTitle className="text-sm">Your {what}</SectionTitle>
-          <Textarea aria-label={`Your ${what}`} rows={10} value={output} onChange={(e) => setOutput(e.target.value)} />
+          <Textarea ref={outputRef} aria-label={`Your ${what}`} rows={10} value={output} onChange={(e) => setOutput(e.target.value)} />
           <div className="flex flex-wrap gap-2">
             <Button variant="outline" onClick={() => copy("output")}>
               <ClipboardCopy />
-              {copied === "output" ? "Copied" : "Copy"}
+              {copied === "output" ? "Copied" : copied === "failed" ? "Selected: press Ctrl+C" : "Copy"}
             </Button>
             <Button variant="outline" onClick={downloadPdf} busy={busy === "pdf"} disabled={!docId}>
               {busy !== "pdf" && <Download />}PDF
@@ -257,7 +262,7 @@ export function Write({ initialJob }: { initialJob: string | null }) {
           <span className="min-w-0 flex-1">
             <b className="break-all">{staged}</b> is uploaded by your next Autofill.
           </span>
-          <Button variant="ghost" size="icon-sm" onClick={unstage} aria-label="Use my usual résumé instead" title="Use my usual résumé instead">
+          <Button variant="ghost" size="icon-sm" onClick={() => setStaged(null)} aria-label="Use my usual résumé instead" title="Use my usual résumé instead">
             <X />
           </Button>
         </div>

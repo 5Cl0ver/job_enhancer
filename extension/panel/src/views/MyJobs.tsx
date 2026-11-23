@@ -94,7 +94,7 @@ function JobRow({ job }: { job: SavedJob }) {
           <CheckCircle2 aria-hidden /> Applied
         </Badge>
       ) : (
-        <Button variant="outline" size="sm" onClick={markApplied} busy={busy} title="Move this job to Applied">
+        <Button variant="outline" size="sm" onClick={markApplied} busy={busy} title="Move this job to Applied" aria-label={`Mark ${job.title} applied`}>
           Mark applied
         </Button>
       )}

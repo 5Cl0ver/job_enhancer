@@ -5,6 +5,7 @@ import { BriefcaseBusiness, ExternalLink, PenLine, ScanSearch, Settings as Setti
 import { Button, Spinner } from "@/ui";
 import { cn } from "@/lib/utils";
 import { appUrl } from "@/lib/chrome";
+import { bestJobMatch } from "@/lib/context";
 import { usePanel } from "@/lib/store";
 import { SignIn } from "@/views/SignIn";
 import { ThisPage } from "@/views/ThisPage";
@@ -36,10 +37,12 @@ export function Logo({ className }: { className?: string }) {
 }
 
 export function App() {
-  const { auth } = usePanel();
+  const { auth, tab, saved } = usePanel();
   const [view, setView] = React.useState<View>("page");
-  // "Write a cover letter for this job" from This page.
+  // "Write for this job" from This page; otherwise the job the tab is about.
   const [writeFor, setWriteFor] = React.useState<string | null>(null);
+  React.useEffect(() => setWriteFor(null), [tab.url]);
+  const preferJob = writeFor || bestJobMatch(tab.title, saved.jobs)?.job_listing_id || null;
 
   if (auth.state === "loading") return <Spinner label="Starting…" />;
   if (auth.state === "out") return <SignIn />;
@@ -56,18 +59,26 @@ export function App() {
         </Button>
       </header>
 
+      {/* Every view stays mounted and is only hidden, so work in progress (a
+          letter just written, a job being checked) survives switching views. */}
       <main className="flex-1 overflow-y-auto px-3 py-3">
-        {view === "page" && (
+        <div hidden={view !== "page"}>
           <ThisPage
             onWrite={(jobListingId) => {
               setWriteFor(jobListingId);
               setView("write");
             }}
           />
-        )}
-        {view === "jobs" && <MyJobs />}
-        {view === "write" && <Write initialJob={writeFor} />}
-        {view === "settings" && <Settings />}
+        </div>
+        <div hidden={view !== "jobs"}>
+          <MyJobs />
+        </div>
+        <div hidden={view !== "write"}>
+          <Write preferJob={preferJob} />
+        </div>
+        <div hidden={view !== "settings"}>
+          <Settings />
+        </div>
       </main>
 
       <nav aria-label="Job Catcher" className="grid grid-cols-4 border-t bg-background">

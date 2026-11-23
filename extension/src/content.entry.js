@@ -530,6 +530,7 @@ function openSyncReview() {
   close.className = "je-sp-close";
   close.type = "button";
   close.textContent = "✕";
+  close.setAttribute("aria-label", "Close");
   close.addEventListener("click", () => panel.remove());
   head.appendChild(close);
   panel.appendChild(head);
