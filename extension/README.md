@@ -60,9 +60,19 @@ npm run check     # build + unit tests
 - **Unit tests** ([`test/extract.spec.js`](test/extract.spec.js)) cover every
   extraction path. To lock a selector against reality, save a real job page's HTML
   into [`test/fixtures/`](test/fixtures/) and add a test pointing at it.
-- **E2E** ([`e2e/extension.spec.js`](e2e/extension.spec.js)) loads the extension,
-  injects the capture bundle, and asserts it stores the parsed job — MV3 needs a
-  headed/persistent context (or `xvfb` in CI).
+- **Browser tests** ([`e2e/`](e2e/)) load a **test copy** of the built extension
+  into real Chromium ([`e2e/support/launch.js`](e2e/support/launch.js)) against a
+  **fake app server** ([`e2e/support/fake-api.js`](e2e/support/fake-api.js)) with
+  an invented applicant, and the invented pages in `test/lab/` and
+  `test/fixtures/` ([`e2e/support/lab-server.js`](e2e/support/lab-server.js)).
+  The repo's `config.js` (always the live app) is never touched — the copy gets
+  its own. MV3 needs a headed/persistent context (`xvfb-run` in CI, where every
+  pull request runs them).
+- **Updates:** installing or updating the extension puts its current scripts
+  into tabs that are already open ([`src/background/reinject.js`](src/background/reinject.js)),
+  and each script retires the copy it replaces ([`src/orphan.js`](src/orphan.js)) —
+  no tab refresh needed. [`e2e/reinject.spec.js`](e2e/reinject.spec.js) reloads the
+  extension from `chrome://extensions` with a job tab open to prove it.
 
 ## Notes
 

@@ -10,6 +10,7 @@
 // Bundled by esbuild. config.js is loaded at runtime from the extension root.
 import { friendlyApiError } from "./errors.js";
 import { parseSummary } from "./savedSync.js";
+import { reinjectOpenTabs } from "./background/reinject.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -17,6 +18,9 @@ const cfg = self.JOB_ENHANCER_CONFIG;
 // Clicking the toolbar icon opens the side panel (no popup).
 chrome.runtime.onInstalled.addListener(() => {
   chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
+  // Installed or updated: put the current scripts into the tabs already open,
+  // so nothing needs a refresh (spec 015).
+  reinjectOpenTabs().catch(() => {});
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
@@ -150,6 +154,7 @@ async function checkSaved(job) {
       title: job.title || "",
       company: job.company || "",
       location: job.location || "",
+      url: job.url || "",
     }),
   });
   if (!res.ok) return { saved: false, signedIn: true };

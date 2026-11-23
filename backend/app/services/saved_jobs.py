@@ -35,6 +35,7 @@ from app.schemas.saved_job import (
 )
 from app.services.dedup import job_content_hash, normalize
 from app.services.email_job_names import is_sender_person, role_doubtful
+from app.services.scout_dedupe import posting_link
 from app.services.scout_tracks import get_track
 
 # Same thresholds the dedup service uses, so "is this the job I saved?" is judged
@@ -163,24 +164,50 @@ async def get_saved_listing(
     title: str,
     company: str = "",
     location: str = "",
+    url: str = "",
 ) -> JobListing | None:
     """The listing for this job IF this user has saved it, else None. Matches by
     the same content hash used for dedup, so the extension can show "already
-    saved" (and whether details are still missing) before a click."""
+    saved" (and whether details are still missing) before a click.
+
+    When the hash misses and the page's ``url`` is given, the user's saved job
+    with that posting link counts too: a job saved before its page was read
+    (Scout's "Save anyway", spec 015) carries the location Claude read, which
+    rarely matches the page's wording."""
     content_hash = job_content_hash(
         normalize(title), normalize(company), normalize(location)
     )
     listing = await db.scalar(
         select(JobListing).where(JobListing.content_hash == content_hash)
     )
-    if listing is None:
-        return None
-    saved_id = await db.scalar(
-        select(SavedJob.id).where(
-            SavedJob.user_id == user_id, SavedJob.job_listing_id == listing.id
+    if listing is not None:
+        saved_id = await db.scalar(
+            select(SavedJob.id).where(
+                SavedJob.user_id == user_id, SavedJob.job_listing_id == listing.id
+            )
         )
+        if saved_id is not None:
+            return listing
+    links = _link_forms(url)
+    if not links:
+        return None
+    return await db.scalar(
+        select(JobListing)
+        .join(SavedJob, SavedJob.job_listing_id == JobListing.id)
+        .where(SavedJob.user_id == user_id, JobListing.apply_url.in_(links))
+        .limit(1)
     )
-    return listing if saved_id is not None else None
+
+
+def _link_forms(url: str) -> list[str]:
+    """The ways a posting link may have been stored: as given, without a
+    trailing slash, and as its standalone job page (LinkedIn/Indeed panes)."""
+    url = (url or "").strip()
+    if not url.startswith(("http://", "https://")):
+        return []
+    return sorted(
+        {url, url.rstrip("/"), posting_link(url), posting_link(url).rstrip("/")}
+    )
 
 
 def listing_needs_details(listing: JobListing) -> bool:
@@ -203,12 +230,20 @@ async def backfill_job_details(
     salary/job_type) — never downgraded. Returns the list of updated fields.
     """
     listing = await get_saved_listing(
-        db, user_id, data.title, data.company, data.location
+        db, user_id, data.title, data.company, data.location, data.url
     )
     if listing is None:
         return []
 
     updated: list[str] = []
+    # Saved before its page was read: take the page's real location.
+    if (
+        listing.location in (None, "", "Not specified")
+        and data.location
+        and data.location != "Not specified"
+    ):
+        listing.location = data.location
+        updated.append("location")
     # A longer description is a fuller one (feed snippet -> real posting).
     if data.description and len(data.description) > len(listing.description or ""):
         listing.description = data.description

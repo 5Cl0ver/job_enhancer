@@ -60,6 +60,8 @@ class JobSavedCheck(BaseModel):
     title: str = Field(min_length=1, max_length=500)
     company: str = Field(default="", max_length=255)
     location: str = Field(default="", max_length=255)
+    # The page's link: matches a job saved before its page was read (spec 015).
+    url: str = Field(default="", max_length=2000)
 
 
 class JobSavedResult(BaseModel):

@@ -10,6 +10,10 @@
 // app checks the same again before keeping a copy.
 import { extractJob } from "./extract/index.js";
 import { SCOUT_MAX_FAILS, scoutDone, scoutPayload, withPageFallback } from "./scoutCapture.js";
+import { claimPage, runtimeGone } from "./orphan.js";
+
+// One copy per page: after an update the new copy takes over (see orphan.js).
+const isCurrent = claimPage("scoutpage");
 
 const TICK_MS = 2500;
 const TRIES_PER_PAGE = 20; // ~50s: long enough for a slow careers site to load
@@ -25,11 +29,7 @@ let tries = 0;
 let lastRead = "";
 
 function orphaned() {
-  try {
-    return !chrome.runtime?.id;
-  } catch {
-    return true;
-  }
+  return !isCurrent() || runtimeGone();
 }
 
 /** sendMessage that never throws synchronously (an orphaned script). */

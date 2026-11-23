@@ -35,12 +35,21 @@ import {
   captureWorkdayDropdowns,
   inWorkExperience,
 } from "./autofill/workday.js";
+import { claimPage, sweepLegacy } from "./orphan.js";
+
+// This copy owns the page now (see orphan.js): drop buttons/panels left by a
+// copy from before an update, and stop ours if a newer copy takes over.
+const isCurrent = claimPage("autofill");
+for (const el of document.querySelectorAll("#jec-autofill, #jec-remember, #jec-autofill-panel, #jec-review-panel")) {
+  el.remove();
+}
+sweepLegacy("#je-autofill-btn, #je-remember-btn, #je-autofill-panel, #je-review-panel, #je-autofill-style");
 
 const ATS = detectAts(location.href); // still used for submit auto-tracking
-const BTN_ID = "je-autofill-btn";
-const REMEMBER_ID = "je-remember-btn";
-const PANEL_ID = "je-autofill-panel";
-const REVIEW_ID = "je-review-panel";
+const BTN_ID = "jec-autofill";
+const REMEMBER_ID = "jec-remember";
+const PANEL_ID = "jec-autofill-panel";
+const REVIEW_ID = "jec-review-panel";
 const LABEL = "⚡ Autofill from Job Enhancer";
 
 // Pretty names for the summary popout.
@@ -64,10 +73,15 @@ if (document.body) {
   // Forms render/replace via JS — keep the button in sync, but DEBOUNCE so busy
   // pages (Amazon/Workday) don't thrash on every mutation.
   let _t;
-  new MutationObserver(() => {
+  const observer = new MutationObserver(() => {
+    if (!isCurrent()) {
+      observer.disconnect(); // a newer copy took over (an update)
+      return;
+    }
     clearTimeout(_t);
     _t = setTimeout(ensureButton, 500);
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  observer.observe(document.body, { childList: true, subtree: true });
   watchForSubmit();
 }
 
@@ -76,6 +90,7 @@ if (document.body) {
 try {
   chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
     if (msg?.type !== "runAutofill") return;
+    if (!isCurrent()) return;
     if (window !== window.top && !hasFillableForm()) return; // skip empty iframes
     const btn = forceButton();
     run(btn)
@@ -899,9 +914,9 @@ function watchForSubmit() {
 }
 
 function injectStyles() {
-  if (document.getElementById("je-autofill-style")) return;
+  if (document.getElementById("jec-autofill-style")) return;
   const style = document.createElement("style");
-  style.id = "je-autofill-style";
+  style.id = "jec-autofill-style";
   style.textContent = `
     #${BTN_ID} {
       position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
