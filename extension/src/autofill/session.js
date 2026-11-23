@@ -85,7 +85,7 @@ function within(box, el) {
   return false;
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "consent", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 const optionLabels = (f) => (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60);
@@ -208,7 +208,7 @@ export function createSession(deps) {
       const res = await fillOne(field, d.values, d.source);
       if (!res.ok) leave(field, res.reason || "rejected");
     }
-    return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)) };
+    return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)), seen: list.length };
   }
 
   /**

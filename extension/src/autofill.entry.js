@@ -13,7 +13,9 @@
 // → widgets.js (write + read back) → session.js (the fill, Fix, Undo).
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
-import { profileValues } from "./autofill/classify/profileKeys.js";
+import { profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
+import { frameReport } from "./autofill/report.js";
+import { resolve } from "./autofill/resolve.js";
 import { createSession } from "./autofill/session.js";
 import { watchForSubmit } from "./autofill/track.js";
 import { fillAllWorkExperience, inWorkExperience, isWorkdayExperience } from "./autofill/workday.js";
@@ -248,7 +250,7 @@ async function fill(auto) {
     if (work?.length) await fillAllWorkExperience(document, work);
   }
 
-  const { leftovers } = await session.fillKnown(copy, {
+  const { leftovers, seen } = await session.fillKnown(copy, {
     auto,
     onProgress: (done, total) => status({ phase: "filling", done, total, note: "Filling…" }),
   });
@@ -273,7 +275,9 @@ async function fill(auto) {
     report();
   }
   status({ phase: "done", filled: lastReport.filled, need: lastReport.need }, { now: true });
-  return { ok: true, ...lastReport };
+  // `seen`: how many fields this frame could see — 0 makes the background
+  // read the page again before reporting (spec 017).
+  return { ok: true, ...lastReport, seen };
 }
 
 /** Has anything in Workday's Work Experience been filled (by anyone)? */
@@ -366,6 +370,39 @@ try {
 } catch {
   /* orphaned */
 }
+
+// ---- What Job Catcher saw (spec 017) ------------------------------------------
+// Read by the background with chrome.scripting (every frame, in this world):
+// is this copy alive, and the frame's scan report — never a field's value.
+
+function within(box, el) {
+  for (let n = el; n; n = n.parentNode || n.host) if (n === box) return true;
+  return false;
+}
+
+function scanReportNow() {
+  const fields = session.scan();
+  const r = session.report();
+  const filled = new Map(r.entries.map((e) => [e.id, e.source]));
+  const need = new Map(r.need_you.map((n) => [n.id, n.reason]));
+  const modal = openModal();
+  const decide = (f) => {
+    if (filled.has(f.id)) return `filled (${filled.get(f.id)})`;
+    if (need.has(f.id)) return `left for you (${need.get(f.id)})`;
+    if (!lastCopy) {
+      const key = profileKeyFor(f);
+      return key ? `profile answer: ${key}` : "not a profile question";
+    }
+    const d = resolve(f, lastCopy);
+    return d.skip ? `would leave: ${d.skip}${d.key ? ` (${d.key})` : ""}` : `would fill: ${d.source}${d.key ? ` (${d.key})` : ""}`;
+  };
+  return frameReport(document, { fields, decide, popupOpen: !!modal, inModal: (el) => !!modal && within(modal, el) });
+}
+
+globalThis.__jecAutofill = {
+  alive: () => isCurrent() && !runtimeGone(),
+  report: () => (isCurrent() ? scanReportNow() : null),
+};
 
 // ---- Start ----------------------------------------------------------------
 

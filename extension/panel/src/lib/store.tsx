@@ -49,6 +49,8 @@ export interface FillStatus {
   note?: string;
   filled?: number;
   need?: number;
+  /** fields the frames could see (0: blind, even after reading again) */
+  seen?: number;
   problem?: "signed_out" | "asleep" | "refresh" | "slow";
   at: number;
 }

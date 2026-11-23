@@ -7,6 +7,7 @@
 // of the script, and one press fills them all.
 import { normalizeQuestion } from "./classify/answers.js";
 import { applicantHost, isApplyUrl } from "./hosts.js";
+import { isOnScreen } from "./visible.js";
 
 /** A shadow root, including closed ones where the extension API allows. */
 export function shadowOf(el) {
@@ -161,14 +162,9 @@ function groupQuestion(members, optionLabels) {
   return "";
 }
 
-function isVisible(el) {
-  if (el.hidden || el.closest?.("[hidden], [aria-hidden=true], [inert]")) return false;
-  const view = el.ownerDocument?.defaultView;
-  const style = view?.getComputedStyle?.(el);
-  if (style && (style.visibility === "hidden" || style.display === "none")) return false;
-  const rects = el.getClientRects?.();
-  return !rects || rects.length > 0;
-}
+// On screen for a person, by rendering only (spec 017): never by aria-hidden
+// or inert on an ancestor, which pop-up libraries set on the pop-up itself.
+const isVisible = isOnScreen;
 
 /** Radios and checkboxes are often drawn by a label while the input is hidden. */
 function choiceVisible(el, visible) {

@@ -806,6 +806,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The panel's Autofill button (or the page, for a tab id it knows).
         const tabId = msg.tabId ?? sender.tab?.id;
         sendResponse(tabId != null ? await presence.press(tabId) : { ok: false, problem: "refresh" });
+      } else if (msg.type === "readAgain") {
+        sendResponse(await presence.readAgain(msg.tabId));
+      } else if (msg.type === "scanReport") {
+        sendResponse({ ok: true, report: await presence.report(msg.tabId) });
       } else if (msg.type === "probeTab") {
         presence.probe(msg.tabId);
         sendResponse({ ok: true });

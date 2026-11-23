@@ -1,0 +1,109 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 017: the real failure of 0.32.0 on a
+     Paycom "Getting You Started" pop-up — rebuilt the way MUI v4 draws it.
+     The dialog is rendered INSIDE #root (disablePortal), and MUI v4's
+     ModalManager marks the body's other children AND #root aria-hidden="true"
+     while it's open — so the visible pop-up sits under aria-hidden. Outlined
+     MUI text fields (label[for] + notched fieldset), a phone beside a "+1"
+     flag button, MUI radios and a checkbox drawn by an SVG over an
+     opacity:0 <input>. No "apply" in the address.
+     window.__formData() holds what the pop-up's inputs hold. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Business Systems Analyst - Northvale Fitness Careers</title>
+    <style>
+      body { font-family: system-ui, sans-serif; margin: 0; }
+      .backdrop { position: fixed; inset: 0; background: rgb(0 0 0 / 50%); z-index: 1300; display: flex; justify-content: center; align-items: flex-start; overflow: auto; }
+      .MuiDialog-paper { background: #fff; width: 560px; margin: 24px; padding: 24px; border-radius: 4px; }
+      .MuiTextField-root { position: relative; margin: 16px 0; }
+      .MuiInputLabel-root { position: absolute; left: 14px; top: 16px; pointer-events: none; color: #333; }
+      .MuiInputLabel-shrink { top: -8px; font-size: 12px; background: #fff; padding: 0 4px; }
+      .MuiOutlinedInput-root { position: relative; }
+      .MuiInputBase-input { width: 100%; box-sizing: border-box; padding: 18px 14px; border: 0; background: transparent; position: relative; z-index: 1; }
+      .PrivateNotchedOutline-root { position: absolute; inset: -5px 0 0; border: 1px solid #888; border-radius: 4px; margin: 0; padding: 0 8px; pointer-events: none; }
+      .PrivateNotchedOutline-root legend { visibility: hidden; font-size: 12px; padding: 0; height: 11px; }
+      .phone { display: flex; align-items: center; }
+      .flag { display: flex; align-items: center; gap: 6px; padding: 0 10px; cursor: pointer; }
+      .flag i { display: inline-block; width: 28px; height: 18px; background: linear-gradient(#b22 50%, #eee 50%); }
+      .MuiRadio-root, .MuiCheckbox-root { position: relative; display: inline-flex; width: 24px; height: 24px; }
+      .PrivateSwitchBase-input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: pointer; z-index: 1; }
+      .MuiFormControlLabel-root { display: inline-flex; align-items: center; gap: 6px; margin-right: 24px; }
+    </style>
+  </head>
+  <body>
+    <div id="root">
+      <header><strong>NORTHVALE FITNESS</strong> · <a href="#">Sign In</a> · <button type="button">Create Account</button></header>
+      <main>
+        <h1>Business Systems Analyst II - CRM (61770)</h1>
+        <p>Fully Remote · Regular Full Time</p>
+        <button id="apply" type="button">Apply</button>
+      </main>
+      <!-- the pop-up, rendered in place (MUI disablePortal) -->
+      <div id="modal-slot"></div>
+    </div>
+    <div id="toasts"></div>
+
+    <script>
+      const field = (id, label, type = "text") => `
+        <div class="MuiFormControl-root MuiTextField-root">
+          <label class="MuiFormLabel-root MuiInputLabel-root MuiInputLabel-outlined" for="${id}" id="${id}-label">${label}<span aria-hidden="true" class="MuiFormLabel-asterisk"> *</span></label>
+          <div class="MuiInputBase-root MuiOutlinedInput-root">
+            <input id="${id}" name="${id}" type="${type}" class="MuiInputBase-input MuiOutlinedInput-input" aria-invalid="false">
+            <fieldset aria-hidden="true" class="PrivateNotchedOutline-root"><legend><span>${label} *</span></legend></fieldset>
+          </div>
+        </div>`;
+
+      function open() {
+        const slot = document.getElementById("modal-slot");
+        slot.innerHTML = `
+          <div role="presentation" class="MuiDialog-root"><div class="backdrop">
+            <div role="dialog" aria-modal="true" aria-labelledby="gs-title" class="MuiPaper-root MuiDialog-paper">
+              <h2 id="gs-title">Getting You Started</h2>
+              <p>Save your application, receive urgent messages from recruiters and track your application status with an account.</p>
+              <form id="getting-started" novalidate>
+                ${field("legalFirstName", "Legal First Name")}
+                ${field("legalLastName", "Legal Last Name")}
+                ${field("emailAddress", "Email Address", "email")}
+                ${field("confirmEmail", "Confirm Email", "email")}
+                <div class="MuiFormControl-root MuiTextField-root">
+                  <label class="MuiFormLabel-root MuiInputLabel-root MuiInputLabel-shrink" for="primaryPhone">Primary Phone Number<span aria-hidden="true" class="MuiFormLabel-asterisk">*</span></label>
+                  <div class="MuiInputBase-root MuiOutlinedInput-root phone">
+                    <div class="flag" role="button" tabindex="0" aria-haspopup="true" aria-label="Country code"><i></i><span>+1</span><svg width="10" height="10" aria-hidden="true"><path d="M0 0 L10 0 L5 6Z"/></svg></div>
+                    <input id="primaryPhone" name="primaryPhone" type="tel" placeholder="XXX XXX XXXX" class="MuiInputBase-input MuiOutlinedInput-input">
+                    <fieldset aria-hidden="true" class="PrivateNotchedOutline-root"><legend><span>Primary Phone Number *</span></legend></fieldset>
+                  </div>
+                </div>
+                <fieldset class="MuiFormControl-root" style="border:0;padding:0">
+                  <legend>Do you consent to receiving text communications related to your job application via SMS from Northvale Fitness, which may include auto dialed and automated messages, at the mobile number provided?*</legend>
+                  <div role="radiogroup">
+                    <label class="MuiFormControlLabel-root"><span class="MuiRadio-root"><input class="PrivateSwitchBase-input" type="radio" name="smsConsent" value="yes"><svg width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="#333" stroke-width="2"/></svg></span><span>Yes</span></label>
+                    <label class="MuiFormControlLabel-root"><span class="MuiRadio-root"><input class="PrivateSwitchBase-input" type="radio" name="smsConsent" value="no"><svg width="24" height="24" aria-hidden="true"><circle cx="12" cy="12" r="9" fill="none" stroke="#333" stroke-width="2"/></svg></span><span>No</span></label>
+                  </div>
+                </fieldset>
+                <label class="MuiFormControlLabel-root"><span class="MuiCheckbox-root"><input class="PrivateSwitchBase-input" type="checkbox" name="privacyAck"><svg width="24" height="24" aria-hidden="true"><rect x="3" y="3" width="18" height="18" fill="none" stroke="#333" stroke-width="2"/></svg></span><span>* I confirm that I have read and understood the Privacy Policy.</span></label>
+                <button type="button" id="continue">Continue To Application</button>
+              </form>
+            </div>
+          </div></div>`;
+        // MUI v4 ModalManager: aria-hide the body's children while the modal is
+        // open — with the dialog rendered in place, that includes #root itself.
+        for (const el of document.body.children) if (el.tagName !== "SCRIPT") el.setAttribute("aria-hidden", "true");
+        // Outlined labels shrink once their box has text.
+        for (const input of slot.querySelectorAll(".MuiInputBase-input")) {
+          input.addEventListener("input", () => input.closest(".MuiTextField-root").querySelector("label").classList.toggle("MuiInputLabel-shrink", !!input.value || input.id === "primaryPhone"));
+        }
+      }
+      window.__formData = () => {
+        const out = {};
+        for (const el of document.querySelectorAll("#getting-started [name]")) {
+          if (el.type === "radio") { if (el.checked) out[el.name] = el.value; else if (!(el.name in out)) out[el.name] = ""; }
+          else if (el.type === "checkbox") out[el.name] = el.checked;
+          else out[el.name] = el.value;
+        }
+        return out;
+      };
+      document.getElementById("apply").addEventListener("click", () => setTimeout(open, 150));
+    </script>
+  </body>
+</html>

@@ -135,56 +135,128 @@ export function createFillPresence({ notify }) {
   }
 
   /**
+   * "Read the page again" (spec 017): a fresh reader in every frame that has
+   * none (a frame the page wrote itself, a copy orphaned by an update), then
+   * every frame reports its form again. Never replaces a live copy, so the
+   * last fill's review and Undo keep working.
+   */
+  async function readAgain(tabId) {
+    let results = [];
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        injectImmediately: true,
+        func: () => !!globalThis.__jecAutofill?.alive?.(),
+      });
+    } catch {
+      return { ok: false, frames: 0, injected: 0 }; // a page Chrome keeps extensions out of
+    }
+    const dead = results.filter((r) => !r.result).map((r) => r.frameId);
+    if (dead.length) {
+      await chrome.scripting
+        .executeScript({ target: { tabId, frameIds: dead }, injectImmediately: true, files: ["dist/autofill.js"] })
+        .catch(() => {});
+    }
+    probe(tabId);
+    await new Promise((r) => setTimeout(r, 700)); // the frames' reports land
+    return { ok: true, frames: results.length, injected: dead.length, ...(await get(tabId)) };
+  }
+
+  /** "Copy what Job Catcher saw": every frame's scan report (never values). */
+  async function report(tabId) {
+    let results = [];
+    try {
+      results = await chrome.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => globalThis.__jecAutofill?.report?.() ?? null,
+      });
+    } catch {
+      results = [];
+    }
+    const tab = await chrome.tabs.get(tabId).catch(() => null);
+    let host = "";
+    try {
+      host = new URL(tab?.url || "").hostname;
+    } catch {
+      /* no address */
+    }
+    return {
+      version: chrome.runtime.getManifest().version,
+      host,
+      frames: results.filter((r) => r.result).map((r) => ({ frameId: r.frameId, ...r.result })),
+      silent: results.filter((r) => !r.result).length,
+    };
+  }
+
+  /**
    * Fill the tab: every frame with a form (only the pop-up's, when one is
    * open), or the top frame when none reported one — the user asked, so try.
+   * When no frame could see a single field, the page is read again (a fresh
+   * reader everywhere) and filled once more before anything is reported.
    * @returns {Promise<{ok: boolean, filled: number, need: number, problem?: string}>}
    */
   async function press(tabId) {
     if (pressing.has(tabId)) return { ok: false, busy: true, filled: 0, need: 0 };
     pressing.add(tabId);
     try {
-      const frames = Object.entries(await readForms(tabId)).map(([id, p]) => ({ id: Number(id), p }));
-      let targets = frames.filter((f) => f.p.form);
-      if (targets.some((f) => f.p.inModal)) targets = targets.filter((f) => f.p.inModal);
-      const ids = targets.length ? targets.map((f) => f.id) : [0];
-      await setStatus(tabId, { phase: "filling", done: 0, total: 0, note: "Starting…" });
-      const ask = (list) =>
-        Promise.all(
-          list.map((frameId) =>
-            Promise.race([
-              chrome.tabs.sendMessage(tabId, { type: "runAutofill", force: true }, { frameId }).catch(() => null),
-              new Promise((r) => setTimeout(() => r({ ok: false, slow: true }), FRAME_TIMEOUT_MS)),
-            ]),
-          ),
-        );
-      let replies = await ask(ids);
-      // Every target gone (a frame closed without saying so): forget them and
-      // try the other frames with a form, or the page itself.
-      if (replies.every((r) => r == null)) {
-        await forget(tabId, ids);
-        const rest = frames.filter((f) => f.p.form && !ids.includes(f.id)).map((f) => f.id);
-        const retry = rest.length ? rest : ids.includes(0) ? [] : [0];
-        if (retry.length) replies = await ask(retry);
+      let out = await pressOnce(tabId, "Starting…");
+      if (out.blind) {
+        await setStatus(tabId, { phase: "filling", done: 0, total: 0, note: "Looking deeper…" });
+        await readAgain(tabId);
+        out = await pressOnce(tabId, "Looking deeper…");
       }
-      const ok = replies.filter((r) => r?.ok);
-      const filled = ok.reduce((n, r) => n + (r.filled || 0), 0);
-      const need = ok.reduce((n, r) => n + (r.need || 0), 0);
-      if (ok.length) {
-        await setStatus(tabId, { phase: "done", filled, need });
-        flash(tabId, String(filled), filled ? BADGE.done : BADGE.problem);
-        return { ok: true, filled, need };
-      }
-      const r = replies.find(Boolean) || {};
-      // Already filling (a new step, keep filling): that run reports its own result.
-      if (r.busy) return { ok: false, busy: true, filled: 0, need: 0 };
-      const problem = r.signedIn === false ? "signed_out" : r.unreachable ? "asleep" : r.slow ? "slow" : "refresh";
-      await setStatus(tabId, { phase: "problem", problem });
-      flash(tabId, "!", BADGE.problem);
-      return { ok: false, problem, filled: 0, need: 0 };
+      return out.result;
     } finally {
       pressing.delete(tabId);
     }
   }
 
-  return { get, storePresence, frameStatus, clear, probe, press };
+  /** One press; `blind` when no frame saw a field (or none answered). */
+  async function pressOnce(tabId, note) {
+    const frames = Object.entries(await readForms(tabId)).map(([id, p]) => ({ id: Number(id), p }));
+    let targets = frames.filter((f) => f.p.form);
+    if (targets.some((f) => f.p.inModal)) targets = targets.filter((f) => f.p.inModal);
+    const ids = targets.length ? targets.map((f) => f.id) : [0];
+    await setStatus(tabId, { phase: "filling", done: 0, total: 0, note });
+    const ask = (list) =>
+      Promise.all(
+        list.map((frameId) =>
+          Promise.race([
+            chrome.tabs.sendMessage(tabId, { type: "runAutofill", force: true }, { frameId }).catch(() => null),
+            new Promise((r) => setTimeout(() => r({ ok: false, slow: true }), FRAME_TIMEOUT_MS)),
+          ]),
+        ),
+      );
+    let replies = await ask(ids);
+    // Every target gone (a frame closed without saying so): forget them and
+    // try the other frames with a form, or the page itself.
+    if (replies.every((r) => r == null)) {
+      await forget(tabId, ids);
+      const rest = frames.filter((f) => f.p.form && !ids.includes(f.id)).map((f) => f.id);
+      const retry = rest.length ? rest : ids.includes(0) ? [] : [0];
+      if (retry.length) replies = await ask(retry);
+    }
+    const ok = replies.filter((r) => r?.ok);
+    const filled = ok.reduce((n, r) => n + (r.filled || 0), 0);
+    const need = ok.reduce((n, r) => n + (r.need || 0), 0);
+    const seen = ok.reduce((n, r) => n + (r.seen ?? 1), 0);
+    const r = replies.find((x) => x && !x.ok) || {};
+    // Already filling (a new step, keep filling): that run reports its own result.
+    if (!ok.length && r.busy) return { result: { ok: false, busy: true, filled: 0, need: 0 } };
+    // Signed out / app asleep: reading again wouldn't help.
+    const stopped = r.signedIn === false || r.unreachable;
+    const blind = !stopped && note !== "Looking deeper…" && (ok.length ? seen === 0 && !filled : true);
+    if (blind) return { blind: true };
+    if (ok.length) {
+      await setStatus(tabId, { phase: "done", filled, need, seen });
+      flash(tabId, String(filled), filled ? BADGE.done : BADGE.problem);
+      return { result: { ok: true, filled, need, seen } };
+    }
+    const problem = r.signedIn === false ? "signed_out" : r.unreachable ? "asleep" : r.slow ? "slow" : "refresh";
+    await setStatus(tabId, { phase: "problem", problem });
+    flash(tabId, "!", BADGE.problem);
+    return { result: { ok: false, problem, filled: 0, need: 0 } };
+  }
+
+  return { get, storePresence, frameStatus, clear, probe, press, readAgain, report };
 }
