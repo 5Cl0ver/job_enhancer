@@ -88,7 +88,6 @@ test("an update takes over open tabs: old buttons gone for good, Scout still cop
   await jobTab.waitForTimeout(7000);
   for (const [tab, current] of [
     [jobTab, "#jec-save"],
-    [formTab, "#jec-autofill"],
     [myJobsTab, "#jec-sync"],
   ]) {
     await expect(tab.locator(`:is(${LEGACY}):visible`)).toHaveCount(0);
@@ -96,7 +95,10 @@ test("an update takes over open tabs: old buttons gone for good, Scout still cop
     await expect(tab.locator(current)).not.toContainText(/refresh/i);
   }
 
-  // The new autofill button works (a fill, not "↻ Refresh page").
-  await formTab.locator("#jec-autofill").click();
+  // The old autofill button is gone, nothing new is drawn, and the updated
+  // extension fills the open form (no refresh needed).
+  await expect(formTab.locator(`:is(${LEGACY}):visible`)).toHaveCount(0);
+  await expect(formTab.locator("jec-ui-autofill")).toHaveCount(0);
+  expect((await ext.autofill(formTab)).ok).toBe(true);
   await expect(formTab.locator("#first")).toHaveValue("Wren", { timeout: 10000 });
 });

@@ -1,14 +1,18 @@
-// Autofill, in every frame of every https page (spec 015). A small pill on
-// pages that look like an application: one press fills every field the app
-// knows — instantly, from the copy of your details the extension keeps — then
-// the app's AI answers what's left. Every filled field is outlined by where its
-// answer came from, and the side panel lists them all with Fix / Undo.
-// It NEVER submits.
+// Autofill, in every frame of every https page (spec 015, 016). Nothing is
+// drawn on the page but the outlines on the fields it filled: everything is
+// managed from the side panel and the toolbar icon (spec 016, a user decision).
+//
+// Each frame tells the background whether it holds a form worth filling, so
+// the panel can offer Autofill on any page with one, whatever its address, and
+// the toolbar icon shows ⚡. A press (panel, toolbar or shortcut) fills every
+// frame with a form instantly, from the copy of your details the extension
+// keeps, then the app's AI answers what's left; progress and the result go to
+// the panel as one status line. It NEVER submits.
 //
 // The work happens in src/autofill/: scan.js (find fields) → resolve.js (decide)
 // → widgets.js (write + read back) → session.js (the fill, Fix, Undo).
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
-import { removeUi, uiRoot } from "./ui/onpage.js";
+import { removeUi } from "./ui/onpage.js";
 import { profileValues } from "./autofill/classify/profileKeys.js";
 import { createSession } from "./autofill/session.js";
 import { watchForSubmit } from "./autofill/track.js";
@@ -19,7 +23,7 @@ const isCurrent = claimPage("autofill");
 for (const el of document.querySelectorAll("#jec-autofill, #jec-remember, #jec-autofill-panel, #jec-review-panel, #jec-autofill-style")) {
   el.remove(); // 0.28 and 0.29, before the shadow-root pill
 }
-removeUi("autofill");
+removeUi("autofill"); // the on-page pill of 0.30–0.31
 sweepLegacy("#je-autofill-btn, #je-remember-btn, #je-autofill-panel, #je-review-panel, #je-autofill-style");
 
 const TOP = window === window.top;
@@ -33,13 +37,32 @@ function send(msg) {
   }
 }
 
+// ---- Pop-ups ------------------------------------------------------------------
+// While a pop-up holding a form is open, only its fields are filled: what's
+// behind it is out of sight, and may be another form (spec 016, research R9).
+
+const MODALS =
+  'dialog[open], [aria-modal="true"], [role="dialog"], [role="alertdialog"], mat-dialog-container, sdf-dialog, sdf-modal, sdf-focus-pane[data-sdf-modal]';
+// Boxes a person types into: a cookie-preferences pop-up (only switches) never counts.
+const TEXTISH =
+  'input:not([type]), input[type=text], input[type=email], input[type=tel], input[type=url], input[type=number], input[type=date], textarea, select, [role=combobox]';
+
+function openModal() {
+  const shown = [...document.querySelectorAll(MODALS)].filter(
+    (el) => el.getClientRects().length && [...el.querySelectorAll(TEXTISH)].filter((c) => c.getClientRects().length).length >= 2,
+  );
+  // The innermost, last-opened one (a pop-up inside a page-wide wrapper).
+  return shown.filter((el) => !shown.some((o) => o !== el && el.contains(o))).pop() || null;
+}
+
 const session = createSession({
   send,
   // Workday's Work Experience blocks are filled from the résumé below.
   skipField: (f) => isWorkdayExperience(document) && inWorkExperience(f.el),
+  scope: openModal,
 });
 
-let state = "idle"; // idle | busy | done | error
+let state = "idle"; // idle | busy
 let lastReport = { filled: 0, need: 0 };
 // Keep filling (spec 015, Story 4): after one press, each later step of the
 // same application fills as it appears. Remembered per tab and site by the
@@ -50,90 +73,59 @@ let usedHere = false; // autofill ran on this page (learning only notices then)
 let lastStep = "";
 let lastCopy = null; // the profile's answers, for noticing typed ones
 
-// ---- The pill --------------------------------------------------------------
+// ---- Status for the side panel ------------------------------------------------
 
-function pill() {
-  const root = uiRoot("autofill");
-  let box = root.getElementById("jec-pill");
-  if (box) return box;
-  box = document.createElement("div");
-  box.id = "jec-pill";
-  box.className = "jec-pill";
-  box.setAttribute("role", "group");
-  box.setAttribute("aria-label", "Job Catcher autofill");
-  const main = document.createElement("button");
-  main.type = "button";
-  main.id = "jec-autofill";
-  main.className = "je-btn jec-pill-main";
-  main.addEventListener("click", () => (state === "done" ? openReview() : run()));
-  const review = document.createElement("button");
-  review.type = "button";
-  review.className = "jec-pill-link";
-  review.textContent = "Review";
-  review.addEventListener("click", openReview);
-  const undo = document.createElement("button");
-  undo.type = "button";
-  undo.className = "jec-pill-link";
-  undo.textContent = "Undo";
-  undo.addEventListener("click", async () => {
-    await session.undo();
-    report();
-    setPill("idle");
-  });
-  box.append(main, review, undo);
-  root.appendChild(box);
-  setPill(state);
-  return box;
+let statusAt = 0;
+/** What this frame is doing, for the panel's status line (throttled). */
+function status(s, { now = false } = {}) {
+  if (!now && s.phase === "filling" && Date.now() - statusAt < 150) return;
+  statusAt = Date.now();
+  send({ type: "fillStatus", status: s });
 }
 
-function setPill(next, text) {
-  state = next;
-  const box = uiRoot("autofill").getElementById("jec-pill");
-  if (!box) return;
-  const main = box.querySelector(".jec-pill-main");
-  box.dataset.state = next;
-  main.dataset.state = next === "done" ? "saved" : next === "busy" ? "busy" : next === "error" ? "error" : "";
-  main.textContent =
-    text ||
-    (next === "busy"
-      ? "Filling…"
-      : next === "done"
-        ? `✓ ${lastReport.filled} filled${lastReport.need ? ` · ${lastReport.need} for you` : ""}`
-        : "⚡ Autofill");
-  for (const b of box.querySelectorAll(".jec-pill-link")) b.hidden = next !== "done";
-}
+// ---- Is there a form here? ------------------------------------------------------
+// Asked on page changes, so kept cheap on busy pages: the full scan runs only
+// when the set of form controls on screen changed (or, on a page with none in
+// plain sight, at most every 10 s for forms inside components).
 
-function openReview() {
-  send({ type: "openReview" });
-}
-
-// Is this an application? Asked on page changes, so kept cheap on busy pages:
-// the full scan runs only when the set of form controls changed (or, on a page
-// with none in plain sight, at most every 10 s for forms inside components).
-let ensureTimer;
+let checkTimer;
 let lastSig = "";
 let lastCheck = 0;
-let lastAnswer = false;
+let lastPresence = { form: false, app: false, fields: 0, inModal: false };
+let lastSent = "";
 const CONTROLS = "input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea, [role=combobox]";
-function looksLikeApplicationNow() {
-  // Count only controls on screen: a form opened later (a dialog) changes it.
+
+function presenceNow() {
+  // Count only controls on screen: a form opened later (a pop-up) changes it.
   const n = [...document.querySelectorAll(CONTROLS)].filter((el) => el.getClientRects().length).length;
   const sig = `${location.href}|${n}`;
   const now = Date.now();
-  if (sig === lastSig && (n > 0 || now - lastCheck < 10_000)) return lastAnswer;
+  if (sig === lastSig && (n > 0 || now - lastCheck < 10_000)) return lastPresence;
   lastSig = sig;
   lastCheck = now;
-  lastAnswer = session.isApplication();
-  return lastAnswer;
+  lastPresence = { ...session.presence(), inModal: !!openModal() };
+  return lastPresence;
 }
 
-function ensurePill() {
+/** Tell the background when this frame's form appears, changes or goes. */
+function check() {
   if (!isCurrent()) return;
-  const app = looksLikeApplicationNow();
-  if (state !== "idle" || app) pill();
-  else uiRoot("autofill").getElementById("jec-pill")?.remove();
+  if (state === "busy") {
+    // Mid-fill the page is ours to change: look again once it's done.
+    checkTimer ||= setTimeout(() => {
+      checkTimer = null;
+      check();
+    }, 300);
+    return;
+  }
+  const p = presenceNow();
+  const key = JSON.stringify([location.href, p.form, p.app, p.fields, p.inModal]);
+  if (key !== lastSent && (p.form || lastSent)) {
+    lastSent = p.form ? key : "";
+    send({ type: "formPresence", presence: { ...p, at: Date.now() } });
+  }
   // A new step of an application being filled: fill it too.
-  if (app && keepOn && state !== "busy") {
+  if (p.app && keepOn && state !== "busy") {
     const step = session.stepFingerprint();
     if (step && step !== lastStep) {
       lastStep = step;
@@ -174,22 +166,61 @@ async function loadCopy() {
   return lastCopy;
 }
 
+/**
+ * After the résumé upload: if the page rebuilds its form from it (form
+ * controls added or removed), wait until that stops — quiet for `quietMs`, at
+ * most `capMs`. A page that doesn't rebuild within `firstMs` isn't waited on;
+ * other page changes (a ticker, an animation) never count.
+ */
+function settle({ firstMs = 700, quietMs = 500, capMs = 4000 } = {}) {
+  const touchesForm = (nodes) =>
+    [...nodes].some((n) => n.nodeType === 1 && (n.matches(CONTROLS) || n.querySelector?.(CONTROLS)));
+  return new Promise((resolve) => {
+    let quiet;
+    const done = () => {
+      observer.disconnect();
+      clearTimeout(quiet);
+      clearTimeout(cap);
+      resolve();
+    };
+    const observer = new MutationObserver((records) => {
+      if (!records.some((r) => touchesForm(r.addedNodes) || touchesForm(r.removedNodes))) return;
+      clearTimeout(quiet);
+      quiet = setTimeout(done, quietMs);
+    });
+    const cap = setTimeout(done, capMs);
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    quiet = setTimeout(done, firstMs);
+  });
+}
+
 async function run({ auto = false } = {}) {
-  if (state === "busy" || !isCurrent()) return { ok: false };
-  if (runtimeGone()) {
-    setPill("error", "↻ Refresh the page");
-    return { ok: false };
+  if (state === "busy" || !isCurrent()) return { ok: false, busy: state === "busy" };
+  if (runtimeGone()) return { ok: false, refresh: true };
+  state = "busy";
+  try {
+    return await fill(auto);
+  } finally {
+    state = "idle";
   }
-  if (TOP || session.isApplication()) pill();
-  setPill("busy");
+}
+
+async function fill(auto) {
+  status({ phase: "filling", done: 0, total: 0, note: "Getting your details…" }, { now: true });
   // The first use on a computer may wait for a sleeping server.
-  const slow = setTimeout(() => state === "busy" && setPill("busy", "Waking up the app…"), 1500);
+  const slow = setTimeout(() => status({ phase: "filling", done: 0, total: 0, note: "Waking up the app…" }, { now: true }), 1500);
   const copy = await loadCopy();
   clearTimeout(slow);
   if (copy.signedOut || copy.unreachable) {
-    setPill("error", copy.signedOut ? "Sign in from the side panel" : "Can't reach the app: try again");
-    setTimeout(() => setPill("idle"), 4000);
+    const problem = copy.signedOut ? "signed_out" : "asleep";
+    status({ phase: "problem", problem }, { now: true });
     return { ok: false, signedIn: !copy.signedOut, unreachable: !!copy.unreachable };
+  }
+
+  // The résumé first: many applicant systems read it and rewrite the form.
+  if (await session.uploadResume(copy)) {
+    status({ phase: "filling", done: 0, total: 0, note: "Uploading your résumé…" }, { now: true });
+    await settle();
   }
 
   // Workday's Work Experience: one block per job on the résumé (read once
@@ -199,27 +230,30 @@ async function run({ auto = false } = {}) {
   if (isWorkdayExperience(document) && (!auto || !workExperienceTouched())) {
     let work = copy.history?.work;
     if (!work?.length) {
-      setPill("busy", "Reading your résumé…");
+      status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
       work = (await send({ type: "getWorkHistory" }))?.entries;
     }
     if (work?.length) await fillAllWorkExperience(document, work);
-    setPill("busy");
   }
 
-  const { leftovers } = await session.fillKnown(copy, { auto });
+  const { leftovers } = await session.fillKnown(copy, {
+    auto,
+    onProgress: (done, total) => status({ phase: "filling", done, total, note: "Filling…" }),
+  });
   usedHere = true;
   report();
-  setPill("done");
   lastStep = session.stepFingerprint();
   if (!auto && !keepOn && !keepUserOff) {
     keepOn = true; // on by default after a press (switch it off in the panel)
     send({ type: "setKeepFilling", on: true });
   }
   if (leftovers.length) {
+    const n = Math.min(leftovers.length, 40);
+    status({ phase: "filling", done: lastReport.filled, total: lastReport.filled + n, note: `Asking the AI about ${n} question${n === 1 ? "" : "s"}…` }, { now: true });
     await session.fillWithAi(leftovers);
     report();
-    setPill("done");
   }
+  status({ phase: "done", filled: lastReport.filled, need: lastReport.need }, { now: true });
   return { ok: true, ...lastReport };
 }
 
@@ -244,7 +278,7 @@ function notice() {
   noticedAt = Date.now();
   // Only on an application the user is filling with Job Catcher — never a
   // checkout or any other form that merely looks similar.
-  if (!usedHere || !looksLikeApplicationNow()) return;
+  if (!usedHere || !presenceNow().app) return;
   const answers = session.typedAnswers();
   if (answers.length) send({ type: "answersNoticed", answers });
   if (lastCopy) {
@@ -258,7 +292,7 @@ function watchForAdvance() {
     "click",
     (e) => {
       const path = e.composedPath?.() || [];
-      if (path.some((n) => /^JEC-UI-/i.test(n?.tagName || ""))) return; // our own pill
+      if (path.some((n) => /^JEC-UI-/i.test(n?.tagName || ""))) return; // our own on-page UI
       const b = path.find((n) => n?.matches?.('button, [role="button"], input[type="submit"]'));
       const label = (b?.value || b?.textContent || "").replace(/\s+/g, " ").trim();
       if (label && label.length <= 40 && ADVANCE.test(label)) notice();
@@ -274,10 +308,18 @@ function watchForAdvance() {
 try {
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (!isCurrent()) return;
+    if (msg?.type === "probeFill") {
+      // The panel opened: say again whether there's a form here (no reply —
+      // the answer goes to the background as formPresence).
+      lastSig = "";
+      lastSent = "";
+      check();
+      return;
+    }
     if (msg?.type === "runAutofill") {
-      // A frame fills only when it holds an application itself (not a chat
-      // widget, a newsletter box or a payment frame).
-      if (!TOP && !session.isApplication()) return;
+      // A frame fills when it holds a form itself (not a chat widget, a
+      // newsletter box or a payment frame); the top frame always tries.
+      if (!TOP && !(msg.force ? presenceNow().form : session.isApplication())) return;
       run().then(reply, () => reply({ ok: false }));
       return true;
     }
@@ -296,10 +338,7 @@ try {
         return { ok: false };
       };
       act().then((r) => {
-        if (!["show", "typed", "keep"].includes(msg.action)) {
-          report();
-          setPill(session.filledCount ? "done" : "idle");
-        }
+        if (!["show", "typed", "keep"].includes(msg.action)) report();
         reply(r);
       });
       return true;
@@ -317,24 +356,21 @@ if (document.body && isCurrent()) {
     keepOn = !!r?.on;
     keepUserOff = !!r?.userOff;
     if (keepOn) usedHere = true; // the application they're filling, next page
-    if (keepOn) ensurePill();
+    if (keepOn) check();
   });
   watchForAdvance();
-  ensurePill();
+  check();
   const observer = new MutationObserver(() => {
     if (!isCurrent()) {
       observer.disconnect();
       return;
     }
-    clearTimeout(ensureTimer);
-    ensureTimer = setTimeout(ensurePill, 600);
+    // At most every 300 ms, even on a page that never stops changing.
+    checkTimer ||= setTimeout(() => {
+      checkTimer = null;
+      check();
+    }, 300);
   });
-  observer.observe(document.body, { childList: true, subtree: true });
-  watchForSubmit({
-    isCurrent,
-    onSubmit: (job) => {
-      send({ type: "markApplied", job });
-      if (uiRoot("autofill").getElementById("jec-pill")) setPill("done", "✓ Tracked as applied");
-    },
-  });
+  observer.observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["open", "hidden", "aria-hidden", "style", "class"] });
+  watchForSubmit({ isCurrent, onSubmit: (job) => send({ type: "markApplied", job }) });
 }

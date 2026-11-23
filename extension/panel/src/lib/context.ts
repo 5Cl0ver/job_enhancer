@@ -1,5 +1,6 @@
 // What the user is doing in the tab the panel is beside. Pure (URL + title in,
 // a context out) so it's unit-tested: test/panel-context.spec.js.
+import { applicantHost } from "../../../src/autofill/hosts.js";
 
 export type PageContext =
   | { kind: "none" }
@@ -49,8 +50,14 @@ export function detectContext(url: string): PageContext {
     return { kind: "application", site: "Lever", autoTracked: true, indeed: false };
   if (/\.myworkdayjobs\.com$/i.test(host) && /\b(apply|application)/i.test(path))
     return { kind: "application", site: "Workday", autoTracked: true, indeed: false };
-  // Any other site whose PATH is an application form (Amazon Jobs, iCIMS,
-  // company careers pages). Path only, so job listings don't count.
+  // The other applicant systems (Paycom, Paylocity, UKG, ADP…): one list,
+  // shared with the page (src/autofill/hosts.js). Workday's job listings
+  // aren't applications: only its apply path (above) is.
+  const system = applicantHost(url);
+  if (system && system.name !== "Workday")
+    return { kind: "application", site: system.name, autoTracked: !!system.autoTracked, indeed: false };
+  // Any other site whose PATH is an application form (Amazon Jobs, company
+  // careers pages). Path only, so job listings don't count.
   if (/\b(apply|application)/i.test(path))
     return { kind: "application", site: siteLabel(host), autoTracked: false, indeed: false };
   return { kind: "page", site: siteLabel(host) };

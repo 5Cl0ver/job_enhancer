@@ -376,9 +376,9 @@ describe("PR #31 re-review", () => {
   });
 
   it("question-only steps on an application's own address count as applications", async () => {
-    const { APPLY_URL } = await import("../src/autofill/scan.js");
-    expect(APPLY_URL.test("https://vellacor.wd5.myworkdayjobs.com/en-US/External/job/X/apply/applyManually")).toBe(true);
-    expect(APPLY_URL.test("https://github.com/vellacor/repo/issues/1")).toBe(false);
+    const { isApplyUrl } = await import("../src/autofill/hosts.js");
+    expect(isApplyUrl("https://vellacor.wd5.myworkdayjobs.com/en-US/External/job/X/apply/applyManually")).toBe(true);
+    expect(isApplyUrl("https://github.com/vellacor/repo/issues/1")).toBe(false);
   });
 });
 

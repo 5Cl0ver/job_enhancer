@@ -379,7 +379,9 @@ export function readField(field) {
 
 /** Does the field already hold something (the user's or the page's)? */
 export function hasValue(field) {
-  return readField(field).trim() !== "";
+  const v = readField(field).trim();
+  // A phone box that holds only its country code ("+1") is still empty.
+  return v !== "" && !(field.hints?.dialCode && /^\+\s?\d{1,4}$/.test(v));
 }
 
 export function snapshot(field) {

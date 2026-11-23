@@ -1,0 +1,25 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 016: a contact-style form with no
+     "apply" in its address, each box labelled a different common way —
+     label[for], a wrapping label, aria-labelledby, aria-label, a floating
+     label after the box, a table cell beside it, and a placeholder only. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Get in touch - Tidewell Labs</title>
+  </head>
+  <body>
+    <h1>Talk to our recruiting team</h1>
+    <form id="contact">
+      <div><label for="a">First name</label><input id="a"></div>
+      <div><label>Last name <input id="b"></label></div>
+      <div><span id="em-l">Email address</span><input id="c" aria-labelledby="em-l"></div>
+      <div><input id="d" aria-label="Phone number"></div>
+      <div class="field"><input id="e"><label class="floating">City</label></div>
+      <table><tr><td>Zip code</td><td><input id="f"></td></tr></table>
+      <div><input id="g" placeholder="LinkedIn profile URL"></div>
+      <div><label for="msg">Message</label><textarea id="msg"></textarea></div>
+      <button type="button">Send</button>
+    </form>
+  </body>
+</html>

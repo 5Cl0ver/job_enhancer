@@ -12,6 +12,7 @@ import { friendlyApiError } from "./errors.js";
 import { parseSummary } from "./savedSync.js";
 import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
+import { createFillPresence } from "./background/fillPresence.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -253,12 +254,22 @@ function storeFillSession(tabId, frameId, session) {
   return fillWrites;
 }
 
+// Does each tab have a form, and what is Autofill doing there (spec 016).
+const presence = createFillPresence({
+  notify: (tabId) => chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {}),
+});
+
 async function getFillSession(tabId) {
   const key = fillKey(tabId);
   const pk = pendingKey(tabId);
   const kk = keepKey(tabId);
   const { [key]: held, [pk]: pending, [kk]: keep } = await chrome.storage.session.get([key, pk, kk]);
-  return { ...(held || { frames: {} }), pending: pending || { answers: [], profile: {} }, keep: !!keep?.on };
+  return {
+    ...(held || { frames: {} }),
+    pending: pending || { answers: [], profile: {} },
+    keep: !!keep?.on,
+    presence: await presence.get(tabId),
+  };
 }
 
 // What the user typed that the app could remember (answers and profile
@@ -319,11 +330,16 @@ async function clearFillSession(tabId) {
 try {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearFillSession(tabId);
+    presence.clear(tabId);
     chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId)]).catch(() => {});
   });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
-    if (info.url) clearFillSession(tabId);
+    if (!info.url) return;
+    clearFillSession(tabId);
+    // The new page reports its own form; ask again once it has settled, in
+    // case a frame reported before this cleared it (an in-page address change).
+    presence.clear(tabId).then(() => setTimeout(() => presence.probe(tabId), 1000));
   });
 } catch {
   /* tabs API unavailable */
@@ -334,7 +350,7 @@ try {
   chrome.commands.onCommand.addListener(async (command) => {
     if (command !== "autofill") return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) chrome.tabs.sendMessage(tab.id, { type: "runAutofill" }).catch(() => {});
+    if (tab?.id) presence.press(tab.id); // the badge shows how it went
   });
 } catch {
   /* commands API unavailable */
@@ -780,6 +796,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           on: !!keep?.on && keep.site === here && (keep.until || 0) > Date.now(),
           userOff: !!keep?.userOff && keep.site === here,
         });
+      } else if (msg.type === "formPresence") {
+        if (sender.tab?.id != null) await presence.storePresence(sender.tab.id, sender.frameId ?? 0, msg.presence);
+        sendResponse({ ok: true });
+      } else if (msg.type === "fillStatus") {
+        if (sender.tab?.id != null) await presence.frameStatus(sender.tab.id, msg.status);
+        sendResponse({ ok: true });
+      } else if (msg.type === "pressAutofill") {
+        // The panel's Autofill button (or the page, for a tab id it knows).
+        const tabId = msg.tabId ?? sender.tab?.id;
+        sendResponse(tabId != null ? await presence.press(tabId) : { ok: false, problem: "refresh" });
+      } else if (msg.type === "probeTab") {
+        presence.probe(msg.tabId);
+        sendResponse({ ok: true });
       } else if (msg.type === "getFillSession") {
         sendResponse({ ok: true, ...(await getFillSession(msg.tabId)) });
       } else if (msg.type === "fillAction") {
@@ -789,10 +818,6 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           .sendMessage(msg.tabId, { type: "fillAction", action: msg.action, id: msg.id, value: msg.value }, opts)
           .catch(() => null);
         sendResponse({ ok: !!out, ...(out || {}) });
-      } else if (msg.type === "openReview") {
-        // A click on the page's pill: Chrome allows opening the panel then.
-        if (sender.tab?.id != null) await chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
-        sendResponse({ ok: true });
       } else if (msg.type === "aiMapFields") {
         sendResponse({ ok: true, ...(await aiMapFields(msg.fields || [])) });
       } else if (msg.type === "getWorkHistory") {

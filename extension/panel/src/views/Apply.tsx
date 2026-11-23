@@ -1,4 +1,5 @@
-// "This page" on an application: Autofill, then review EVERYTHING it did —
+// "This page" on any page with a form: Autofill, with one status line that
+// always says what's happening (spec 016), then review EVERYTHING it did —
 // each field with where its answer came from, Fix (with the page's real
 // options), Show, Undo — the questions left for you, Undo all, and Remember
 // what you typed. Every frame of the tab is covered (spec 015, Story 2).
@@ -18,7 +19,7 @@ import { Alert, Badge, Button, Card, Input, Muted, SectionTitle, Select, Switch 
 import { cn } from "@/lib/utils";
 import { send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
-import { usePanel, type FillEntry, type FillNeed, type FillSuggestion } from "@/lib/store";
+import { usePanel, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence } from "@/lib/store";
 
 const SOURCE: Record<string, { label: string; tone: string }> = {
   profile: { label: "Profile", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
@@ -38,18 +39,19 @@ const WHY: Record<string, string> = {
 
 export function Apply({
   site,
+  isApplication,
   autoTracked,
   match,
   onWrite,
 }: {
   site: string;
+  isApplication: boolean;
   autoTracked: boolean;
   match: SavedJob | null;
   onWrite: (id: string) => void;
 }) {
   const { tab, reloadSaved, staged, fill } = usePanel();
   const [busy, setBusy] = React.useState(false);
-  const [failed, setFailed] = React.useState<"" | "page" | "app">("");
   const [marking, setMarking] = React.useState(false);
   const [showFilled, setShowFilled] = React.useState(false);
 
@@ -58,19 +60,15 @@ export function Apply({
   const checkCount = toCheck.length + suggestions.length;
   const sure = entries.filter((e) => !(e.source === "ai" && !e.fixed));
 
+  // The background fills every frame that holds a form and keeps the status
+  // line up to date while it works; the result lands there too.
   async function autofill() {
     if (!tab.id) return;
     setBusy(true);
-    setFailed("");
-    let res = null;
-    try {
-      res = await chrome.tabs.sendMessage(tab.id, { type: "runAutofill" });
-    } catch {
-      res = null;
-    }
+    await send({ type: "pressAutofill", tabId: tab.id });
     setBusy(false);
-    if (!res?.ok && res?.signedIn !== false) setFailed(res?.unreachable ? "app" : "page");
   }
+  const filling = busy || fill.presence?.status?.phase === "filling";
 
   async function undoAll() {
     if (!tab.id) return;
@@ -91,22 +89,24 @@ export function Apply({
     <div className="flex flex-col gap-3">
       <Card className="flex flex-col gap-3">
         <div className="flex flex-col gap-0.5">
-          <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">Applying on {site}</span>
-          <SectionTitle>{match ? match.title : "Application in progress"}</SectionTitle>
-          <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+            {isApplication ? `Applying on ${site}` : `A form on ${site}`}
+          </span>
+          <SectionTitle>{match ? match.title : isApplication ? "Application in progress" : "Fill it from your profile"}</SectionTitle>
+          {isApplication && <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>}
         </div>
-        <Button onClick={autofill} busy={busy} className="w-full">
-          {!busy && <Zap />}
-          {busy ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
+        <Button onClick={autofill} busy={filling} disabled={filling} className="w-full">
+          {!filling && <Zap />}
+          {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
         </Button>
+        <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} />
+        <ShortcutHint />
         {staged && !entries.length && (
           <Muted>
             Uploads your tailored résumé <b className="break-all text-foreground">{staged}</b>.
           </Muted>
         )}
-        {failed === "page" && <Alert tone="warning">Couldn't reach the page. Refresh it once, then try again.</Alert>}
-        {failed === "app" && <Alert tone="warning">Couldn't reach Job Enhancer (it may be waking up). Try again in a moment.</Alert>}
-        {entries.length + needYou.length > 0 && (
+        {!filling && entries.length + needYou.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>
             {checkCount > 0 && <span className="text-violet-700 dark:text-violet-300"> · {checkCount} to check</span>}
@@ -209,6 +209,119 @@ export function Apply({
           : "Autofill never submits. After you submit, press Mark applied."}
       </Muted>
     </div>
+  );
+}
+
+const PROBLEM: Record<string, string> = {
+  signed_out: "Sign in to Job Enhancer first (top of this panel), then press Autofill.",
+  asleep: "Couldn't reach Job Enhancer (it may be waking up). Try again in a moment.",
+  refresh: "Couldn't reach the page. Refresh it once, then press Autofill again.",
+  slow: "This is taking too long. Press Autofill to try again.",
+};
+const STUCK_MS = 20_000;
+
+/**
+ * One line that always says what's happening: looking, ready, filling N of
+ * M, done, or what went wrong — never silence, never a spinner forever.
+ */
+function StatusLine({
+  presence,
+  busy,
+  filledNow,
+  needNow,
+}: {
+  presence: Presence | null;
+  busy: boolean;
+  filledNow: number;
+  needNow: number;
+}) {
+  const status: FillStatus | null = presence?.status || null;
+  const [now, setNow] = React.useState(Date.now());
+  const working = busy || status?.phase === "filling";
+  React.useEffect(() => {
+    if (!working) return;
+    const t = setInterval(() => setNow(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, [working]);
+
+  let tone: "info" | "ok" | "warn" = "info";
+  let text: string;
+  if (status?.phase === "filling" && now - status.at > STUCK_MS) {
+    tone = "warn";
+    text = PROBLEM.slow;
+  } else if (working) {
+    const n = status?.total ? ` ${Math.min(status.done || 0, status.total)} of ${status.total}` : "";
+    text = status?.note && !n ? status.note : `Filling…${n}`;
+  } else if (status?.phase === "problem") {
+    tone = "warn";
+    text = PROBLEM[status.problem || "refresh"] || PROBLEM.refresh;
+  } else if (status?.phase === "done") {
+    if (!filledNow && !(status.filled || 0)) {
+      tone = "warn";
+      text = needNow ? "Nothing here matched your profile. The questions are listed below for you." : "Nothing here matched your profile.";
+    } else {
+      tone = "ok";
+      text = "Done. Check the page, then submit it yourself.";
+    }
+  } else if (!presence) {
+    text = "Looking at this page…";
+  } else if (presence.form) {
+    tone = "ok";
+    text = "Form found: ready to fill.";
+  } else {
+    text = "No form found yet. Press Autofill to try anyway.";
+  }
+  return (
+    <p
+      role="status"
+      aria-live="polite"
+      data-testid="fill-status"
+      className={cn(
+        "flex items-center gap-2 text-xs",
+        tone === "ok" && "text-emerald-700 dark:text-emerald-300",
+        tone === "warn" && "text-amber-700 dark:text-amber-300",
+        tone === "info" && "text-muted-foreground",
+      )}
+    >
+      <span
+        aria-hidden
+        className={cn(
+          "size-2 shrink-0 rounded-full",
+          tone === "ok" ? "bg-emerald-500" : tone === "warn" ? "bg-amber-500" : "bg-primary",
+          working && "animate-pulse",
+        )}
+      />
+      {text}
+    </p>
+  );
+}
+
+/** The keyboard shortcut Chrome really gave Autofill (another extension can take ours). */
+function ShortcutHint() {
+  const [key, setKey] = React.useState<string | null>(null);
+  React.useEffect(() => {
+    chrome.commands
+      ?.getAll?.()
+      .then((all) => setKey(all.find((c) => c.name === "autofill")?.shortcut || ""))
+      .catch(() => setKey(null));
+  }, []);
+  if (key == null) return null;
+  return (
+    <p className="text-[11px] text-muted-foreground">
+      {key ? (
+        <>
+          Shortcut: <kbd className="rounded border px-1 font-mono">{key}</kbd>
+        </>
+      ) : (
+        <button
+          type="button"
+          className="cursor-pointer underline underline-offset-2 hover:text-foreground"
+          onClick={() => chrome.tabs.create({ url: "chrome://extensions/shortcuts" })}
+        >
+          Set a keyboard shortcut for Autofill
+        </button>
+      )}
+    </p>
   );
 }
 

@@ -18,6 +18,17 @@ export function isResumeUpload(field) {
 }
 
 /**
+ * A phone number without its country code, for a box beside a code picker:
+ * "+1 (555) 010-2345" → "(555) 010-2345", "15550102345" → "5550102345".
+ */
+export function nationalNumber(phone) {
+  const s = String(phone || "").trim();
+  if (s.startsWith("+")) return s.replace(/^\+\d{1,3}[\s.-]*/, "");
+  if (s.replace(/\D/g, "").length === 11 && /^1/.test(s)) return s.replace(/^1[\s.-]*/, "");
+  return s;
+}
+
+/**
  * @typedef {{values: Record<string, string[]>, answers: Array<{question_key: string, answer: string}>, resumeFile?: File|null}} Copy
  * @returns {{values: Array<string|File>, source: "profile"|"learned", key?: string, learnKey?: string}
  *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person", key?: string}}
@@ -33,7 +44,8 @@ export function resolve(field, copy) {
   if (field.kind === "checkbox") return { skip: "consent" };
   const key = profileKeyFor(field); // never the user's own details for someone else
   if (key) {
-    const values = copy.values[key] || [];
+    let values = copy.values[key] || [];
+    if (key === "phone" && field.hints?.dialCode) values = values.map(nationalNumber);
     return values.length ? { values, source: "profile", key } : { skip: "no_data", key };
   }
   const learned = matchAnswer(field.key, copy.answers);
