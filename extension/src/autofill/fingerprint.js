@@ -14,7 +14,7 @@ const cut = (s, n) => String(s || "").trim().slice(0, n);
 export function stableName(s) {
   const v = String(s || "");
   if (!v || v.length > 80) return "";
-  if (/^(css|jss|sc|emotion|mui|chakra|radix|headlessui|react-select)[-_]|^:r|\d{3,}|[a-f0-9]{8,}/i.test(v)) return "";
+  if (/^(css|jss|sc|emotion|mui|chakra|radix|headlessui|react-select)[-_]|^:r|\d{2,}|[-_:]\d+$|[a-f0-9]{8,}/i.test(v)) return "";
   if (/^[a-z]{1,2}$/i.test(v)) return "";
   return v;
 }
@@ -36,7 +36,8 @@ export function fingerprintOf(field, fields = []) {
     name: stableName(field.hints?.name),
     id: stableName(field.hints?.id),
     testid: stableName(el?.getAttribute?.("data-testid") || el?.getAttribute?.("data-automation-id")),
-    autocomplete: cut(field.hints?.autocomplete, 80),
+    // "off" / "on" / "nope" say nothing about the box.
+    autocomplete: /^(off|on|nope|false|none|disabled|new-password|no)$/i.test(field.hints?.autocomplete || "") ? "" : cut(field.hints?.autocomplete, 80),
     aria: cut(normalizeQuestion(el?.getAttribute?.("aria-label") || ""), 80),
     placeholder: cut(normalizeQuestion(field.hints?.placeholder || ""), 80),
     kind: field.kind,
@@ -49,6 +50,8 @@ export function fingerprintOf(field, fields = []) {
 export function matchScore(fp, field, fields = []) {
   const now = fingerprintOf(field, fields);
   if (fp.kind && now.kind !== fp.kind) return 0;
+  // Two different questions are two different boxes, whatever their names say.
+  if (fp.label && now.label && fp.label !== now.label) return 0;
   let s = 0;
   if ((fp.name && fp.name === now.name) || (fp.id && fp.id === now.id) || (fp.testid && fp.testid === now.testid)) s = 1;
   else if (fp.label && fp.label === now.label) s = 0.9;
@@ -57,6 +60,19 @@ export function matchScore(fp, field, fields = []) {
   if (fp.section && fp.section === now.section) s += 0.1;
   if (Number.isInteger(fp.index) && fp.index === now.index) s += 0.1;
   return s;
+}
+
+/**
+ * The same box taught again (re-teaching replaces it). Its stable names decide
+ * when both have one — two boxes under one heading are NOT the same; without
+ * any, the same label in the same section at the same place. (Mirrors the
+ * server's rule in backend/app/api/v1/autofill.py.)
+ */
+export function sameBox(a = {}, b = {}) {
+  if ((a.kind || "") !== (b.kind || "")) return false;
+  const strong = ["name", "id", "testid"].filter((k) => a[k] && b[k]);
+  if (strong.length) return strong.every((k) => a[k] === b[k]);
+  return !!a.label && a.label === b.label && a.section === b.section && a.index === b.index;
 }
 
 /**

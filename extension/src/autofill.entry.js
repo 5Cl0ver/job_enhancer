@@ -18,7 +18,8 @@ import { fingerprintOf } from "./autofill/fingerprint.js";
 import { createPicker } from "./autofill/pick.js";
 import { frameReport } from "./autofill/report.js";
 import { collectFields, fieldId, questionFor } from "./autofill/scan.js";
-import { guardReason } from "./autofill/classify/profileKeys.js";
+import { siteKey } from "./autofill/hosts.js";
+import { pointRefusal } from "./autofill/session.js";
 import { resolve } from "./autofill/resolve.js";
 import { createSession } from "./autofill/session.js";
 import { watchForSubmit } from "./autofill/track.js";
@@ -343,7 +344,10 @@ function watchForAdvance() {
 
 try {
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
-    if (!isCurrent()) return;
+    if (!isCurrent()) {
+      picker.stop(); // a newer copy owns the page: never leave pointing behind
+      return;
+    }
     if (msg?.type === "probeFill") {
       // The panel opened: say again whether there's a form here (no reply —
       // the answer goes to the background as formPresence).
@@ -440,21 +444,24 @@ function fieldFor(control) {
   const all = collectFields(control.getRootNode?.() || document, { visible: () => true });
   field = all.find(own);
   if (field) return { field, fields: all };
-  const kind = control.tagName === "SELECT" ? "select" : control.tagName === "TEXTAREA" ? "textarea" : "text";
+  const type = (control.getAttribute?.("type") || "").toLowerCase();
+  // A checkbox or radio the scanner couldn't read is never written as text.
+  const kind = /^(checkbox|radio)$/.test(type) ? "unknown_choice" : control.tagName === "SELECT" ? "select" : control.tagName === "TEXTAREA" ? "textarea" : "text";
   return { field: { id: fieldId(control), kind, el: control, mark: control, question: questionFor(control), key: "", hints: { name: control.getAttribute("name") || "", id: control.id || "", type: control.getAttribute("type") || "" } }, fields: [] };
 }
 
 const picked = new Map(); // id → field, for the answer the panel sends back
 const picker = createPicker({
+  alive: () => isCurrent() && !runtimeGone(),
   labelFor: (el) => questionFor(el).slice(0, 60),
   onPick: (control) => {
     const { field, fields } = fieldFor(control);
     picked.set(field.id, field);
     const type = (control.getAttribute?.("type") || "").toLowerCase();
-    const refused = type === "password" ? "password" : field.kind === "checkbox" ? "consent" : guardReason(field.question, field.kind) || "";
+    const refused = type === "password" ? "password" : pointRefusal(field);
     send({
       type: "picked",
-      site: location.hostname,
+      site: siteKey(location.href),
       field: { id: field.id, label: (field.question || "").slice(0, 120), kind: field.kind, options: (field.options || []).map((o) => o.label).filter(Boolean).slice(0, 60) },
       fingerprint: fingerprintOf(field, fields),
       refused,
@@ -498,7 +505,7 @@ function start() {
   watchForAdvance();
   check();
   // A frame holding a box the user taught here counts as a form, however small.
-  send({ type: "taughtHere", site: location.hostname }).then((r) => {
+  send({ type: "taughtHere", site: siteKey(location.href) }).then((r) => {
     taughtHere = r?.taught || [];
     if (taughtHere.length) {
       lastSig = "";

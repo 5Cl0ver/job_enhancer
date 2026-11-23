@@ -168,3 +168,40 @@ describe("taught boxes: remembered by what they are, matched only when sure", as
     expect(doc.querySelector("#g").value).toBe(""); // self-identification: never
   });
 });
+
+describe("taught boxes: the second review's cases", async () => {
+  const { fingerprintOf, matchTaught, sameBox, stableName } = await import("../src/autofill/fingerprint.js");
+  const { siteKey } = await import("../src/autofill/hosts.js");
+  const { collectFields } = await import("../src/autofill/scan.js");
+  const fieldsOf = (doc) => collectFields(doc, { visible: () => true });
+
+  it("two boxes under one heading are two boxes (teaching one never replaces the other)", () => {
+    const a = { kind: "text", label: "getting you started", name: "fname" };
+    const b = { kind: "text", label: "getting you started", name: "lname" };
+    expect(sameBox(a, b)).toBe(false);
+    expect(sameBox(a, { ...a, index: 4 })).toBe(true); // the same box, moved
+  });
+
+  it("counter ids and autocomplete=off are no evidence", () => {
+    for (const counter of ["input-12", "field_7", "q:3", "answer12"]) expect(stableName(counter)).toBe("");
+    expect(stableName("address1")).toBe("address1");
+    const doc = parse(`<form><input autocomplete="off" aria-label="Promo code"></form>`);
+    const taughtOn = parse(`<form><input autocomplete="off" aria-label="Referral code"></form>`);
+    const fp = fingerprintOf(fieldsOf(taughtOn)[0], fieldsOf(taughtOn));
+    expect(fp.autocomplete).toBe("");
+    expect(matchTaught([{ fingerprint: fp, profile_key: "email" }], fieldsOf(doc)).size).toBe(0);
+  });
+
+  it("the same name on a different question is a different box", () => {
+    const taughtOn = parse(`<form><label for="n">Nickname</label><input id="n" name="contactName"></form>`);
+    const doc = parse(`<form><label for="n">Emergency contact name</label><input id="n" name="contactName"></form>`);
+    const fp = fingerprintOf(fieldsOf(taughtOn)[0], fieldsOf(taughtOn));
+    expect(matchTaught([{ fingerprint: fp, profile_key: "first_name" }], fieldsOf(doc)).size).toBe(0);
+  });
+
+  it("one company's taught boxes never fill another's on a shared host", () => {
+    expect(siteKey("https://boards.greenhouse.io/vellacor/jobs/1")).toBe("boards.greenhouse.io/vellacor");
+    expect(siteKey("https://boards.greenhouse.io/quillstone/jobs/9")).toBe("boards.greenhouse.io/quillstone");
+    expect(siteKey("https://www.paycomonline.net/v4/ats/web.php/portal/X/career-page")).toBe("www.paycomonline.net");
+  });
+});

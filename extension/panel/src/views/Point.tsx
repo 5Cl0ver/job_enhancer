@@ -38,9 +38,8 @@ const ANSWERS: [key: string, label: string][] = [
 ];
 
 const REFUSED: Record<string, string> = {
-  consent: "That's a checkbox only you can tick (an agreement or a choice). Job Catcher never ticks those.",
-  sensitive: "That's a self-identification question. Job Catcher never answers those for you.",
-  private: "That asks for private details (like an ID or bank number). Job Catcher never fills those.",
+  consent: "That's a checkbox or choice only you can tick (an agreement, a yes/no). Job Catcher never ticks those.",
+  sensitive: "That asks about you personally (gender, race, disability, an ID or bank number). Job Catcher never answers those for you.",
   password: "That's a password box. Job Catcher never fills passwords.",
 };
 
@@ -51,6 +50,13 @@ export function startPointing(tabId: number | null) {
 export function Point({ pick }: { pick: Pick }) {
   const { tab } = usePanel();
   const stop = () => tab.id != null && send({ type: "stopPick", tabId: tab.id });
+  // Held while pointing: closing the panel (or leaving This page) stops it,
+  // so the page is never left swallowing clicks.
+  React.useEffect(() => {
+    if (tab.id == null) return;
+    const port = chrome.runtime.connect({ name: `pick:${tab.id}` });
+    return () => port.disconnect();
+  }, [tab.id]);
   if (pick.state === "pointing") {
     return (
       <Card className="flex flex-col gap-2 border-primary/50" data-testid="pointing">
@@ -77,6 +83,7 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
   const [remember, setRemember] = React.useState(true);
   const [busy, setBusy] = React.useState("");
   const [failed, setFailed] = React.useState("");
+  const [notSaved, setNotSaved] = React.useState(false);
 
   React.useEffect(() => {
     send({ type: "getAutofillCopy" }).then((res) => {
@@ -91,6 +98,9 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
     setFailed("");
     const res = await send({ type: "fillPicked", tabId: tab.id, ...choice, remember });
     setBusy("");
+    // Filled, but not remembered (signed out, the app asleep): say so — never
+    // promise "next time" when it won't be.
+    if (res?.ok && remember && !res.remembered) setNotSaved(true);
     if (!res?.ok)
       setFailed(
         res?.reason === "no_data"
@@ -153,7 +163,7 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
             {!choices.length && <li className="px-3 py-2 text-xs text-muted-foreground">No profile answer matches. Type it below.</li>}
           </ul>
           <div className="flex flex-col gap-2">
-            <Textarea rows={2} placeholder="Something else: type the answer" value={other} onChange={(e) => setOther(e.target.value)} aria-label="Something else" />
+            <Textarea rows={2} maxLength={2000} placeholder="Something else: type the answer" value={other} onChange={(e) => setOther(e.target.value)} aria-label="Something else" />
             <Button size="sm" variant="outline" className="self-start" disabled={!other.trim() || !!busy} busy={busy === "other"} onClick={() => fill({ answer: other.trim() })}>
               Fill this
             </Button>
@@ -166,6 +176,7 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
             <Switch checked={remember} label={`Remember for ${pick.site}`} onCheckedChange={setRemember} />
           </label>
           {failed && <Alert tone="warning">{failed}</Alert>}
+          {notSaved && <Alert tone="warning">Filled, but Job Catcher couldn't remember it this time (check you're signed in). Point at it again later to teach it.</Alert>}
         </>
       )}
     </Card>
@@ -178,8 +189,10 @@ export function TaughtList() {
   const [error, setError] = React.useState("");
   const load = React.useCallback(async () => {
     const res = await send({ type: "listTaught" });
-    if (res?.ok) setItems(res.items || []);
-    else setError("Couldn't load taught boxes.");
+    if (res?.ok) {
+      setItems(res.items || []);
+      setError("");
+    } else setError("Couldn't load taught boxes.");
   }, []);
   React.useEffect(() => {
     load();

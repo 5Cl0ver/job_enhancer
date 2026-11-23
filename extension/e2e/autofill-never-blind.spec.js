@@ -222,3 +222,19 @@ test("pointing works inside the Paycom-style pop-up, and Esc stops it", async ()
   await expect(page.locator("jec-ui-pick")).toHaveCount(0);
   await Promise.all([page.close(), panel.close()]);
 });
+
+test("closing the panel while pointing lets the page go", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/unlabeled.html"));
+  const panel = await panelFor(page);
+  await ext.bg({ type: "startPick", tabId: await ext.tabIdOf(page) });
+  await expect(panel.getByTestId("pointing")).toBeVisible({ timeout: 5000 });
+  await page.locator("#mystery").hover();
+  await expect(page.locator("jec-ui-pick")).toHaveCount(1);
+  await panel.close();
+  await expect(page.locator("jec-ui-pick")).toHaveCount(0, { timeout: 5000 });
+  await page.locator("#mystery").click(); // the page gets its clicks back
+  await page.keyboard.type("typed by a person");
+  await expect(page.locator("#mystery")).toHaveValue("typed by a person");
+  await page.close();
+});

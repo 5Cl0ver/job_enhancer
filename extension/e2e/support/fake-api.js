@@ -142,7 +142,14 @@ export async function startFakeApi() {
     },
     "POST /v1/autofill/taught": (b) => {
       const t = { id: `t${state.taught.length + 1}`, ...b };
-      state.taught = [...state.taught.filter((x) => !(x.site === b.site && x.fingerprint?.label === b.fingerprint?.label)), t];
+      // The server's rule: stable names decide; else label + section + place.
+      const same = (x, y) => {
+        if ((x?.kind || "") !== (y?.kind || "")) return false;
+        const strong = ["name", "id", "testid"].filter((k) => x?.[k] && y?.[k]);
+        if (strong.length) return strong.every((k) => x[k] === y[k]);
+        return !!x?.label && x.label === y?.label && x.section === y?.section && x.index === y?.index;
+      };
+      state.taught = [...state.taught.filter((x) => !(x.site === b.site && same(x.fingerprint, b.fingerprint))), t];
       state.bundleVersion++;
       return { status: 201, body: { id: t.id } };
     },

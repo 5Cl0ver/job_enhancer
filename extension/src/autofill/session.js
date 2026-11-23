@@ -5,6 +5,7 @@
 import { normalizeQuestion, yesNo } from "./classify/answers.js";
 import { PRIVATE, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 import { matchTaught } from "./fingerprint.js";
+import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
 import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
 import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
@@ -80,9 +81,21 @@ export function profileValue(key, value) {
   return value;
 }
 
+/**
+ * What a user may never point at and teach: self-identification and private
+ * details (ID, bank…), agreements and lone checkboxes, choices the scanner
+ * couldn't read. Everything else is the user's call ("Notification email").
+ */
+export function pointRefusal(field) {
+  const guard = guardReason(field.question, field.kind);
+  if (guard === "sensitive" || guard === "consent") return guard;
+  if (field.kind === "checkbox" || field.kind === "unknown_choice") return "consent";
+  return "";
+}
+
 /** What a taught box gets: its profile answer or its typed text — never past a guard. */
 function taughtDecision(field, t, copy) {
-  const guard = guardReason(field.question, field.kind);
+  const guard = pointRefusal(field);
   if (guard) return { skip: guard };
   if (t.profile_key) {
     const values = copy.values[t.profile_key] || [];
@@ -204,7 +217,7 @@ export function createSession(deps) {
     const once = new Set();
     const list = scan();
     // Boxes the user pointed at and taught on this site come first (spec 017).
-    const site = doc.location?.hostname || "";
+    const site = siteKey(doc.location?.href || "");
     const taught = matchTaught((copy.taught || []).filter((t) => t.site === site), list);
     let i = 0;
     for (const field of list) {
@@ -253,8 +266,8 @@ export function createSession(deps) {
    * private questions are never filled this way either.
    */
   async function fillPicked(field, values, source) {
-    const guard = guardReason(field.question, field.kind);
-    if (guard || field.kind === "checkbox") return { ok: false, reason: guard || "consent" };
+    const guard = pointRefusal(field);
+    if (guard) return { ok: false, reason: guard };
     fields.set(field.id, field);
     declined.delete(field.id);
     return fillOne(field, values, source);

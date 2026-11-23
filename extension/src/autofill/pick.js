@@ -56,7 +56,7 @@ const CSS = `
 /**
  * @param {{labelFor: (el: Element) => string, onPick: (el: Element) => void, onCancel: () => void}} deps
  */
-export function createPicker({ labelFor, onPick, onCancel }) {
+export function createPicker({ labelFor, onPick, onCancel, alive = () => true }) {
   let on = false;
   let host = null;
   let box = null;
@@ -97,10 +97,12 @@ export function createPicker({ labelFor, onPick, onCancel }) {
     e.stopImmediatePropagation();
   };
   function move(e) {
+    if (!alive()) return stop(); // an update replaced this copy: let the page go
     current = controlAt(pathAt(e));
     schedule();
   }
   function press(e) {
+    if (!alive()) return stop();
     swallow(e);
     if (e.type !== "click") return;
     const picked = controlAt(pathAt(e));
@@ -125,6 +127,9 @@ export function createPicker({ labelFor, onPick, onCancel }) {
     ["click", press],
     ["dblclick", press],
     ["auxclick", press],
+    ["touchstart", press],
+    ["touchend", press],
+    ["contextmenu", press],
     ["keydown", key],
     ["scroll", schedule],
     ["resize", schedule],

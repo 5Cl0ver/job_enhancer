@@ -146,3 +146,29 @@ class TestTaught:
         )
         export = (await client.get("/v1/users/me/export")).json()
         assert export["taught_fields"][0]["site"] == SITE
+
+
+@pytest.mark.asyncio
+async def test_two_boxes_under_one_heading_are_both_kept(client: AsyncClient):
+    """Boxes the scanner couldn't label often share a heading: their names decide."""
+    for name, key in (
+        ("fname", "first_name"),
+        ("lname", "last_name"),
+        ("mail", "email"),
+    ):
+        await client.post(
+            "/v1/autofill/taught",
+            json={
+                "site": SITE,
+                "fingerprint": {
+                    "label": "getting you started",
+                    "name": name,
+                    "kind": "text",
+                },
+                "profile_key": key,
+            },
+        )
+    keys = sorted(
+        r["profile_key"] for r in (await client.get("/v1/autofill/taught")).json()
+    )
+    assert keys == ["email", "first_name", "last_name"]

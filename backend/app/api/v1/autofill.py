@@ -75,13 +75,20 @@ class TaughtIn(BaseModel):
 
 
 def _same_box(a: dict, b: dict) -> bool:
-    """The same box taught again: same kind and the same label or stable name."""
+    """The same box taught again. Its stable names (name / id / testid) decide
+    when both sides have one — two boxes under one heading are NOT the same;
+    without any, the same label in the same section at the same place."""
     if (a.get("kind") or "") != (b.get("kind") or ""):
         return False
-    for key in ("name", "id", "testid", "label"):
-        if a.get(key) and a.get(key) == b.get(key):
-            return True
-    return False
+    strong = [k for k in ("name", "id", "testid") if a.get(k) and b.get(k)]
+    if strong:
+        return all(a[k] == b[k] for k in strong)
+    return (
+        bool(a.get("label"))
+        and a.get("label") == b.get("label")
+        and a.get("section") == b.get("section")
+        and a.get("index") == b.get("index")
+    )
 
 
 @router.post("/taught", status_code=201)
@@ -95,7 +102,7 @@ async def teach(
         await db.scalars(
             select(TaughtField)
             .where(TaughtField.user_id == user.id, TaughtField.site == body.site)
-            .order_by(TaughtField.updated_at)
+            .order_by(TaughtField.updated_at, TaughtField.created_at)
         )
     )
     for row in rows:

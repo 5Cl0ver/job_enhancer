@@ -13,6 +13,7 @@ import { parseSummary } from "./savedSync.js";
 import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
+import { sameBox } from "./autofill/fingerprint.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -274,6 +275,20 @@ async function getFillSession(tabId) {
   };
 }
 
+// The panel holds a port while pointing: closing the panel stops it.
+try {
+  chrome.runtime.onConnect.addListener((port) => {
+    const m = /^pick:(\d+)$/.exec(port.name || "");
+    if (!m) return;
+    port.onDisconnect.addListener(() => {
+      const tabId = Number(m[1]);
+      chrome.storage.session.get(pickKey(tabId)).then((held) => held[pickKey(tabId)] && stopPick(tabId));
+    });
+  });
+} catch {
+  /* runtime unavailable */
+}
+
 // "Point at a box" (spec 017): pointing in every frame of the tab, the box the
 // user clicked (its question + fingerprint, never a value), and the answer
 // they chose — filled in that frame, then remembered in their account.
@@ -307,7 +322,10 @@ async function saveTaught({ site, fingerprint, profile_key, answer }) {
   const { id } = await res.json().catch(() => ({}));
   const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
   if (held) {
-    held.taught = [...(held.taught || []), { id, site, fingerprint, profile_key: profile_key || null, answer: profile_key ? null : answer }];
+    held.taught = [
+      ...(held.taught || []).filter((t) => !(t.site === site && sameBox(t.fingerprint, fingerprint))),
+      { id, site, fingerprint, profile_key: profile_key || null, answer: profile_key ? null : answer },
+    ];
     await chrome.storage.local.set({ je_autofill: held });
   }
   autofill.refresh();
@@ -395,7 +413,12 @@ try {
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (!info.url) return;
     clearFillSession(tabId);
-    chrome.storage.session.remove(pickKey(tabId)).catch(() => {}); // pointing ends with the page
+    // Pointing ends with the page (an in-page step change keeps the old copy).
+    chrome.storage.session.get(pickKey(tabId)).then((held) => {
+      if (!held[pickKey(tabId)]) return;
+      chrome.tabs.sendMessage(tabId, { type: "stopPick" }).catch(() => {});
+      chrome.storage.session.remove(pickKey(tabId)).then(() => changed(tabId));
+    });
     // The new page reports its own form; ask again once it has settled, in
     // case a frame reported before this cleared it (an in-page address change).
     presence.clear(tabId).then(() => setTimeout(() => presence.probe(tabId), 1000));
