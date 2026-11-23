@@ -18,7 +18,18 @@ export function claimPage(scope) {
   const attr = `data-je-${scope}`;
   const token = Math.random().toString(36).slice(2) + Date.now().toString(36);
   document.documentElement.setAttribute(attr, token);
-  return () => document.documentElement.getAttribute(attr) === token;
+  return () => {
+    const root = document.documentElement;
+    const held = root?.getAttribute(attr);
+    // Superseded only when ANOTHER copy's token is there. A page that wiped
+    // the attribute (re-rendered <html>, document.write) doesn't silence the
+    // live copy: it claims the page again.
+    if (held == null) {
+      root?.setAttribute(attr, token);
+      return true;
+    }
+    return held === token;
+  };
 }
 
 /** True when this script lost its extension (updated or removed). */
@@ -31,15 +42,21 @@ export function runtimeGone() {
 }
 
 /**
- * Remove elements left by older copies now, and again over the next few
- * seconds — an orphaned copy can redraw once more before its own timer
- * notices it's dead and stops.
+ * Get rid of elements drawn by copies from 0.27 and older. Some of those copies
+ * keep redrawing on every page change and never notice they're dead, so the
+ * elements are removed now AND hidden for good by a style rule (a redraw then
+ * stays invisible).
  * @param {string} selectors
  */
 export function sweepLegacy(selectors) {
-  const sweep = () => {
-    for (const el of document.querySelectorAll(selectors)) el.remove();
-  };
-  sweep();
-  for (const ms of [1000, 2500, 5000]) setTimeout(sweep, ms);
+  for (const el of document.querySelectorAll(selectors)) el.remove();
+  const id = "jec-legacy-hide";
+  let style = document.getElementById(id);
+  if (!style) {
+    style = document.createElement("style");
+    style.id = id;
+    (document.head || document.documentElement).appendChild(style);
+  }
+  const rule = `${selectors} { display: none !important; }`;
+  if (!style.textContent.includes(rule)) style.textContent += rule + "\n";
 }

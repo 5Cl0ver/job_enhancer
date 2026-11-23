@@ -109,6 +109,7 @@ function hasFillableForm() {
 }
 
 function ensureButton() {
+  if (!isCurrent()) return; // a newer copy took over (an update)
   let btn = document.getElementById(BTN_ID);
   if (!hasFillableForm()) {
     btn?.remove();
@@ -888,7 +889,7 @@ function jobInfo() {
 function watchForSubmit() {
   let sent = false;
   const fire = () => {
-    if (sent) return;
+    if (sent || !isCurrent()) return; // one copy reports a submit, once
     const job = jobInfo();
     if (!job.title) return; // can't identify the job yet — try again next event
     sent = true;

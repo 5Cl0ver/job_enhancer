@@ -1,0 +1,39 @@
+<!doctype html>
+<!-- Lab page (invented company): a plain, labelled application form, the
+     classic shape many applicant systems use. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply: Field Service Technician at Tidewell Labs</title>
+  </head>
+  <body>
+    <h1>Field Service Technician</h1>
+    <p>Tidewell Labs · Harborview, OR</p>
+    <form id="application" action="/__submit" method="post">
+      <label for="first">First name</label>
+      <input id="first" name="first_name" autocomplete="given-name" />
+      <label for="last">Last name</label>
+      <input id="last" name="last_name" autocomplete="family-name" />
+      <label for="email">Email</label>
+      <input id="email" name="email" type="email" />
+      <label for="email2">Confirm email</label>
+      <input id="email2" name="email_confirm" type="email" />
+      <label for="phone">Phone</label>
+      <input id="phone" name="phone" type="tel" />
+      <label for="resume">Resume/CV</label>
+      <input id="resume" name="resume" type="file" accept=".pdf,.doc,.docx" />
+      <label for="why">Why do you want to work at Tidewell Labs?</label>
+      <textarea id="why" name="why"></textarea>
+      <button type="submit">Submit application</button>
+    </form>
+    <div id="ticker" aria-hidden="true"></div>
+    <script>
+      // A live page: something on it changes every half second, the way real
+      // application sites keep redrawing (and wake every content script's
+      // observers).
+      setInterval(() => {
+        document.getElementById("ticker").textContent = String(Date.now());
+      }, 500);
+    </script>
+  </body>
+</html>

@@ -6,7 +6,8 @@
 // fake server, and let the autofill script also run on the lab's http pages.
 // Nothing in the repo is changed.
 import { chromium } from "@playwright/test";
-import { cpSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execSync } from "node:child_process";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,7 +20,45 @@ const SKIP = new Set(["node_modules", "e2e", "test", "test-results", "src", ".vi
 /** The lab's pages are served over http on these hosts (two origins). */
 const LAB_MATCHES = ["http://localhost/*", "http://127.0.0.1/*"];
 
-function makeCopy(apiUrl) {
+/**
+ * Build the extension as it was at an older commit (e.g. the version users
+ * have installed today), once, into extension/.legacy/<ref>/. Returns the
+ * folder holding its manifest.json and dist/ — for real upgrade tests.
+ */
+export function buildLegacy(ref) {
+  const base = join(ROOT, ".legacy", ref);
+  const ext = join(base, "extension");
+  if (existsSync(join(ext, "dist", "content.js"))) return ext;
+  rmSync(base, { recursive: true, force: true });
+  mkdirSync(base, { recursive: true });
+  const repo = dirname(ROOT);
+  const git = (args) => execSync(`git ${args}`, { cwd: repo, maxBuffer: 64 * 1024 * 1024 });
+  const files = git(`ls-tree -r --name-only ${ref} -- extension/src extension/build.mjs extension/manifest.json`)
+    .toString()
+    .split(/\r?\n/)
+    .filter(Boolean);
+  for (const f of files) {
+    const out = join(base, f);
+    mkdirSync(dirname(out), { recursive: true });
+    writeFileSync(out, git(`show ${ref}:${f}`));
+  }
+  // esbuild resolves from extension/node_modules (a parent of this folder).
+  execSync("node build.mjs", { cwd: ext, stdio: "pipe" });
+  return ext;
+}
+
+/** Put a build's manifest.json + dist/ into the test copy (test matches added). */
+function installBuild(dir, from) {
+  rmSync(join(dir, "dist"), { recursive: true, force: true });
+  cpSync(join(from, "dist"), join(dir, "dist"), { recursive: true });
+  const manifest = JSON.parse(readFileSync(join(from, "manifest.json"), "utf8"));
+  for (const cs of manifest.content_scripts || []) {
+    if (cs.js.some((f) => /autofill/.test(f))) cs.matches = [...cs.matches, ...LAB_MATCHES];
+  }
+  writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
+}
+
+function makeCopy(apiUrl, from = ROOT) {
   const dir = mkdtempSync(join(tmpdir(), "je-ext-"));
   cpSync(ROOT, dir, {
     recursive: true,
@@ -36,21 +75,17 @@ function makeCopy(apiUrl) {
       }) +
       ";\n",
   );
-  const manifestPath = join(dir, "manifest.json");
-  const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
-  for (const cs of manifest.content_scripts || []) {
-    if (cs.js.some((f) => /autofill/.test(f))) cs.matches = [...cs.matches, ...LAB_MATCHES];
-  }
-  writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  installBuild(dir, from);
   return dir;
 }
 
 /**
- * @param {{apiUrl: string, signedIn?: boolean}} opts
- * @returns {Promise<{context, worker, extensionId, dir, seedSignedIn, reload, close}>}
+ * @param {{apiUrl: string, signedIn?: boolean, from?: string}} opts
+ *   `from`: a folder with an older build (see buildLegacy) to start on.
+ * @returns {Promise<{context, worker, extensionId, dir, seedSignedIn, reload, upgrade, close}>}
  */
-export async function launchExtension({ apiUrl, signedIn = true }) {
-  const dir = makeCopy(apiUrl);
+export async function launchExtension({ apiUrl, signedIn = true, from = ROOT }) {
+  const dir = makeCopy(apiUrl, from);
   const context = await chromium.launchPersistentContext("", {
     headless: false,
     args: [`--disable-extensions-except=${dir}`, `--load-extension=${dir}`],
@@ -96,6 +131,11 @@ export async function launchExtension({ apiUrl, signedIn = true }) {
       worker = await next;
       await mgr.close();
       return worker;
+    },
+    /** Update to the current build, the way a user does: new files, then reload. */
+    async upgrade() {
+      installBuild(dir, ROOT);
+      return ext.reload();
     },
     async close() {
       await context.close();

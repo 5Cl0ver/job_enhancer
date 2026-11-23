@@ -173,7 +173,22 @@ async def get_saved_listing(
     When the hash misses and the page's ``url`` is given, the user's saved job
     with that posting link counts too: a job saved before its page was read
     (Scout's "Save anyway", spec 015) carries the location Claude read, which
-    rarely matches the page's wording."""
+    rarely matches the page's wording. A link alone is never enough: the
+    saved job must also have (nearly) the same title and company, because a
+    search page's link can stand for many jobs."""
+    listing, _ = await _find_saved_listing(db, user_id, title, company, location, url)
+    return listing
+
+
+async def _find_saved_listing(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    title: str,
+    company: str,
+    location: str,
+    url: str,
+) -> tuple[JobListing | None, bool]:
+    """``get_saved_listing`` plus whether it was found by its link only."""
     content_hash = job_content_hash(
         normalize(title), normalize(company), normalize(location)
     )
@@ -187,27 +202,99 @@ async def get_saved_listing(
             )
         )
         if saved_id is not None:
-            return listing
+            return listing, False
     links = _link_forms(url)
-    if not links:
-        return None
-    return await db.scalar(
+    if not links or not normalize(title) or not normalize(company):
+        return None, False
+    candidates = await db.scalars(
         select(JobListing)
         .join(SavedJob, SavedJob.job_listing_id == JobListing.id)
         .where(SavedJob.user_id == user_id, JobListing.apply_url.in_(links))
-        .limit(1)
+        .order_by(SavedJob.created_at.desc(), JobListing.id)
+    )
+    for cand in candidates:
+        if _same_job(cand, title, company):
+            return cand, True
+    return None, False
+
+
+def _same_job(listing: JobListing, title: str, company: str) -> bool:
+    """The same title and company, judged like dedup (wording may differ a
+    little: "IT Support Tech" vs "IT Support Technician")."""
+    cand_title = listing.title_normalized or normalize(listing.title)
+    cand_company = listing.company_normalized or normalize(listing.company)
+    return (
+        fuzz.token_sort_ratio(normalize(title), cand_title) >= _SYNC_TITLE_THRESHOLD
+        and fuzz.token_sort_ratio(normalize(company), cand_company)
+        >= _SYNC_COMPANY_THRESHOLD
+    )
+
+
+# Links into someone's mailbox (an email-made job's "posting" link carries the
+# email's subject and sender). A listing with one is never shared with another
+# user (see save_manual_job).
+_MAIL_HOSTS = frozenset(
+    {
+        "mail.google.com",
+        "mail.yahoo.com",
+        "mail.aol.com",
+        "outlook.live.com",
+        "outlook.office.com",
+        "outlook.office365.com",
+        "mail.proton.me",
+    }
+)
+
+
+def is_mail_link(url: str | None) -> bool:
+    try:
+        return (urlparse(url or "").hostname or "").lower() in _MAIL_HOSTS
+    except ValueError:
+        return False
+
+
+async def _held_by_others(
+    db: AsyncSession, listing_id: uuid.UUID, user_id: uuid.UUID
+) -> bool:
+    """Has any other user saved this (shared) listing?"""
+    return bool(
+        await db.scalar(
+            select(func.count())
+            .select_from(SavedJob)
+            .where(
+                SavedJob.job_listing_id == listing_id,
+                SavedJob.user_id != user_id,
+            )
+        )
     )
 
 
 def _link_forms(url: str) -> list[str]:
-    """The ways a posting link may have been stored: as given, without a
-    trailing slash, and as its standalone job page (LinkedIn/Indeed panes)."""
+    """The ways a posting link may have been stored: as given, with and without
+    a trailing slash, and as its standalone job page (LinkedIn/Indeed panes)."""
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         return []
-    return sorted(
-        {url, url.rstrip("/"), posting_link(url), posting_link(url).rstrip("/")}
+    forms = set()
+    for u in (url, posting_link(url)):
+        bare = u.rstrip("/")
+        forms |= {bare, bare + "/"}
+    return sorted(forms)
+
+
+async def _private_to_another(
+    db: AsyncSession, listing: JobListing, user_id: uuid.UUID
+) -> bool:
+    """A listing whose link is someone else's mailbox: email-made by another
+    user, and not saved by this one."""
+    if not is_mail_link(listing.apply_url):
+        return False
+    mine = await db.scalar(
+        select(SavedJob.id).where(
+            SavedJob.user_id == user_id, SavedJob.job_listing_id == listing.id
+        )
     )
+    return mine is None and await _held_by_others(db, listing.id, user_id)
 
 
 def listing_needs_details(listing: JobListing) -> bool:
@@ -229,10 +316,13 @@ async def backfill_job_details(
     and fields are only ever upgraded (longer description, filling empty
     salary/job_type) — never downgraded. Returns the list of updated fields.
     """
-    listing = await get_saved_listing(
+    listing, by_link = await _find_saved_listing(
         db, user_id, data.title, data.company, data.location, data.url
     )
     if listing is None:
+        return []
+    # job_listings is a shared pool: never change a row another user relies on.
+    if await _held_by_others(db, listing.id, user_id):
         return []
 
     updated: list[str] = []
@@ -267,7 +357,8 @@ async def backfill_job_details(
     # is_remote is CORRECTED, not just filled: early captures falsely flagged
     # on-site jobs as Remote (full-page text scan); the capture sent from the
     # job's own page is the trustworthy signal.
-    if data.is_remote != listing.is_remote:
+    # (Not on a link-only match: the page may still be drawing the job.)
+    if not by_link and data.is_remote != listing.is_remote:
         listing.is_remote = data.is_remote
         updated.append("is_remote")
 
@@ -345,6 +436,15 @@ async def save_manual_job(
     listing = await db.scalar(
         select(JobListing).where(JobListing.content_hash == content_hash)
     )
+    if listing is not None and await _private_to_another(db, listing, user_id):
+        # Another user's email-made job: its link opens THEIR mailbox (subject,
+        # sender). Give this user their own listing instead of sharing it.
+        content_hash = job_content_hash(
+            title_norm, company_norm, f"{location_norm}|own:{user_id}"
+        )
+        listing = await db.scalar(
+            select(JobListing).where(JobListing.content_hash == content_hash)
+        )
     if listing is None:
         listing = JobListing(
             id=uuid.uuid4(),

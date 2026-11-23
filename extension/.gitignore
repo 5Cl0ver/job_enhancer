@@ -1,6 +1,8 @@
-# Extension tooling — build artifacts (dist/) ARE committed so the extension
-# loads unpacked with no build step; everything else here is local-only.
+# Extension tooling, all local-only. dist/ is built (npm run build) and ignored
+# by the root .gitignore; Chrome loads this folder unpacked after a build.
 node_modules/
 test-results/
 playwright-report/
 .playwright/
+# Old versions built by the browser tests to check real upgrades (e2e/support).
+.legacy/

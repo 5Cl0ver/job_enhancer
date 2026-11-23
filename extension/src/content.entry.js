@@ -32,6 +32,11 @@ const IS_LINKEDIN = /(^|\.)linkedin\./i.test(host);
 const IS_ZIPRECRUITER = /(^|\.)ziprecruiter\./i.test(host);
 
 const BTN_ID = "jec-save";
+// Indeed "My jobs" sync button + review panel. Declared up here: the My jobs
+// block below runs while the module loads, and reading these before their
+// line used to throw, so the on-page Sync button never appeared.
+const SYNC_BTN_ID = "jec-sync";
+const SYNC_PANEL_ID = "jec-sync-panel";
 const LABEL = "＋ Save to Job Enhancer";
 const STALE_LABEL = "↻ Refresh page — extension updated";
 
@@ -205,6 +210,7 @@ if (ON_INDEED_MYJOBS) {
   document.addEventListener(
     "click",
     (e) => {
+      if (!isCurrent()) return; // a newer copy handles the page now
       const t = e.target;
       if (t && t.closest && t.closest("#" + SYNC_BTN_ID)) handleSyncClick();
     },
@@ -216,6 +222,7 @@ if (ON_INDEED_MYJOBS) {
   try {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg?.type !== "readApplications") return;
+      if (!isCurrent()) return;
       try {
         sendResponse({ ok: true, applications: readApplications(document) });
       } catch (e) {
@@ -227,10 +234,15 @@ if (ON_INDEED_MYJOBS) {
     /* orphaned */
   }
   let _st;
-  new MutationObserver(() => {
+  const syncObserver = new MutationObserver(() => {
+    if (!isCurrent()) {
+      syncObserver.disconnect(); // a newer copy took over (an update)
+      return;
+    }
     clearTimeout(_st);
     _st = setTimeout(ensureSyncButton, 500);
-  }).observe(document.body, { childList: true, subtree: true });
+  });
+  syncObserver.observe(document.body, { childList: true, subtree: true });
 }
 
 // The normal Save button runs on job/search pages — NOT the apply flow (there's
@@ -357,6 +369,7 @@ function scoutCapture(job) {
 }
 
 function ensureButton() {
+  if (!isCurrent()) return;
   if (btn && document.contains(btn)) return;
   btn = document.getElementById(BTN_ID) || document.createElement("button");
   btn.id = BTN_ID;
@@ -433,8 +446,6 @@ function setState(el, state, text) {
 
 // ---- Indeed "My jobs" → sync applications into the tracker ----------------
 
-const SYNC_BTN_ID = "jec-sync";
-const SYNC_PANEL_ID = "jec-sync-panel";
 // Offered as stage overrides in the review panel (matches the default pipeline).
 const STAGE_OPTIONS = [
   "Interested",
@@ -476,6 +487,7 @@ function handleSyncClick() {
 }
 
 function ensureSyncButton() {
+  if (!isCurrent()) return;
   let sb = document.getElementById(SYNC_BTN_ID);
   const apps = readApplications(document);
   if (!apps.length) {

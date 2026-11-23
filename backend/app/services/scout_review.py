@@ -17,7 +17,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.collection import Collection
-from app.models.saved_job import ORIGIN_SCOUT
+from app.models.saved_job import ORIGIN_SCOUT, SavedJob
 from app.models.scout import (
     BELOW_BAR,
     DUPLICATE,
@@ -240,6 +240,22 @@ async def save_finding_job(
         )
     else:
         return "no_copy"
+    if capture is None:
+        # Saved before from its own page? Its location rarely matches Claude's
+        # wording, so look it up by its link too, and point at it.
+        known = await sj_svc.get_saved_listing(
+            db, user_id, job.title, job.company, job.location, job.url
+        )
+        if known is not None:
+            mine = await db.scalar(
+                select(SavedJob.id).where(
+                    SavedJob.user_id == user_id, SavedJob.job_listing_id == known.id
+                )
+            )
+            finding.saved_job_id = mine
+            finding.outcome = DUPLICATE
+            finding.app_note = "Already in your tracker"
+            return "already"
     had_it = (
         await sj_svc.get_saved_listing(
             db, user_id, job.title, job.company, job.location

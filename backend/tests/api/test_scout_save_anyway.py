@@ -76,6 +76,28 @@ class TestSaveAnyway:
         assert again.json()["already"] is True
         assert len((await client.get("/v1/saved-jobs/")).json()) == 1
 
+    async def test_a_job_already_saved_from_its_page_is_not_saved_twice(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        _, finding = await _no_copy(db_session, test_user)
+        # Saved earlier on its own page, which words the location its own way.
+        mine = await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": _url("strong"),
+                "title": "Field Service Technician",
+                "company": "Tidewell Labs",
+                "location": "Harborview, OR (On-site)",
+            },
+        )
+        assert mine.status_code == 201
+        r = await client.post(
+            f"/v1/scout/findings/{finding.id}/save", json={"anyway": True}
+        )
+        assert r.json()["already"] is True
+        assert r.json()["saved_job_id"] == mine.json()["id"]
+        assert len((await client.get("/v1/saved-jobs/")).json()) == 1
+
     async def test_without_anyway_it_still_needs_a_copy(
         self, client: AsyncClient, db_session, test_user
     ):
