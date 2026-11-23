@@ -6,8 +6,8 @@ Save jobs from any site to your Job Enhancer tracker — **two ways**:
   job's header (next to Apply/Save). One click reads the title, company, and
   location and saves it. It shows **blue "✓ Already saved"** for jobs already in
   your tracker — *before* you click — and green for new ones.
-- **Anywhere else:** open the **side panel** (toolbar icon) and click **Capture this
-  page** — it reads the job for you — or **Pick manually** to click the exact element.
+- **Anywhere else:** open the **side panel** (toolbar icon) and press **Save this job**:
+  it reads the posting, you check the details, then save.
   The panel stays open while you browse and links to your tracker.
 
 Chromium (Chrome / Edge / Brave), Manifest V3.
@@ -44,10 +44,11 @@ select this `extension/` folder → pin the icon. Make sure the backend is runni
 ## Use
 
 1. Click the toolbar icon → **side panel** → **sign in once**.
-2. **On Indeed / LinkedIn / ZipRecruiter:** click the green **Save to Job Enhancer** button on a job.
-3. **Anywhere else:** in the panel, **Capture this page** (or **Pick manually**) →
-   review the pre-filled form → **Save to tracker**.
-4. Open your tracker from the panel footer anytime.
+2. **On Indeed / LinkedIn / ZipRecruiter:** click **Save to My Jobs** on a job.
+3. **Anywhere else:** in the panel, **This page › Save this job** → check the
+   details → **Save to My Jobs**.
+4. **On an application:** **This page › Autofill this page**, check the page, submit it yourself.
+5. **My jobs**, **Write** (cover letters, tailored résumés) and **Settings** are in the panel's bottom bar.
 
 ## Testing
 
@@ -77,7 +78,7 @@ npm run check     # build + unit tests
 ## Notes
 
 - It **never submits** applications — it only saves jobs you choose.
-- If a site isn't parsed well, use **Capture this page** / **Pick manually** and edit
+- If a site isn't parsed well, highlight the description, press **Save this job** and edit
   the form. Add a fixture + test and we tighten the parser.
 - **When you deploy:** set the production `API_BASE` / `APP_URL` in `config.js`, then
   publish to the **Chrome Web Store** for one-click install (no developer mode).

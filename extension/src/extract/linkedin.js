@@ -9,7 +9,7 @@
 // heading) to fill gaps. PURE (DOM only) — unit-tested against a saved fixture.
 //
 // NOTE: the side panel's "Save the job on this page" uses a SEPARATE, inline
-// copy of this logic in ../../sidepanel.js (`extractJobFromPage`), because that
+// copy of this logic in ../../panel/src/lib/extractPage.js (`extractJobFromPage`), because that
 // function is injected into the page and must be self-contained (no imports).
 // Keep the two in sync — if LinkedIn changes, both need the same fix.
 import { textFrom, looksRemote } from "./util.js";

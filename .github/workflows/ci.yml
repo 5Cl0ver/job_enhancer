@@ -107,6 +107,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Type check (side panel)
+        run: npm run typecheck
+
       - name: Unit tests (Vitest)
         run: npx vitest run
 

@@ -64,7 +64,7 @@ test("side panel page renders the sign-in view without errors", async () => {
   const page = await ext.context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto(`chrome-extension://${ext.extensionId}/sidepanel.html`);
+  await page.goto(`chrome-extension://${ext.extensionId}/dist/panel/index.html`);
 
   await expect(page.getByRole("button", { name: /sign in/i })).toBeVisible();
   expect(errors).toEqual([]);
@@ -129,5 +129,33 @@ test("Claude Scout: a company careers page that draws itself late is still copie
   expect(sent.title).toBe("IT Systems Administrator");
   expect(sent.company).toBe("Vellacor");
   expect(sent.description).toContain("Automate onboarding with PowerShell");
+  await page.close();
+});
+
+test("the on-page Save button saves the open job, and a site's CSS can't hide or restyle it", async () => {
+  const jobUrl = "https://www.linkedin.com/jobs/view/4012399999/";
+  const html = readFileSync(join(FIXTURES, "linkedin-jobview.html"), "utf8").replace(
+    "</head>",
+    // A site stylesheet that would wreck anything drawn in the page itself.
+    "<style>button { display: none !important; } * { color: red !important; font-size: 40px !important; }</style></head>",
+  );
+  await ext.context.route(jobUrl, (route) =>
+    route.fulfill({ status: 200, contentType: "text/html", body: html }),
+  );
+  const page = await ext.context.newPage();
+  await page.goto(jobUrl);
+  const save = page.locator("#jec-save");
+  await expect(save).toBeVisible({ timeout: 8000 });
+  await expect(save).toHaveText("＋ Save to My Jobs");
+  expect(await save.evaluate((el) => getComputedStyle(el).fontSize)).toBe("13.5px");
+  expect(await save.evaluate((el) => getComputedStyle(el).fontFamily)).toContain("system-ui");
+  await save.click();
+  await expect(save).toHaveText(/Saved/);
+  const [{ body }] = api.calls("/v1/saved-jobs/manual");
+  expect(body).toMatchObject({ title: "Senior Platform Engineer", company: "Initech, Inc." });
+
+  // Opened again later: it already knows.
+  await page.reload();
+  await expect(page.locator("#jec-save")).toHaveText("✓ Already saved", { timeout: 8000 });
   await page.close();
 });

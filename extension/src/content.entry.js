@@ -16,14 +16,18 @@ import { SCOUT_MAX_FAILS, scoutDone, scoutPayload } from "./scoutCapture.js";
 import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
 import { readApplications } from "./extract/indeed-myjobs.js";
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
+import { eventOn, removeUi, uiRoot } from "./ui/onpage.js";
 
 // This copy now owns the page. A copy from before an update (still running,
 // orphaned) sees it lost the claim and stops; buttons it drew are removed —
 // including any of OUR ids, which can only belong to an older copy right now.
 const isCurrent = claimPage("content");
 for (const el of document.querySelectorAll("#jec-save, #jec-apply-badge, #jec-apply-save, #jec-sync, #jec-sync-panel")) {
-  el.remove();
+  el.remove(); // drawn by a 0.28 copy, before the shadow-root UI
 }
+removeUi("content");
+// Everything this script draws lives in one shadow root (src/ui/onpage.js).
+const ui = () => uiRoot("content");
 sweepLegacy("#je-save-btn, #je-apply-badge, #je-apply-save, #je-sync-btn, #je-sync-panel, #je-style");
 
 const host = location.hostname;
@@ -37,7 +41,7 @@ const BTN_ID = "jec-save";
 // line used to throw, so the on-page Sync button never appeared.
 const SYNC_BTN_ID = "jec-sync";
 const SYNC_PANEL_ID = "jec-sync-panel";
-const LABEL = "＋ Save to Job Enhancer";
+const LABEL = "＋ Save to My Jobs";
 const STALE_LABEL = "↻ Refresh page — extension updated";
 
 let btn = null;
@@ -88,11 +92,11 @@ if (ON_INDEED_APPLY) {
     if (text === lastBadge) return; // CRITICAL: no redundant DOM writes
     lastBadge = text;
     injectStyles();
-    if (!badge || !document.contains(badge)) {
+    if (!badge || !badge.isConnected) {
       badge = document.createElement("div");
       badge.id = "jec-apply-badge";
       badge.className = "je-btn je-fab je-fab-left";
-      document.body.appendChild(badge);
+      ui().appendChild(badge);
     }
     badge.textContent = text;
     badge.dataset.state = done ? "saved" : "checking";
@@ -131,15 +135,14 @@ if (ON_INDEED_APPLY) {
   // A Save button on the apply page too — in case you forgot to save the job
   // before hitting Apply. Sits just above the "Applying to…" badge.
   const ensureSaveBtn = () => {
-    if (saveBtn && document.contains(saveBtn)) return;
+    if (saveBtn && saveBtn.isConnected) return;
     injectStyles();
     saveBtn = document.createElement("button");
     saveBtn.id = "jec-apply-save";
     saveBtn.type = "button";
-    saveBtn.className = "je-btn je-fab je-fab-left";
-    saveBtn.style.bottom = "66px"; // stack above the badge (bottom: 20px), both left
+    saveBtn.className = "je-btn je-fab je-fab-left je-fab-stack"; // above the badge
     saveBtn.addEventListener("click", saveApplyJob);
-    document.body.appendChild(saveBtn);
+    ui().appendChild(saveBtn);
     setSaveState("idle", "＋ Save this job");
   };
 
@@ -211,8 +214,7 @@ if (ON_INDEED_MYJOBS) {
     "click",
     (e) => {
       if (!isCurrent()) return; // a newer copy handles the page now
-      const t = e.target;
-      if (t && t.closest && t.closest("#" + SYNC_BTN_ID)) handleSyncClick();
+      if (eventOn(e, SYNC_BTN_ID)) handleSyncClick();
     },
     true,
   );
@@ -370,8 +372,8 @@ function scoutCapture(job) {
 
 function ensureButton() {
   if (!isCurrent()) return;
-  if (btn && document.contains(btn)) return;
-  btn = document.getElementById(BTN_ID) || document.createElement("button");
+  if (btn && btn.isConnected) return;
+  btn = ui().getElementById(BTN_ID) || document.createElement("button");
   btn.id = BTN_ID;
   btn.setAttribute("data-je-save", "");
   btn.type = "button";
@@ -398,7 +400,7 @@ function ensureButton() {
 // two spots. Pinning it to one fixed corner ends that jumping.
 function placeButton() {
   if (!btn.classList.contains("je-fab")) btn.classList.add("je-fab");
-  if (btn.parentElement !== document.body) document.body.appendChild(btn);
+  if (btn.parentNode !== ui()) ui().appendChild(btn);
 }
 
 async function onSave() {
@@ -467,10 +469,10 @@ function handleSyncClick() {
   if (_handlingSyncClick) return; // de-dupe button + capture listeners
   _handlingSyncClick = true;
   setTimeout(() => (_handlingSyncClick = false), 300);
-  const sb = document.getElementById(SYNC_BTN_ID);
+  const sb = ui().getElementById(SYNC_BTN_ID);
   try {
     openSyncReview();
-    if (!document.getElementById(SYNC_PANEL_ID) && sb) {
+    if (!ui().getElementById(SYNC_PANEL_ID) && sb) {
       const n = readApplications(document).length;
       sb.dataset.state = "busy";
       sb.textContent = `⚠ read ${n}, but panel didn't open`;
@@ -488,7 +490,7 @@ function handleSyncClick() {
 
 function ensureSyncButton() {
   if (!isCurrent()) return;
-  let sb = document.getElementById(SYNC_BTN_ID);
+  let sb = ui().getElementById(SYNC_BTN_ID);
   const apps = readApplications(document);
   if (!apps.length) {
     sb?.remove();
@@ -500,29 +502,21 @@ function ensureSyncButton() {
     sb.type = "button";
     sb.className = "je-btn je-fab je-sync-fab";
     sb.addEventListener("click", handleSyncClick);
-    document.body.appendChild(sb);
+    ui().appendChild(sb);
   }
-  if (sb.dataset.state !== "busy") {
-    let v = "?";
-    try {
-      v = chrome.runtime.getManifest().version;
-    } catch {
-      /* orphaned */
-    }
-    // Version is ON the button so a stale build is obvious without the console:
-    // if this doesn't say the latest version, Chrome is running old code.
-    sb.textContent = `🔄 Sync ${apps.length} Indeed applications · v${v}`;
-  }
+  const label = `Sync ${apps.length} Indeed applications`;
+  if (sb.dataset.state !== "busy" && sb.textContent !== label) sb.textContent = label;
 }
 
 function openSyncReview() {
-  document.getElementById(SYNC_PANEL_ID)?.remove();
+  ui().getElementById(SYNC_PANEL_ID)?.remove();
   injectStyles();
   const apps = readApplications(document);
   if (!apps.length) return;
 
   const panel = document.createElement("div");
   panel.id = SYNC_PANEL_ID;
+  panel.className = "je-panel";
 
   const head = document.createElement("div");
   head.className = "je-sp-head";
@@ -536,6 +530,7 @@ function openSyncReview() {
   close.className = "je-sp-close";
   close.type = "button";
   close.textContent = "✕";
+  close.setAttribute("aria-label", "Close");
   close.addEventListener("click", () => panel.remove());
   head.appendChild(close);
   panel.appendChild(head);
@@ -616,7 +611,7 @@ function openSyncReview() {
   sync.className = "je-sp-sync";
   sync.type = "button";
   const chosenCount = () => rows.filter((r) => r._data.keep.checked).length;
-  const relabel = () => (sync.textContent = `🔄 Sync ${chosenCount()}`);
+  const relabel = () => (sync.textContent = `Sync ${chosenCount()}`);
   relabel();
   body.addEventListener("change", relabel);
   sync.addEventListener("click", async () => {
@@ -667,7 +662,7 @@ function openSyncReview() {
   btnRow.append(cancel, sync);
   foot.append(status, btnRow);
   panel.appendChild(foot);
-  document.body.appendChild(panel);
+  ui().appendChild(panel);
 }
 
 function showSyncResult(panel, res) {
@@ -735,105 +730,11 @@ function showSyncResult(panel, res) {
     }
   }
   // Refresh the floating button's count (some may have moved off "Applied").
-  const sb = document.getElementById(SYNC_BTN_ID);
+  const sb = ui().getElementById(SYNC_BTN_ID);
   if (sb) sb.textContent = "✓ Synced to Job Enhancer";
 }
 
+// The styles live in the shadow root (src/ui/onpage.js); this makes sure it exists.
 function injectStyles() {
-  if (document.getElementById("jec-style")) return;
-  const style = document.createElement("style");
-  style.id = "jec-style";
-  style.textContent = `
-    .je-btn {
-      display: inline-flex; align-items: center; gap: 6px;
-      margin: 10px 0; padding: 9px 15px; border: 0; border-radius: 999px;
-      font: 600 14px/1 system-ui, -apple-system, sans-serif; color: #fff;
-      background: #16a34a; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,.18);
-      transition: background .15s, transform .1s; z-index: 2147483647;
-    }
-    .je-btn:hover { transform: translateY(-1px); }
-    .je-btn[data-state="checking"] { background: #9ca3af; cursor: default; }
-    .je-btn[data-state="busy"]     { background: #6b7280; cursor: default; }
-    .je-btn[data-state="saved"]    { background: #2563eb; cursor: default; }  /* blue */
-    .je-btn[data-state="error"]    { background: #dc2626; }
-    .je-btn[data-state="stale"]    { background: #d97706; }  /* amber: refresh me */
-    .je-fab {
-      position: fixed; right: 20px; bottom: 20px;
-      box-shadow: 0 6px 20px rgba(0,0,0,.28);
-    }
-    /* Apply-flow badge + save go bottom-LEFT so they never overlap the
-       autofill/remember buttons (a different content script) on the right. */
-    .je-fab-left { left: 20px; right: auto; }
-    .je-sync-fab { background: #7c3aed; }  /* purple: the sync action */
-    .je-sync-fab[data-state="busy"] { background: #6b7280; }
-    /* Sync review panel */
-    #${SYNC_PANEL_ID} {
-      position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
-      width: 380px; max-height: 78vh; overflow: auto;
-      background: #fff; color: #111827; border-radius: 12px;
-      box-shadow: 0 12px 34px rgba(0,0,0,.3);
-      font: 13px/1.45 system-ui, -apple-system, sans-serif;
-    }
-    @media (prefers-color-scheme: dark) { #${SYNC_PANEL_ID} { background: #1f2937; color: #f3f4f6; } }
-    #${SYNC_PANEL_ID} .je-sp-head {
-      position: sticky; top: 0; display: flex; align-items: center;
-      justify-content: space-between; padding: 11px 13px; background: inherit;
-      border-bottom: 1px solid rgba(148,163,184,.3); font-size: 14px;
-    }
-    #${SYNC_PANEL_ID} .je-sp-close { background: none; border: 0; cursor: pointer; color: inherit; font-size: 13px; }
-    #${SYNC_PANEL_ID} .je-sp-sub { padding: 8px 13px; font-size: 12px; color: #6b7280; }
-    #${SYNC_PANEL_ID} .je-sp-body { padding: 2px 13px; }
-    #${SYNC_PANEL_ID} .je-sp-row { padding: 9px 0; border-bottom: 1px solid rgba(148,163,184,.18); }
-    #${SYNC_PANEL_ID} .je-sp-top { display: flex; gap: 9px; align-items: flex-start; cursor: pointer; }
-    #${SYNC_PANEL_ID} .je-sp-top input { margin-top: 3px; }
-    #${SYNC_PANEL_ID} .je-sp-title { font-weight: 600; font-size: 12.5px; }
-    #${SYNC_PANEL_ID} .je-sp-co { font-size: 11.5px; color: #6b7280; margin-top: 1px; }
-    #${SYNC_PANEL_ID} .je-sp-stage {
-      display: flex; align-items: center; gap: 6px; margin: 7px 0 0 26px;
-    }
-    #${SYNC_PANEL_ID} .je-sp-badge {
-      font-size: 11px; padding: 2px 7px; border-radius: 999px;
-      background: rgba(37,99,235,.14); color: #2563eb; white-space: nowrap;
-    }
-    #${SYNC_PANEL_ID} .je-sp-arrow { color: #9ca3af; }
-    #${SYNC_PANEL_ID} .je-sp-sel {
-      flex: 1 1 auto; padding: 5px 7px; border: 1px solid #d1d5db; border-radius: 7px;
-      font: inherit; background: #fff; color: #111827;
-    }
-    @media (prefers-color-scheme: dark) {
-      #${SYNC_PANEL_ID} .je-sp-sel { background: #111827; color: #f3f4f6; border-color: #374151; }
-    }
-    #${SYNC_PANEL_ID} .je-sp-foot {
-      position: sticky; bottom: 0; display: flex; flex-direction: column; gap: 8px;
-      padding: 11px 13px; background: inherit; border-top: 1px solid rgba(148,163,184,.3);
-    }
-    #${SYNC_PANEL_ID} .je-sp-btnrow { display: flex; justify-content: flex-end; gap: 8px; }
-    #${SYNC_PANEL_ID} .je-sp-status {
-      padding: 8px 10px; border-radius: 8px; font-size: 12px; line-height: 1.4;
-    }
-    #${SYNC_PANEL_ID} .je-sp-status[data-kind="info"] { background: rgba(37,99,235,.12); color: #2563eb; }
-    #${SYNC_PANEL_ID} .je-sp-status[data-kind="error"] { background: rgba(220,38,38,.12); color: #dc2626; }
-    #${SYNC_PANEL_ID} .je-sp-sync { background: #7c3aed; color: #fff; border: 0; border-radius: 8px; padding: 9px 15px; font-weight: 700; cursor: pointer; }
-    #${SYNC_PANEL_ID} .je-sp-sync:disabled { background: #6b7280; cursor: default; }
-    #${SYNC_PANEL_ID} .je-sp-cancel { background: transparent; color: inherit; border: 1px solid #d1d5db; border-radius: 8px; padding: 9px 13px; cursor: pointer; }
-    #${SYNC_PANEL_ID} .je-sp-done { padding: 16px 13px 8px; text-align: center; }
-    #${SYNC_PANEL_ID} .je-sp-done-big { font-size: 20px; font-weight: 800; color: #16a34a; margin-bottom: 4px; }
-    #${SYNC_PANEL_ID} .je-sp-done-note { padding: 8px 13px 12px; text-align: center; font-size: 12px; color: #6b7280; }
-    #${SYNC_PANEL_ID} .je-sp-results { padding: 2px 13px; }
-    #${SYNC_PANEL_ID} .je-sp-rgroup { margin-bottom: 8px; }
-    #${SYNC_PANEL_ID} .je-sp-rhead {
-      font-size: 10px; font-weight: 700; text-transform: uppercase;
-      letter-spacing: .05em; margin: 8px 0 4px;
-    }
-    #${SYNC_PANEL_ID} .je-sp-rhead.updated { color: #2563eb; }
-    #${SYNC_PANEL_ID} .je-sp-rhead.imported { color: #16a34a; }
-    #${SYNC_PANEL_ID} .je-sp-rhead.skipped { color: #9ca3af; }
-    #${SYNC_PANEL_ID} .je-sp-rrow {
-      display: flex; justify-content: space-between; gap: 10px; padding: 3px 0;
-      border-bottom: 1px solid rgba(148,163,184,.15); font-size: 12px;
-    }
-    #${SYNC_PANEL_ID} .je-sp-rname { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-    #${SYNC_PANEL_ID} .je-sp-rstage { flex: 0 0 auto; color: #6b7280; }
-  `;
-  document.documentElement.appendChild(style);
+  ui();
 }
