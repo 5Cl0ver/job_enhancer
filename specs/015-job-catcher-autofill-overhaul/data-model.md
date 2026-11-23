@@ -58,7 +58,8 @@ Unchanged. Save anyway creates the saved job through the existing `save_finding_
       ai_asked: ["<fingerprint>", ...]
     }
   },
-  pending_answers: [{question_key, question_text, answer}]
+  pending_answers: [{question_key, question_text, answer}],
+  pending_profile: {<profile key>: {old, new}}   // FR-013a, offered as "Save to my profile"
 }
 ```
 

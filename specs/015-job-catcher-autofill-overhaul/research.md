@@ -253,3 +253,27 @@ Results shows **Save anyway** next to "Open and press Save" when `!can_save`.
 3. `xvfb-run -a npx playwright test`
 
 MV3 extensions need headed Chromium, which is why xvfb is used. Failing extension tests block merging, like the backend and frontend jobs.
+
+## R15 — The new look: the panel in the app's design system
+
+**Decision**: Rebuild the side panel as a small **Vite + React 19 + Tailwind v4** app in `extension/panel/`, building to `extension/dist/panel/`. `manifest.side_panel.default_path` points at it.
+- **Tokens**: `panel/src/theme.css` copies the app's `:root` and `.dark` variable blocks and the `@theme inline` mapping from `frontend/src/globals.css`. A Vitest drift test parses both files and fails if the color variables differ.
+- **Components**: Button, Card, Input, Textarea, Select, Switch, Tabs and Badge, written shadcn-style like the app's `components/ui`. They are lightweight copies, not shared imports, so the extension builds on its own.
+- **Theme**: `.dark` on `<html>` follows `prefers-color-scheme`. Fonts are the system stack, so no web font download is needed in an extension page.
+- **Structure**: the panel is context-first.
+  - **This page**: it switches between Apply (an application), Save job (a posting, using the existing extractors via `capture.js`), Indeed sync (My jobs) and an "Elsewhere" tip.
+  - **Bottom bar**: My jobs (saved list, Mark applied), Write (the AI helper: cover letter or résumé, free AI or my Claude, PDF, use for upload) and Settings (account, Claude Project link, shortcut, keep-filling default, sign out).
+  - Sign-in has its own screen.
+- **Messaging**: the panel talks to the background through a typed helper (`src/lib/bg.ts`) that follows contracts/extension-messages.md. The background stays the only API caller, and the panel never fetches the API.
+- **Pick manually**: the old picker.js moves into a content-script module the panel injects, reworked in the same on-page style.
+- **On-page UI**: the board Save button, the Autofill pill, outlines and flash are drawn in shadow roots from one shared stylesheet. They use the same tokens, so they look like the app and sites can't restyle them.
+
+**Rationale**:
+- The user wants the extension to look like the app. Reusing the app's stack and tokens is the surest way.
+- React makes the Apply view (live lists, Fix editors, Undo) far simpler than hand-built DOM.
+- Vite gives Tailwind v4 the same way the app does.
+
+**Alternatives**:
+- Restyling the 1,391-line vanilla panel: keeps the structural mess the user is complaining about.
+- Preact: smaller, but differs from the app.
+- Importing the app's globals.css directly: couples the builds and pulls in web fonts.

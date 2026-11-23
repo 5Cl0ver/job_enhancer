@@ -100,6 +100,15 @@ It also lists the questions only I can answer, each with Show, and has **Undo al
 
 ---
 
+## Decisions (user, 2026-11-23)
+
+1. **AI answers:** filled and outlined purple, marked "check". Unsure ones are suggestions only.
+2. **Multi-step:** after one press, later steps fill by themselves. This is on by default and can be switched off.
+3. **Sites:** Workday comes first and is tested deepest. Greenhouse, Lever, Ashby, iCIMS, SmartRecruiters, Indeed Apply, LinkedIn Easy Apply and company sites must all work through the general engine.
+4. **What "not working" meant:** pressing Autofill often didn't actually fill, and Chrome's own autofill did name and address better.
+
+   The user expects to fill the first applications by hand. After that the extension should learn from **everything** they type, including name, address, phone and links, not only unusual questions. It should get steadily better at knowing what goes where, while every filled value stays visible and checkable. This makes Story 3 cover profile fields too (FR-013a).
+
 ### User Story 3 - It learns my answers without extra steps (Priority: P2)
 
 When I answer a question the app didn't know and move on, the extension notices and offers it in the panel under **New answers to remember**. "Move on" means pressing Next, Continue, Save or Submit, or leaving the page.
@@ -185,6 +194,40 @@ When the extension updates, it takes over my open tabs by itself, with no reload
 2. **Given** a Scout result marked "Not copied", **When** I press Save anyway, **Then** it's in My Jobs with title, company and link. When I later open the posting with Job Catcher running, the full description is added.
 3. **Given** I submit an application on a supported applicant system, **When** the page submits, **Then** the matching saved job moves to Applied, as today.
 
+---
+
+### User Story 7 - It looks and feels like the app (Priority: P1)
+
+The user said: "the UI/UX looks pretty poor, old and gross… we need a whole overhaul of the entire thing."
+
+The side panel and everything Job Catcher draws on pages are redesigned in the app's own look (the same as Scout and My Jobs):
+- the app's colors, font, corner radius and dark/light themes
+- calm cards
+- clear main buttons
+- no emoji walls
+
+The panel works around what I'm doing on the current tab, so the screen is short and obvious:
+- **On an application:** Autofill and Review.
+- **On a job posting:** Save this job, with its details shown and editable.
+- **On Indeed "My jobs":** Sync.
+- **Everything else**, a tap away in a small bottom bar:
+  - **My jobs**: saved jobs, Mark applied, open in app
+  - **Write**: cover letter or tailored résumé, the free AI or my Claude, PDF, use for upload
+  - **Settings**: account, Claude Project link, keyboard shortcut, keep-filling default, sign out
+
+On pages, the Save button and the Autofill pill share one small, consistent style that sites can't restyle.
+
+**Why this priority**: The user reads the panel on every application. A confusing, dated screen undercuts a fill that works.
+
+**Independent Test**: Open the redesigned panel in the browser tests in each context (signed out, on an application, on a posting, on Indeed My jobs, elsewhere) and in both themes. Check every current action is reachable and works against the fake server. Check there are no page errors.
+
+**Acceptance Scenarios**:
+
+1. **Given** I'm on an application form, **When** I open the panel, **Then** the top of the panel is Autofill / Review for this page, and nothing else competes with it.
+2. **Given** I'm on a job posting, **When** I open the panel, **Then** I see the job's title, company and details ready to save in one press, with "Already saved" if it is.
+3. **Given** dark or light mode in Chrome, **When** the panel opens, **Then** it uses the app's matching theme, with readable contrast (WCAG AA).
+4. **Given** any feature the old panel had, **When** I look for it, **Then** it's in **This page**, **My jobs**, **Write** or **Settings**, and works the same.
+
 ### Edge Cases
 
 - **Signed out:**
@@ -252,6 +295,11 @@ When the extension updates, it takes over my open tabs by itself, with no reload
 
 **Learning (Story 3)**
 - **FR-013**: The extension MUST notice answers the user gave to unknown questions when they press Next, Continue, Save or Submit, or leave the page. It MUST offer them in the panel for review: keep or uncheck, edit, then Save. Nothing is saved without Save.
+- **FR-013a**: The extension MUST also learn the profile from what the user types.
+  - It applies to profile-type fields (name, email, phone, address, links, work authorization, salary, start date) that the user typed or that Chrome's own autofill put in.
+  - When the profile is empty or different for such a field, the panel offers it under **Save to my profile**, showing the old and new value.
+  - The first application filled by hand teaches the next one, with nothing saved without a press.
+- **FR-013b**: Values Chrome's own autofill puts in MUST be treated like the user's own. They are never overwritten, and they can be learned.
 - **FR-014**: A Fix on a remembered or AI answer MUST be saved as a remembered answer.
 - **FR-015**: Remembered answers MUST be matched to a choice field's options by meaning: Yes/No equivalents, starts-with, and same words.
 - **FR-015a**: Two questions that differ in country, number or negation MUST never share an answer.
@@ -275,6 +323,19 @@ When the extension updates, it takes over my open tabs by itself, with no reload
 - **FR-021**: All current features listed in Story 6 MUST keep working, each covered by an automated test.
 - **FR-022**: On install or update, the extension MUST put its current scripts into open tabs by itself, so no reload or refresh is needed.
 - **FR-023**: Scout Results MUST offer **Save anyway** for jobs whose page wasn't copied. It saves title, company and link and marks the job as needing details. The extension then adds the full posting when the user opens that page.
+
+**Look and feel (Story 7)**
+- **FR-026**: The side panel MUST be rebuilt in the app's design system:
+  - the same color tokens, font, radius and components (buttons, cards, inputs, switches, tabs)
+  - light and dark themes following Chrome's setting
+  - WCAG 2.1 AA contrast and keyboard use
+- **FR-027**: The panel MUST open on the view that fits the current tab (application, posting, Indeed My jobs, or other). It MUST keep every existing action reachable in at most two taps, under This page, My jobs, Write and Settings.
+- **FR-028**: Everything drawn on pages MUST share one style and be isolated from the site's styles:
+  - the Save button on job boards
+  - the Autofill pill
+  - field outlines
+  - flash on Show
+- **FR-029**: The panel's colors MUST stay in step with the app's. A check fails if the extension's copy of the app's color tokens drifts from the app's.
 
 **Testing**
 - **FR-024**: The work MUST include a test lab of invented application pages, in the shapes of the common applicant systems and form styles:
@@ -314,8 +375,10 @@ When the extension updates, it takes over my open tabs by itself, with no reload
 - **SC-002**: With the extension's copy in place, a press fills the page in under 1 second, even with the fake server delaying every reply by 30 seconds.
 - **SC-003**: A Workday-shaped 4-step lab application needs at most one press to fill every known field on all 4 steps.
 - **SC-004**: An answer typed once in one lab form fills its reworded twin in another lab form after one Save.
+- **SC-004a**: Starting from an empty profile, filling one lab form by hand and pressing Save once lets autofill fill name, email, phone, address and links on a different lab form.
 - **SC-005**: Self-ID questions, consent boxes, essays and prefilled values are untouched on 100% of lab runs.
 - **SC-006**: Every listed existing feature has a passing automated browser test, and CI runs them all.
+- **SC-008**: In browser tests, every old panel action is reachable in the new panel in at most two taps. The panel shows no page errors in any context, and passes an automated contrast check in both themes.
 - **SC-007**: After an extension update, an already-open tab is copied by a Scout run with no user action.
 
 ## Assumptions

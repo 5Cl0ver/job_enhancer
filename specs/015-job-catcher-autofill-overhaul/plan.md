@@ -22,7 +22,9 @@ The work starts by building the **test lab**:
 - a fake app server
 - a Playwright harness that loads a test copy of the built extension
 
-The probe failures (search dropdown, confirm email, aria-labelled field, shadow DOM, slow serial calls) become the first red tests. Two quick wins can ship first, as they fix Scout today:
+The probe failures (search dropdown, confirm email, aria-labelled field, shadow DOM, slow serial calls) become the first red tests. **The whole extension UI is also redesigned in the app's look** (Story 7). The side panel is rebuilt with **React 19 + Tailwind v4 + lucide icons**, the same stack and color tokens as the app, and is built by Vite inside `extension/panel/`. The context-first layout is "This page" plus a bottom bar with My jobs, Write and Settings. The on-page Save button and Autofill pill share one shadow-root style.
+
+Two quick wins can ship first, as they fix Scout today:
 - re-injecting scripts into open tabs on update
 - **Save anyway** in Scout Results
 
@@ -34,7 +36,7 @@ The probe failures (search dropdown, confirm email, aria-labelled field, shadow 
 - Frontend: TypeScript, React 19.
 
 **Primary Dependencies**:
-- Extension: esbuild, Vitest + happy-dom (unit), Playwright (browser). New dev-only dependencies: `react` and `react-dom`, used only to build the lab's React form.
+- Extension: esbuild for content scripts and the worker; **Vite + React 19 + Tailwind v4 + lucide-react for the side panel**, matching the app's versions. Vitest + happy-dom + Testing Library (unit), Playwright (browser). React is also used to build the lab's React form.
 - Backend: FastAPI, SQLAlchemy async, Alembic, LangChain NVIDIA (existing AI).
 - Frontend: TanStack Query, sonner.
 
@@ -80,7 +82,7 @@ The probe failures (search dropdown, confirm email, aria-labelled field, shadow 
 | Principle | How this plan meets it |
 |---|---|
 | I. Portfolio quality | The engine is split into single-purpose modules with a manifest. The lab plus browser tests are a showcase of the testing approach. The README Testing section is updated. |
-| II. User-centric | Fills in under 1 s and puts review in one place. The UI is short: one status line, and a panel grouped as Needs you, Check these, then Filled (collapsed). |
+| II. User-centric | Fills in under 1 s and puts review in one place. The panel is redesigned around the current tab, in the app's look, meeting WCAG AA. The UI is short: one status line, and a panel grouped as Needs you, Check these, then Filled (collapsed). |
 | III. AI | AI is the last tier, batched and marked. Unsure answers are suggestions only. Nothing breaks without a key (FR-020b). The prompt lives in `ai_service.py`, under version control. |
 | IV. Security & privacy | The copy stays in extension-only storage and is wiped on sign-out. The AI gets questions and options only. Self-ID and consent are never touched. Lab data is invented, and no personal data appears in tests or logs. |
 | V. Tests | Lab browser tests check every story, so the "tests pass but the real thing fails" gap closes. CI runs the extension tests for the first time. |
@@ -145,9 +147,14 @@ extension/
 │   │   ├── autofillCopy.js       # bundle change-check, résumé bytes, wipe on sign-out
 │   │   ├── sessions.js           # per tab/frame session relay (storage.session) → panel
 │   │   └── reinject.js           # on install/update: inject current scripts into open tabs
-│   ├── panel/apply.entry.js      # side panel "Apply" view (bundled → dist/panel-apply.js)
 │   └── (existing extract/, content.entry.js, scout*, savedSync.js … unchanged except cleanup)
-├── sidepanel.html / sidepanel.js # + Apply view mount; existing views kept
+├── panel/                        # NEW side panel app (Vite + React 19 + Tailwind v4) → dist/panel/
+│   ├── index.html  vite.config.ts  src/main.tsx
+│   ├── src/theme.css             # app color tokens (copied; drift test vs frontend/src/globals.css)
+│   ├── src/ui/                   # Button, Card, Input, Switch, Tabs… (shadcn-style, same as app)
+│   ├── src/views/                # ThisPage (Apply · SaveJob · IndeedSync · Elsewhere), MyJobs, Write, Settings, SignIn
+│   └── src/lib/bg.ts             # typed messages to the background (contracts/extension-messages.md)
+├── sidepanel.html / sidepanel.js / picker.js  # REMOVED once panel/ reaches parity
 ├── test/                         # Vitest (existing + new scan/classify/resolve/widget specs)
 │   └── lab/                      # invented application pages (see research R11)
 │       ├── classic.html  react-form/  workday/  buttons-typeahead.html  embed-host.html
@@ -182,13 +189,14 @@ frontend/
    - re-inject scripts on install/update, with an orphan guard
    - Scout **Save anyway**
    - the lab harness skeleton, with a fake API, launch helper and CI job
-2. **PR B — Instant, correct fill + review** (Stories 1, 2: the MVP).
+2. **PR B — The new look** (Story 7). This rebuilds the side panel in the app's design system with every existing feature ported. It also restyles the board Save button in a shadow root, and adds browser tests for every panel context and both themes. The old `sidepanel.*` is removed.
+3. **PR C — Instant, correct fill + review** (Stories 1, 2: the MVP).
    - the engine
    - the bundle endpoint and the copy held by the extension
    - the pill
    - the panel's Apply view
    - lab pages: classic, React, buttons/typeahead, embed, shadow, noise, prefilled, sensitive
-3. **PR C — Learns, multi-step, Workday, AI** (Stories 3, 4, 5).
+4. **PR D — Learns, multi-step, Workday, AI** (Stories 3, 4, 5).
    - noticing answers
    - keep-filling
    - Workday experience and education from the stored résumé reading
