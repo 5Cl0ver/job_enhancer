@@ -61,7 +61,8 @@ test("one press: every later step fills as it appears, from the profile and the 
   const page = await ext.context.newPage();
   await page.goto(URL);
   await page.locator("#jec-autofill").click();
-  await expect.poll(async () => (await form(page)).legalNameSection_firstName, { timeout: 15000 }).toBe("Wren");
+  // The step is done when its last field (after the country dropdown) is in.
+  await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   const one = await form(page);
   expect(one.email).toBe(PERSON.email);
   expect(one["phone-number"]).toBe(PERSON.profile.phone);
@@ -96,7 +97,8 @@ test("what you type is offered as you move on — answers and profile — and fi
   const page = await ext.context.newPage();
   await page.goto(URL);
   await page.locator("#jec-autofill").click();
-  await expect.poll(async () => (await form(page)).legalNameSection_firstName, { timeout: 15000 }).toBe("Wren");
+  // The step is done when its last field (after the country dropdown) is in.
+  await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   // The profile had no street address: the user types it, then moves on.
   await page.locator("#addressSection_addressLine1").fill("12 Ferry Lane");
   await next(page);
@@ -142,7 +144,8 @@ test("Keep filling can be switched off in the panel", async () => {
   const page = await ext.context.newPage();
   await page.goto(URL);
   await page.locator("#jec-autofill").click();
-  await expect.poll(async () => (await form(page)).legalNameSection_firstName, { timeout: 15000 }).toBe("Wren");
+  // The step is done when its last field (after the country dropdown) is in.
+  await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   const panel = await panelFor(page);
   const keep = panel.getByRole("switch", { name: "Keep filling this application" });
   await expect(keep).toHaveAttribute("aria-checked", "true");
@@ -159,7 +162,8 @@ test("an unsure AI answer is a suggestion: shown, filled only on Use", async () 
   const page = await ext.context.newPage();
   await page.goto(URL);
   await page.locator("#jec-autofill").click();
-  await expect.poll(async () => (await form(page)).legalNameSection_firstName, { timeout: 15000 }).toBe("Wren");
+  // The step is done when its last field (after the country dropdown) is in.
+  await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   await next(page);
   await next(page);
   await expect.poll(async () => (await form(page))["q-auth"], { timeout: 15000 }).toBe("Yes");
