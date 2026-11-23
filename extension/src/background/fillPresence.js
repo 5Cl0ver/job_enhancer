@@ -5,7 +5,15 @@
 // Kept in storage.session: it survives the worker sleeping and goes with the
 // browser session.
 
+import { matchesPattern } from "./reinject.js";
+
 const formKey = (tabId) => `je_form:${tabId}`;
+
+/** Where the manifest runs the autofill reader (the tests add their lab). */
+function autofillMatches() {
+  const cs = (chrome.runtime.getManifest().content_scripts || []).find((c) => (c.js || []).some((f) => /autofill/.test(f)));
+  return cs?.matches || [];
+}
 const statusKey = (tabId) => `je_status:${tabId}`;
 
 const BADGE = { ready: "#4f46e5", done: "#16a34a", problem: "#d97706" };
@@ -146,12 +154,15 @@ export function createFillPresence({ notify }) {
       results = await chrome.scripting.executeScript({
         target: { tabId, allFrames: true },
         injectImmediately: true,
-        func: () => !!globalThis.__jecAutofill?.alive?.(),
+        func: () => ({ alive: !!globalThis.__jecAutofill?.alive?.(), origin: self.origin }),
       });
     } catch {
       return { ok: false, frames: 0, injected: 0 }; // a page Chrome keeps extensions out of
     }
-    const dead = results.filter((r) => !r.result).map((r) => r.frameId);
+    // Only where the manifest's reader belongs (https pages, never plain
+    // http), in frames whose reader is missing or orphaned.
+    const allowed = (origin) => autofillMatches().some((p) => matchesPattern(`${origin}/`, p));
+    const dead = results.filter((r) => r.result && !r.result.alive && allowed(r.result.origin)).map((r) => r.frameId);
     if (dead.length) {
       await chrome.scripting
         .executeScript({ target: { tabId, frameIds: dead }, injectImmediately: true, files: ["dist/autofill.js"] })
@@ -166,10 +177,14 @@ export function createFillPresence({ notify }) {
   async function report(tabId) {
     let results = [];
     try {
-      results = await chrome.scripting.executeScript({
-        target: { tabId, allFrames: true },
-        func: () => globalThis.__jecAutofill?.report?.() ?? null,
-      });
+      results = await Promise.race([
+        chrome.scripting.executeScript({
+          target: { tabId, allFrames: true },
+          injectImmediately: true,
+          func: () => globalThis.__jecAutofill?.report?.() ?? null,
+        }),
+        new Promise((r) => setTimeout(() => r([]), 5000)), // a frame that never loads
+      ]);
     } catch {
       results = [];
     }
@@ -199,11 +214,11 @@ export function createFillPresence({ notify }) {
     if (pressing.has(tabId)) return { ok: false, busy: true, filled: 0, need: 0 };
     pressing.add(tabId);
     try {
-      let out = await pressOnce(tabId, "Starting…");
+      let out = await pressOnce(tabId, { note: "Starting…", retry: false });
       if (out.blind) {
         await setStatus(tabId, { phase: "filling", done: 0, total: 0, note: "Looking deeper…" });
         await readAgain(tabId);
-        out = await pressOnce(tabId, "Looking deeper…");
+        out = await pressOnce(tabId, { note: "Looking deeper…", retry: true });
       }
       return out.result;
     } finally {
@@ -212,7 +227,7 @@ export function createFillPresence({ notify }) {
   }
 
   /** One press; `blind` when no frame saw a field (or none answered). */
-  async function pressOnce(tabId, note) {
+  async function pressOnce(tabId, { note, retry }) {
     const frames = Object.entries(await readForms(tabId)).map(([id, p]) => ({ id: Number(id), p }));
     let targets = frames.filter((f) => f.p.form);
     if (targets.some((f) => f.p.inModal)) targets = targets.filter((f) => f.p.inModal);
@@ -242,10 +257,12 @@ export function createFillPresence({ notify }) {
     const seen = ok.reduce((n, r) => n + (r.seen ?? 1), 0);
     const r = replies.find((x) => x && !x.ok) || {};
     // Already filling (a new step, keep filling): that run reports its own result.
-    if (!ok.length && r.busy) return { result: { ok: false, busy: true, filled: 0, need: 0 } };
-    // Signed out / app asleep: reading again wouldn't help.
-    const stopped = r.signedIn === false || r.unreachable;
-    const blind = !stopped && note !== "Looking deeper…" && (ok.length ? seen === 0 && !filled : true);
+    if (!ok.length && replies.some((x) => x?.busy)) return { result: { ok: false, busy: true, filled: 0, need: 0 } };
+    // Blind: frames answered but saw no field, or no frame answered at all.
+    // Never when signed out, the app is asleep or a frame is just slow:
+    // reading again wouldn't help, and a slow frame is still filling.
+    const waiting = replies.some((x) => x && (x.signedIn === false || x.unreachable || x.slow));
+    const blind = !retry && !waiting && (ok.length ? seen === 0 && !filled : replies.every((x) => !x || !x.ok));
     if (blind) return { blind: true };
     if (ok.length) {
       await setStatus(tabId, { phase: "done", filled, need, seen });

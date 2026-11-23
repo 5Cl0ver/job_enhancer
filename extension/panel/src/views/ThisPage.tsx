@@ -65,7 +65,7 @@ function NoForm({ known }: { known: boolean }) {
         )}
       </div>
       {/* Can see a form Job Catcher can't? Never stuck (spec 017). */}
-      {known && <Trouble tabId={tab.id} />}
+      {known && <Trouble key={tab.url} tabId={tab.id} />}
     </div>
   );
 }

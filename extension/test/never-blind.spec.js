@@ -15,22 +15,26 @@ const EMAIL = "wren@example.com";
 const copy = () => ({ values: profileValues(PROFILE, EMAIL, new Date("2026-11-23T12:00:00")), answers: [], resumeFile: null });
 
 /** A stand-in element with the rendering facts a test wants. */
-function el({ attrs = {}, visible = true, rects = 1 } = {}) {
+function el({ attrs = {}, visible = true, rects = 1, box = { left: 10, top: 10, right: 210, bottom: 40, width: 200, height: 30 }, hiddenWrapper = false, inPopup = false, tag = "INPUT" } = {}) {
   return {
     isConnected: true,
+    tagName: tag,
     getAttribute: (k) => (k in attrs ? attrs[k] : null),
     checkVisibility: () => visible,
     getClientRects: () => Array(rects).fill({}),
-    closest: () => null,
+    getBoundingClientRect: () => box,
+    closest: (sel) => (/aria-hidden/.test(sel) ? (hiddenWrapper ? {} : null) : /dialog/.test(sel) ? (inPopup ? {} : null) : null),
+    ownerDocument: { documentElement: { scrollWidth: 1280 }, defaultView: { innerWidth: 1280, scrollX: 0, scrollY: 0 } },
   };
 }
 
 describe("on screen = drawn on screen (never accessibility attributes)", () => {
-  it("a box inside an aria-hidden or inert wrapper is still on screen", () => {
-    // closest() isn't even consulted: ancestors' aria-hidden / inert don't count.
-    const box = el();
-    box.closest = () => ({ getAttribute: () => "true" });
-    expect(hiddenReason(box)).toBe("");
+  it("a box inside an open pop-up is on screen even when its ancestors are aria-hidden (MUI v4)", () => {
+    expect(hiddenReason(el({ hiddenWrapper: true, inPopup: true }))).toBe("");
+  });
+
+  it("…but outside a pop-up, aria-hidden / inert still hide it (the page behind, a drawer, a trap)", () => {
+    expect(hiddenReason(el({ hiddenWrapper: true }))).toBe("hidden_from_page");
   });
 
   it("not drawn: display:none / visibility:hidden (checkVisibility), or no size", () => {
@@ -41,6 +45,21 @@ describe("on screen = drawn on screen (never accessibility attributes)", () => {
   it("a library's hidden copy of a drawn control (aria-hidden AND out of the tab order) isn't a field", () => {
     expect(hiddenReason(el({ attrs: { "aria-hidden": "true", tabindex: "-1" } }))).toBe("proxy");
     expect(hiddenReason(el({ attrs: { "aria-hidden": "true" } }))).toBe(""); // focusable: a real box
+  });
+
+  it("spam traps only bots fill are never boxes", () => {
+    // Parked far off the page (left: -9999px)
+    expect(hiddenReason(el({ box: { left: -9999, right: -9799, top: 10, bottom: 40, width: 200, height: 30 } }))).toBe("off_page");
+    // A speck of a box
+    expect(hiddenReason(el({ box: { left: 10, right: 11, top: 10, bottom: 11, width: 1, height: 1 } }))).toBe("speck");
+    // A box to type in that's out of the tab order (Mailchimp's b_… field)
+    expect(hiddenReason(el({ attrs: { tabindex: "-1" } }))).toBe("trap");
+    expect(hiddenReason(el({ attrs: { tabindex: "-1", type: "radio" } }))).toBe(""); // a drawn radio's input
+  });
+
+  it("…but a real box scrolled above the view of a long pop-up stays", () => {
+    expect(hiddenReason(el({ box: { left: 300, right: 700, top: -900, bottom: -860, width: 400, height: 40 } }))).toBe("");
+
   });
 });
 
@@ -92,5 +111,18 @@ describe("what Job Catcher saw: the report", () => {
     // happy-dom draws nothing, so each is "no_size" before its other reason
     expect(r.found).toBe(3);
     expect(Object.values(r.dropped).reduce((a, b) => a + b, 0)).toBe(3);
+  });
+});
+
+describe("a label never carries the answer", () => {
+  it("a dropdown's chosen value isn't read as its question", async () => {
+    const { questionFor } = await import("../src/autofill/scan.js");
+    const doc = parse(`
+      <label id="g-l">Gender</label>
+      <div role="combobox" id="g" aria-labelledby="g-l g"><span>Female</span></div>
+      <div class="field"><div>Location</div>
+        <div class="select__control"><div class="select__single-value">Harborview, OR</div><input id="loc" role="combobox"></div></div>`);
+    expect(questionFor(doc.querySelector("#g"))).toBe("Gender");
+    expect(questionFor(doc.querySelector("#loc"))).not.toMatch(/Harborview/);
   });
 });

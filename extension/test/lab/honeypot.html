@@ -1,0 +1,23 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 017: an application with the spam traps
+     ("honeypots") real forms use — boxes only bots fill. Filling any of them
+     can get an application thrown out. A person sees only the real boxes. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Apply - Tidewell Labs</title></head>
+  <body>
+    <form id="apply">
+      <p><label for="fn">First name</label><input id="fn" name="first_name"></p>
+      <p><label for="ln">Last name</label><input id="ln" name="last_name"></p>
+      <p><label for="em">Email</label><input id="em" name="email" type="email"></p>
+      <!-- Mailchimp's: parked off the page, out of the tab order, hidden from screen readers -->
+      <div style="position: absolute; left: -5000px" aria-hidden="true"><input type="text" id="b1" name="b_8f2a_91c3" tabindex="-1" value=""></div>
+      <!-- A "website" trap with a label, off the page -->
+      <div style="position: absolute; left: -9999px; top: -9999px"><label for="website">Website</label><input id="website" name="website" autocomplete="off"></div>
+      <!-- A see-through trap -->
+      <p style="opacity: 0; position: absolute;"><label for="url">Your URL</label><input id="url" name="url"></p>
+      <!-- A 1px speck -->
+      <input id="speck" name="phone_confirm" style="width: 1px; height: 1px; padding: 0; border: 0" aria-label="Phone">
+      <button type="submit">Apply</button>
+    </form>
+  </body>
+</html>

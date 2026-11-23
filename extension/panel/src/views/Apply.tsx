@@ -30,7 +30,7 @@ const SOURCE: Record<string, { label: string; tone: string }> = {
 
 const WHY: Record<string, string> = {
   sensitive: "Only you answer this",
-  consent: "An agreement: only you can tick it",
+  consent: "A checkbox only you can tick",
   essay: "Written answer: yours to write",
   no_data: "Not in your profile yet",
   no_option: "None of its choices matched",
@@ -315,7 +315,7 @@ function StatusLine({
       />
       {text}
     </p>
-    {(trouble || quiet) && <Trouble tabId={tabId} quiet={quiet} />}
+    {(trouble || quiet) && <Trouble key={presence?.status?.at ?? 0} tabId={tabId} quiet={quiet} />}
     </>
   );
 }

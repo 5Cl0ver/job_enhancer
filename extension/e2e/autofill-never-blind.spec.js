@@ -125,3 +125,14 @@ test("a page whose reader was lost (an orphaned copy) is read again and filled b
   await expect(page.locator("#first")).toHaveValue("Wren");
   await page.close();
 });
+
+test("spam traps only bots fill stay empty; the real boxes fill", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/honeypot.html"));
+  const res = await ext.autofill(page);
+  expect(res.ok).toBe(true);
+  await expect(page.locator("#fn")).toHaveValue("Wren");
+  await expect(page.locator("#em")).toHaveValue(PERSON.email);
+  for (const trap of ["#b1", "#website", "#url", "#speck"]) await expect(page.locator(trap)).toHaveValue("");
+  await page.close();
+});

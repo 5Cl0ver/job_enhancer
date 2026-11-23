@@ -57,10 +57,17 @@ function showing(el) {
   return s.visibility !== "hidden" && s.display !== "none" && Number(s.opacity) > 0.05;
 }
 
+const BLOCKING = 'dialog[open], [aria-modal="true"], mat-dialog-container, sdf-dialog, sdf-modal, sdf-focus-pane[data-sdf-modal]';
+const ANY_BOX = "input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea, [role=combobox]";
+
 function openModal() {
-  const shown = [...document.querySelectorAll(MODALS)].filter(
-    (el) => showing(el) && [...el.querySelectorAll(TEXTISH)].filter(showing).length >= 2,
-  );
+  const shown = [...document.querySelectorAll(MODALS)].filter((el) => {
+    if (!showing(el)) return false;
+    // A blocking pop-up (it hides the page) with any box at all; any other
+    // dialog only with two boxes to type in (not a cookie banner's switches).
+    if (el.matches(BLOCKING)) return [...el.querySelectorAll(ANY_BOX)].some((c) => c.getClientRects().length);
+    return [...el.querySelectorAll(TEXTISH)].filter(showing).length >= 2;
+  });
   // The innermost, last-opened one (a pop-up inside a page-wide wrapper).
   return shown.filter((el) => !shown.some((o) => o !== el && el.contains(o))).pop() || null;
 }
@@ -170,6 +177,7 @@ async function loadCopy() {
   lastCopy = {
     values: profileValues(copy.profile, copy.email, new Date(), copy.history),
     answers: copy.answers || [],
+    taught: copy.taught || [],
     history: copy.history || null,
     resumeFile,
   };
@@ -406,7 +414,8 @@ globalThis.__jecAutofill = {
 
 // ---- Start ----------------------------------------------------------------
 
-if (document.body && isCurrent()) {
+function start() {
+  if (!document.body || !isCurrent()) return;
   // Keep filling carries over from the last step's page (same tab, same site).
   send({ type: "getKeepFilling" }).then((r) => {
     keepOn = !!r?.on;
@@ -441,3 +450,7 @@ if (document.body && isCurrent()) {
     check();
   });
 }
+
+// A copy injected while the page is still loading waits for its body.
+if (document.body) start();
+else document.addEventListener("DOMContentLoaded", start, { once: true });

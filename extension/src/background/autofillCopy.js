@@ -67,6 +67,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
           email: b.email || "",
           profile: b.profile || {},
           answers: b.answers || [],
+          taught: b.taught || [],
           history: b.history || null,
           resume: b.resume || null,
         },
@@ -121,7 +122,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
     return {
       signedIn: true,
       waited,
-      copy: { profile: held.profile, email: held.email, answers: held.answers, history: held.history },
+      copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history: held.history },
       resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime } : null,
     };
   }
