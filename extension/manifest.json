@@ -1,11 +1,22 @@
 {
   "manifest_version": 3,
   "name": "Job Enhancer — Job Catcher",
-  "version": "0.29.0",
+  "version": "0.30.0",
   "description": "Save jobs from any site to your Job Enhancer tracker — a side panel plus a one-click Save button on Indeed, LinkedIn & ZipRecruiter job pages.",
-  "permissions": ["sidePanel", "storage", "scripting", "activeTab"],
-  "host_permissions": ["http://*/*", "https://*/*"],
-  "background": { "service_worker": "dist/background.js" },
+  "permissions": [
+    "sidePanel",
+    "storage",
+    "scripting",
+    "activeTab",
+    "unlimitedStorage"
+  ],
+  "host_permissions": [
+    "http://*/*",
+    "https://*/*"
+  ],
+  "background": {
+    "service_worker": "dist/background.js"
+  },
   "action": {
     "default_title": "Open Job Enhancer",
     "default_icon": {
@@ -14,15 +25,25 @@
       "128": "icons/icon128.png"
     }
   },
-  "side_panel": { "default_path": "dist/panel/index.html" },
+  "side_panel": {
+    "default_path": "dist/panel/index.html"
+  },
   "content_scripts": [
     {
-      "matches": ["https://*.indeed.com/*", "https://*.linkedin.com/*", "https://*.ziprecruiter.com/*"],
-      "js": ["dist/content.js"],
+      "matches": [
+        "https://*.indeed.com/*",
+        "https://*.linkedin.com/*",
+        "https://*.ziprecruiter.com/*"
+      ],
+      "js": [
+        "dist/content.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://*/*"],
+      "matches": [
+        "https://*/*"
+      ],
       "exclude_matches": [
         "https://*.indeed.com/*",
         "https://*.linkedin.com/*",
@@ -36,30 +57,55 @@
         "https://outlook.office365.com/*",
         "https://mail.proton.me/*"
       ],
-      "js": ["dist/scoutpage.js"],
+      "js": [
+        "dist/scoutpage.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://careers.google.com/*", "https://www.google.com/about/careers/*"],
-      "js": ["dist/scoutpage.js"],
+      "matches": [
+        "https://careers.google.com/*",
+        "https://www.google.com/about/careers/*"
+      ],
+      "js": [
+        "dist/scoutpage.js"
+      ],
       "run_at": "document_idle"
     },
     {
-      "matches": ["https://*.indeed.com/*"],
-      "js": ["dist/bridge.js"],
+      "matches": [
+        "https://*.indeed.com/*"
+      ],
+      "js": [
+        "dist/bridge.js"
+      ],
       "run_at": "document_start",
       "world": "MAIN"
     },
     {
-      "matches": ["https://*/*"],
-      "js": ["dist/autofill.js"],
+      "matches": [
+        "https://*/*"
+      ],
+      "js": [
+        "dist/autofill.js"
+      ],
       "run_at": "document_idle",
-      "all_frames": true
+      "all_frames": true,
+      "match_about_blank": true,
+      "match_origin_as_fallback": true
     }
   ],
   "icons": {
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "commands": {
+    "autofill": {
+      "suggested_key": {
+        "default": "Alt+Shift+F"
+      },
+      "description": "Autofill this application"
+    }
   }
 }

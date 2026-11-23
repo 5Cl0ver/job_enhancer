@@ -50,41 +50,41 @@ Delivery is three PRs, as in [plan.md](plan.md):
 
 ## Phase 4: Foundational for autofill (PR C)
 
-- [ ] T013 Migration l0a1b2c3d4e6, adding resumes.parsed_history (JSON) and parsed_history_at, in backend/alembic/versions/ and backend/app/models/resume.py
-- [ ] T014 [P] pytest for the bundle (full, unchanged, version changes, isolation, history_pending, 401) in backend/tests/api/test_autofill_bundle.py
-- [ ] T015 Bundle service + version in backend/app/services/autofill_bundle.py; router GET /v1/autofill/bundle in backend/app/api/v1/autofill.py; registered in backend/app/main.py
-- [ ] T016 parse_resume_history (work + education) in backend/app/services/ai_service.py; run it on résumé upload and lazily from the bundle; serve /v1/ai/work-history from the cache, in backend/app/api/v1/ai.py
-- [ ] T017 The background autofill copy (change check, résumé bytes, wipe on sign-out or account change, refresh on panel open and on press, at most every 60 s) in extension/src/background/autofillCopy.js
-- [ ] T018 The session relay (storage.session per tab/frame, merge, sessionChanged broadcast, frame-addressed panel actions) in extension/src/background/sessions.js
+- [ ] T013 (moved to PR D, with the résumé reading) Migration l0a1b2c3d4e6, adding resumes.parsed_history (JSON) and parsed_history_at, in backend/alembic/versions/ and backend/app/models/resume.py
+- [X] T014 [P] pytest for the bundle (full, unchanged, version changes, isolation, history_pending, 401) in backend/tests/api/test_autofill_bundle.py
+- [X] T015 Bundle service + version in backend/app/services/autofill_bundle.py; router GET /v1/autofill/bundle in backend/app/api/v1/autofill.py; registered in backend/app/main.py
+- [ ] T016 (PR D) parse_resume_history (work + education) in backend/app/services/ai_service.py; run it on résumé upload and lazily from the bundle; serve /v1/ai/work-history from the cache, in backend/app/api/v1/ai.py
+- [X] T017 The background autofill copy (change check, résumé bytes, wipe on sign-out or account change, refresh on panel open and on press, at most every 60 s) in extension/src/background/autofillCopy.js
+- [X] T018 The session relay (storage.session per tab/frame, merge, sessionChanged broadcast, frame-addressed panel actions) in extension/src/background/sessions.js
 
 ## Phase 5: User Story 1 — one press fills the page, right, instantly (P1, PR C)
 
 **Independent test**: lab pages classic, react-form, shadow, embed-host, noise, prefilled and sensitive. Check the page's own data, the time from press to filled (under 1 s), and a 30 s server delay.
 
-- [ ] T019 [P] [US1] Lab pages: classic.html, buttons-typeahead.html, embed-host.html, shadow.html, noise.html, prefilled.html, sensitive.html in extension/test/lab/
-- [ ] T020 [P] [US1] Lab React app (react-select-style search dropdown, location typeahead, yes/no buttons, date, controlled inputs; React state exposed as window.__formData) in extension/test/lab/react-form/, built by extension/test/lab/build.mjs
-- [ ] T021 [P] [US1] Browser tests for Story 1 scenarios 1–8 in extension/e2e/autofill-fill.spec.js
-- [ ] T022 [P] [US1] Unit tests for the deep walk, labels, controls and page detection in extension/test/scan.spec.js
-- [ ] T023 [P] [US1] Unit tests for profile keys, guards, resolve and matchOption in extension/test/resolve.spec.js; the existing autofill.spec.js and workday.spec.js are moved over and kept green
-- [ ] T024 [US1] Deep walk (shadow roots via an injected getter, same-origin frames) in extension/src/autofill/scan/walk.js
-- [ ] T025 [US1] Question resolution (R4) in extension/src/autofill/scan/label.js
-- [ ] T026 [US1] Control → Field (kinds, groups, options, sections) in extension/src/autofill/scan/controls.js; looksLikeApplication + stepFingerprint in extension/src/autofill/scan/page.js
-- [ ] T027 [US1] Profile keys and guards (moved from mapper.js and extended per R6) in extension/src/autofill/classify/profileKeys.js; normalizeQuestion, matchAnswer and matchOption in extension/src/autofill/classify/answers.js
-- [ ] T028 [US1] resolve(field, copy) → Decision or Skip in extension/src/autofill/resolve.js
-- [ ] T029 [US1] Writers with read-back, snapshot and restore: events.js, text.js, select.js, combobox.js, choice.js, date.js, file.js, index.js in extension/src/autofill/widgets/
-- [ ] T030 [US1] The session's instant tier (scan → resolve → write → verify → report) in extension/src/autofill/session.js
-- [ ] T031 [US1] The shadow-root pill + per-root outline styles in extension/src/autofill/ui/pill.js
-- [ ] T032 [US1] Rewrite extension/src/autofill.entry.js as a thin boot: pill only on looksLikeApplication, runAutofill in every frame, orphan guard. Delete src/autofill/mapper.js, fill.js and workday.js once their logic has moved.
-- [ ] T033 [US1] Manifest: `commands.autofill` (Alt+Shift+F), `unlimitedStorage`, `match_origin_as_fallback` on autofill; the background handles the command, in extension/manifest.json and extension/src/background.entry.js
+- [X] T019 [P] [US1] Lab pages: classic.html, buttons-typeahead.html, embed-host.html, shadow.html, noise.html, prefilled.html, sensitive.html in extension/test/lab/
+- [X] T020 [P] [US1] Lab React app (react-select-style search dropdown, location typeahead, yes/no buttons, date, controlled inputs; React state exposed as window.__formData) in extension/test/lab/react-form/, built by extension/test/lab/build.mjs
+- [X] T021 [P] [US1] Browser tests for Story 1 scenarios 1–8 in extension/e2e/autofill-fill.spec.js
+- [X] T022 [P] [US1] Unit tests for the deep walk, labels, controls and page detection in extension/test/scan.spec.js
+- [X] T023 [P] [US1] Unit tests for profile keys, guards, resolve and matchOption in extension/test/resolve.spec.js; the existing autofill.spec.js and workday.spec.js are moved over and kept green
+- [X] T024 [US1] Deep walk (shadow roots via an injected getter, same-origin frames) in extension/src/autofill/scan/walk.js
+- [X] T025 [US1] Question resolution (R4) in extension/src/autofill/scan/label.js
+- [X] T026 [US1] Control → Field (kinds, groups, options, sections) in extension/src/autofill/scan/controls.js; looksLikeApplication + stepFingerprint in extension/src/autofill/scan/page.js
+- [X] T027 [US1] Profile keys and guards (moved from mapper.js and extended per R6) in extension/src/autofill/classify/profileKeys.js; normalizeQuestion, matchAnswer and matchOption in extension/src/autofill/classify/answers.js
+- [X] T028 [US1] resolve(field, copy) → Decision or Skip in extension/src/autofill/resolve.js
+- [X] T029 [US1] Writers with read-back, snapshot and restore: events.js, text.js, select.js, combobox.js, choice.js, date.js, file.js, index.js in extension/src/autofill/widgets/
+- [X] T030 [US1] The session's instant tier (scan → resolve → write → verify → report) in extension/src/autofill/session.js
+- [X] T031 [US1] The shadow-root pill + per-root outline styles in extension/src/autofill/ui/pill.js
+- [X] T032 [US1] Rewrite extension/src/autofill.entry.js as a thin boot: pill only on looksLikeApplication, runAutofill in every frame, orphan guard. Delete src/autofill/mapper.js, fill.js and workday.js once their logic has moved.
+- [X] T033 [US1] Manifest: `commands.autofill` (Alt+Shift+F), `unlimitedStorage`, `match_origin_as_fallback` on autofill; the background handles the command, in extension/manifest.json and extension/src/background.entry.js
 
 ## Phase 6: User Story 2 — review everything in one place (P1, PR C)
 
 **Independent test**: autofill a lab form, open Review, then Fix, Undo, Undo all, and check the page's data after each.
 
-- [ ] T034 [P] [US2] Browser tests for Review (list, Fix, Show, Undo, Undo all, step change refresh, openReview opens the panel) in extension/e2e/autofill-review.spec.js
-- [ ] T035 [US2] Frame handlers for applyFix, undo, show, useSuggestion and setKeepFilling in extension/src/autofill/session.js
-- [ ] T036 [US2] Side panel Apply view (Need you, Check these, collapsed Filled, Undo all, keep-filling switch) in extension/panel/src/views/Apply.tsx, replacing the PR B placeholder
-- [ ] T037 [US2] openReview → chrome.sidePanel.open({tabId}) in extension/src/background.entry.js
+- [X] T034 [P] [US2] Browser tests for Review (list, Fix, Show, Undo, Undo all, step change refresh, openReview opens the panel) in extension/e2e/autofill-review.spec.js
+- [X] T035 [US2] Frame handlers for applyFix, undo, show, useSuggestion and setKeepFilling in extension/src/autofill/session.js
+- [X] T036 [US2] Side panel Apply view (Need you, Check these, collapsed Filled, Undo all, keep-filling switch) in extension/panel/src/views/Apply.tsx, replacing the PR B placeholder
+- [X] T037 [US2] openReview → chrome.sidePanel.open({tabId}) in extension/src/background.entry.js
 
 ## Phase 7: User Story 3 — it learns (P2, PR D)
 

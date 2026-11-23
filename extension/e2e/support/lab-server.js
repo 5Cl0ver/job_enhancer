@@ -5,12 +5,28 @@
 import { createServer } from "node:http";
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { extname, join, normalize } from "node:path";
+import { buildSync } from "esbuild";
 import { ROOT } from "./launch.js";
+
+/** Build the lab's React form (test/lab/react-form/main.jsx → app.js). */
+function buildReactForm() {
+  const dir = join(ROOT, "test", "lab", "react-form");
+  buildSync({
+    entryPoints: [join(dir, "main.jsx")],
+    outfile: join(dir, "app.js"),
+    bundle: true,
+    format: "iife",
+    jsx: "automatic",
+    define: { "process.env.NODE_ENV": "\"production\"" },
+    logLevel: "error",
+  });
+}
 
 const DIRS = { "/lab/": join(ROOT, "test", "lab"), "/fixtures/": join(ROOT, "test", "fixtures") };
 const TYPES = { ".html": "text/html", ".js": "text/javascript", ".css": "text/css", ".json": "application/json" };
 
 export async function startLabServer() {
+  buildReactForm();
   const submissions = []; // forms the TEST submitted (the extension never does)
   const server = createServer(async (req, res) => {
     const path = decodeURIComponent((req.url || "/").split("?")[0]);

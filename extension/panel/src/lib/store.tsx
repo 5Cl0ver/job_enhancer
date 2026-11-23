@@ -7,6 +7,30 @@ import { send, targetTab } from "./chrome";
 import { useClaudeUrlState } from "./claudeUrl";
 
 type Auth = { state: "loading" | "in" | "out"; email: string };
+
+/** One field autofill filled, in one frame of the tab (session.js report). */
+export interface FillEntry {
+  id: string;
+  frameId: number;
+  label: string;
+  kind: string;
+  source: "profile" | "learned" | "ai";
+  value: string;
+  options: string[];
+  can_undo: boolean;
+  fixed?: boolean;
+}
+/** A field left for the user, and why. */
+export interface FillNeed {
+  id: string;
+  frameId: number;
+  label: string;
+  kind: string;
+  reason: string;
+  options: string[];
+}
+export type Fill = { entries: FillEntry[]; needYou: FillNeed[]; frameIds: number[] };
+const NO_FILL: Fill = { entries: [], needYou: [], frameIds: [] };
 type Saved = { jobs: SavedJob[]; loaded: boolean; error: string | null };
 type Tab = { id: number | null; url: string; title: string; ctx: PageContext };
 
@@ -23,6 +47,8 @@ interface Panel {
   /** The tailored résumé the next Autofill uploads (its file name), if any. */
   staged: string | null;
   setStaged: (docId: string | null, filename?: string) => Promise<void>;
+  /** What autofill did on the tab beside the panel, every frame merged. */
+  fill: Fill;
 }
 
 const PanelContext = React.createContext<Panel | null>(null);
@@ -41,6 +67,32 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   const [tab, setTab] = React.useState<Tab>(NO_TAB);
   const [claudeUrl, setClaudeUrl] = useClaudeUrlState(auth.state === "in");
   const [staged, setStagedName] = React.useState<string | null>(null);
+  const [fill, setFill] = React.useState<Fill>(NO_FILL);
+  const tabId = tab.id;
+
+  const loadFill = React.useCallback(async (id: number | null) => {
+    if (id == null) return setFill(NO_FILL);
+    const res = await send({ type: "getFillSession", tabId: id });
+    const frames = (res?.frames || {}) as Record<string, { entries?: Omit<FillEntry, "frameId">[]; need_you?: Omit<FillNeed, "frameId">[] }>;
+    const entries: FillEntry[] = [];
+    const needYou: FillNeed[] = [];
+    for (const [fid, f] of Object.entries(frames)) {
+      const frameId = Number(fid);
+      for (const e of f.entries || []) entries.push({ ...e, frameId });
+      for (const n of f.need_you || []) needYou.push({ ...n, frameId });
+    }
+    setFill({ entries, needYou, frameIds: Object.keys(frames).map(Number) });
+  }, []);
+
+  // The tab changed, or one of its frames filled / fixed / undid something.
+  React.useEffect(() => {
+    loadFill(tabId);
+    const onMessage = (msg: { type?: string; tabId?: number }) => {
+      if (msg?.type === "sessionChanged" && msg.tabId === tabId) loadFill(tabId);
+    };
+    chrome.runtime.onMessage.addListener(onMessage);
+    return () => chrome.runtime.onMessage.removeListener(onMessage);
+  }, [tabId, loadFill]);
 
   const setStaged = React.useCallback(async (docId: string | null, filename?: string) => {
     try {
@@ -101,6 +153,7 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   React.useEffect(() => {
     refreshAuth();
     refreshTab();
+    send({ type: "refreshAutofillCopy" });
     chrome.storage.local
       .get("je_staged_resume")
       .then(({ je_staged_resume }) => setStagedName((je_staged_resume as { filename?: string } | undefined)?.filename || null))
@@ -136,8 +189,8 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   }, [refreshAuth, refreshTab, sync]);
 
   const value = React.useMemo(
-    () => ({ auth, refreshAuth, signedOut, saved, reloadSaved, tab, refreshTab, claudeUrl, setClaudeUrl, staged, setStaged }),
-    [auth, refreshAuth, signedOut, saved, reloadSaved, tab, refreshTab, claudeUrl, setClaudeUrl, staged, setStaged],
+    () => ({ auth, refreshAuth, signedOut, saved, reloadSaved, tab, refreshTab, claudeUrl, setClaudeUrl, staged, setStaged, fill }),
+    [auth, refreshAuth, signedOut, saved, reloadSaved, tab, refreshTab, claudeUrl, setClaudeUrl, staged, setStaged, fill],
   );
   return <PanelContext.Provider value={value}>{children}</PanelContext.Provider>;
 }

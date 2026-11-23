@@ -1,15 +1,16 @@
 // "This page": what Job Catcher can do on the tab beside it. One clear main
 // action per kind of page: fill an application, save a posting, sync Indeed.
 import * as React from "react";
-import { CheckCircle2, ClipboardCheck, ExternalLink, FileText, MousePointerClick, PenLine, RefreshCw, Save, Zap } from "lucide-react";
+import { ExternalLink, FileText, MousePointerClick, RefreshCw, Save } from "lucide-react";
 import { Alert, Badge, Button, Card, Field, Input, Muted, SectionTitle, Select, Switch, Textarea } from "@/ui";
 import { bestJobMatch, findDuplicate, type SavedJob } from "@/lib/context";
 import { send } from "@/lib/chrome";
 import { usePanel } from "@/lib/store";
 import { extractJobFromPage } from "@/lib/extractPage.js";
+import { Apply } from "@/views/Apply";
 
 export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void }) {
-  const { tab, saved } = usePanel();
+  const { tab, saved, fill } = usePanel();
   const ctx = tab.ctx;
   const match = bestJobMatch(tab.title, saved.jobs);
 
@@ -17,95 +18,12 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   if (ctx.kind === "indeed-myjobs") return <IndeedSync key={tab.url} />;
   return (
     <div className="flex flex-col gap-3">
-      {ctx.kind === "application" && (
-        <ApplyCard site={ctx.site} autoTracked={ctx.autoTracked} match={match} onWrite={onWrite} />
+      {(ctx.kind === "application" || fill.entries.length + fill.needYou.length > 0) && (
+        <Apply site={ctx.site} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onWrite={onWrite} />
       )}
       {/* A fresh card per page: nothing carries over from the last one. */}
-      <SaveJob key={tab.url} compact={ctx.kind === "application"} site={ctx.site} match={match} />
+      <SaveJob key={tab.url} compact={ctx.kind === "application" || fill.entries.length > 0} site={ctx.site} match={match} />
     </div>
-  );
-}
-
-// --- Applying ---------------------------------------------------------------
-
-function ApplyCard({
-  site,
-  autoTracked,
-  match,
-  onWrite,
-}: {
-  site: string;
-  autoTracked: boolean;
-  match: SavedJob | null;
-  onWrite: (id: string) => void;
-}) {
-  const { tab, reloadSaved, staged } = usePanel();
-  const [fill, setFill] = React.useState<"idle" | "busy" | "done" | "failed">("idle");
-  const [marking, setMarking] = React.useState(false);
-
-  async function autofill() {
-    if (!tab.id) return;
-    setFill("busy");
-    let res = null;
-    try {
-      res = await chrome.tabs.sendMessage(tab.id, { type: "runAutofill" });
-    } catch {
-      res = null;
-    }
-    setFill(res?.ok ? "done" : "failed");
-  }
-
-  async function markApplied() {
-    if (!match) return;
-    setMarking(true);
-    await send({ type: "markApplied", job: { title: match.title, company: match.company } });
-    await reloadSaved();
-    setMarking(false);
-  }
-
-  return (
-    <Card className="flex flex-col gap-3">
-      <div className="flex flex-col gap-0.5">
-        <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">Applying on {site}</span>
-        <SectionTitle>{match ? match.title : "Application in progress"}</SectionTitle>
-        <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>
-      </div>
-      <Button onClick={autofill} busy={fill === "busy"} className="w-full">
-        {fill !== "busy" && <Zap />}
-        {fill === "busy" ? "Filling…" : "Autofill this page"}
-      </Button>
-      {staged && fill !== "done" && (
-        <Muted>
-          Uploads your tailored résumé <b className="break-all text-foreground">{staged}</b>.
-        </Muted>
-      )}
-      {fill === "done" && <Alert tone="success">Filled. Check every field on the page, then submit it yourself.</Alert>}
-      {fill === "failed" && (
-        <Alert tone="warning">Couldn't reach the page. Refresh it once, then try again.</Alert>
-      )}
-      <div className="flex flex-wrap items-center gap-2">
-        {match?.applied ? (
-          <Badge variant="success">
-            <CheckCircle2 aria-hidden /> Tracked as applied
-          </Badge>
-        ) : match ? (
-          <Button variant="outline" size="sm" onClick={markApplied} busy={marking}>
-            {!marking && <ClipboardCheck />}I submitted it: mark applied
-          </Button>
-        ) : null}
-        {match?.job_listing_id && (
-          <Button variant="ghost" size="sm" onClick={() => onWrite(match.job_listing_id)}>
-            <PenLine />
-            Write for this job
-          </Button>
-        )}
-      </div>
-      <Muted>
-        {autoTracked
-          ? "Autofill never submits. When you submit, the job moves to Applied by itself."
-          : "Autofill never submits. After you submit, press Mark applied."}
-      </Muted>
-    </Card>
   );
 }
 

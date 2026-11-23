@@ -181,7 +181,7 @@ test("applying: the panel knows the job, fills the page, and marks it applied", 
   await expect(panel.getByRole("heading", { name: "Help Desk Analyst" })).toBeVisible();
   await panel.getByRole("button", { name: "Autofill this page" }).click();
   await expect(tab.locator("#first")).toHaveValue("Wren", { timeout: 10000 });
-  await expect(panel.getByText(/Check every field on the page/)).toBeVisible();
+  await expect(panel.getByText("nothing was submitted", { exact: false })).toBeVisible();
   await panel.getByRole("button", { name: /mark applied/ }).click();
   await expect(panel.getByText("Tracked as applied")).toBeVisible();
   expect(errors).toEqual([]);

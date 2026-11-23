@@ -4,8 +4,14 @@
 // user's parsed résumé history (most recent first) — clicking "Add Another" to
 // make a block per job, and filling title / company / location / role / dates.
 // PURE-ish (DOM only) so it's unit-tested with happy-dom.
-import { setNativeValue, markFilled } from "./fill.js";
-import { keyForText, normalizeQuestion, matchAnswer, SELF_ID, BOOL_KEYS } from "./mapper.js";
+// (Its questionnaire dropdowns are filled by the general engine now:
+// widgets.js handles any dropdown drawn as a button.)
+import { setNativeValue } from "./widgets.js";
+
+/** Outline a filled control like the rest of autofill (session.js). */
+function markFilled(el) {
+  el?.setAttribute?.("data-jec-fill", "profile");
+}
 
 /** Is this a Workday application with a Work Experience section? */
 export function isWorkdayExperience(doc) {
@@ -163,182 +169,6 @@ export async function fillWorkExperience(blocks, entries, opts = {}) {
     }
   }
   return { filled, details };
-}
-
-// ---- Workday questionnaire dropdowns -------------------------------------
-// The "Application Questions" page uses custom listbox widgets (a button that
-// pops open an option list), NOT <select> — so the generic passes can't see
-// them. Each is a <button aria-haspopup="listbox"> inside a formField, with the
-// question in the fieldset's legend.
-
-/** Every Workday questionnaire dropdown with its question text. */
-export function collectWorkdayDropdowns(doc) {
-  if (!doc?.querySelectorAll) return [];
-  const out = [];
-  for (const button of doc.querySelectorAll('button[aria-haspopup="listbox"]')) {
-    const field = button.closest('[data-automation-id^="formField-"]');
-    if (!field) continue;
-    const legend = field.querySelector('legend [data-automation-id="richText"]') || field.querySelector("legend");
-    const question = (legend?.textContent || "")
-      .replace(/\s+/g, " ")
-      .replace(/\*/g, "")
-      .trim();
-    if (!question) continue;
-    // Protected self-ID (ethnicity/gender/veteran/disability) is the user's to
-    // answer — never surface it for known-answer, learned, or AI filling.
-    if (SELF_ID.test(question)) continue;
-    out.push({ button, field, question, current: (button.textContent || "").trim() });
-  }
-  return out;
-}
-
-// The answer for a questionnaire dropdown, or null: a profile Yes/No (work
-// authorization, sponsorship, relocation…) or a previously-learned answer.
-// Returns {answer, source} so the summary can label it correctly (green profile
-// vs blue remembered) and so a "Fix" on a remembered one re-saves properly.
-// Legal attestations we have no data for return null → left for the user.
-function dropdownAnswer(question, values, answers) {
-  const key = keyForText(question);
-  if (key && typeof values[key] === "boolean") {
-    return { answer: values[key] ? "Yes" : "No", source: "profile" };
-  }
-  const m = matchAnswer(normalizeQuestion(question), answers);
-  return m ? { answer: m.answer, source: "learned" } : null;
-}
-
-/**
- * Capture the user's CURRENT questionnaire selections so we can remember them —
- * this is how Workday answers accumulate into the learn-as-you-go memory (they
- * live in custom <button> listboxes the generic capture can't see). Skips the
- * placeholder, protected self-ID (already filtered by collect), and questions
- * the profile owns (Yes/No work-auth etc.), which don't belong in that memory.
- * @returns {Array<{question_key, question_text, answer}>}
- */
-export function captureWorkdayDropdowns(doc) {
-  const out = [];
-  for (const dd of collectWorkdayDropdowns(doc)) {
-    const answer = (dd.current || "").trim();
-    if (!answer || isPlaceholder(answer)) continue;
-    if (BOOL_KEYS.has(keyForText(dd.question))) continue; // profile-owned
-    out.push({
-      question_key: normalizeQuestion(dd.question),
-      question_text: dd.question.slice(0, 500),
-      answer,
-    });
-  }
-  return out;
-}
-
-const optionLabel = (o) =>
-  (o.getAttribute("data-automation-label") || o.textContent || "").replace(/\s+/g, " ").trim();
-
-const isPlaceholder = (label) => /^(select( one)?|choose( an option)?|-+ ?select ?-+)$/i.test(label);
-
-// Open the button's listbox and return its option elements (Workday only renders
-// them after a click). Leaves the list OPEN so the caller can read/click.
-async function openOptions(dd, doc, wait) {
-  dd.button.click();
-  for (let t = 0; t < 20; t++) {
-    await wait(40);
-    const opts = [...doc.querySelectorAll('[data-automation-id="promptOption"], [role="option"]')];
-    if (opts.length) return opts;
-  }
-  return [];
-}
-
-// Close an open listbox without selecting (toggle the button).
-function closeDropdown(dd, doc) {
-  if (doc.querySelector('[data-automation-id="promptOption"], [role="option"]')) dd.button.click();
-}
-
-function clickOption(opts, answer) {
-  const want = String(answer).replace(/\s+/g, " ").trim().toLowerCase();
-  if (!want) return false;
-  const match =
-    opts.find((o) => optionLabel(o).toLowerCase() === want) ||
-    opts.find((o) => want.length >= 2 && optionLabel(o).toLowerCase().startsWith(want));
-  if (match) {
-    match.click();
-    return true;
-  }
-  return false;
-}
-
-/**
- * Fill Workday questionnaire dropdowns. Two tiers, so new questions don't need
- * hand-mapping:
- *   1. KNOWN — profile Yes/No + learned answers (instant, no AI).
- *   2. AI FALLBACK — read every unknown widget's REAL options, then make ONE
- *      batched call (opts.aiMap(fields) → {id: answer}) so the whole page costs a
- *      single round-trip instead of one-per-dropdown. Grounded: the model omits
- *      anything the user's data doesn't answer, so legal attestations are left
- *      for the user.
- * Uses the standard ARIA combobox pattern (aria-haspopup=listbox + role=option),
- * so it generalises beyond Workday.
- */
-export async function fillWorkdayDropdowns(doc, values, answers, opts = {}) {
-  const wait = opts.wait || ((ms) => new Promise((r) => setTimeout(r, ms)));
-  const aiMap = opts.aiMap;
-  const dds = collectWorkdayDropdowns(doc);
-  const filled = [];
-  const pending = []; // {dd, options} for the single AI batch
-
-  // Pass 1: apply known answers; collect options for the unknowns.
-  for (const dd of dds) {
-    const known = dropdownAnswer(dd.question, values, answers || []);
-    if (known && dd.current.toLowerCase() === known.answer.toLowerCase()) continue; // already set
-    const optsEls = await openOptions(dd, doc, wait);
-    if (!optsEls.length) continue;
-    if (known) {
-      if (clickOption(optsEls, known.answer)) {
-        markFilled(dd.button, known.source);
-        filled.push({
-          label: dd.question.slice(0, 70),
-          value: known.answer,
-          source: known.source,
-          question: dd.question,
-          questionKey: normalizeQuestion(dd.question),
-        });
-      } else {
-        closeDropdown(dd, doc);
-      }
-      continue;
-    }
-    const labels = optsEls.map(optionLabel).filter((l) => l && !isPlaceholder(l));
-    closeDropdown(dd, doc);
-    if (labels.length && aiMap) pending.push({ dd, options: labels });
-  }
-
-  // Pass 2: ONE AI call for every unknown dropdown on the page.
-  if (pending.length && aiMap) {
-    const fields = pending.map((p, i) => ({
-      id: "d" + i,
-      label: p.dd.question,
-      type: "select",
-      options: p.options,
-    }));
-    const mappings = (await aiMap(fields)) || {};
-    // Pass 3: apply the model's choices.
-    for (let i = 0; i < pending.length; i++) {
-      const choice = mappings["d" + i];
-      if (!choice) continue;
-      const { dd } = pending[i];
-      const optsEls = await openOptions(dd, doc, wait);
-      if (clickOption(optsEls, choice)) {
-        markFilled(dd.button, "ai");
-        filled.push({
-          label: dd.question.slice(0, 70),
-          value: choice,
-          source: "ai",
-          question: dd.question,
-          questionKey: normalizeQuestion(dd.question),
-        });
-      } else {
-        closeDropdown(dd, doc);
-      }
-    }
-  }
-  return filled;
 }
 
 /**

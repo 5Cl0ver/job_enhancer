@@ -78,6 +78,23 @@ button:focus-visible, select:focus-visible, input:focus-visible {
 .je-fab-left { left: 20px; right: auto; }
 .je-fab-stack { bottom: 66px; }
 
+/* Autofill pill: the main button plus Review / Undo once it has filled. */
+.jec-pill {
+  position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;
+  display: flex; align-items: center; gap: 2px; padding: 3px;
+  border-radius: 999px; background: var(--card);
+  box-shadow: 0 0 0 1px var(--border), 0 8px 24px rgb(0 0 0 / 18%);
+  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+.jec-pill .je-btn { position: static; box-shadow: none; height: 34px; }
+.jec-pill .je-btn[data-state="saved"] { box-shadow: none; background: transparent; }
+.jec-pill-link {
+  height: 30px; padding: 0 11px; border: 0; border-radius: 999px; cursor: pointer;
+  background: transparent; color: var(--primary); font: 600 12.5px/1 ui-sans-serif, system-ui, sans-serif;
+}
+.jec-pill-link:hover { background: var(--muted); }
+.jec-pill-link[hidden] { display: none; }
+
 /* Indeed "My jobs" sync review: a card in the app's style. */
 .je-panel {
   position: fixed; right: 20px; bottom: 20px; z-index: 2147483647;

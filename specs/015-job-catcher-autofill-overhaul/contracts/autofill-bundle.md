@@ -29,6 +29,7 @@ This returns everything the extension's autofill copy holds, behind a cheap chan
 }
 ```
 
+- **PR C ships the bundle without history** (`history: null`, `history_pending: false`); PR D adds the stored résumé reading.
 - `history` is `null` with `history_pending: true` while the résumé is being read. The server starts reading it in the background, and the next change check returns the result.
 - `resume` is `null` when there is no active résumé. The bytes still come from the existing `GET /v1/ai/resumes/active/file`.
 - **401** means not signed in. The extension wipes its copy.

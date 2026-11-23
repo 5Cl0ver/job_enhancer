@@ -7,6 +7,7 @@ from app.api.v1 import (
     ai,
     analytics,
     attention,
+    autofill,
     collections,
     email,
     jobs,
@@ -35,3 +36,4 @@ api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytic
 api_router.include_router(email.router, prefix="/email", tags=["Email"])
 api_router.include_router(attention.router, prefix="/attention", tags=["Attention"])
 api_router.include_router(scout.router, prefix="/scout", tags=["Scout"])
+api_router.include_router(autofill.router, prefix="/autofill", tags=["Autofill"])
