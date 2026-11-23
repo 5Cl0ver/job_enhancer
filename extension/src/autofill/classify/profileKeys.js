@@ -8,7 +8,7 @@
 
 /** Protected self-identification: the user's to answer, always. */
 export const SELF_ID =
-  /ethnic|\brace\b|racial|gender|\bsex\b|hispanic|latin[ox]|veteran|military|armed forces|disab(?:led|ilit)|handicap|sexual orientation|lgbtq?|transgender|\bpronouns?\b|voluntary (self[- ]?)?(identification|disclosure)|self[- ]identif|date of birth|birth ?date|\bdob\b|\bage\b|how old|citizen(ship)?\b|marital|religio|pregnan/i;
+  /ethnic|\brace\b|racial|gender|\bsex\b|hispanic|latin[ox]|veteran|military|armed forces|disab(?:led|ilit)|handicap|sexual orientation|lgbtq?|transgender|\bpronouns?\b|voluntary (self[- ]?)?(identification|disclosure)|self[- ]identif|date of birth|birth ?date|\bdob\b|marital|religio|pregnan/i;
 
 /** Private numbers and documents: never filled, never remembered. */
 export const PRIVATE =
@@ -16,7 +16,7 @@ export const PRIVATE =
 
 /** Questions about someone else (a reference, an emergency contact). */
 export const OTHER_PERSON =
-  /reference|emergency|referr(al|er|ed by)|who referred|supervisor|manager'?s|recruiter|spouse|parent|guardian|next of kin/i;
+  /\breferences?\b(?! (number|code|id)\b)|emergency contact|\breferr(er|ed by)\b|who referred|\bsupervisor'?s?\b|\bmanager'?s (name|email|phone)|\bspouse\b|\bguardian\b|next of kin/i;
 
 /** Agreeing to terms or attesting to something: only the user can. */
 export const CONSENT =
@@ -113,11 +113,14 @@ export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", 
  */
 // Address words are only the field's name when the question is short: "City"
 // yes, "Please state your salary expectations" no.
+const HEARD_ABOUT = /how did you (hear|find|learn|come across)|where did you (hear|find|see)|source of (this )?(application|referral)/i;
+
 const SHORT_ONLY = new Set(["city", "state", "country", "postal_code", "address_line1", "address_line2", "location"]);
 
 export function profileKeyFor(field) {
-  // Someone else's details (a reference, an emergency contact) aren't yours.
-  if (OTHER_PERSON.test(field.question || "")) return null;
+  // Someone else's details (a reference, an emergency contact) aren't yours,
+  // and "How did you hear about us (LinkedIn, …)?" isn't your LinkedIn link.
+  if (OTHER_PERSON.test(field.question || "") || HEARD_ABOUT.test(field.question || "")) return null;
   const ac = String(field.hints?.autocomplete || "").toLowerCase();
   for (const token of ac.split(/\s+/)) if (AUTOCOMPLETE[token]) return AUTOCOMPLETE[token];
   if (field.hints?.type === "email") {

@@ -38,7 +38,7 @@ const clean = (s) =>
 const CONTROL = "input, select, textarea, button, [role=combobox], [role=radio], [role=checkbox], [contenteditable=''], [contenteditable=true]";
 
 /** The visible text of a node, leaving out controls (a select's options...). */
-export function textOf(node, max = 400) {
+export function textOf(node, max = 1500) {
   let out = "";
   const walk = (n) => {
     for (const c of n.childNodes || []) {
@@ -329,5 +329,13 @@ export function looksLikeApplication(fields, { isIdentity, isMapped }) {
   const password = root?.querySelector?.('input[type="password"]');
   if (password && isVisible(password)) return false;
   const mapped = fields.filter(isMapped);
-  return mapped.length >= 2 && mapped.some(isIdentity);
+  if (mapped.length >= 2 && mapped.some(isIdentity)) return true;
+  // A question-only step (Workday's "Application Questions", "Voluntary
+  // Disclosures"…) on an application's own address.
+  const href = root?.defaultView?.location?.href || "";
+  return APPLY_URL.test(href) && fields.length >= 2;
 }
+
+/** Addresses that are applications (applicant systems, or a path with apply). */
+export const APPLY_URL =
+  /\/(apply|application|applications|candidate)\b|myworkdayjobs\.com|greenhouse\.io|lever\.co|ashbyhq\.com|icims\.com|smartrecruiters\.com|jobvite\.com|workable\.com|taleo\.net|successfactors|smartapply\.indeed\.com/i;

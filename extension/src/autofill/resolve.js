@@ -31,13 +31,15 @@ export function resolve(field, copy) {
   }
   // A lone checkbox is almost always an agreement: never ticked for the user.
   if (field.kind === "checkbox") return { skip: "consent" };
-  if (OTHER_PERSON.test(field.question || "")) return { skip: "other_person" };
-  const key = profileKeyFor(field);
+  const key = profileKeyFor(field); // never the user's own details for someone else
   if (key) {
     const values = copy.values[key] || [];
     return values.length ? { values, source: "profile", key } : { skip: "no_data", key };
   }
   const learned = matchAnswer(field.key, copy.answers);
   if (learned) return { values: [learned.answer], source: "learned", learnKey: learned.question_key };
+  // A question about someone else: a remembered answer is fine, an AI guess
+  // (from the user's own data) is not.
+  if (OTHER_PERSON.test(field.question || "")) return { skip: "other_person" };
   return { skip: "unknown" };
 }

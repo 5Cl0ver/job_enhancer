@@ -108,7 +108,8 @@ let lastCheck = 0;
 let lastAnswer = false;
 const CONTROLS = "input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea, [role=combobox]";
 function looksLikeApplicationNow() {
-  const n = document.querySelectorAll(CONTROLS).length;
+  // Count only controls on screen: a form opened later (a dialog) changes it.
+  const n = [...document.querySelectorAll(CONTROLS)].filter((el) => el.getClientRects().length).length;
   const sig = `${location.href}|${n}`;
   const now = Date.now();
   if (sig === lastSig && (n > 0 || now - lastCheck < 10_000)) return lastAnswer;
@@ -169,7 +170,7 @@ async function run() {
   if (copy.signedOut || copy.unreachable) {
     setPill("error", copy.signedOut ? "Sign in from the side panel" : "Can't reach the app: try again");
     setTimeout(() => setPill("idle"), 4000);
-    return { ok: false, signedIn: !copy.signedOut };
+    return { ok: false, signedIn: !copy.signedOut, unreachable: !!copy.unreachable };
   }
 
   // Workday's Work Experience: one block per job on the résumé.

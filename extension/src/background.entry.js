@@ -243,13 +243,13 @@ const fillKey = (tabId) => `je_fill:${tabId}`;
 // other's read-modify-write.
 let fillWrites = Promise.resolve();
 function storeFillSession(tabId, frameId, session) {
-  fillWrites = fillWrites.then(async () => {
+  fillWrites = fillWrites.catch(() => {}).then(async () => {
     const key = fillKey(tabId);
     const { [key]: held = { frames: {} } } = await chrome.storage.session.get(key);
     held.frames[frameId] = { ...session, at: Date.now() };
     await chrome.storage.session.set({ [key]: held });
     chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
-  }, () => {});
+  });
   return fillWrites;
 }
 

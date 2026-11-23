@@ -299,7 +299,7 @@ describe("PR #31 review: wrong answers that must not happen", () => {
     ["Have you served in the armed forces?", "radio", "sensitive"],
     ["Do you have a handicap?", "radio", "sensitive"],
     ["Date of birth", "date", "sensitive"],
-    ["Are you a U.S. citizen?", "radio", "sensitive"],
+
     ["Social Security Number", "text", "sensitive"],
     ["Driver's license number", "text", "sensitive"],
   ])("never touches %s", (q, kind, why) => {
@@ -342,5 +342,42 @@ describe("PR #31 review: wrong answers that must not happen", () => {
     doc.querySelector("#c").checked = true;
     doc.querySelector("#q").value = "Vim";
     expect(s.typedAnswers().map((a) => a.question_text)).toEqual(["Favorite tool?"]);
+  });
+});
+
+describe("PR #31 re-review", () => {
+  it("an empty real react-select (placeholder in its value container) reads as empty", async () => {
+    const { readField } = await import("../src/autofill/widgets.js");
+    const doc = parse(`<label id="l">Location</label>
+      <div class="select__control"><div class="select__value-container">
+        <div class="select__placeholder">Start typing...</div>
+        <input role="combobox" aria-labelledby="l" aria-autocomplete="list"></div></div>`);
+    const [f] = fieldsOf(doc);
+    expect(f.kind).toBe("combobox");
+    expect(readField(f)).toBe("");
+  });
+
+  it("work authorization that mentions 'citizen', and an age check, are ordinary questions", () => {
+    expect(guardReason("Are you legally authorized to work in the U.S. (citizen or permanent resident)?", "radio")).toBeNull();
+    expect(profileKeyFor({ question: "Are you legally authorized to work in the U.S. (citizen or permanent resident)?", hints: {} })).toBe("authorized_to_work");
+    expect(guardReason("Are you at least 18 years of age?", "radio")).toBeNull();
+  });
+
+  it("'How did you hear… referral, recruiter' uses its remembered answer", () => {
+    const field = { kind: "text", question: "How did you hear about us (LinkedIn, referral, recruiter)?", hints: {} };
+    field.key = normalizeQuestion(field.question);
+    const d = resolve(field, copy({ answers: [{ question_key: field.key, answer: "LinkedIn" }] }));
+    expect(d.values).toEqual(["LinkedIn"]);
+  });
+
+  it("a reference's details never get the user's own, nor an AI guess", () => {
+    const field = { kind: "text", question: "Reference 1 – Email", hints: { type: "email" }, key: "reference 1 email" };
+    expect(resolve(field, copy()).skip).toBe("other_person");
+  });
+
+  it("question-only steps on an application's own address count as applications", async () => {
+    const { APPLY_URL } = await import("../src/autofill/scan.js");
+    expect(APPLY_URL.test("https://vellacor.wd5.myworkdayjobs.com/en-US/External/job/X/apply/applyManually")).toBe(true);
+    expect(APPLY_URL.test("https://github.com/vellacor/repo/issues/1")).toBe(false);
   });
 });

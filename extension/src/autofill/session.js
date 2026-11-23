@@ -86,11 +86,12 @@ export function createSession(deps) {
 
   async function fillOne(field, values, source) {
     const snap = snapshot(field);
+    const before = readField(field);
     const res = await writeField(field, values);
     if (!res.ok) {
       // Written but not taken (or half taken): put the field back, so nothing
       // is left changed without a record and an Undo.
-      if (readField(field) !== (snap.value ?? snap.shown ?? readField(field))) await restore(field, snap).catch(() => {});
+      if (readField(field) !== before) await restore(field, snap).catch(() => {});
       return res;
     }
     filled.set(field.id, { field, snap, entry: entryFor(field, source, res.actual, snap) });
@@ -193,7 +194,11 @@ export function createSession(deps) {
       const x = filled.get(k);
       if (!x || !x.entry.can_undo) continue;
       // Changed on the page since? That's the user's now: leave it.
-      if (x.field.kind !== "file" && !same(readField(x.field), x.entry.value)) {
+      // (Exactly, or the same digits: "Rich" is not "Richmond".)
+      const now = readField(x.field).trim();
+      const ours = String(x.entry.value).trim();
+      const unchanged = now === ours || (now.replace(/\D/g, "").length >= 7 && now.replace(/\D/g, "") === ours.replace(/\D/g, "")) || (x.field.kind !== "text" && x.field.kind !== "textarea" && same(now, ours));
+      if (x.field.kind !== "file" && !unchanged) {
         filled.delete(k);
         unmark(x.field);
         continue;

@@ -49,7 +49,7 @@ export function Apply({
 }) {
   const { tab, reloadSaved, staged, fill } = usePanel();
   const [busy, setBusy] = React.useState(false);
-  const [failed, setFailed] = React.useState(false);
+  const [failed, setFailed] = React.useState<"" | "page" | "app">("");
   const [marking, setMarking] = React.useState(false);
   const [showFilled, setShowFilled] = React.useState(false);
 
@@ -60,7 +60,7 @@ export function Apply({
   async function autofill() {
     if (!tab.id) return;
     setBusy(true);
-    setFailed(false);
+    setFailed("");
     let res = null;
     try {
       res = await chrome.tabs.sendMessage(tab.id, { type: "runAutofill" });
@@ -68,7 +68,7 @@ export function Apply({
       res = null;
     }
     setBusy(false);
-    if (!res?.ok && res?.signedIn !== false) setFailed(true);
+    if (!res?.ok && res?.signedIn !== false) setFailed(res?.unreachable ? "app" : "page");
   }
 
   async function undoAll() {
@@ -103,7 +103,8 @@ export function Apply({
             Uploads your tailored résumé <b className="break-all text-foreground">{staged}</b>.
           </Muted>
         )}
-        {failed && <Alert tone="warning">Couldn't reach the page. Refresh it once, then try again.</Alert>}
+        {failed === "page" && <Alert tone="warning">Couldn't reach the page. Refresh it once, then try again.</Alert>}
+        {failed === "app" && <Alert tone="warning">Couldn't reach Job Enhancer (it may be waking up). Try again in a moment.</Alert>}
         {entries.length + needYou.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>

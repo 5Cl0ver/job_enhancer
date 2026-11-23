@@ -368,7 +368,7 @@ export function readField(field) {
       // the input, which holds only what's being typed. Never the whole box's
       // text (it can hold the label or other fields).
       const box = comboBox(el);
-      const chosen = box === el ? null : box.querySelector('[class*="single-value"], [class*="singleValue"], [class*="__value"]:not(input), [class*="selected-value"]');
+      const chosen = box === el ? null : box.querySelector('[class*="single-value"], [class*="singleValue"], [class*="selected-value"]');
       const shown = chosen ? textOf(chosen) : "";
       return (shown && !isPlaceholderOption(shown) ? shown : "") || el.value || "";
     }
