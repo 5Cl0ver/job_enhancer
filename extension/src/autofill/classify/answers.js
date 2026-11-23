@@ -1,5 +1,5 @@
 // Matching questions to remembered answers, and answers to a field's options.
-// PURE (no DOM, no chrome.*): unit-tested in test/fill-answers.spec.js.
+// PURE (no DOM, no chrome.*): unit-tested in test/fill-engine.spec.js.
 
 /** Normalize a question into a stable match key (case/punctuation-insensitive). */
 export function normalizeQuestion(text) {
@@ -97,11 +97,15 @@ export function yesNo(text) {
  * The option that means the same as `answer`, or null. Tried in order: exact,
  * the option's value, yes/no equivalents ("Yes, I am authorized…"), starts-with
  * either way (4+ characters), then shared words with no pivot disagreement.
+ * `strict`: only an exact label or value — callers try every way of saying
+ * an answer strictly before any looser match ("United States of America"
+ * exactly, before "United States" as a prefix of "…Minor Outlying Islands").
  * @param {string} answer
  * @param {Array<{label: string, value?: string}>} options
+ * @param {{strict?: boolean}} [opts]
  * @returns {number} the index, or -1
  */
-export function matchOption(answer, options) {
+export function matchOption(answer, options, { strict = false } = {}) {
   const want = clean(answer);
   if (!want || !options?.length) return -1;
   const labels = options.map((o) => clean(o.label));
@@ -111,6 +115,7 @@ export function matchOption(answer, options) {
   if (i >= 0) return i;
   i = options.findIndex((o, k) => usable(k) && clean(o.value) === want);
   if (i >= 0) return i;
+  if (strict) return -1;
 
   const yn = yesNo(answer);
   if (yn) {
@@ -118,15 +123,22 @@ export function matchOption(answer, options) {
     if (hits.length === 1) return hits[0];
   }
 
-  i = labels.findIndex((l, k) => usable(k) && want.length >= 2 && l.startsWith(want));
-  if (i >= 0) return i;
-  i = labels.findIndex((l, k) => usable(k) && l.length >= 4 && want.startsWith(l));
+  // Starts-with, only at a word boundary ("No" never picks "Not applicable"),
+  // and the closest such option wins.
+  const boundary = (long, short) => long.startsWith(short) && (long.length === short.length || long[short.length] === " ");
+  let best = -1;
+  labels.forEach((l, k) => {
+    if (!usable(k) || want.length < 2) return;
+    if (boundary(l, want) && (best < 0 || l.length < labels[best].length)) best = k;
+  });
+  if (best >= 0) return best;
+  i = labels.findIndex((l, k) => usable(k) && l.length >= 4 && boundary(want, l));
   if (i >= 0) return i;
 
   // US states and the like: "OR" ↔ "Oregon" is handled by the caller's
   // aliases; here, shared words.
   const wWords = want.split(" ");
-  let best = -1;
+  best = -1;
   let bestScore = 0;
   labels.forEach((l, k) => {
     if (!usable(k)) return;

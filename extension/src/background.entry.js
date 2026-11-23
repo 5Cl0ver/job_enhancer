@@ -239,12 +239,18 @@ const autofill = createAutofillCopy({
 // browser session.
 const fillKey = (tabId) => `je_fill:${tabId}`;
 
-async function storeFillSession(tabId, frameId, session) {
-  const key = fillKey(tabId);
-  const { [key]: held = { frames: {} } } = await chrome.storage.session.get(key);
-  held.frames[frameId] = { ...session, at: Date.now() };
-  await chrome.storage.session.set({ [key]: held });
-  chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+// One write at a time: frames reporting together must not overwrite each
+// other's read-modify-write.
+let fillWrites = Promise.resolve();
+function storeFillSession(tabId, frameId, session) {
+  fillWrites = fillWrites.then(async () => {
+    const key = fillKey(tabId);
+    const { [key]: held = { frames: {} } } = await chrome.storage.session.get(key);
+    held.frames[frameId] = { ...session, at: Date.now() };
+    await chrome.storage.session.set({ [key]: held });
+    chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+  }, () => {});
+  return fillWrites;
 }
 
 async function getFillSession(tabId) {

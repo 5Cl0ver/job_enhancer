@@ -1,5 +1,5 @@
 // Which profile answer a field asks for, and which fields must never be
-// touched. PURE (no DOM): unit-tested in test/fill-resolve.spec.js.
+// touched. PURE (no DOM): unit-tested in test/fill-engine.spec.js.
 //
 // The words shown to people (labels, questions) are the stable signal on any
 // site; the HTML `autocomplete` attribute, when a site sets it, is even better.
@@ -8,11 +8,19 @@
 
 /** Protected self-identification: the user's to answer, always. */
 export const SELF_ID =
-  /ethnic|\brace\b|racial|gender|\bsex\b|hispanic|latin[ox]|veteran|disab(?:led|ilit)|sexual orientation|lgbtq?|transgender|\bpronouns?\b|voluntary (self[- ]?)?(identification|disclosure)|self[- ]identif/i;
+  /ethnic|\brace\b|racial|gender|\bsex\b|hispanic|latin[ox]|veteran|military|armed forces|disab(?:led|ilit)|handicap|sexual orientation|lgbtq?|transgender|\bpronouns?\b|voluntary (self[- ]?)?(identification|disclosure)|self[- ]identif|date of birth|birth ?date|\bdob\b|\bage\b|how old|citizen(ship)?\b|marital|religio|pregnan/i;
+
+/** Private numbers and documents: never filled, never remembered. */
+export const PRIVATE =
+  /\bssn\b|social security|national (id|insurance)|passport|driver'?s?\s*licen[cs]e|licen[cs]e (number|no)|tax (id|number)|\btin\b|bank|routing|account number|credit card|card number|\bcvv\b|mother'?s maiden/i;
+
+/** Questions about someone else (a reference, an emergency contact). */
+export const OTHER_PERSON =
+  /reference|emergency|referr(al|er|ed by)|who referred|supervisor|manager'?s|recruiter|spouse|parent|guardian|next of kin/i;
 
 /** Agreeing to terms or attesting to something: only the user can. */
 export const CONSENT =
-  /\bi (have read|agree|acknowledge|certify|attest|consent|understand|confirm that)|terms (of|and) |privacy (policy|notice)|consent|acknowledg|attest|certif(y|ication that)|by (checking|clicking|submitting)|e-?signature|electronic signature/i;
+  /\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy (policy|notice)|consent|acknowledg|attest|certif(y|ication that)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature/i;
 
 /** Essays: a person writes these (Write in the panel helps). */
 export const ESSAY =
@@ -25,9 +33,14 @@ export const NOISE =
 /** Why a field is left alone, or null. Self-ID and consent come first. */
 export function guardReason(question, kind) {
   const q = String(question || "");
-  if (SELF_ID.test(q)) return "sensitive";
+  if (SELF_ID.test(q) || PRIVATE.test(q)) return "sensitive";
   if ((kind === "checkbox" || kind === "checkbox_list") && CONSENT.test(q)) return "consent";
-  if (CONSENT.test(q) && /\bi (agree|certify|attest|acknowledge)|signature/i.test(q)) return "consent";
+  // Agreeing, in any form (a box, a Yes/No question, a dropdown).
+  if (
+    CONSENT.test(q) &&
+    /\bi (agree|accept|certify|attest|acknowledge|authori[sz]e)|signature|\b(agree|accept)\b.*\b(terms|conditions|polic)|background check|authori[sz]e .*(background|credit|drug|check)/i.test(q)
+  )
+    return "consent";
   if (NOISE.test(q)) return "noise";
   if (ESSAY.test(q) && (kind === "textarea" || kind === "editable" || kind === "text")) return "essay";
   return null;
@@ -66,10 +79,20 @@ const RULES = [
   { key: "email", re: /e-?mail/i },
   { key: "phone_type", re: /(phone|device)[\s_-]*(device[\s_-]*)?type|type of phone/i },
   { key: "phone_country", re: /country[\s_-]*(phone[\s_-]*)?code|phone.*country|dialing code/i },
-  { key: "phone", re: /phone|mobile|telephone|cell/i },
+  { key: "phone", re: /phone|mobile|telephone|\bcell\b/i },
   { key: "linkedin_url", re: /linked[\s_-]*in/i },
   { key: "github_url", re: /git[\s_-]*hub/i },
   { key: "portfolio_url", re: /portfolio|personal[\s_-]*(web)?site|website|^url$|other (url|link)/i },
+  {
+    key: "authorized_to_work",
+    re: /authori[sz]ed[\s\S]*(work|employ)|work[\s_-]*authori[sz]ation|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ)|right to work/i,
+  },
+  { key: "requires_sponsorship", re: /sponsor/i },
+  { key: "willing_to_relocate", re: /relocat/i },
+  // Before the address rules: "Please state your salary…" is about salary.
+  { key: "desired_salary", re: /desired[\s_-]*(salary|pay|compensation)|salary[\s_-]*(expectation|requirement)|expected[\s_-]*(salary|pay|compensation)|compensation[\s_-]*expect|^salary$/i },
+  { key: "notice_period", re: /notice[\s_-]*period|(earliest|available)[\s_-]*start|start[\s_-]*date|when can you start|availability to start/i },
+  { key: "today_date", re: /today['’]?s?[\s_-]*date|current[\s_-]*date|date[\s_-]*signed|signature[\s_-]*date|^date$/i },
   // One combined "location" field (Greenhouse, Lever, Ashby) beats the
   // granular address keys.
   { key: "location", re: /^location\b|current location|where are you (located|based)|city,? state|location \(city\)/i },
@@ -79,15 +102,6 @@ const RULES = [
   { key: "postal_code", re: /postal|\bzip\b|zip[\s_-]*code|post[\s_-]*code/i },
   { key: "country", re: /\bcountry\b/i },
   { key: "state", re: /\bstate\b|province|\bregion\b/i },
-  {
-    key: "authorized_to_work",
-    re: /authori[sz]ed[\s\S]*(work|employ)|work[\s_-]*authori[sz]ation|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ)|right to work/i,
-  },
-  { key: "requires_sponsorship", re: /sponsor/i },
-  { key: "willing_to_relocate", re: /relocat/i },
-  { key: "desired_salary", re: /desired[\s_-]*(salary|pay|compensation)|salary[\s_-]*(expectation|requirement)|expected[\s_-]*(salary|pay|compensation)|compensation[\s_-]*expect|^salary$/i },
-  { key: "notice_period", re: /notice[\s_-]*period|(earliest|available)[\s_-]*start|start[\s_-]*date|when can you start|availability to start/i },
-  { key: "today_date", re: /today['’]?s?[\s_-]*date|current[\s_-]*date|date[\s_-]*signed|signature[\s_-]*date|^date$/i },
 ];
 
 /** Profile keys answered Yes/No. */
@@ -97,7 +111,13 @@ export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", 
  * The profile key a field asks for, or null.
  * @param {{question: string, hints: {autocomplete?: string, type?: string, name?: string, id?: string}}} field
  */
+// Address words are only the field's name when the question is short: "City"
+// yes, "Please state your salary expectations" no.
+const SHORT_ONLY = new Set(["city", "state", "country", "postal_code", "address_line1", "address_line2", "location"]);
+
 export function profileKeyFor(field) {
+  // Someone else's details (a reference, an emergency contact) aren't yours.
+  if (OTHER_PERSON.test(field.question || "")) return null;
   const ac = String(field.hints?.autocomplete || "").toLowerCase();
   for (const token of ac.split(/\s+/)) if (AUTOCOMPLETE[token]) return AUTOCOMPLETE[token];
   if (field.hints?.type === "email") {
@@ -105,7 +125,12 @@ export function profileKeyFor(field) {
   }
   if (field.hints?.type === "tel") return "phone";
   const text = [field.question, field.hints?.name, field.hints?.id].filter(Boolean).join(" ");
-  for (const { key, re } of RULES) if (re.test(field.question) || (!field.question && re.test(text))) return key;
+  const q = field.question || "";
+  for (const { key, re } of RULES) {
+    if (!(re.test(q) || (!q && re.test(text)))) continue;
+    if (SHORT_ONLY.has(key) && q.length > 45) continue;
+    return key;
+  }
   return null;
 }
 

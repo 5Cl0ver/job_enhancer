@@ -1,6 +1,6 @@
 // Scan: every field on the page a person would fill, with the question it asks.
 // DOM only (no chrome.* except the optional closed-shadow-root getter), so it
-// runs under happy-dom in test/fill-scan.spec.js.
+// runs under happy-dom in test/fill-engine.spec.js.
 //
 // Reaches into components that hide their insides (shadow DOM, open and — in
 // the extension — closed). Frames are NOT walked: each frame runs its own copy
@@ -38,10 +38,11 @@ const clean = (s) =>
 const CONTROL = "input, select, textarea, button, [role=combobox], [role=radio], [role=checkbox], [contenteditable=''], [contenteditable=true]";
 
 /** The visible text of a node, leaving out controls (a select's options...). */
-export function textOf(node) {
+export function textOf(node, max = 400) {
   let out = "";
   const walk = (n) => {
     for (const c of n.childNodes || []) {
+      if (out.length > max) return; // a label is short: stop reading pages
       if (c.nodeType === 3) out += c.nodeValue + " ";
       else if (c.nodeType === 1) {
         const tag = c.tagName;
@@ -224,7 +225,10 @@ export function collectFields(root, opts = {}) {
         continue;
       }
       if (type === "file") {
-        add({ id: fieldId(el), kind: "file", el, mark: el.closest("label, [class*=drop], [class*=upload]") || el, question: questionFor(el), hints: hintsOf(el) });
+        // Often hidden behind a drop zone: count it when it or its zone shows.
+        const zone = el.closest("label, [class*=drop], [class*=upload], [class*=Drop], [class*=Upload]");
+        if (!visible(el) && !(zone && visible(zone))) continue;
+        add({ id: fieldId(el), kind: "file", el, mark: zone || el, question: questionFor(el), hints: hintsOf(el) });
         continue;
       }
       if (!visible(el) || el.readOnly) continue;
@@ -298,13 +302,16 @@ export function collectFields(root, opts = {}) {
   return fields.sort((a, b) => (order.get(a.el) ?? 0) - (order.get(b.el) ?? 0));
 }
 
-/** The visible box of an input combobox (react-select's container, etc.). */
+/** The visible box of an input combobox: a known control wrapper, or its
+ *  parent when that holds nothing else (never a whole form or its label). */
 export function comboBox(el) {
-  return (
-    el.closest?.("[class*=container], [class*=select__control], [class*=Select], [data-automation-id^=formField]") ||
-    el.parentElement?.parentElement ||
-    el
+  const known = el.closest?.(
+    "[class*=select__control], [class*=-control], [class*=Select-control], [class*=combobox], [data-automation-id^=formField]",
   );
+  if (known) return known;
+  const p = el.parentElement;
+  if (p && !p.querySelector("label") && p.querySelectorAll("input, select, textarea, button").length <= 2) return p;
+  return el;
 }
 
 function comboQuestion(el) {
@@ -314,10 +321,13 @@ function comboQuestion(el) {
   return (legend && textOf(legend)) || questionFor(el);
 }
 
-/** Does this page look like a job application (not a sign-in or search)? */
-export function looksLikeApplication(fields, identityKeys) {
+/** Does this page look like a job application (not a sign-in, a search, or a
+ *  page that merely has an upload box)? Two fields the profile answers, at
+ *  least one of them about the person (or a résumé upload), and no password. */
+export function looksLikeApplication(fields, { isIdentity, isMapped }) {
   const root = fields[0]?.el?.ownerDocument;
   const password = root?.querySelector?.('input[type="password"]');
   if (password && isVisible(password)) return false;
-  return fields.some((f) => f.kind === "file") || fields.filter((f) => identityKeys(f)).length >= 2;
+  const mapped = fields.filter(isMapped);
+  return mapped.length >= 2 && mapped.some(isIdentity);
 }

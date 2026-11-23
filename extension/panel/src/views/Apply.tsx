@@ -33,6 +33,7 @@ const WHY: Record<string, string> = {
   no_option: "None of its choices matched",
   rejected: "The page didn't take it",
   unknown: "New question",
+  other_person: "About someone else",
 };
 
 export function Apply({

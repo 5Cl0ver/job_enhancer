@@ -90,9 +90,7 @@
         "dist/autofill.js"
       ],
       "run_at": "document_idle",
-      "all_frames": true,
-      "match_about_blank": true,
-      "match_origin_as_fallback": true
+      "all_frames": true
     }
   ],
   "icons": {

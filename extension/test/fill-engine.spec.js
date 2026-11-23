@@ -273,3 +273,74 @@ describe("a résumé upload", () => {
     expect(resolve(byId.r, copy()).skip).toBe("no_data"); // no file on hand
   });
 });
+
+describe("PR #31 review: wrong answers that must not happen", () => {
+  it("a country list without a plain 'United States' gets the right one", () => {
+    const c = copy();
+    const options = [{ label: "United Kingdom" }, { label: "United States Minor Outlying Islands" }, { label: "United States of America" }];
+    const doc = parse(
+      `<label for="co">Country</label><select id="co"><option value="">Select</option>${options.map((o) => `<option>${o.label}</option>`).join("")}</select>`,
+    );
+    return session(doc)
+      .fillKnown(c)
+      .then(() => expect(doc.querySelector("#co").value).toBe("United States of America"));
+  });
+
+  it("'No' never picks 'Not applicable'", () => {
+    expect(matchOption("No", [{ label: "Not applicable" }, { label: "None" }])).toBe(-1);
+    expect(matchOption("No", [{ label: "Not applicable" }, { label: "No" }])).toBe(1);
+  });
+
+  it.each([
+    ["I accept the Terms & Conditions", "checkbox", "consent"],
+    ["I authorize a background check", "radio", "consent"],
+    ["Do you agree to the terms?", "radio", "consent"],
+    ["Military status", "select", "sensitive"],
+    ["Have you served in the armed forces?", "radio", "sensitive"],
+    ["Do you have a handicap?", "radio", "sensitive"],
+    ["Date of birth", "date", "sensitive"],
+    ["Are you a U.S. citizen?", "radio", "sensitive"],
+    ["Social Security Number", "text", "sensitive"],
+    ["Driver's license number", "text", "sensitive"],
+  ])("never touches %s", (q, kind, why) => {
+    expect(guardReason(q, kind)).toBe(why);
+  });
+
+  it.each([
+    ["Excellent communication skills?", null],
+    ["Please state your salary expectations", "desired_salary"],
+    ["Are you authorized to work in the country where this job is located?", "authorized_to_work"],
+    ["Reference 1 – Full name", null],
+    ["Emergency contact phone", null],
+    ["Cell phone", "phone"],
+  ])("'%s' → %s", (q, key) => {
+    expect(profileKeyFor({ question: q, hints: {} })).toBe(key);
+  });
+
+  it("a lone checkbox is never ticked, even with a remembered 'Yes'", async () => {
+    const doc = parse(`<label><input type="checkbox" id="c"> Text me about my application</label>
+      <label for="fn">First name</label><input id="fn">`);
+    await session(doc).fillKnown(copy({ answers: [{ question_key: "text me about my application", answer: "Yes" }] }));
+    expect(doc.querySelector("#c").checked).toBe(false);
+  });
+
+  it("Undo leaves alone a field the user changed after the fill", async () => {
+    const doc = parse(`<label for="ph">Phone</label><input id="ph" type="tel">`);
+    const s = session(doc);
+    await s.fillKnown(copy());
+    doc.querySelector("#ph").value = "555-999-0000"; // the user's correction
+    await s.undo();
+    expect(doc.querySelector("#ph").value).toBe("555-999-0000");
+  });
+
+  it("Remember never offers private numbers or a ticked box", () => {
+    const doc = parse(`<label for="ssn">Social Security Number</label><input id="ssn">
+      <label><input type="checkbox" id="c"> Text me updates</label>
+      <label for="q">Favorite tool?</label><input id="q">`);
+    const s = session(doc);
+    doc.querySelector("#ssn").value = "000-00-0000";
+    doc.querySelector("#c").checked = true;
+    doc.querySelector("#q").value = "Vim";
+    expect(s.typedAnswers().map((a) => a.question_text)).toEqual(["Favorite tool?"]);
+  });
+});

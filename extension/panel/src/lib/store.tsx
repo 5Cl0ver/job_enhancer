@@ -70,9 +70,12 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   const [fill, setFill] = React.useState<Fill>(NO_FILL);
   const tabId = tab.id;
 
+  const fillFor = React.useRef<number | null>(null);
   const loadFill = React.useCallback(async (id: number | null) => {
+    fillFor.current = id;
     if (id == null) return setFill(NO_FILL);
     const res = await send({ type: "getFillSession", tabId: id });
+    if (fillFor.current !== id) return; // the panel moved to another tab
     const frames = (res?.frames || {}) as Record<string, { entries?: Omit<FillEntry, "frameId">[]; need_you?: Omit<FillNeed, "frameId">[] }>;
     const entries: FillEntry[] = [];
     const needYou: FillNeed[] = [];

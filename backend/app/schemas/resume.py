@@ -65,6 +65,9 @@ class AutofillMapRequest(BaseModel):
 
 class AutofillMapResponse(BaseModel):
     mappings: dict[str, str] = Field(default_factory=dict)
+    # How sure the model was, 0..1 per mapped id (spec 015): the extension fills
+    # at 0.75+ and only suggests below. Old extensions ignore it.
+    confidence: dict[str, float] = Field(default_factory=dict)
 
 
 class WorkExperienceEntry(BaseModel):

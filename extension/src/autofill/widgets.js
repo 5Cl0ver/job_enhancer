@@ -4,7 +4,7 @@
 //
 // Each kind has: write(field, candidates) → {ok, actual, reason?},
 // read(field), snapshot(field), restore(field, snap) (for Undo).
-// DOM only; happy-dom covers the simple kinds (test/fill-widgets.spec.js), the
+// DOM only; happy-dom covers the simple kinds (test/fill-engine.spec.js), the
 // browser lab covers the rest (e2e/autofill-*.spec.js).
 import { isPlaceholderOption, matchOption } from "./classify/answers.js";
 import { comboBox, textOf } from "./scan.js";
@@ -74,10 +74,15 @@ function key(el, k) {
   fire(el, "KeyboardEvent", "keyup", { key: k, code: k });
 }
 
-const same = (actual, wanted) => {
+const digits = (s) => String(s ?? "").replace(/\D/g, "");
+export const same = (actual, wanted) => {
   const a = norm(actual);
   const w = norm(wanted);
-  return !!a && (a === w || a.includes(w) || (a.length >= 3 && w.includes(a)));
+  if (!a) return false;
+  // A phone box that shows "(555) 010-4477" for "555-010-4477".
+  const ad = digits(actual);
+  if (ad.length >= 7 && ad === digits(wanted)) return true;
+  return a === w || a.includes(w) || (a.length >= 3 && w.includes(a));
 };
 
 // ---- Text, text areas, editable boxes ------------------------------------
@@ -152,10 +157,13 @@ function writeSelect(field, candidates) {
   return { ok: actual === options[i].label, actual };
 }
 
+/** Every way of saying the answer EXACTLY first, then the looser matches. */
 function firstMatch(candidates, options) {
-  for (const c of candidates) {
-    const i = matchOption(c, options);
-    if (i >= 0) return i;
+  for (const strict of [true, false]) {
+    for (const c of candidates) {
+      const i = matchOption(c, options, { strict });
+      if (i >= 0) return i;
+    }
   }
   return -1;
 }
@@ -202,8 +210,9 @@ function pressed(el) {
 
 // ---- Search-style dropdowns (react-select, Workday, typeaheads) -----------
 
-/** The options a dropdown is showing right now. */
-export function visibleOptions(field) {
+/** The options a dropdown is showing right now (minus `before`: options
+ *  that were already open elsewhere on the page before we opened this one). */
+export function visibleOptions(field, before = null) {
   const el = field.el;
   const root = el.getRootNode?.() || el.ownerDocument;
   const doc = el.ownerDocument;
@@ -218,6 +227,7 @@ export function visibleOptions(field) {
   for (const scope of scopes) {
     for (const o of scope.querySelectorAll('[role="option"], [data-automation-id="promptOption"]')) {
       if (seen.has(o) || o.getAttribute("aria-disabled") === "true") continue;
+      if (before?.has(o) && !owned.length) continue;
       const rects = o.getClientRects?.();
       if (rects && rects.length === 0) continue; // a closed menu's options
       seen.add(o);
@@ -228,10 +238,10 @@ export function visibleOptions(field) {
   return out;
 }
 
-async function waitForOptions(field, ms) {
+async function waitForOptions(field, ms, before = null) {
   const end = Date.now() + ms;
   for (;;) {
-    const opts = visibleOptions(field);
+    const opts = visibleOptions(field, before);
     if (opts.length || Date.now() > end) return opts;
     await sleep(60);
   }
@@ -262,15 +272,17 @@ function closeCombo(field) {
 async function writeCombo(field, candidates, { wait = 2500 } = {}) {
   const el = field.el;
   const typed = el.tagName === "INPUT";
+  // Another dropdown's menu left open must never be mistaken for this one's.
+  const before = new Set(visibleOptions(field).map((o) => o.el));
   // 1) Open it and look at what it offers.
   openCombo(field);
-  let opts = await waitForOptions(field, typed ? 600 : wait);
+  let opts = await waitForOptions(field, typed ? 600 : wait, before);
   let i = firstMatch(candidates, opts);
   // 2) A typeahead: type each candidate until a matching option shows.
   if (i < 0 && typed) {
     for (const c of candidates.slice(0, 3)) {
       setNativeValue(el, String(c), { blur: false });
-      opts = await waitForOptions(field, wait);
+      opts = await waitForOptions(field, wait, before);
       i = firstMatch([c, ...candidates], opts);
       if (i >= 0) break;
     }
@@ -292,10 +304,13 @@ async function writeCombo(field, candidates, { wait = 2500 } = {}) {
 /** Peek at a dropdown's options without choosing (for the AI's question). */
 export async function peekOptions(field) {
   if (field.kind !== "combobox") return (field.options || []).map((o) => o.label);
+  const before = new Set(visibleOptions(field).map((o) => o.el));
   openCombo(field);
-  const opts = await waitForOptions(field, 1500);
+  const opts = await waitForOptions(field, 1500, before);
   closeCombo(field);
-  if (field.el.tagName !== "INPUT") pointerClick(field.el); // toggle shut
+  await sleep(120);
+  // Still open (it ignores Escape)? Toggle it shut — only then.
+  if (field.el.tagName !== "INPUT" && visibleOptions(field, before).length) pointerClick(field.el);
   return opts.map((o) => o.label).slice(0, 60);
 }
 
@@ -349,12 +364,12 @@ export function readField(field) {
         const t = textOf(el);
         return isPlaceholderOption(t) ? "" : t;
       }
+      // react-select & co keep the choice in a "single value" element next to
+      // the input, which holds only what's being typed. Never the whole box's
+      // text (it can hold the label or other fields).
       const box = comboBox(el);
-      let shown = textOf(box);
-      // react-select keeps the choice in a sibling "single value" element; the
-      // input itself holds only what's being typed.
-      const ph = el.getAttribute("placeholder");
-      if (ph) shown = shown.split(ph).join(" ").trim();
+      const chosen = box === el ? null : box.querySelector('[class*="single-value"], [class*="singleValue"], [class*="__value"]:not(input), [class*="selected-value"]');
+      const shown = chosen ? textOf(chosen) : "";
       return (shown && !isPlaceholderOption(shown) ? shown : "") || el.value || "";
     }
     default:
@@ -387,10 +402,12 @@ export function snapshot(field) {
   }
 }
 
-/** Can Undo put this field back exactly? */
+/** Can Undo put this field back exactly? (A radio can't be un-chosen in a
+ *  way a framework notices; only a previous choice can be re-chosen.) */
 export function canRestore(field, snap) {
   if (field.kind === "combobox") return !snap.shown || !!clearControl(field);
   if (field.kind === "buttons") return snap.pressed.some(Boolean);
+  if (field.kind === "radio") return snap.checked.some(Boolean);
   return true;
 }
 
@@ -402,17 +419,16 @@ function clearControl(field) {
 export async function restore(field, snap) {
   const el = field.el;
   switch (field.kind) {
-    case "radio":
+    case "radio": {
+      const i = snap.checked.findIndex(Boolean);
+      if (i < 0) return false;
+      clickChoice(field.options[i].el);
+      return true;
+    }
     case "checkbox_list":
     case "checkbox": {
       (field.options || [{ el }]).forEach((o, i) => {
-        if (o.el.checked !== snap.checked[i]) {
-          if (field.kind === "radio" && !snap.checked[i]) {
-            // A radio can't be clicked off: clear it directly.
-            o.el.checked = false;
-            fire(o.el, "Event", "change");
-          } else clickChoice(o.el);
-        }
+        if (o.el.checked !== snap.checked[i]) clickChoice(o.el);
       });
       return true;
     }

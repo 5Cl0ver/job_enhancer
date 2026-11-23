@@ -17,17 +17,22 @@ const REFRESH_MS = 60_000;
  */
 export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
   let inFlight = null;
+  // Bumped by wipe(): a refresh that started before a sign-out (or another
+  // account's sign-in) must never write the old account's data back.
+  let generation = 0;
 
-  async function fetchResume(headers, meta) {
+  async function fetchResume(headers, meta, gen) {
     const { [RESUME]: cached } = await chrome.storage.local.get(RESUME);
     const stamp = `${meta.id}|${meta.updated_at}`;
     if (cached?.stamp === stamp) return;
     const res = await wakeFetch(`${api}/v1/ai/resumes/active/file`, { headers });
-    if (!res.ok) return;
+    if (!res.ok || gen !== generation) return;
+    const b64 = toB64(await res.arrayBuffer());
+    if (gen !== generation) return;
     await chrome.storage.local.set({
       [RESUME]: {
         stamp,
-        b64: toB64(await res.arrayBuffer()),
+        b64,
         filename: res.headers.get("X-Resume-Filename") || meta.filename || "resume.pdf",
         mime: res.headers.get("Content-Type") || meta.mime || "application/pdf",
       },
@@ -37,7 +42,8 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
   /** Ask the server what changed (cheap when nothing did). */
   async function refresh() {
     if (inFlight) return inFlight;
-    inFlight = (async () => {
+    const gen = generation;
+    const run = (async () => {
       const t = await token();
       if (!t) return false;
       const headers = { Authorization: `Bearer ${t}` };
@@ -46,10 +52,14 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
       const res = await wakeFetch(`${api}/v1/autofill/bundle${qs}`, { headers });
       if (!res.ok) return false;
       const b = await res.json();
+      if (gen !== generation) return false; // signed out meanwhile
       if (b.changed === false) {
         await chrome.storage.local.set({ [COPY]: { ...held, fetched_at: Date.now() } });
+        // A résumé that failed to download last time: try again.
+        if (held?.resume) await fetchResume(headers, held.resume, gen).catch(() => {});
         return true;
       }
+      if (gen !== generation) return false;
       await chrome.storage.local.set({
         [COPY]: {
           version: b.version,
@@ -61,15 +71,16 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
           resume: b.resume || null,
         },
       });
-      if (b.resume) await fetchResume(headers, b.resume).catch(() => {});
+      if (b.resume) await fetchResume(headers, b.resume, gen).catch(() => {});
       else await chrome.storage.local.remove(RESUME);
       return true;
     })()
       .catch(() => false)
       .finally(() => {
-        inFlight = null;
+        if (inFlight === run) inFlight = null;
       });
-    return inFlight;
+    inFlight = run;
+    return run;
   }
 
   /** The staged tailored résumé's PDF (cached by document). */
@@ -117,6 +128,8 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
 
   /** Signed out (or another account signed in): forget everything. */
   async function wipe() {
+    generation++;
+    inFlight = null; // the next refresh starts fresh, with the new account
     await chrome.storage.local.remove([COPY, RESUME, STAGED]);
   }
 

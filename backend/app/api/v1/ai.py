@@ -343,8 +343,8 @@ async def autofill_map(
     )
     user_data = _user_data_text(profile, answers, resume_text)
     fields = [f.model_dump() for f in data.fields]
-    mappings = await ai_service.map_fields(user_data, fields)
-    return AutofillMapResponse(mappings=mappings)
+    mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
+    return AutofillMapResponse(mappings=mappings, confidence=confidence)
 
 
 @router.post("/work-history", response_model=WorkHistoryResponse)

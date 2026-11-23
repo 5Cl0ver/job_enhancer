@@ -3,10 +3,10 @@
 // Nothing is ever submitted, nothing the user typed is overwritten, and
 // self-identification, agreements and essays are never touched.
 import { normalizeQuestion } from "./classify/answers.js";
-import { profileKeyFor } from "./classify/profileKeys.js";
+import { PRIVATE, profileKeyFor } from "./classify/profileKeys.js";
 import { collectFields, looksLikeApplication } from "./scan.js";
-import { IDENTITY, resolve } from "./resolve.js";
-import { canRestore, hasValue, peekOptions, readField, restore, snapshot, writeField } from "./widgets.js";
+import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
+import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
 
 const STYLE_ID = "jec-fill-style";
 const STYLE = `
@@ -39,7 +39,7 @@ function unmark(field) {
   (field.mark || field.el)?.removeAttribute?.("data-jec-fill");
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 const optionLabels = (f) => (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60);
@@ -66,7 +66,11 @@ export function createSession(deps) {
     return list;
   };
 
-  const isApplication = () => looksLikeApplication([...scan()], (f) => IDENTITY.has(profileKeyFor(f) || ""));
+  const isApplication = () =>
+    looksLikeApplication(scan(), {
+      isIdentity: (f) => IDENTITY.has(profileKeyFor(f) || "") || (f.kind === "file" && isResumeUpload(f)),
+      isMapped: (f) => !!profileKeyFor(f) || (f.kind === "file" && isResumeUpload(f)),
+    });
 
   function entryFor(field, source, actual, snap) {
     return {
@@ -83,7 +87,12 @@ export function createSession(deps) {
   async function fillOne(field, values, source) {
     const snap = snapshot(field);
     const res = await writeField(field, values);
-    if (!res.ok) return res;
+    if (!res.ok) {
+      // Written but not taken (or half taken): put the field back, so nothing
+      // is left changed without a record and an Undo.
+      if (readField(field) !== (snap.value ?? snap.shown ?? readField(field))) await restore(field, snap).catch(() => {});
+      return res;
+    }
     filled.set(field.id, { field, snap, entry: entryFor(field, source, res.actual, snap) });
     needYou.delete(field.id);
     mark(field, source);
@@ -126,7 +135,7 @@ export function createSession(deps) {
     const asked = [];
     for (const f of leftovers.slice(0, 40)) {
       const options = f.kind === "combobox" && asked.filter((a) => a.f.kind === "combobox").length < 12 ? await peekOptions(f) : optionLabels(f);
-      asked.push({ f, q: { id: f.id, label: f.question, type: f.kind === "text" || f.kind === "date" ? "text" : "select", options } });
+      asked.push({ f, q: { id: f.id, label: f.question.slice(0, 500), type: f.kind === "text" || f.kind === "date" ? "text" : "select", options } });
     }
     const res = await send({ type: "aiMapFields", fields: asked.map((a) => a.q) }).catch(() => null);
     const mappings = res?.mappings || {};
@@ -135,8 +144,9 @@ export function createSession(deps) {
     for (const { f } of asked) {
       const v = mappings[f.id];
       if (v == null || v === "" || hasValue(f)) continue;
-      // An unsure answer stays a suggestion (spec 015, Story 5).
-      if (confidence[f.id] != null && confidence[f.id] < 0.75) continue;
+      // Only a sure answer fills; an unsure (or unscored) one is left for the
+      // user (spec 015, Story 5).
+      if ((confidence[f.id] ?? 0.5) < 0.75) continue;
       const r = await fillOne(f, [String(v)], "ai");
       if (r.ok) n++;
     }
@@ -182,6 +192,12 @@ export function createSession(deps) {
     for (const k of ids) {
       const x = filled.get(k);
       if (!x || !x.entry.can_undo) continue;
+      // Changed on the page since? That's the user's now: leave it.
+      if (x.field.kind !== "file" && !same(readField(x.field), x.entry.value)) {
+        filled.delete(k);
+        unmark(x.field);
+        continue;
+      }
       if (await restore(x.field, x.snap)) {
         filled.delete(k);
         unmark(x.field);
@@ -210,7 +226,13 @@ export function createSession(deps) {
   /** Answers the user typed into questions we didn't know ("Remember"). */
   function typedAnswers() {
     const out = [];
-    for (const field of scan()) {
+    const list = scan();
+    const keyCount = new Map();
+    for (const f of list) keyCount.set(f.key, (keyCount.get(f.key) || 0) + 1);
+    for (const field of list) {
+      // Agreements, private numbers, and questions we can't tell apart (two
+      // fields read as the same question) are never remembered.
+      if (field.kind === "checkbox" || PRIVATE.test(field.question) || keyCount.get(field.key) > 1) continue;
       // Something we filled counts only if the user has since changed it.
       const ours = filled.get(field.id);
       if (ours && ours.entry.source !== "ai" && readField(field).trim() === ours.entry.value.trim()) continue;

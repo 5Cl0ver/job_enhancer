@@ -99,10 +99,28 @@ function openReview() {
   send({ type: "openReview" });
 }
 
+// Is this an application? Asked on page changes, so kept cheap on busy pages:
+// the full scan runs only when the set of form controls changed (or, on a page
+// with none in plain sight, at most every 10 s for forms inside components).
 let ensureTimer;
+let lastSig = "";
+let lastCheck = 0;
+let lastAnswer = false;
+const CONTROLS = "input:not([type=hidden]):not([type=submit]):not([type=button]), select, textarea, [role=combobox]";
+function looksLikeApplicationNow() {
+  const n = document.querySelectorAll(CONTROLS).length;
+  const sig = `${location.href}|${n}`;
+  const now = Date.now();
+  if (sig === lastSig && (n > 0 || now - lastCheck < 10_000)) return lastAnswer;
+  lastSig = sig;
+  lastCheck = now;
+  lastAnswer = session.isApplication();
+  return lastAnswer;
+}
+
 function ensurePill() {
   if (!isCurrent()) return;
-  if (state !== "idle" || session.isApplication()) pill();
+  if (state !== "idle" || looksLikeApplicationNow()) pill();
   else uiRoot("autofill").getElementById("jec-pill")?.remove();
 }
 
@@ -117,7 +135,8 @@ function report() {
 
 async function loadCopy() {
   const res = await send({ type: "getAutofillCopy" });
-  if (!res?.signedIn) return null;
+  if (!res?.signedIn) return { signedOut: true };
+  if (!res.copy) return { unreachable: true };
   let resumeFile = null;
   if (res.resume?.b64) {
     try {
@@ -147,11 +166,10 @@ async function run() {
   const slow = setTimeout(() => state === "busy" && setPill("busy", "Waking up the app…"), 1500);
   const copy = await loadCopy();
   clearTimeout(slow);
-  if (!copy) {
-    setPill("error", "Sign in to autofill");
-    openReview();
+  if (copy.signedOut || copy.unreachable) {
+    setPill("error", copy.signedOut ? "Sign in from the side panel" : "Can't reach the app: try again");
     setTimeout(() => setPill("idle"), 4000);
-    return { ok: false, signedIn: false };
+    return { ok: false, signedIn: !copy.signedOut };
   }
 
   // Workday's Work Experience: one block per job on the résumé.
@@ -179,8 +197,9 @@ try {
   chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
     if (!isCurrent()) return;
     if (msg?.type === "runAutofill") {
-      // Only frames with a form answer (an empty frame stays quiet).
-      if (!TOP && !session.isApplication() && !session.scan().length) return;
+      // A frame fills only when it holds an application itself (not a chat
+      // widget, a newsletter box or a payment frame).
+      if (!TOP && !session.isApplication()) return;
       run().then(reply, () => reply({ ok: false }));
       return true;
     }
@@ -223,7 +242,7 @@ if (document.body && isCurrent()) {
     isCurrent,
     onSubmit: (job) => {
       send({ type: "markApplied", job });
-      setPill("done", "✓ Tracked as applied");
+      if (uiRoot("autofill").getElementById("jec-pill")) setPill("done", "✓ Tracked as applied");
     },
   });
 }
