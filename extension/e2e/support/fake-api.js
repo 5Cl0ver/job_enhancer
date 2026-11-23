@@ -65,6 +65,7 @@ export async function startFakeApi() {
     bundleVersion: 1, // bumped whenever the profile or answers change
     history: null, // the résumé read into {work, education}
     aiAnswers: {}, // question label -> {value, confidence} the fake AI gives
+    taught: [], // boxes taught with "Point at a box": {id, site, fingerprint, profile_key, answer}
     resume: { filename: "wren-calloway.pdf", bytes: Buffer.from("%PDF-1.4\n% invented résumé\n") },
   };
   const log = []; // {method, path, body, at}
@@ -130,6 +131,7 @@ export async function startFakeApi() {
           email: state.email,
           profile: state.profile,
           answers: state.answers,
+          taught: state.taught,
           history: state.history,
           history_pending: false,
           resume: state.resume
@@ -137,6 +139,21 @@ export async function startFakeApi() {
             : null,
         },
       };
+    },
+    "POST /v1/autofill/taught": (b) => {
+      const t = { id: `t${state.taught.length + 1}`, ...b };
+      state.taught = [...state.taught.filter((x) => !(x.site === b.site && x.fingerprint?.label === b.fingerprint?.label)), t];
+      state.bundleVersion++;
+      return { status: 201, body: { id: t.id } };
+    },
+    "GET /v1/autofill/taught": () => ({
+      body: state.taught.map((t) => ({ id: t.id, site: t.site, label: t.fingerprint?.label || "", profile_key: t.profile_key ?? null, answer_preview: t.answer ? t.answer.slice(0, 40) : null })),
+    }),
+    "DELETE /v1/autofill/taught/:id": (_b, req) => {
+      const id = req.url.split("/").pop();
+      state.taught = state.taught.filter((t) => t.id !== id);
+      state.bundleVersion++;
+      return { status: 204 };
     },
     "POST /v1/ai/work-history": () => ({ body: { entries: state.history?.work || [] } }),
     "GET /v1/saved-jobs/summary": (_b, req) => {
@@ -226,6 +243,7 @@ export async function startFakeApi() {
     log.push({ method: req.method, path, body, at: Date.now() });
     let key = `${req.method} ${path}`;
     if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
+    if (/^DELETE \/v1\/autofill\/taught\/[^/]+$/.test(key)) key = "DELETE /v1/autofill/taught/:id";
     const o = overrides.get(path) ?? overrides.get(key);
     const wait = (typeof o === "object" && o?.delay) || delay;
     if (wait) await new Promise((r) => setTimeout(r, wait));

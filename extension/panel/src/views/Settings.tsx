@@ -1,4 +1,5 @@
 // "Settings": the account, the Claude Project link, and where things are.
+import { TaughtList } from "@/views/Point";
 import * as React from "react";
 import { ExternalLink, LogOut } from "lucide-react";
 import { Button, Card, Field, Input, Muted, SectionTitle } from "@/ui";
@@ -33,6 +34,8 @@ export function Settings() {
           </Button>
         </div>
       </Card>
+
+      <TaughtList />
 
       <Card className="flex flex-col gap-2">
         <Field label="Claude Project link">

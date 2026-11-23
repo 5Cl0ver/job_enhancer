@@ -52,8 +52,9 @@ select this `extension/` folder → pin the icon. Make sure the backend is runni
    under the button always says what's happening ("Form found", "Filling… 7 of 15",
    "Done", or what went wrong). Check the page, then submit it yourself. Shortcut:
    **Alt+Shift+J** (the panel shows the key Chrome really gave it). If it ever misses: **Read the
-   page again**, or **Copy what Job Catcher saw** (the page's questions, never your answers) and
-   paste it to Claude.
+   page again**, **Point at a box** (click the box, choose what goes there: it fills, and fills by
+   itself next time, on every computer), or **Copy what Job Catcher saw** (the page's questions,
+   never your answers) and paste it to Claude.
 5. **My jobs**, **Write** (cover letters, tailored résumés) and **Settings** are in the panel's bottom bar.
 
 ## Testing

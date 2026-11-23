@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-23
 
-**Status**: Building (PR A: the fix + never stuck)
+**Status**: Built (PR #34: the fix, never stuck, point and teach)
 
 **Input**: The user, on a real Paycom application pop-up with v0.32.0: the panel found the application and offered Autofill, but a press said **"Nothing here matched your profile"** and listed nothing. "I don't want to have to keep going back and forth … There has to be a way for us to go around me giving you the HTML every single time … maybe a button … where it says no form on this page yet, different types of errors, where I can click and then it will read the page again … I've seen extensions where you can literally hover over the HTML … No more errors like this. I need it to work."
 

@@ -61,6 +61,15 @@ export interface Presence {
   fields: number;
   status: FillStatus | null;
 }
+/** "Point at a box" (spec 017): pointing, or the box clicked (never its value). */
+export interface Pick {
+  state: "pointing" | "picked";
+  at: number;
+  frameId?: number;
+  site?: string;
+  refused?: string;
+  field?: { id: string; label: string; kind: string; options: string[] };
+}
 export type Fill = {
   entries: FillEntry[];
   needYou: FillNeed[];
@@ -69,8 +78,9 @@ export type Fill = {
   pending: Pending;
   keep: boolean;
   presence: Presence | null;
+  pick: Pick | null;
 };
-const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null };
+const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null, pick: null };
 type Saved = { jobs: SavedJob[]; loaded: boolean; error: string | null };
 type Tab = { id: number | null; url: string; title: string; ctx: PageContext };
 
@@ -137,6 +147,7 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
       pending: (res?.pending as Pending) || { answers: [], profile: {} },
       keep: !!res?.keep,
       presence: (res?.presence as Presence) || { form: false, app: false, fields: 0, status: null },
+      pick: (res?.pick as Pick) || null,
     });
   }, []);
 

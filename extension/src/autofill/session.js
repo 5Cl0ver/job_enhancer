@@ -147,10 +147,12 @@ export function createSession(deps) {
   const hasForm = () => presence().form;
 
   /** One scan: is there a form, is it an application, how many fields. */
-  function presence() {
+  /** @param {object[]} [taught] boxes taught on this site: a frame holding one has a form. */
+  function presence(taught = []) {
     const list = scan();
     const app = looksLikeApplication(list, appCheck);
-    return { form: app || hasFormHere(list, { isApplication: () => app }), app, fields: list.length };
+    const form = app || hasFormHere(list, { isApplication: () => app }) || (taught.length > 0 && matchTaught(taught, list).size > 0);
+    return { form, app, fields: list.length };
   }
 
   function entryFor(field, source, actual, snap) {

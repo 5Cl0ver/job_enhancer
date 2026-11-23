@@ -20,6 +20,7 @@ import { cn } from "@/lib/utils";
 import { send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
 import { Trouble } from "@/views/Trouble";
+import { startPointing } from "@/views/Point";
 import { usePanel, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence } from "@/lib/store";
 
 const SOURCE: Record<string, { label: string; tone: string }> = {
@@ -315,7 +316,7 @@ function StatusLine({
       />
       {text}
     </p>
-    {(trouble || quiet) && <Trouble key={presence?.status?.at ?? 0} tabId={tabId} quiet={quiet} />}
+    {(trouble || quiet) && <Trouble key={presence?.status?.at ?? 0} tabId={tabId} quiet={quiet} onPoint={() => startPointing(tabId)} />}
     </>
   );
 }

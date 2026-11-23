@@ -126,3 +126,45 @@ describe("a label never carries the answer", () => {
     expect(questionFor(doc.querySelector("#loc"))).not.toMatch(/Harborview/);
   });
 });
+
+describe("taught boxes: remembered by what they are, matched only when sure", async () => {
+  const { fingerprintOf, matchTaught, stableName } = await import("../src/autofill/fingerprint.js");
+  const { collectFields } = await import("../src/autofill/scan.js");
+  const fieldsOf = (doc) => collectFields(doc, { visible: () => true });
+
+  it("names a build tool generated aren't trusted", () => {
+    expect(stableName("legalFirstName")).toBe("legalFirstName");
+    expect(stableName("email_address")).toBe("email_address");
+    for (const generated of ["css-1x2y3z", "jss123", ":r3:", "input-48213", "mui-5", "a"]) expect(stableName(generated)).toBe("");
+  });
+
+  it("found again after the site's markup shifts (new classes, new ids, moved)", () => {
+    const before = parse(`<form><h2>Personal information</h2><label for="a1">Legal first name</label><input id="input-1234" name="legalFirstName" class="css-1x2y3z"></form>`);
+    const fp = fingerprintOf(fieldsOf(before)[0], fieldsOf(before));
+    const after = parse(`<form><h2>Personal information</h2><label for="b">Nickname</label><input id="b">
+      <label for="a9">Legal first name</label><input id="input-9876" name="legalFirstName" class="css-9z8y7x"></form>`);
+    const fields = fieldsOf(after);
+    const hit = matchTaught([{ fingerprint: fp, profile_key: "first_name" }], fields);
+    expect([...hit.keys()]).toEqual([fields[1].id]);
+  });
+
+  it("never guesses between two look-alike boxes", () => {
+    const doc = parse(`<form><div><input></div><div><input></div></form>`);
+    const fields = fieldsOf(doc);
+    const fp = { ...fingerprintOf(fields[0], fields), index: 7 }; // no name, no label: only a kind
+    expect(matchTaught([{ fingerprint: fp, profile_key: "email" }], fields).size).toBe(0);
+  });
+
+  it("a taught box fills, but never past the guards (consent, self-ID)", async () => {
+    const doc = parse(`<form><input id="contactAddress"><label for="g">Gender</label><select id="g"><option></option><option>Female</option></select></form>`);
+    const fields = fieldsOf(doc);
+    const s = createSession({ doc, send: vi.fn(async () => ({})), visible: () => true });
+    const taught = [
+      { site: doc.location?.hostname || "", fingerprint: fingerprintOf(fields[0], fields), profile_key: "email" },
+      { site: doc.location?.hostname || "", fingerprint: fingerprintOf(fields[1], fields), answer: "Female" },
+    ];
+    await s.fillKnown({ ...copy(), taught });
+    expect(doc.querySelector("#contactAddress").value).toBe(EMAIL);
+    expect(doc.querySelector("#g").value).toBe(""); // self-identification: never
+  });
+});

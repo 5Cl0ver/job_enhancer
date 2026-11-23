@@ -263,13 +263,71 @@ async function getFillSession(tabId) {
   const key = fillKey(tabId);
   const pk = pendingKey(tabId);
   const kk = keepKey(tabId);
-  const { [key]: held, [pk]: pending, [kk]: keep } = await chrome.storage.session.get([key, pk, kk]);
+  const ik = pickKey(tabId);
+  const { [key]: held, [pk]: pending, [kk]: keep, [ik]: pick } = await chrome.storage.session.get([key, pk, kk, ik]);
   return {
     ...(held || { frames: {} }),
     pending: pending || { answers: [], profile: {} },
     keep: !!keep?.on,
     presence: await presence.get(tabId),
+    pick: pick || null,
   };
+}
+
+// "Point at a box" (spec 017): pointing in every frame of the tab, the box the
+// user clicked (its question + fingerprint, never a value), and the answer
+// they chose — filled in that frame, then remembered in their account.
+const pickKey = (tabId) => `je_pick:${tabId}`;
+const changed = (tabId) => chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+
+async function startPick(tabId) {
+  await chrome.storage.session.set({ [pickKey(tabId)]: { state: "pointing", at: Date.now() } });
+  chrome.tabs.sendMessage(tabId, { type: "startPick" }).catch(() => {});
+  changed(tabId);
+}
+
+async function stopPick(tabId) {
+  chrome.tabs.sendMessage(tabId, { type: "stopPick" }).catch(() => {});
+  await chrome.storage.session.remove(pickKey(tabId));
+  changed(tabId);
+}
+
+/** Remember a taught box in the account (it rides in the autofill bundle). */
+async function saveTaught({ site, fingerprint, profile_key, answer }) {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const res = await fetch(`${cfg.API_BASE}/v1/autofill/taught`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(profile_key ? { site, fingerprint, profile_key } : { site, fingerprint, answer }),
+  }).catch(() => null);
+  if (!res?.ok) return { error: "Couldn't remember it this time" };
+  // In the copy right away (the next page fills it even before the copy is
+  // fetched again), then the account's version.
+  const { id } = await res.json().catch(() => ({}));
+  const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+  if (held) {
+    held.taught = [...(held.taught || []), { id, site, fingerprint, profile_key: profile_key || null, answer: profile_key ? null : answer }];
+    await chrome.storage.local.set({ je_autofill: held });
+  }
+  autofill.refresh();
+  chrome.runtime.sendMessage({ type: "taughtChanged" }).catch(() => {});
+  return { ok: true };
+}
+
+async function taughtApi(method, path = "") {
+  const token = await getValidToken();
+  if (!token) return { error: "NOT_SIGNED_IN" };
+  const res = await fetch(`${cfg.API_BASE}/v1/autofill/taught${path}`, {
+    method,
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => null);
+  if (!res?.ok) return { error: "Couldn't reach Job Enhancer" };
+  if (method === "DELETE") {
+    autofill.refresh();
+    chrome.runtime.sendMessage({ type: "taughtChanged" }).catch(() => {});
+  }
+  return { ok: true, items: method === "GET" ? await res.json() : undefined };
 }
 
 // What the user typed that the app could remember (answers and profile
@@ -331,12 +389,13 @@ try {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearFillSession(tabId);
     presence.clear(tabId);
-    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId)]).catch(() => {});
+    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId)]).catch(() => {});
   });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (!info.url) return;
     clearFillSession(tabId);
+    chrome.storage.session.remove(pickKey(tabId)).catch(() => {}); // pointing ends with the page
     // The new page reports its own form; ask again once it has settled, in
     // case a frame reported before this cleared it (an in-page address change).
     presence.clear(tabId).then(() => setTimeout(() => presence.probe(tabId), 1000));
@@ -720,6 +779,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });
       } else if (msg.type === "backfillJob") {
         sendResponse({ ok: true, ...(await backfillJob(msg.job)) });
+      } else if (msg.type === "taughtHere") {
+        // Just this site's taught boxes (never the résumé): every frame asks on load.
+        const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+        sendResponse({ ok: true, taught: (held?.taught || []).filter((t) => t.site === msg.site) });
       } else if (msg.type === "getAutofillCopy") {
         sendResponse({ ok: true, ...(await autofill.get()) });
       } else if (msg.type === "refreshAutofillCopy") {
@@ -806,6 +869,48 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The panel's Autofill button (or the page, for a tab id it knows).
         const tabId = msg.tabId ?? sender.tab?.id;
         sendResponse(tabId != null ? await presence.press(tabId) : { ok: false, problem: "refresh" });
+      } else if (msg.type === "startPick") {
+        await startPick(msg.tabId);
+        sendResponse({ ok: true });
+      } else if (msg.type === "stopPick") {
+        await stopPick(msg.tabId);
+        sendResponse({ ok: true });
+      } else if (msg.type === "picked") {
+        // A frame's box was clicked: the other frames stop pointing.
+        const tabId = sender.tab?.id;
+        if (tabId != null) {
+          const { field, fingerprint, site, refused } = msg;
+          await chrome.storage.session.set({
+            [pickKey(tabId)]: { state: "picked", frameId: sender.frameId ?? 0, field, fingerprint, site, refused: refused || "", at: Date.now() },
+          });
+          chrome.tabs.sendMessage(tabId, { type: "stopPick" }).catch(() => {});
+          changed(tabId);
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === "pickCancelled") {
+        if (sender.tab?.id != null) await stopPick(sender.tab.id);
+        sendResponse({ ok: true });
+      } else if (msg.type === "fillPicked") {
+        // The panel's choice for the picked box: fill it there, remember it,
+        // and point again for the next box.
+        const { [pickKey(msg.tabId)]: pick } = await chrome.storage.session.get(pickKey(msg.tabId));
+        if (!pick?.field || pick.refused) {
+          sendResponse({ ok: false, reason: pick?.refused || "gone" });
+        } else {
+          const out = await chrome.tabs
+            .sendMessage(msg.tabId, { type: "fillPicked", fieldId: pick.field.id, profile_key: msg.profile_key, answer: msg.answer }, { frameId: pick.frameId })
+            .catch(() => null);
+          let remembered = false;
+          if (out?.ok && msg.remember) {
+            remembered = !(await saveTaught({ site: pick.site, fingerprint: pick.fingerprint, profile_key: msg.profile_key, answer: msg.answer })).error;
+          }
+          if (out?.ok) await startPick(msg.tabId);
+          sendResponse({ ok: !!out?.ok, reason: out?.reason || (out ? "" : "refresh"), remembered });
+        }
+      } else if (msg.type === "listTaught") {
+        sendResponse(await taughtApi("GET"));
+      } else if (msg.type === "forgetTaught") {
+        sendResponse(await taughtApi("DELETE", `/${encodeURIComponent(msg.id)}`));
       } else if (msg.type === "readAgain") {
         sendResponse(await presence.readAgain(msg.tabId));
       } else if (msg.type === "scanReport") {

@@ -14,7 +14,11 @@
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
 import { profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
+import { fingerprintOf } from "./autofill/fingerprint.js";
+import { createPicker } from "./autofill/pick.js";
 import { frameReport } from "./autofill/report.js";
+import { collectFields, fieldId, questionFor } from "./autofill/scan.js";
+import { guardReason } from "./autofill/classify/profileKeys.js";
 import { resolve } from "./autofill/resolve.js";
 import { createSession } from "./autofill/session.js";
 import { watchForSubmit } from "./autofill/track.js";
@@ -89,6 +93,7 @@ let keepUserOff = false; // switched off in the panel: a press doesn't turn it b
 let usedHere = false; // autofill ran on this page (learning only notices then)
 let lastStep = "";
 let lastCopy = null; // the profile's answers, for noticing typed ones
+let taughtHere = []; // boxes the user taught on this site (spec 017)
 
 // ---- Status for the side panel ------------------------------------------------
 
@@ -120,7 +125,7 @@ function presenceNow() {
   if (sig === lastSig && (n > 0 || now - lastCheck < 10_000)) return lastPresence;
   lastSig = sig;
   lastCheck = now;
-  lastPresence = { ...session.presence(), inModal: !!openModal() };
+  lastPresence = { ...session.presence(taughtHere), inModal: !!openModal() };
   return lastPresence;
 }
 
@@ -347,6 +352,19 @@ try {
       check();
       return;
     }
+    if (msg?.type === "startPick") {
+      picker.start();
+      return;
+    }
+    if (msg?.type === "stopPick") {
+      picker.stop();
+      return;
+    }
+    if (msg?.type === "fillPicked") {
+      if (!picked.has(msg.fieldId)) return; // another frame's box
+      fillPickedNow(msg).then(reply, () => reply({ ok: false }));
+      return true;
+    }
     if (msg?.type === "runAutofill") {
       // A frame fills when it holds a form itself (not a chat widget, a
       // newsletter box or a payment frame); the top frame always tries.
@@ -407,6 +425,60 @@ function scanReportNow() {
   return frameReport(document, { fields, decide, popupOpen: !!modal, inModal: (el) => !!modal && within(modal, el) });
 }
 
+// ---- Point at a box (spec 017) -------------------------------------------------
+// The panel starts it in every frame; the frame whose box is clicked tells the
+// background what it is (its question and fingerprint — never its value); the
+// panel asks "What goes here?" and the answer is filled here, then remembered.
+
+/** The scanned field for a picked control — even one the scanner left out. */
+function fieldFor(control) {
+  const fields = session.scan();
+  const own = (f) => f.el === control || (f.options || []).some((o) => o.el === control) || f.mark === control || f.mark?.contains?.(control);
+  let field = fields.find(own);
+  if (field) return { field, fields };
+  // Left out by the scanner (the reason the user is pointing): read it anyway.
+  const all = collectFields(control.getRootNode?.() || document, { visible: () => true });
+  field = all.find(own);
+  if (field) return { field, fields: all };
+  const kind = control.tagName === "SELECT" ? "select" : control.tagName === "TEXTAREA" ? "textarea" : "text";
+  return { field: { id: fieldId(control), kind, el: control, mark: control, question: questionFor(control), key: "", hints: { name: control.getAttribute("name") || "", id: control.id || "", type: control.getAttribute("type") || "" } }, fields: [] };
+}
+
+const picked = new Map(); // id → field, for the answer the panel sends back
+const picker = createPicker({
+  labelFor: (el) => questionFor(el).slice(0, 60),
+  onPick: (control) => {
+    const { field, fields } = fieldFor(control);
+    picked.set(field.id, field);
+    const type = (control.getAttribute?.("type") || "").toLowerCase();
+    const refused = type === "password" ? "password" : field.kind === "checkbox" ? "consent" : guardReason(field.question, field.kind) || "";
+    send({
+      type: "picked",
+      site: location.hostname,
+      field: { id: field.id, label: (field.question || "").slice(0, 120), kind: field.kind, options: (field.options || []).map((o) => o.label).filter(Boolean).slice(0, 60) },
+      fingerprint: fingerprintOf(field, fields),
+      refused,
+    });
+  },
+  onCancel: () => send({ type: "pickCancelled" }),
+});
+
+async function fillPickedNow({ fieldId: id, profile_key, answer }) {
+  const field = picked.get(id);
+  if (!field?.el?.isConnected) return { ok: false, reason: "gone" };
+  let values = answer ? [answer] : [];
+  if (profile_key) {
+    const copy = lastCopy || (await loadCopy());
+    if (copy.signedOut || copy.unreachable) return { ok: false, reason: copy.signedOut ? "signed_out" : "asleep" };
+    values = copy.values[profile_key] || [];
+  }
+  if (!values.length) return { ok: false, reason: "no_data" };
+  const res = await session.fillPicked(field, values, profile_key ? "profile" : "learned");
+  usedHere = true;
+  report();
+  return { ok: !!res.ok, reason: res.reason, actual: res.ok ? String(res.actual ?? "") : "" };
+}
+
 globalThis.__jecAutofill = {
   alive: () => isCurrent() && !runtimeGone(),
   report: () => (isCurrent() ? scanReportNow() : null),
@@ -425,6 +497,14 @@ function start() {
   });
   watchForAdvance();
   check();
+  // A frame holding a box the user taught here counts as a form, however small.
+  send({ type: "taughtHere", site: location.hostname }).then((r) => {
+    taughtHere = r?.taught || [];
+    if (taughtHere.length) {
+      lastSig = "";
+      check();
+    }
+  });
   const observer = new MutationObserver(() => {
     if (!isCurrent()) {
       observer.disconnect();

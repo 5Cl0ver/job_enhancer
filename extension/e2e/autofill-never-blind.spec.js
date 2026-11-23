@@ -136,3 +136,89 @@ test("spam traps only bots fill stay empty; the real boxes fill", async () => {
   for (const trap of ["#b1", "#website", "#url", "#speck"]) await expect(page.locator(trap)).toHaveValue("");
   await page.close();
 });
+
+// ---- Point at a box (spec 017, Story 3) --------------------------------------
+
+/** Click the middle of an element on the page (a real mouse, like a person). */
+async function clickBox(page, box) {
+  const b = await box.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 3 });
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+}
+
+test("point at a box no reader can name, say what goes there: it fills, and next time fills itself", async () => {
+  api.state.taught = [];
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/unlabeled.html"));
+  const panel = await panelFor(page);
+  await expect(status(panel)).toHaveText(/Form found/, { timeout: 5000 });
+  await panel.getByRole("button", { name: "Autofill this page" }).click();
+  await expect(status(panel)).toHaveText(/Nothing here matched/, { timeout: 15000 });
+
+  // Point → click the plain box → "Email".
+  await panel.getByRole("button", { name: "Point at a box" }).click();
+  await expect(panel.getByTestId("pointing")).toBeVisible();
+  await clickBox(page, page.locator("#mystery"));
+  const ask = panel.getByTestId("what-goes-here");
+  await expect(ask).toBeVisible({ timeout: 5000 });
+  await ask.getByRole("button", { name: /^Email/ }).click();
+  await expect(page.locator("#mystery")).toHaveValue(PERSON.email);
+  await expect(panel.getByTestId("pointing")).toBeVisible(); // ready for the next box
+
+  // A box inside a closed page component → "Phone".
+  await clickBox(page, page.locator("#shadow-host"));
+  await expect(ask).toBeVisible({ timeout: 5000 });
+  await ask.getByRole("button", { name: /^Phone/ }).click();
+  await expect.poll(() => page.evaluate(() => window.__deep())).toBe(PERSON.profile.phone);
+
+  // A box inside a frame → typed text.
+  await clickBox(page, page.frameLocator("#inner").locator("#framed"));
+  await expect(ask).toBeVisible({ timeout: 5000 });
+  await ask.getByLabel("Something else").fill("Referred by a former colleague");
+  await ask.getByRole("button", { name: "Fill this" }).click();
+  await expect(page.frameLocator("#inner").locator("#framed")).toHaveValue("Referred by a former colleague");
+
+  // An agreement: refused, never learned.
+  await clickBox(page, page.locator("#agree"));
+  await expect(ask.getByText(/only you can tick/)).toBeVisible({ timeout: 5000 });
+  await expect(page.locator("#agree")).not.toBeChecked();
+  await panel.getByRole("button", { name: "Stop pointing" }).click();
+  await expect(panel.getByTestId("pointing")).toHaveCount(0);
+  expect(api.state.taught.map((t) => t.profile_key || t.answer)).toEqual(["email", "phone", "Referred by a former colleague"]);
+  await expect(page.locator("jec-ui-pick")).toHaveCount(0); // nothing left on the page
+
+  // Next visit: every taught box fills by itself.
+  const again = await ext.context.newPage();
+  await again.goto(lab.url("/lab/unlabeled.html"));
+  expect((await ext.autofill(again)).ok).toBe(true);
+  await expect(again.locator("#mystery")).toHaveValue(PERSON.email);
+  await expect.poll(() => again.evaluate(() => window.__deep())).toBe(PERSON.profile.phone);
+  await expect(again.frameLocator("#inner").locator("#framed")).toHaveValue("Referred by a former colleague");
+  await expect(again.locator("#other")).toHaveValue(""); // never taught: never guessed
+
+  // Settings lists them; Remove forgets one.
+  await panel.getByRole("button", { name: "Settings" }).click();
+  const list = panel.getByTestId("taught-list");
+  await expect(list.getByText(/→ Email/)).toBeVisible();
+  await list.getByRole("button", { name: "Remove" }).first().click();
+  await expect.poll(() => api.state.taught.length).toBe(2);
+  await Promise.all([page.close(), again.close(), panel.close()]);
+});
+
+test("pointing works inside the Paycom-style pop-up, and Esc stops it", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(PAYCOM);
+  await page.locator("#apply").click();
+  await expect(page.locator("[role=dialog]")).toBeVisible();
+  const panel = await panelFor(page);
+  const tabId = await ext.tabIdOf(page);
+  await ext.bg({ type: "startPick", tabId });
+  await expect(panel.getByTestId("pointing")).toBeVisible({ timeout: 5000 });
+  await page.locator("#legalFirstName").hover();
+  await expect(page.locator("jec-ui-pick")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(panel.getByTestId("pointing")).toHaveCount(0, { timeout: 5000 });
+  await expect(page.locator("[role=dialog]")).toBeVisible(); // the pop-up never saw the Esc
+  await expect(page.locator("jec-ui-pick")).toHaveCount(0);
+  await Promise.all([page.close(), panel.close()]);
+});
