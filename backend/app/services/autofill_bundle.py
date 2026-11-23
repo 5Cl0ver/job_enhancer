@@ -21,6 +21,7 @@ from sqlalchemy.orm import defer
 from app.models.application_profile import ApplicationProfile
 from app.models.custom_answer import CustomAnswer
 from app.models.resume import Resume
+from app.models.taught_field import TaughtField
 from app.schemas.user import ApplicationProfileSchema
 
 
@@ -38,6 +39,13 @@ async def bundle_version(db: AsyncSession, user_id: uuid.UUID, email: str) -> st
             )
         )
     ).one()
+    taught_count, taught_at = (
+        await db.execute(
+            select(func.count(), func.max(TaughtField.updated_at)).where(
+                TaughtField.user_id == user_id
+            )
+        )
+    ).one()
     resume = (
         await db.execute(
             select(Resume.id, Resume.created_at, Resume.parsed_history_at)
@@ -46,7 +54,15 @@ async def bundle_version(db: AsyncSession, user_id: uuid.UUID, email: str) -> st
             .limit(1)
         )
     ).first()
-    parts = [email, profile_at, count, answers_at, *(resume or (None, None, None))]
+    parts = [
+        email,
+        profile_at,
+        count,
+        answers_at,
+        taught_count,
+        taught_at,
+        *(resume or (None, None, None)),
+    ]
     raw = "|".join("" if p is None else str(p) for p in parts)
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
@@ -60,6 +76,13 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
             select(CustomAnswer)
             .where(CustomAnswer.user_id == user_id)
             .order_by(CustomAnswer.question_key)
+        )
+    )
+    taught = list(
+        await db.scalars(
+            select(TaughtField)
+            .where(TaughtField.user_id == user_id)
+            .order_by(TaughtField.site, TaughtField.created_at)
         )
     )
     resume = await db.scalar(
@@ -86,6 +109,17 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
                 "answer": a.answer,
             }
             for a in answers
+        ],
+        # Boxes the user pointed at and taught (spec 017), per site.
+        "taught": [
+            {
+                "id": str(t.id),
+                "site": t.site,
+                "fingerprint": t.fingerprint,
+                "profile_key": t.profile_key,
+                "answer": t.answer,
+            }
+            for t in taught
         ],
         "history": (resume.parsed_history or None) if read else None,
         "history_pending": resume is not None

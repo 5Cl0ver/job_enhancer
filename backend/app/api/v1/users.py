@@ -20,6 +20,7 @@ from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
+from app.models.taught_field import TaughtField
 from app.models.user import User
 from app.schemas.user import (
     ApplicationProfileSchema,
@@ -283,6 +284,12 @@ async def export_data(
         .all()
     )
 
+    taught_fields = (
+        (await db.execute(select(TaughtField).where(TaughtField.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+
     def _dt(v: datetime | None) -> str | None:
         return v.isoformat() if v else None
 
@@ -350,6 +357,16 @@ async def export_data(
                 "last_used_at": _dt(a.last_used_at),
             }
             for a in custom_answers
+        ],
+        "taught_fields": [
+            {
+                "site": t.site,
+                "fingerprint": t.fingerprint,
+                "profile_key": t.profile_key,
+                "answer": t.answer,
+                "created_at": _dt(t.created_at),
+            }
+            for t in taught_fields
         ],
     }
 
