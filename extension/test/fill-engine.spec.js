@@ -419,3 +419,55 @@ describe("part 4: education, current job, learning the profile", () => {
     expect(s.typedProfile(known)).toEqual({ address_line1: "40 Pier Road", willing_to_relocate: false });
   });
 });
+
+describe("PR #32 review", () => {
+  it.each([
+    ["College degree required?", null],
+    ["Describe a major project you led", null],
+    ["May we contact your current employer?", null],
+    ["Highest level of education", "degree"],
+    ["School or University", "school"],
+  ])("'%s' → %s", (q, key) => {
+    expect(profileKeyFor({ question: q, hints: {} })).toBe(key);
+  });
+
+  it("only values the profile can hold are offered", async () => {
+    const { profileValue } = await import("../src/autofill/session.js");
+    expect(profileValue("desired_salary", "$80,000 - $95,000")).toBeNull();
+    expect(profileValue("desired_salary", "$25/hr")).toBeNull();
+    expect(profileValue("desired_salary", "$85,000")).toBe(85000);
+    expect(profileValue("desired_salary", "90k")).toBe(90000);
+    expect(profileValue("linkedin_url", "linkedin.com/in/wren")).toBe("https://linkedin.com/in/wren");
+    expect(profileValue("phone", "123")).toBeNull();
+    expect(profileValue("willing_to_relocate", "No")).toBe(false);
+  });
+
+  it("a company's phone or a second address is never offered as yours", () => {
+    const doc = parse(`<label for="p">Phone</label><input id="p" type="tel">
+      <label for="cp">Company phone</label><input id="cp" type="tel">`);
+    const s = session(doc);
+    doc.querySelector("#cp").value = "555-222-3333";
+    expect(s.typedProfile(profileValues(PROFILE, EMAIL))).toEqual({});
+  });
+
+  it("undone fields are left alone by automatic runs, refilled by a press", async () => {
+    const doc = parse(`<label for="fn">First name</label><input id="fn"><label for="ln">Last name</label><input id="ln">`);
+    const s = session(doc);
+    await s.fillKnown(copy());
+    await s.undo();
+    await s.fillKnown(copy(), { auto: true });
+    expect(doc.querySelector("#fn").value).toBe("");
+    await s.fillKnown(copy());
+    expect(doc.querySelector("#fn").value).toBe("Wren");
+  });
+
+  it("the AI is never asked the same question twice", async () => {
+    const doc = parse(`<label for="fn">First name</label><input id="fn"><label for="q">Favorite tool?</label><input id="q">`);
+    const send = vi.fn(async () => ({ mappings: {}, confidence: {} }));
+    const s = session(doc, send);
+    const a = await s.fillKnown(copy());
+    await s.fillWithAi(a.leftovers);
+    const b = await s.fillKnown(copy(), { auto: true });
+    expect(b.leftovers).toEqual([]);
+  });
+});

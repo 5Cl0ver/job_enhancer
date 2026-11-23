@@ -46,6 +46,38 @@ const LEARNABLE_PROFILE = new Set([
   "authorized_to_work", "requires_sponsorship", "willing_to_relocate", "desired_salary", "notice_period",
 ]);
 const BOOL_PROFILE = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
+// Keys filled once per page (repeated education blocks: only the first).
+const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title"]);
+// Questions about a business, a recipient or someone's work line, not the user.
+const NOT_MINE = /company|employer|business|office|work (phone|address)|recipient|shipping|billing|gift|delivery/i;
+
+/**
+ * A typed value as the profile stores it, or null when it can't be one
+ * (a pay range, an hourly rate, a phone extension…), so a save never fails.
+ */
+export function profileValue(key, value) {
+  if (BOOL_PROFILE.has(key)) {
+    const b = yesNo(value);
+    return b ? b === "yes" : null;
+  }
+  if (key === "desired_salary") {
+    if (/[-–]|\bto\b|\/\s*h|hour|hr\b|month|week/i.test(value)) return null; // a range or not yearly
+    const m = /^\$?\s*(\d[\d,]*(?:\.\d+)?)\s*(k)?$/i.exec(value.trim());
+    if (!m) return null;
+    const n = Number(m[1].replace(/,/g, "")) * (m[2] ? 1000 : 1);
+    return n >= 1000 && n <= 5_000_000 ? Math.round(n) : null;
+  }
+  if (key === "phone") return value.replace(/\D/g, "").length >= 7 ? value : null;
+  if (/_url$/.test(key)) {
+    const url = /^https?:\/\//i.test(value) ? value : `https://${value}`;
+    try {
+      return new URL(url).hostname.includes(".") ? url : null;
+    } catch {
+      return null;
+    }
+  }
+  return value;
+}
 
 const LEFT_FOR_YOU = new Set(["sensitive", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
@@ -69,6 +101,10 @@ export function createSession(deps) {
   let fields = new Map();
   /** id → {field, item}: the AI's unsure answers, offered with "Use" */
   const suggestions = new Map();
+  /** Fields the user undid: an automatic run (keep filling) leaves them alone. */
+  const declined = new Set();
+  /** Fields already put to the AI: never asked twice (each step, each run). */
+  const aiAsked = new Set();
 
   const scan = () => {
     const list = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter((f) => !skipField(f));
@@ -122,10 +158,15 @@ export function createSession(deps) {
    * @param {import("./resolve.js").Copy} copy
    * @returns {Promise<{leftovers: object[]}>}
    */
-  async function fillKnown(copy) {
+  async function fillKnown(copy, { auto = false } = {}) {
     const leftovers = [];
+    if (!auto) declined.clear(); // a press means: fill again, undone ones too
+    // A suggestion whose field left the page (a new step) is gone.
+    for (const [id, x] of suggestions) if (!x.field.el.isConnected) suggestions.delete(id);
+    // Education and the current job go into the FIRST block that asks.
+    const once = new Set();
     for (const field of scan()) {
-      if (filled.has(field.id)) continue;
+      if (filled.has(field.id) || declined.has(field.id)) continue;
       if (field.kind !== "file" && hasValue(field)) continue;
       if (field.kind === "file" && field.el.files?.length) continue;
       const d = resolve(field, copy);
@@ -134,10 +175,14 @@ export function createSession(deps) {
         leave(field, d.skip);
         continue;
       }
+      if (ONCE_KEYS.has(d.key)) {
+        if (once.has(d.key)) continue;
+        once.add(d.key);
+      }
       const res = await fillOne(field, d.values, d.source);
       if (!res.ok) leave(field, res.reason || "rejected");
     }
-    return { leftovers };
+    return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)) };
   }
 
   /** One request for everything left: the app's AI answers from the user's data. */
@@ -145,6 +190,7 @@ export function createSession(deps) {
     if (!leftovers.length) return 0;
     const asked = [];
     for (const f of leftovers.slice(0, 40)) {
+      aiAsked.add(f.id);
       const options = f.kind === "combobox" && asked.filter((a) => a.f.kind === "combobox").length < 12 ? await peekOptions(f) : optionLabels(f);
       asked.push({ f, q: { id: f.id, label: f.question.slice(0, 500), type: f.kind === "text" || f.kind === "date" ? "text" : "select", options } });
     }
@@ -181,6 +227,11 @@ export function createSession(deps) {
   async function useSuggestion(id) {
     const s = suggestions.get(id);
     if (!s) return { ok: false };
+    // Gone from the page, or the user answered it meanwhile: drop it.
+    if (!s.field.el.isConnected || hasValue(s.field)) {
+      suggestions.delete(id);
+      return { ok: false };
+    }
     const res = await fillOne(s.field, [s.item.value], "ai");
     if (res.ok) suggestions.delete(id);
     return res;
@@ -202,23 +253,25 @@ export function createSession(deps) {
    */
   function typedProfile(known) {
     const out = {};
-    for (const field of scan()) {
+    const seen = new Map(); // key → how many fields on the page ask for it
+    const list = scan();
+    for (const field of list) {
+      const key = profileKeyFor(field);
+      if (key) seen.set(key, (seen.get(key) || 0) + 1);
+    }
+    for (const field of list) {
       const key = profileKeyFor(field);
       if (!LEARNABLE_PROFILE.has(key)) continue;
+      // Two fields asking the same (yours and a company's, a shipping address)
+      // or a question about a business: not clearly the user's own.
+      if (seen.get(key) > 1 || NOT_MINE.test(field.question)) continue;
       const ours = filled.get(field.id);
       const value = readField(field).trim();
       if (!value || value.length > 200) continue;
       if (ours && same(value, ours.entry.value)) continue; // ours, untouched
       if ((known[key] || []).some((k) => same(value, k))) continue; // already saved
-      if (BOOL_PROFILE.has(key)) {
-        const b = yesNo(value);
-        if (b) out[key] = b === "yes";
-      } else if (key === "desired_salary") {
-        const n = Number(value.replace(/[^\d.]/g, ""));
-        if (n > 0) out[key] = Math.round(n);
-      } else if (key === "state" && value.length > 2) {
-        out[key] = value;
-      } else out[key] = value;
+      const v = profileValue(key, value);
+      if (v !== null) out[key] = v;
     }
     return out;
   }
@@ -265,6 +318,7 @@ export function createSession(deps) {
       }
       if (await restore(x.field, x.snap)) {
         filled.delete(k);
+        declined.add(k);
         unmark(x.field);
         undone++;
       }
@@ -300,7 +354,7 @@ export function createSession(deps) {
       if (field.kind === "checkbox" || PRIVATE.test(field.question) || keyCount.get(field.key) > 1) continue;
       // Something we filled counts only if the user has since changed it.
       const ours = filled.get(field.id);
-      if (ours && ours.entry.source !== "ai" && readField(field).trim() === ours.entry.value.trim()) continue;
+      if (ours && readField(field).trim() === ours.entry.value.trim()) continue; // ours, untouched
       if (profileKeyFor(field) || field.kind === "file" || !field.key || field.key.length < 3) continue;
       const d = resolve(field, { values: {}, answers: [] });
       if (d.skip && d.skip !== "unknown") continue; // sensitive, essays, agreements

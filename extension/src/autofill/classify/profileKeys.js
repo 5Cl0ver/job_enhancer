@@ -91,11 +91,11 @@ const RULES = [
   { key: "willing_to_relocate", re: /relocat/i },
   // From the résumé (education, the most recent job) — spec 015 R2.
   { key: "graduation_year", re: /graduat(ion|ed)?[\s_-]*(year|date)|year of graduation|completion[\s_-]*(year|date)|year (completed|graduated)/i },
-  { key: "field_of_study", re: /field[\s_-]*of[\s_-]*study|\bmajor\b|discipline|area of study|concentration|course of study/i },
-  { key: "degree", re: /^\W*degree\b|degree (type|level|earned|obtained|received)|level of education|highest (level of )?(education|degree)|education level/i },
-  { key: "school", re: /^\W*(school|university|college|institution)\b|school (or|\/) university|name of (school|university|college|institution)|school name|university name/i },
-  { key: "current_title", re: /current (job[\s_-]*)?title|current (position|role)|most recent (job[\s_-]*)?(title|position|role)/i },
-  { key: "current_company", re: /current (company|employer)|most recent (company|employer)|present employer/i },
+  { key: "field_of_study", re: /field[\s_-]*of[\s_-]*study|^\W*(major|academic discipline|area of study|concentration|course of study)\b/i },
+  { key: "degree", re: /^\W*(degree( (type|level|earned|obtained|received))?|(highest )?(level of )?education( level)?|highest degree)\W*$/i },
+  { key: "school", re: /^\W*((school|university|college|institution)( name| attended)?|school (or|\/) university|name of (school|university|college|institution))\W*$/i },
+  { key: "current_title", re: /^\W*(your )?(current|most recent) (job[\s_-]*)?(title|position|role)\W*$/i },
+  { key: "current_company", re: /^\W*(your )?(current|most recent|present) (company|employer)( name)?\W*$/i },
   // Before the address rules: "Please state your salary…" is about salary.
   { key: "desired_salary", re: /desired[\s_-]*(salary|pay|compensation)|salary[\s_-]*(expectation|requirement)|expected[\s_-]*(salary|pay|compensation)|compensation[\s_-]*expect|^salary$/i },
   { key: "notice_period", re: /notice[\s_-]*period|(earliest|available)[\s_-]*start|start[\s_-]*date|when can you start|availability to start/i },
@@ -122,7 +122,10 @@ export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", 
 // yes, "Please state your salary expectations" no.
 const HEARD_ABOUT = /how did you (hear|find|learn|come across)|where did you (hear|find|see)|source of (this )?(application|referral)/i;
 
-const SHORT_ONLY = new Set(["city", "state", "country", "postal_code", "address_line1", "address_line2", "location"]);
+const SHORT_ONLY = new Set([
+  "city", "state", "country", "postal_code", "address_line1", "address_line2", "location",
+  "school", "degree", "field_of_study", "graduation_year",
+]);
 
 export function profileKeyFor(field) {
   // Someone else's details (a reference, an emergency contact) aren't yours,

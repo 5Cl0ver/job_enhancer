@@ -16,6 +16,7 @@ import uuid
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.models.application_profile import ApplicationProfile
 from app.models.custom_answer import CustomAnswer
@@ -63,6 +64,7 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
     )
     resume = await db.scalar(
         select(Resume)
+        .options(defer(Resume.file_data))  # never load the file itself here
         .where(Resume.user_id == user_id, Resume.is_active.is_(True))
         .order_by(Resume.created_at.desc())
         .limit(1)

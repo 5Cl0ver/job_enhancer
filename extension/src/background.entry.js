@@ -267,11 +267,17 @@ async function getFillSession(tabId) {
 const pendingKey = (tabId) => `je_pending:${tabId}`;
 const keepKey = (tabId) => `je_keep:${tabId}`;
 
-/** "jobs.vellacor.example" and "vellacor.example" are the same site. */
+// Hosts that serve many companies' applications: the company is in the path.
+const SHARED_HOSTS = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|workable\.com|jobvite\.com)$/i;
+const KEEP_MS = 2 * 60 * 60 * 1000; // keep filling lasts an application, not forever
+
+/** Which application a page belongs to: its host (one company's Workday is
+ *  vellacor.wd5.myworkdayjobs.com), plus the company's path on shared hosts. */
 function siteOf(url) {
   try {
-    const parts = new URL(url).hostname.split(".");
-    return parts.slice(-2).join(".");
+    const u = new URL(url);
+    if (SHARED_HOSTS.test(u.hostname)) return `${u.hostname}/${u.pathname.split("/")[1] || ""}`;
+    return u.hostname;
   } catch {
     return "";
   }
@@ -295,16 +301,14 @@ function updatePending(tabId, change) {
 async function saveProfileFields(fields) {
   const token = await getValidToken();
   if (!token) return { error: "NOT_SIGNED_IN" };
-  const headers = { Authorization: `Bearer ${token}`, "Content-Type": "application/json" };
-  const cur = await fetch(`${cfg.API_BASE}/v1/users/me/application-profile`, { headers });
-  if (!cur.ok) return { error: "Couldn't load your profile" };
-  const profile = await cur.json();
+  // Only the chosen fields: the profile save merges, so nothing else changes.
   const res = await fetch(`${cfg.API_BASE}/v1/users/me/application-profile`, {
     method: "PUT",
-    headers,
-    body: JSON.stringify({ ...profile, ...fields }),
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify(fields),
   });
-  return res.ok ? { ok: true } : { error: "Couldn't save your profile" };
+  if (res.ok) return { ok: true };
+  return { error: res.status === 422 ? "One of those values isn't valid. Uncheck it and try again." : "Couldn't save your profile" };
 }
 
 async function clearFillSession(tabId) {
@@ -757,8 +761,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const tabId = msg.tabId ?? sender.tab?.id;
         const url = msg.tabId != null ? (await chrome.tabs.get(msg.tabId).catch(() => null))?.url : sender.tab?.url;
         if (tabId != null) {
-          if (msg.on) await chrome.storage.session.set({ [keepKey(tabId)]: { on: true, site: siteOf(url || "") } });
-          else await chrome.storage.session.remove(keepKey(tabId));
+          await chrome.storage.session.set({
+            [keepKey(tabId)]: msg.on
+              ? { on: true, site: siteOf(url || ""), until: Date.now() + KEEP_MS }
+              : { on: false, userOff: msg.tabId != null, site: siteOf(url || "") },
+          });
           if (msg.tabId != null) chrome.tabs.sendMessage(tabId, { type: "fillAction", action: "keep", value: !!msg.on }).catch(() => {});
           chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
         }
@@ -767,7 +774,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const tabId = sender.tab?.id;
         const { [keepKey(tabId)]: keep } = tabId != null ? await chrome.storage.session.get(keepKey(tabId)) : {};
         // Only on the same site: the application, not wherever the tab goes next.
-        sendResponse({ ok: true, on: !!keep?.on && keep.site === siteOf(sender.tab?.url || sender.url || "") });
+        const here = siteOf(sender.tab?.url || sender.url || "");
+        sendResponse({
+          ok: true,
+          on: !!keep?.on && keep.site === here && (keep.until || 0) > Date.now(),
+          userOff: !!keep?.userOff && keep.site === here,
+        });
       } else if (msg.type === "getFillSession") {
         sendResponse({ ok: true, ...(await getFillSession(msg.tabId)) });
       } else if (msg.type === "fillAction") {

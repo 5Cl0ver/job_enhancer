@@ -45,6 +45,8 @@ let lastReport = { filled: 0, need: 0 };
 // same application fills as it appears. Remembered per tab and site by the
 // background, so it carries across page loads; switchable in the panel.
 let keepOn = false;
+let keepUserOff = false; // switched off in the panel: a press doesn't turn it back on
+let usedHere = false; // autofill ran on this page (learning only notices then)
 let lastStep = "";
 let lastCopy = null; // the profile's answers, for noticing typed ones
 
@@ -192,7 +194,9 @@ async function run({ auto = false } = {}) {
 
   // Workday's Work Experience: one block per job on the résumé (read once
   // and held in the copy; asked for only if the copy doesn't have it yet).
-  if (isWorkdayExperience(document)) {
+  // An automatic run (a new step) fills these only while they're all empty —
+  // never over the user's edits, never re-adding a block they removed.
+  if (isWorkdayExperience(document) && (!auto || !workExperienceTouched())) {
     let work = copy.history?.work;
     if (!work?.length) {
       setPill("busy", "Reading your résumé…");
@@ -202,11 +206,12 @@ async function run({ auto = false } = {}) {
     setPill("busy");
   }
 
-  const { leftovers } = await session.fillKnown(copy);
+  const { leftovers } = await session.fillKnown(copy, { auto });
+  usedHere = true;
   report();
   setPill("done");
   lastStep = session.stepFingerprint();
-  if (!auto && !keepOn) {
+  if (!auto && !keepOn && !keepUserOff) {
     keepOn = true; // on by default after a press (switch it off in the panel)
     send({ type: "setKeepFilling", on: true });
   }
@@ -218,18 +223,28 @@ async function run({ auto = false } = {}) {
   return { ok: true, ...lastReport };
 }
 
+/** Has anything in Workday's Work Experience been filled (by anyone)? */
+function workExperienceTouched() {
+  return [...document.querySelectorAll('[data-fkit-id^="workExperience-"] input:not([type=checkbox]), [data-fkit-id^="workExperience-"] textarea')].some(
+    (el) => (el.value || "").trim() !== "",
+  );
+}
+
 // ---- Learning (spec 015, Story 3) -------------------------------------------
 // When the user moves on (Next, Continue, Submit, leaving the page), what they
 // typed into questions the app didn't know — and profile answers it didn't have
 // — is offered in the side panel to remember. Nothing is saved without a press.
 
-const ADVANCE = /^(next|continue|save (and|&) continue|save|review|submit( (my )?application)?|apply|send( application)?|proceed)\b/i;
+// The whole label, exactly: "Save job", "Apply filters", "Next job" don't count.
+const ADVANCE = /^(next( step)?|continue|save (and|&) continue|save (and|&) next|review( (my )?application)?|submit( (my )?application)?|apply|send( (my )?application)?|proceed)$/i;
 
 let noticedAt = 0;
 function notice() {
   if (!isCurrent() || Date.now() - noticedAt < 500) return;
   noticedAt = Date.now();
-  if (!looksLikeApplicationNow()) return;
+  // Only on an application the user is filling with Job Catcher — never a
+  // checkout or any other form that merely looks similar.
+  if (!usedHere || !looksLikeApplicationNow()) return;
   const answers = session.typedAnswers();
   if (answers.length) send({ type: "answersNoticed", answers });
   if (lastCopy) {
@@ -275,6 +290,7 @@ try {
         if (msg.action === "use") return { ok: (await session.useSuggestion(msg.id)).ok };
         if (msg.action === "keep") {
           keepOn = !!msg.value;
+          keepUserOff = !msg.value;
           return { ok: true };
         }
         return { ok: false };
@@ -299,6 +315,8 @@ if (document.body && isCurrent()) {
   // Keep filling carries over from the last step's page (same tab, same site).
   send({ type: "getKeepFilling" }).then((r) => {
     keepOn = !!r?.on;
+    keepUserOff = !!r?.userOff;
+    if (keepOn) usedHere = true; // the application they're filling, next page
     if (keepOn) ensurePill();
   });
   watchForAdvance();

@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.database import AsyncSessionLocal
 from app.models.resume import Resume
@@ -28,14 +29,16 @@ session_factory = AsyncSessionLocal
 
 async def read_resume(resume: Resume) -> dict:
     """Read the résumé's text into {work, education} and store it on the row
-    (the caller commits)."""
+    (the caller commits). A reading that found nothing at all is NOT stored —
+    most likely the AI was unavailable — so it's tried again next time."""
     text = resume.extracted_text or ""
     history = {
         "work": await ai_service.parse_work_history(text),
         "education": await ai_service.parse_education(text),
     }
-    resume.parsed_history = history
-    resume.parsed_history_at = datetime.now(tz=UTC)
+    if history["work"] or history["education"]:
+        resume.parsed_history = history
+        resume.parsed_history_at = datetime.now(tz=UTC)
     return history
 
 
@@ -55,7 +58,11 @@ async def read_in_background(resume_id: uuid.UUID) -> None:
     _reading.add(resume_id)
     try:
         async with session_factory() as db:
-            resume = await db.scalar(select(Resume).where(Resume.id == resume_id))
+            resume = await db.scalar(
+                select(Resume)
+                .options(defer(Resume.file_data))
+                .where(Resume.id == resume_id)
+            )
             if resume is None or resume.parsed_history_at is not None:
                 return
             await read_resume(resume)

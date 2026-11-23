@@ -194,3 +194,37 @@ class TestResumeReading:
     async def test_no_resume_nothing_pending(self, client: AsyncClient):
         b = (await client.get("/v1/autofill/bundle")).json()
         assert b["history"] is None and b["history_pending"] is False
+
+    async def test_a_reading_that_found_nothing_is_tried_again(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        """The AI down (an empty reading) must not freeze the résumé as empty."""
+        from unittest.mock import AsyncMock, patch
+
+        from app.services import resume_history
+
+        r = await self._resume(db_session, test_user)
+        with (
+            patch(
+                "app.services.ai_service.parse_work_history",
+                new=AsyncMock(return_value=[]),
+            ),
+            patch(
+                "app.services.ai_service.parse_education",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            await resume_history.read_resume(r)
+        assert r.parsed_history_at is None
+        with (
+            patch(
+                "app.services.ai_service.parse_work_history",
+                new=AsyncMock(return_value=WORK),
+            ),
+            patch(
+                "app.services.ai_service.parse_education",
+                new=AsyncMock(return_value=[]),
+            ),
+        ):
+            await resume_history.read_resume(r)
+        assert r.parsed_history == {"work": WORK, "education": []}

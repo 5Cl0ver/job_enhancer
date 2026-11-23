@@ -19,6 +19,7 @@ from fastapi.responses import StreamingResponse
 from slowapi import Limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import defer
 
 from app.database import get_db
 from app.middleware.auth import get_current_user
@@ -365,6 +366,7 @@ async def work_history(
     actually in the résumé."""
     resume = await db.scalar(
         select(Resume)
+        .options(defer(Resume.file_data))
         .where(Resume.user_id == user.id, Resume.is_active.is_(True))
         .order_by(Resume.created_at.desc())
         .limit(1)
