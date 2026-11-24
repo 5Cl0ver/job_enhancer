@@ -304,3 +304,25 @@ test("a job's résumé changed in the app wins over an earlier pick in the panel
   expect((await page.evaluate(() => window.__formData()))["e1-company"]).toBe("Quillstone");
   await page.close();
 });
+
+test("a pick that couldn't be saved to the job says the job still uses its own résumé, with Try again", async () => {
+  api.state.resumes = { "resume-2": DATA_RESUME() };
+  const url = lab.url("/lab/employment.html");
+  api.state.jobs = [{ id: "j1", job_listing_id: "l1", title: "Application", company: "Opal Ridge Labs", location: "", url, applied_at: null, resume_id: null }];
+  api.state.jobsVersion++;
+  api.override("/v1/saved-jobs/j1/resume", { status: 500, body: { detail: "boom" } });
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  const panel = await panelFor(page);
+  const choice = panel.getByTestId("resume-choice");
+  await expect(choice).toBeVisible({ timeout: 8000 });
+  await choice.getByRole("button", { name: "Change" }).click();
+  await choice.getByLabel("Résumé for this application").selectOption("resume-2");
+  const note = panel.getByTestId("resume-choice-note");
+  await expect(note).toContainText("Couldn't save it to this job, so it's still using");
+  await expect(choice).not.toContainText("Filling from wren-data.pdf");
+  api.reset();
+  await note.getByRole("button", { name: "Try again" }).click();
+  await expect.poll(() => api.state.jobResumes.j1).toBe("resume-2");
+  await Promise.all([page.close(), panel.close()]);
+});

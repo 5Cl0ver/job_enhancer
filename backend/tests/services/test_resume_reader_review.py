@@ -99,3 +99,16 @@ Support Analyst | Quillstone | 2021 –
     out = read(text)["work"]
     assert out[0]["current"] is True and out[0]["start_month"] == 8
     assert (out[1]["start_year"], out[1]["end_year"]) == (2021, 2024)
+
+
+def test_prose_ending_in_a_year_range_is_not_a_job():
+    text = """EXPERIENCE
+Systems Administrator | Kelso Labs | Mar 2018 - Present
+Migrated Windows Server 2012 - 2019
+Led ERP rollout 2021 - 2022
+Building a new help desk 2020 - 2021
+Kelso Labs 2016 - 2018
+United Health 2014 - 2016
+"""
+    out = read(text)["work"]
+    assert [j["start_year"] for j in out] == [2018, 2016, 2014]

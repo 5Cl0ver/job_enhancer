@@ -23,9 +23,7 @@ depends_on = None
 def upgrade() -> None:
     with op.batch_alter_table("resumes") as batch:
         batch.add_column(
-            sa.Column(
-                "read_attempts", sa.Integer(), nullable=False, server_default="0"
-            )
+            sa.Column("read_attempts", sa.Integer(), nullable=False, server_default="0")
         )
     with op.batch_alter_table("users") as batch:
         batch.add_column(

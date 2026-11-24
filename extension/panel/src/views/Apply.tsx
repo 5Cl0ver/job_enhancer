@@ -402,6 +402,7 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
   }>({ choice: null, resumeId: null, jobResumeId: null });
   const [open, setOpen] = React.useState(false);
   const [note, setNote] = React.useState("");
+  const [retry, setRetry] = React.useState<string | null>(null);
 
   const load = React.useCallback(async () => {
     if (tab.id == null) return;
@@ -423,13 +424,22 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
     const row = resumes?.find((r) => r.id === id);
     const res = await send({ type: "chooseResume", tabId: tab.id, resumeId: id || null, filename: row?.filename || "" });
     setOpen(false);
-    setNote(match && res?.saved === false ? "Using it here, but couldn't save it to the job. Try again later." : "");
     await load();
     if (match) reloadSaved();
+    // A linked job only ever uses what's saved on the job: say so plainly.
+    if (match && res?.saved === false) {
+      const using = (jobResume && resumes?.find((r) => r.id === jobResume)?.filename) || "your usual résumé";
+      setNote(`Couldn't save it to this job, so it's still using ${using}.`);
+      setRetry(id);
+    } else {
+      setNote("");
+      setRetry(null);
+    }
   }
 
   const active = resumes?.find((r) => r.active) || null;
   const { choice, resumeId, jobResumeId } = state;
+  const jobResume = jobResumeId;
   const usingName = (resumeId && (resumes?.find((r) => r.id === resumeId)?.filename || choice?.filename)) || "";
   const name = usingName || staged || active?.filename || "";
   if (!name && !resumes?.length) return null;
@@ -465,7 +475,20 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
           </Alert>
         </div>
       )}
-      {note && <Alert tone="warning">{note}</Alert>}
+      {note && (
+        <div data-testid="resume-choice-note">
+          <Alert tone="warning">
+            <span className="flex flex-wrap items-center justify-between gap-2">
+              <span>{note}</span>
+              {retry !== null && (
+                <Button variant="ghost" size="sm" onClick={() => pick(retry)}>
+                  Try again
+                </Button>
+              )}
+            </span>
+          </Alert>
+        </div>
+      )}
     </div>
   );
 }

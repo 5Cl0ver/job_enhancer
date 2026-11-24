@@ -154,7 +154,11 @@ export function resolve(field, copy) {
   const learned = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
   // A learned answer, with its OWN other wordings ("Washington" → "WA") so a
   // dropdown still finds it — never the profile's old value (spec 020 review).
-  const use = (l) => ({ values: key ? valueForms(key, l.answer) : [l.answer], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) });
+  const use = (l) => {
+    let values = key ? valueForms(key, l.answer) : [l.answer];
+    if (key === "phone" && field.hints?.dialCode) values = values.map(nationalNumber);
+    return { values, source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) };
+  };
   if (learned && learned.tier !== "close" && learned.tier !== "offer") return use(learned);
   if (key) {
     let values = copy.values[key] || [];

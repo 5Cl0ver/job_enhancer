@@ -168,3 +168,10 @@ describe("spec 020 correctness re-review", () => {
     expect(resolve(q, { answers: [...answers, { question_key: "@desired_salary", answer: "120000" }], values, site: "y.example" }).values[0]).toBe("80000");
   });
 });
+
+describe("a learned phone beside a country-code picker", () => {
+  it("loses its country code, like the profile's", () => {
+    const d = resolve(field("Phone Number", { hints: { dialCode: true } }), { answers: [{ question_key: "@phone", answer: "+1 (555) 010-2345" }], values: {}, site: "x" });
+    expect(d.values[0]).toBe("(555) 010-2345");
+  });
+});

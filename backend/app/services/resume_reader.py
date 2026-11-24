@@ -141,6 +141,18 @@ def _point(text: str) -> tuple[int | None, int | None, bool]:
     return None, None, False
 
 
+# A line starting like a sentence about work done ("Migrated …", "Led …",
+# "Building …"): prose with years in it, not a job's header line.
+_PROSE_START = re.compile(
+    # (Company words that look like verbs — United, Advanced… — are names.)
+    r"^(?!(?:united|limited|advanced|applied|integrated|linked|consolidated|"
+    r"allied|associated|distinguished|wing|king|spring|ring)\b)"
+    r"(?:led|ran|built|grew|cut|won|drove|owned|made|set up|helped|worked|"
+    r"supported|managed|created|designed|developed|implemented|improved|reduced|"
+    r"increased|launched|delivered|maintained|handled|trained|wrote|"
+    r"[a-z]+ed|[a-z]+ing)\b",
+    re.IGNORECASE,
+)
 _HAS_MONTH = re.compile(rf"{_MONTH}\s+\d{{4}}|\b\d{{1,2}}/\d{{4}}", re.IGNORECASE)
 _HEAD_MARK = re.compile(r"\||·|•|—|–|@|\bat\b|,|\s{3,}|\t")
 
@@ -168,6 +180,7 @@ def _dates(line: str) -> dict | None:
             (not before or not after)
             and len(head.split()) <= 8
             and not head[:1].islower()
+            and not _PROSE_START.match(head)
         )
         if head.endswith(".") or not (not head or marked or header):
             return None
