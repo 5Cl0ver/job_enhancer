@@ -123,6 +123,36 @@ test("Workday: a box the user typed in first is never changed", async () => {
   await page.close();
 });
 
+test("Workday: the user's own edits stay theirs after the page redraws its rows; an untouched cut title is still fixed", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/workday-sections.html"));
+  await page.locator("#w1-title").fill("Applications Developer");
+  await page.locator("#w1-desc").fill("My own words about the job.");
+  await page.locator("#w1-location").click(); // leaving the box: remembered
+  await page.waitForTimeout(300);
+  await page.evaluate(() => window.__redraw()); // Workday's Back: new boxes, same values
+  expect((await ext.autofill(page)).ok).toBe(true);
+  await expect(page.locator("#w1-title")).toHaveValue("Applications Developer");
+  await expect(page.locator("#w1-desc")).toHaveValue("My own words about the job.");
+  await expect(page.locator("#w1-company")).toHaveValue("Brightfold Labs");
+  await page.close();
+});
+
+test("Workday: 'I currently work here' ticked by the page for a job that ended is unticked on a press, and the To date filled", async () => {
+  api.state.history = { ...HISTORY, work: [{ ...WORK[0], current: false, start_month: 9, start_year: 2024, end_month: 8, end_year: 2026 }] };
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/workday-sections.html?preticked=1"));
+  expect((await ext.autofill(page)).ok).toBe(true);
+  await expect(page.locator("#w1-current")).not.toBeChecked();
+  await expect(page.locator("#w1-to-m")).toBeVisible();
+  const data = await page.evaluate(() => window.__formData());
+  expect(data["w1-from-m"]).toBe("09");
+  expect(data["w1-to-m"]).toBe("08");
+  expect(data["w1-to-y"]).toBe("2026");
+  await page.close();
+});
+
 test("Greenhouse-style rows: '+ Add another' until each job has a row; never Save", async () => {
   const page = await ext.context.newPage();
   await page.goto(lab.url("/lab/greenhouse-rows.html"));

@@ -25,7 +25,7 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
-import { fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
+import { editKey, fillSections, inWorkdaySection, isWorkdaySections, shownValue } from "./autofill/sections/index.js";
 
 // This copy owns the page (see orphan.js): drop what older copies drew.
 const isCurrent = claimPage("autofill");
@@ -80,23 +80,58 @@ function openModal() {
 }
 
 // Boxes the user typed in or chose on this page (real input only — never our
-// own writes): a fill never changes them (spec 020).
+// own writes): a fill never changes them (spec 020). Remembered per tab by
+// where the box is, not just the element, so a page that redraws its rows
+// (Workday's Back, a resumed draft) still knows: a box showing what the user
+// left in it is theirs.
 const userEdited = new WeakSet();
+let savedEdits = {}; // where → what the user left there (this tab, this site)
 const CONTROL = 'input, textarea, select, [role="combobox"], [contenteditable="true"], button[aria-haspopup]';
+function rememberEdit(el) {
+  try {
+    const key = editKey(el);
+    if (!key) return;
+    const value = shownValue(el);
+    savedEdits[key] = value;
+    send({ type: "userEdit", key, value });
+  } catch {
+    /* a box gone mid-way */
+  }
+}
 function noteUser(e) {
   if (!e.isTrusted) return;
   const el = (e.composedPath?.()[0] || e.target)?.closest?.(CONTROL);
-  if (el) userEdited.add(el);
+  if (!el) return;
+  userEdited.add(el);
+  if (e.type === "change" || e.type === "focusout") rememberEdit(el);
 }
-for (const type of ["input", "change"]) document.addEventListener(type, noteUser, true);
-// A list button the user opened themselves is theirs too.
-document.addEventListener("click", (e) => e.isTrusted && e.target?.closest?.('button[aria-haspopup="listbox"]') && noteUser(e), true);
+for (const type of ["input", "change", "focusout"]) document.addEventListener(type, noteUser, true);
+// A list button the user opened themselves is theirs too (its choice is read once it's made).
+document.addEventListener(
+  "click",
+  (e) => {
+    const btn = e.isTrusted && e.target?.closest?.('button[aria-haspopup="listbox"]');
+    if (!btn) return;
+    userEdited.add(btn);
+    setTimeout(() => rememberEdit(btn), 1500);
+  },
+  true,
+);
+function isUsers(el) {
+  if (userEdited.has(el)) return true;
+  try {
+    const key = editKey(el);
+    return !!key && key in savedEdits && savedEdits[key] === shownValue(el);
+  } catch {
+    return false;
+  }
+}
 
 const session = createSession({
   send,
   // Workday's résumé rows (jobs, schools, languages…) are filled by sections/.
   skipField: (f) => inWorkdaySection(f.el),
-  userEdited: (el) => userEdited.has(el),
+  userEdited: isUsers,
   scope: openModal,
 });
 
@@ -289,7 +324,8 @@ async function fill(auto) {
     if (work?.length) copy.history = { ...(copy.history || {}), work };
   }
   status({ phase: "filling", done: 0, total: 0, note: "Filling your résumé sections…" }, { now: true });
-  await fillSections(document, copy, { session, auto, userEdited: (el) => userEdited.has(el) });
+  savedEdits = { ...((await send({ type: "getUserEdits" }))?.edits || {}), ...savedEdits };
+  await fillSections(document, copy, { session, auto, userEdited: isUsers });
 
   // Super autofill: a press starts filling every next step of this application.
   if (!auto && !keepOn && (await superAutofill())) {

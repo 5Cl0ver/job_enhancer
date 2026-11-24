@@ -769,7 +769,7 @@ try {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearFillSession(tabId);
     presence.clear(tabId);
-    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId)]).catch(() => {});
+    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), `je_edits:${tabId}`]).catch(() => {});
   });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -1326,6 +1326,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
         }
         sendResponse({ ok: true });
+      } else if (msg.type === "userEdit") {
+        // A box the user typed in or chose on this application (spec 020):
+        // kept per tab and site so a page that redraws its rows (Back, a
+        // resumed draft) still knows it's theirs. Never sent anywhere.
+        const tabId = sender.tab?.id;
+        if (tabId != null && typeof msg.key === "string" && msg.key && msg.key.length <= 400) {
+          const k = `je_edits:${tabId}`;
+          const site = siteOf(sender.tab?.url || "");
+          const { [k]: held } = await chrome.storage.session.get(k);
+          const edits = held?.site === site ? { ...held.edits } : {};
+          delete edits[msg.key]; // newest last
+          edits[msg.key] = String(msg.value ?? "").slice(0, 500);
+          const keys = Object.keys(edits);
+          for (const old of keys.slice(0, Math.max(0, keys.length - 300))) delete edits[old];
+          await chrome.storage.session.set({ [k]: { site, edits } });
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === "getUserEdits") {
+        const tabId = sender.tab?.id;
+        const k = `je_edits:${tabId}`;
+        const { [k]: held } = tabId != null ? await chrome.storage.session.get(k) : {};
+        sendResponse({ ok: true, edits: held?.site === siteOf(sender.tab?.url || "") ? held.edits : {} });
       } else if (msg.type === "resumeUploaded") {
         // The résumé is in this application: automatic steps never upload it again.
         if (sender.tab?.id != null) {

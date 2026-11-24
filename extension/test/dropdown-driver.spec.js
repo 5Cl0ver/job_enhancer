@@ -19,14 +19,14 @@ function page() {
  * Escape on the button or a click outside closes it; picking an option sets
  * the button's text. `virtual` draws only 8 rows at a time, by scroll.
  */
-function listbox(ctx, id, labels, { virtual = false, sticky = false, leaf = true } = {}) {
+function listbox(ctx, id, labels, { virtual = false, sticky = false, leaf = true, container = null, plain = false } = {}) {
   const { doc, stats } = ctx;
   const btn = doc.createElement("button");
   btn.id = id;
   btn.setAttribute("aria-haspopup", "listbox");
   btn.setAttribute("aria-expanded", "false");
   btn.textContent = "Select One";
-  doc.getElementById("form").appendChild(btn);
+  (container || doc.getElementById("form")).appendChild(btn);
   let popup = null;
   const close = () => {
     if (!popup) return;
@@ -60,13 +60,13 @@ function listbox(ctx, id, labels, { virtual = false, sticky = false, leaf = true
   btn.addEventListener("click", () => {
     if (popup) return close();
     popup = doc.createElement("div");
-    popup.setAttribute("data-automation-activepopup", "true");
+    if (!plain) popup.setAttribute("data-automation-activepopup", "true");
     const ul = doc.createElement("ul");
     ul.setAttribute("role", "listbox");
     ul.addEventListener("scroll", () => draw(ul));
     draw(ul);
     popup.appendChild(ul);
-    doc.body.appendChild(popup);
+    (container || doc.body).appendChild(popup);
     btn.setAttribute("aria-expanded", "true");
     stats.open++;
     stats.opened++;
@@ -150,6 +150,46 @@ describe("one dropdown at a time", () => {
     a.field.pick = (opts) => opts.findIndex((o) => o.label.startsWith("4"));
     expect((await writeField(a.field, ["(level 4)"])).ok).toBe(true);
     expect(a.btn.textContent).toBe("4 - Advanced");
+  });
+});
+
+describe("an application's own pop-up window is never closed", () => {
+  /** A pop-up application (LinkedIn Easy Apply-like): Escape anywhere or a click outside closes it. */
+  function modal(ctx) {
+    const { doc } = ctx;
+    const dlg = doc.createElement("div");
+    dlg.setAttribute("role", "dialog");
+    dlg.setAttribute("aria-modal", "true");
+    doc.body.appendChild(dlg);
+    doc.addEventListener("keydown", (e) => e.key === "Escape" && dlg.remove());
+    // (On mousedown, as most pop-ups do: an option removes itself during its click.)
+    doc.addEventListener("mousedown", (e) => dlg.isConnected && !dlg.contains(e.target) && dlg.remove());
+    return dlg;
+  }
+
+  it("a list inside it that stays open after the pick is closed without closing the pop-up", async () => {
+    const ctx = page();
+    const dlg = modal(ctx);
+    const a = listbox(ctx, "a", ["Yes", "No"], { container: dlg, plain: true, sticky: true });
+    const res = await writeField(a.field, ["Yes"]);
+    expect(res.ok).toBe(true);
+    expect(a.btn.textContent).toBe("Yes");
+    expect(ctx.stats.open).toBe(0);
+    expect(dlg.isConnected).toBe(true);
+  });
+
+  it("a list the page opened (not Job Catcher's) is left alone, and so is the pop-up", async () => {
+    const ctx = page();
+    const dlg = modal(ctx);
+    const theirs = listbox(ctx, "theirs", ["Red", "Blue"], { container: dlg, plain: true });
+    const mine = listbox(ctx, "mine", ["Yes", "No"], { container: dlg, plain: true });
+    let escapes = 0;
+    theirs.btn.addEventListener("keydown", (e) => e.key === "Escape" && escapes++);
+    theirs.btn.click(); // opened by the page or the user
+    expect((await writeField(mine.field, ["No"])).ok).toBe(true);
+    expect(mine.btn.textContent).toBe("No");
+    expect(dlg.isConnected).toBe(true);
+    expect(escapes).toBe(0); // Job Catcher never closes what it didn't open
   });
 });
 

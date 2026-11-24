@@ -13,7 +13,9 @@
      Month/year boxes take a value only Workday's way (ArrowUp, or real typing):
      a value set by script alone is dropped when the box loses focus.
      window.__formData() holds what the PAGE has taken; window.__maxOpen() the
-     most lists ever open at once. -->
+     most lists ever open at once; window.__redraw() rebuilds the job rows with
+     the same values (Workday's Back, a resumed draft). ?preticked=1: Workday
+     ticked "I currently work here" on row 1, which hides its To date. -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -203,7 +205,7 @@
       // Month/year boxes take a value Workday's way only: ArrowUp/ArrowDown or
       // real typing. A value set by script alone is dropped on blur.
       function wireSpin(input) {
-        let kept = "";
+        let kept = input.value || "";
         const max = input.dataset.automationId === "dateSectionMonth-input" ? 12 : 2100;
         const pad = (v) => (max === 12 ? String(v).padStart(2, "0") : String(v));
         input.addEventListener("keydown", (e) => {
@@ -224,7 +226,37 @@
         });
       }
 
+      // "I currently work here" hides the row's To date while ticked (Workday's way).
+      function wireCurrent(cb) {
+        const to = cb.closest('[role="group"]').querySelector('[data-automation-id="formField-endDate"]');
+        const sync = () => (to.hidden = cb.checked);
+        cb.addEventListener("change", sync);
+        cb.addEventListener("click", () => setTimeout(sync, 0));
+        sync();
+      }
+
+      // Rebuild the job rows with the values they hold (new elements, same values).
+      window.__redraw = () => {
+        const box = document.getElementById("work-rows");
+        const values = [...box.querySelectorAll("input, textarea")].map((el) => [el.id, el.type === "checkbox" ? el.checked : el.value]);
+        const n = counts.work;
+        box.innerHTML = "";
+        counts.work = 0;
+        for (let i = 0; i < n; i++) {
+          counts.work++;
+          box.insertAdjacentHTML("beforeend", ROWS.work(counts.work));
+        }
+        for (const [id, v] of values) {
+          const el = document.getElementById(id);
+          if (!el) continue;
+          if (el.type === "checkbox") el.checked = v;
+          else el.value = v;
+        }
+        for (const row of box.children) wire(row);
+      };
+
       function wire(root) {
+        for (const cb of root.querySelectorAll('[data-automation-id="formField-currentlyWorkHere"] input')) wireCurrent(cb);
         for (const b of root.querySelectorAll('button[aria-haspopup="listbox"]')) wireList(b);
         for (const s of root.querySelectorAll('input[role="spinbutton"]')) wireSpin(s);
         for (const i of root.querySelectorAll('[data-automation-id="multiSelectContainer"] input')) wirePrompt(i, i.id === "skills" ? SKILLS : SCHOOLS);
@@ -238,6 +270,11 @@
       for (const btn of document.querySelectorAll('[data-automation-id="add-button"]')) btn.addEventListener("click", () => addRow(btn.dataset.kind));
       // Workday's own résumé reading filled one job, wrongly.
       addRow("work", { title: "Platform Engineer", desc: "Cloud &amp; Tooling) · Brightfold Labs" });
+      if (new URLSearchParams(location.search).get("preticked")) {
+        const cb = document.getElementById("w1-current");
+        cb.checked = true;
+        cb.dispatchEvent(new Event("change"));
+      }
       addRow("edu");
       addRow("lang");
       wire(document.querySelector('[data-automation-id="formField-skills"]'));

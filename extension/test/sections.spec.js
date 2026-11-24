@@ -321,3 +321,114 @@ describe("a plain Skills box", () => {
     expect(profileValues({}, "", new Date(), { skills: [] }).skills).toEqual([]);
   });
 });
+
+describe("security review: guards and automatic steps", () => {
+  const f = (question, kind = "checkbox") => ({ question, kind, hints: {} });
+
+  it("a declaration that mentions current employment is never 'I currently work here'", () => {
+    expect(jobPart(f("I certify that I am not currently employed by a competitor"))).toBe("");
+    expect(jobPart(f("I am currently employed by a government agency"))).toBe("");
+    expect(jobPart(f("I currently work here"))).toBe("current");
+    expect(jobPart(f("Current Position?"))).toBe("current");
+    expect(jobPart({ question: "", kind: "checkbox", hints: { name: "currentlyWorkHere" } })).toBe("current");
+  });
+
+  it("declaration and agreement boxes inside a job block are never ticked", async () => {
+    const doc = parse(`<form><h3>Employment</h3>
+      <label>Company name <input class="co"></label><label>Title <input class="ti"></label>
+      <label><input type="checkbox" id="cur"> I currently work here</label>
+      <label><input type="checkbox" id="decl1"> I certify that I am not currently employed by a competitor</label>
+      <label><input type="checkbox" id="decl2"> I am currently employed by a government agency</label>
+      <label><input type="checkbox" id="agree"> I agree that the information above is true</label></form>`);
+    const s = session(doc);
+    await s.fillKnown(copyOf({ work: WORK.slice(0, 1) }));
+    expect(doc.querySelector(".co").value).toBe("Brightfold Labs");
+    expect(doc.getElementById("cur").checked).toBe(true);
+    for (const id of ["decl1", "decl2", "agree"]) expect(doc.getElementById(id).checked).toBe(false);
+  });
+
+  it("a step filled by itself fills empty boxes and adds rows, but never corrects a filled one", async () => {
+    const { doc } = workdayPage();
+    const s = session(doc);
+    await fillSections(doc, copyOf({ work: WORK }), { session: s, auto: true, userEdited: () => false, wait: NOW });
+    const rows = rowsOf(doc, "work");
+    expect(rows).toHaveLength(3);
+    expect(val(rows[0], "jobTitle")).toBe("Platform Engineer"); // Workday's, untouched
+    expect(val(rows[0], "companyName")).toBe("Brightfold Labs"); // empty: filled
+    expect(val(rows[1], "jobTitle")).toBe("Support Analyst");
+
+    const gh = greenhousePage().doc;
+    gh.querySelector(".ti").value = "Platform Engineer";
+    const s2 = session(gh);
+    await s2.fillKnown(copyOf({ work: WORK.slice(0, 1) }), { auto: true });
+    expect(gh.querySelector(".ti").value).toBe("Platform Engineer");
+    expect(gh.querySelector(".co").value).toBe("Brightfold Labs");
+  });
+});
+
+describe("correctness review: the user's edits survive a redraw; a pre-ticked 'I currently work here'", () => {
+  it("a box the user changed stays theirs after Workday redraws the row — on a press and on a step filled by itself", async () => {
+    const { editKey, shownValue } = await import("../src/autofill/sections/index.js");
+    for (const auto of [false, true]) {
+      const { doc } = workdayPage();
+      const saved = {};
+      const row = rowsOf(doc, "work")[0];
+      const title = row.querySelector('[data-automation-id="formField-jobTitle"] input');
+      const desc = row.querySelector('[data-automation-id="formField-roleDescription"] textarea');
+      title.value = "Applications Developer";
+      desc.value = "My own words about the job.";
+      for (const el of [title, desc]) saved[editKey(el)] = shownValue(el);
+      // Workday redraws the row (Back, a resumed draft): new elements, same values.
+      const html = row.outerHTML;
+      row.insertAdjacentHTML("afterend", html);
+      const fresh = row.nextElementSibling;
+      row.remove();
+      fresh.querySelector('[data-automation-id="formField-jobTitle"] input').value = "Applications Developer";
+      fresh.querySelector('[data-automation-id="formField-roleDescription"] textarea').value = "My own words about the job.";
+      const isUsers = (el) => saved[editKey(el)] === shownValue(el);
+      const s = session(doc, { has: isUsers });
+      await fillSections(doc, copyOf({ work: WORK }), { session: s, auto, userEdited: isUsers, wait: NOW });
+      const r1 = rowsOf(doc, "work")[0];
+      expect(val(r1, "jobTitle")).toBe("Applications Developer");
+      expect(val(r1, "roleDescription", "textarea")).toBe("My own words about the job.");
+      expect(val(r1, "companyName")).toBe("Brightfold Labs"); // empty boxes still filled
+    }
+  });
+
+  it("the page ticked 'I currently work here' for a job that ended: a press unticks it and fills the To date; a step filled by itself leaves it", async () => {
+    const ended = [{ ...WORK[1], start_month: 9, start_year: 2024, end_month: 8, end_year: 2026 }];
+    for (const auto of [false, true]) {
+      const { doc } = workdayPage({ prefilled: false });
+      const row = rowsOf(doc, "work")[0];
+      const cb = row.querySelector('[data-automation-id="formField-currentlyWorkHere"] input');
+      const to = row.querySelector('[data-automation-id="formField-endDate"]');
+      cb.checked = true;
+      to.hidden = true; // Workday hides "To" while it's ticked
+      cb.addEventListener("change", () => (to.hidden = cb.checked));
+      cb.addEventListener("click", () => (to.hidden = cb.checked));
+      const s = session(doc);
+      await fillSections(doc, copyOf({ work: ended }), { session: s, auto, userEdited: () => false, wait: NOW });
+      if (auto) {
+        expect(cb.checked).toBe(true);
+      } else {
+        expect(cb.checked).toBe(false);
+        expect(to.querySelector('[data-automation-id="dateSectionMonth-input"]').value).toBe("08");
+        expect(to.querySelector('[data-automation-id="dateSectionYear-input"]').value).toBe("2026");
+        await s.undo();
+        expect(cb.checked).toBe(true);
+      }
+    }
+  });
+
+  it("other sites: a pre-ticked 'I currently work here' is unticked on a press for a job that ended", async () => {
+    const doc = parse(`<form><h3>Employment</h3><label>Company name <input class="co"></label><label>Title <input class="ti"></label>
+      <label><input type="checkbox" id="cur" checked> I currently work here</label></form>`);
+    const s = session(doc);
+    await s.fillKnown(copyOf({ work: [WORK[1]] }));
+    expect(doc.getElementById("cur").checked).toBe(false);
+    const auto = parse(`<form><h3>Employment</h3><label>Company name <input class="co"></label><label>Title <input class="ti"></label>
+      <label><input type="checkbox" id="cur" checked> I currently work here</label></form>`);
+    await session(auto).fillKnown(copyOf({ work: [WORK[1]] }), { auto: true });
+    expect(auto.getElementById("cur").checked).toBe(true);
+  });
+});

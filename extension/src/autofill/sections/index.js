@@ -4,12 +4,37 @@
 // the general engine. Data: the CHOSEN résumé's details and the profile's
 // languages. No AI anywhere.
 import { addRows } from "./generic.js";
-import { fillWorkday, inWorkdaySection, isWorkdaySections } from "./workday.js";
+import { normalizeQuestion } from "../classify/answers.js";
+import { questionFor, sectionHeading } from "../scan.js";
+import { fillWorkday, inWorkdaySection, isWorkdaySections, workdayAddress } from "./workday.js";
 
 export { inWorkdaySection, isWorkdaySections };
 
 /** Sections already given rows on this page: a new step filled by itself never re-adds them. */
-const addedHere = new Map(); // page address → Set of kinds
+const addedHere = new WeakMap(); // document → Map(page address → Set of kinds)
+
+const CONTROL = 'input, textarea, select, [role="combobox"], button[aria-haspopup]';
+
+/**
+ * Where a box is, in a way that survives the page redrawing it (Workday
+ * rebuilds rows on Back, resumed drafts): Workday's section/row/field, else
+ * the section heading, the question and which box asking it this is.
+ */
+export function editKey(el) {
+  const wd = workdayAddress(el);
+  if (wd) return wd;
+  const q = normalizeQuestion(questionFor(el));
+  if (!q) return null;
+  const same = [...el.ownerDocument.querySelectorAll(CONTROL)].filter((c) => normalizeQuestion(questionFor(c)) === q);
+  return `q|${normalizeQuestion(sectionHeading(el) || "")}|${q}|${Math.max(0, same.indexOf(el))}`;
+}
+
+/** What a box shows, to compare with what the user left in it. */
+export function shownValue(el) {
+  if (el.type === "checkbox" || el.type === "radio") return el.checked ? "Yes" : "No";
+  if (el.tagName === "BUTTON") return (el.textContent || "").trim();
+  return String(el.value ?? "").trim();
+}
 
 /** What the sections are filled from. */
 export function sectionData(copy) {
@@ -32,13 +57,17 @@ export function sectionData(copy) {
 export async function fillSections(doc, copy, { session, auto, userEdited, wait }) {
   const data = sectionData(copy);
   const page = doc.location?.href?.split("#")[0] || "";
-  if (!addedHere.has(page)) addedHere.set(page, new Set());
-  const kinds = addedHere.get(page);
+  if (!addedHere.has(doc)) addedHere.set(doc, new Map());
+  const pages = addedHere.get(doc);
+  if (!pages.has(page)) pages.set(page, new Set());
+  const kinds = pages.get(page);
   const ctx = {
     wait: wait || ((ms) => new Promise((r) => setTimeout(r, ms))),
     auto,
     userEdited,
-    put: (field, values) => session.putSection(field, values),
+    // A step filled by itself only fills empty boxes and adds rows; a wrong
+    // value is corrected only on a press, with the user there to see and Undo.
+    put: (field, values) => session.putSection(field, values, { correct: !auto }),
     leave: (field, reason) => session.leaveField(field, reason),
     undo: (id) => session.undo(id),
     scan: () => session.scan(),

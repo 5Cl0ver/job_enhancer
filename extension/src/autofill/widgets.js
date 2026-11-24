@@ -280,19 +280,92 @@ function oneAtATime(fn) {
   return run;
 }
 
-/** Close whatever list is open (Escape, then a click on the page's empty part). */
-async function closeOpenLists(doc, quiet = 400) {
-  const open = () => openPopups(doc).length + expandedControls(doc).length > 0;
-  if (!open()) return true;
-  for (let round = 0; round < 3 && open(); round++) {
-    for (const c of expandedControls(doc)) key(c, "Escape");
-    const active = doc.activeElement;
-    if (active && active !== doc.body) key(active, "Escape");
-    if (await until(() => !open(), 150)) return true;
-    pointerClick(doc.querySelector('[data-automation-id="mainContent"]') || doc.body);
-    if (await until(() => !open(), 150)) return true;
+// The application's own pop-up window (LinkedIn Easy Apply, Paycom's "Getting
+// You Started"): never closed by closing a list.
+const DIALOG = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
+function openDialog(doc) {
+  const all = [...doc.querySelectorAll(DIALOG)].filter(shown);
+  return all.filter((d) => !all.some((o) => o !== d && d.contains(o))).pop() || null;
+}
+
+/**
+ * Where a click closes a list without closing anything else: the page's main
+ * area — or, with an application pop-up open, that pop-up itself, and only for
+ * a list inside it. null: nowhere safe to click.
+ */
+function neutralSpot(doc, owner) {
+  const dlg = openDialog(doc);
+  if (dlg) return owner && dlg.contains(owner) ? dlg : null;
+  return doc.querySelector('[data-automation-id="mainContent"]') || doc.body;
+}
+
+/** Lists this driver opened (control → the options that were showing before), until closed. */
+const ours = new Map();
+
+/**
+ * Shut one list we opened. Outside an application pop-up: Escape, then a
+ * click on the page. Inside one: never Escape (it would reach the pop-up) —
+ * leave the box (a search box closes on blur), click the pop-up itself, or
+ * press the list's own button again.
+ */
+async function shut(field, isOpen) {
+  const el = field.el;
+  const doc = el.ownerDocument;
+  const closed = () => !isOpen();
+  if (closed()) return true;
+  const inDialog = !!openDialog(doc)?.contains(el);
+  if (!inDialog) {
+    key(el, "Escape");
+    if (await until(closed, 200)) return true;
   }
+  if (el.tagName === "INPUT") {
+    fire(el, "FocusEvent", "blur", { bubbles: false });
+    fire(el, "FocusEvent", "focusout");
+    el.blur?.();
+    if (await until(closed, 200)) return true;
+  }
+  const spot = neutralSpot(doc, el);
+  if (spot) {
+    pointerClick(spot);
+    if (await until(closed, 200)) return true;
+  }
+  // A toggle button that ignores all that: press it once more — only while open.
+  if (el.tagName !== "INPUT" && !closed()) pointerClick(el);
+  return until(closed, 300);
+}
+
+/**
+ * Before opening a list: close the lists THIS driver left open, and on a
+ * Workday page Workday's own open list (its stacked lists are the bug). Never
+ * anything else the page has open, never the application's pop-up.
+ */
+async function closeOpenLists(doc, quiet = 400) {
+  const mine = () => [...ours].filter(([el, before]) => el.isConnected && listOpen({ el }, before));
+  const workday = () => openPopups(doc);
+  const open = () => mine().length + workday().length > 0;
+  for (let round = 0; round < 3 && open(); round++) {
+    for (const [el, before] of mine()) await shut({ el }, () => listOpen({ el }, before));
+    if (workday().length && !openDialog(doc)) {
+      for (const c of expandedControls(doc)) if (c.matches('button[aria-haspopup="listbox"]')) key(c, "Escape");
+      if (!(await until(() => !workday().length, 150))) {
+        const spot = neutralSpot(doc, null);
+        if (spot) pointerClick(spot);
+        await until(() => !workday().length, 150);
+      }
+    }
+  }
+  for (const [el, before] of [...ours]) if (!el.isConnected || !listOpen({ el }, before)) ours.delete(el);
   return !open() || (await until(() => !open(), quiet));
+}
+
+/** Is a list we opened still open: its control says so, or its options still show. */
+function listOpen(field, before) {
+  const el = field.el;
+  if (el.getAttribute("aria-expanded") === "true") return true;
+  // A search box we typed in, still focused, with Workday's (maybe empty) result list up.
+  if (el.tagName === "INPUT" && el.ownerDocument.activeElement === el && openPopups(el.ownerDocument).length) return true;
+  return visibleOptions(field, before).length > 0;
 }
 
 async function until(test, ms) {
@@ -383,17 +456,11 @@ function stillOpen(field, before) {
 /** Close this dropdown and make sure it closed (true when it did). */
 async function closeCombo(field, before) {
   const el = field.el;
-  const doc = el.ownerDocument;
   if (el.tagName === "INPUT" && el.value && !readField(field)) setNativeValue(el, "", { blur: false });
   // Most close by themselves after a pick.
-  if (await until(() => !stillOpen(field, before), 250)) return true;
-  key(el, "Escape");
-  if (await until(() => !stillOpen(field, before), 200)) return true;
-  pointerClick(doc.querySelector('[data-automation-id="mainContent"]') || doc.body);
-  if (await until(() => !stillOpen(field, before), 200)) return true;
-  // A toggle button that ignores both: press it once more — only while open.
-  if (el.tagName !== "INPUT" && stillOpen(field, before)) pointerClick(el);
-  return until(() => !stillOpen(field, before), 300);
+  const ok = (await until(() => !stillOpen(field, before), 250)) || (await shut(field, () => stillOpen(field, before)));
+  if (ok) ours.delete(el);
+  return ok;
 }
 
 /** The scrolling box of a long list that draws only what's in view. */
@@ -446,6 +513,7 @@ async function writeComboNow(field, candidates, { wait = 2500 } = {}) {
   await closeOpenLists(doc);
   const before = new Set(visibleOptions(field).map((o) => o.el));
   openCombo(field);
+  ours.set(el, before);
   let opts = await waitForOptions(field, typed ? 600 : wait, before);
   let i = pick(opts);
   // 2) A typeahead: type each candidate until a matching option shows.
@@ -481,6 +549,7 @@ export function peekOptions(field) {
     await closeOpenLists(field.el.ownerDocument);
     const before = new Set(visibleOptions(field).map((o) => o.el));
     openCombo(field);
+    ours.set(field.el, before);
     const opts = await waitForOptions(field, 1500, before);
     await closeCombo(field, before);
     return opts.map((o) => o.label).slice(0, 60);
@@ -526,6 +595,7 @@ export function searchPick(input, term, { wait = 1500 } = {}) {
     pointerClick(input);
     setNativeValue(input, want, { blur: false });
     key(input, "Enter");
+    ours.set(input, before);
     let picked = "";
     const end = Date.now() + wait;
     while (Date.now() < end && count() === had) {

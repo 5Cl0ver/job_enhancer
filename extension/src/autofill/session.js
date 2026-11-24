@@ -121,6 +121,14 @@ export function pointRefusal(field) {
  */
 function sectionDecision(field, section, part, entry, copy) {
   if (part) {
+    // The same guards as everywhere: a declaration, agreement or self-ID box
+    // inside a job block is never ticked or typed in (a job's description
+    // box may read as an essay question: that one is fine).
+    const guard = guardReason(field.question || "", field.kind);
+    if (guard && !(guard === "essay" && part === "description")) return { skip: guard };
+    // "I currently work here" ticked by the page for a job that ended: untick
+    // it (a correction: a press only); left unticked otherwise, quietly.
+    if (part === "current" && entry && !entry.current) return field.el.checked ? { values: ["No"], source: "profile", key: "job_current" } : { skip: "fine" };
     const values = section === "education" ? eduValues(part, entry, field) : jobValues(part, entry, field);
     if (values.length) return { values, source: "profile", key: `${section === "education" ? "edu" : "job"}_${part}` };
     // A past job that isn't current: its "I work here" box stays unticked, quietly.
@@ -256,6 +264,7 @@ export function createSession(deps) {
     if (declined.has(field.id) || userEdited(field.el)) return { skipped: "user" };
     const ours = filled.get(field.id);
     const now = readField(field);
+    if (field.kind === "chips" && now.trim() && !correct) return { skipped: "has_value" };
     if (field.kind !== "chips") {
       if (ours && !agrees(field, now, ours.entry.value)) return { skipped: "user" }; // changed since: theirs
       if (now.trim() && values.some((v) => agrees(field, now, v))) return { ok: true, already: true };
@@ -310,7 +319,8 @@ export function createSession(deps) {
       // school's part, which is corrected from the résumé when it's wrong
       // (an applicant system's own résumé reading cuts titles; spec 020).
       const prefilled = field.kind !== "file" && hasValue(field);
-      if (prefilled && (!part || taught.has(field.id) || userEdited(field.el))) continue;
+      // (Only on a press: on a step filled by itself, a filled box stays as it is.)
+      if (prefilled && (auto || !part || taught.has(field.id) || userEdited(field.el))) continue;
       if (field.kind === "file" && (field.el.files?.length || skipFiles)) continue;
       const entry = section === "education" ? copy.history?.education?.[block] : copy.history?.work?.[block];
       const d = taught.has(field.id)
@@ -513,7 +523,12 @@ export function createSession(deps) {
       // (Exactly, or the same digits: "Rich" is not "Richmond".)
       const now = readField(x.field).trim();
       const ours = String(x.entry.value).trim();
-      const unchanged = now === ours || (now.replace(/\D/g, "").length >= 7 && now.replace(/\D/g, "") === ours.replace(/\D/g, "")) || (x.field.kind !== "text" && x.field.kind !== "textarea" && same(now, ours));
+      const unchanged =
+        now === ours ||
+        (now.replace(/\D/g, "").length >= 7 && now.replace(/\D/g, "") === ours.replace(/\D/g, "")) ||
+        // A box we ticked or unticked reads "Yes" / "": still as we left it?
+        (x.field.kind === "checkbox" && (now === "Yes") === (ours === "Yes")) ||
+        (x.field.kind !== "text" && x.field.kind !== "textarea" && same(now, ours));
       if (x.field.kind !== "file" && !unchanged) {
         filled.delete(k);
         unmark(x.field);

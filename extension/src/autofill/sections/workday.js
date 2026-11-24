@@ -63,6 +63,22 @@ function addButtons(doc) {
   return [...doc.querySelectorAll('[data-automation-id="add-button"]')];
 }
 
+/**
+ * Where a box sits in Workday's résumé sections, independent of the page
+ * redrawing it: section kind, row number, field and date part. null outside.
+ */
+export function workdayAddress(el) {
+  const row = el?.closest?.(ROW);
+  const kind = row && rowKind(row);
+  if (kind) {
+    const rows = workdaySections(el.ownerDocument).get(kind)?.rows || [];
+    const ff = el.closest('[data-automation-id^="formField-"]')?.getAttribute("data-automation-id") || "";
+    return `wd|${kind}|${rows.indexOf(row)}|${ff}|${el.getAttribute("data-automation-id") || el.getAttribute("name") || el.tagName}`;
+  }
+  if (el?.closest?.(FF("skills"))) return "wd|skills";
+  return null;
+}
+
 /** A control inside a row this filler owns (the general engine skips these). */
 export function inWorkdaySection(el) {
   const row = el?.closest?.(ROW);
@@ -104,6 +120,9 @@ function labelOf(el) {
   return (l ? textOf(l) : "") || el.getAttribute("aria-label") || "";
 }
 
+/** A box the page shows (Workday hides "To" while "I currently work here" is ticked). */
+const shownBox = (el) => !!el && !el.closest("[hidden]") && (!el.getClientRects || el.getClientRects().length > 0);
+
 const box = (el, kind, question) => ({ id: fieldId(el), el, kind, mark: el, question, hints: {} });
 const pad = (n) => String(n).padStart(2, "0");
 
@@ -141,7 +160,7 @@ async function promptOrText(ctx, ff, value, question) {
 
 /** Clear a half-filled date (a month with no year shows Workday's error), never the user's. */
 async function fixPartialDate(ctx, container) {
-  if (!container) return;
+  if (!container || ctx.auto) return; // a step filled by itself changes no filled box
   const m = container.querySelector(MONTH);
   const y = container.querySelector(YEAR);
   const mv = (m?.value || "").trim();
@@ -208,9 +227,20 @@ async function fillWork(ctx, row, e, n) {
   any = (await text(ctx, q(`${FF("jobTitle")} input`), e.title, at("Job Title"))) || any;
   any = (await text(ctx, q(`${FF("companyName")} input`), e.company, at("Company"))) || any;
   any = (await text(ctx, q(`${FF("location")} input`), e.location, at("Location"))) || any;
-  any = (await checkbox(ctx, q(`${FF("currentlyWorkHere")} input[type="checkbox"]`), e.current, at("I currently work here"))) || any;
+  const current = q(`${FF("currentlyWorkHere")} input[type="checkbox"]`);
+  if (e.current) any = (await checkbox(ctx, current, true, at("I currently work here"))) || any;
+  else if (current?.checked) {
+    // The page ticked it, the résumé says the job ended: untick it (a press
+    // only — never on a step filled by itself, never the user's own tick),
+    // then wait for the To date the page shows once it's unticked.
+    const res = await ctx.put(box(current, "checkbox", at("I currently work here")), ["No"]);
+    if (wrote(res)) {
+      any = true;
+      await waitFor(() => shownBox(q(FF("endDate"))), ctx, 1000);
+    }
+  }
   any = (await date(ctx, q(FF("startDate")), e.start_month, e.start_year, at("From"))) || any;
-  if (!e.current) any = (await date(ctx, q(FF("endDate")), e.end_month, e.end_year, at("To"))) || any;
+  if (!e.current && !current?.checked && shownBox(q(FF("endDate")))) any = (await date(ctx, q(FF("endDate")), e.end_month, e.end_year, at("To"))) || any;
   any = (await text(ctx, q(`${FF("roleDescription")} textarea`), e.description, at("Role Description"))) || any;
   return any;
 }

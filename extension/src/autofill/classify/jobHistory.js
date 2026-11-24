@@ -46,7 +46,9 @@ function headingKind(section) {
 export function jobPart(field) {
   const q = `${field.question || ""} ${field.hints?.name || ""}`;
   const label = String(field.question || "").trim();
-  if (field.kind === "checkbox" && /currently (work|employed)|i (still )?work here|current(ly)? (job|position|employer|role)|present (job|position)/i.test(label)) return "current";
+  // Only the box that says exactly that — never a declaration that mentions it
+  // ("I certify that I am not currently employed by a competitor").
+  if (field.kind === "checkbox" && (/^(i )?(currently|still) work here\??$|^current(ly)? (job|position|employer|role)\??$/i.test(label) || /currentlyWorkHere/i.test(`${field.hints?.name || ""} ${field.hints?.id || ""}`))) return "current";
   if ((field.kind === "textarea" || field.kind === "text") && /^(job |role |position )?(description|duties|responsibilities)\b|^(role|job|position) description|^describe your (role|duties|responsibilities|position)\b/i.test(label)) return "description";
   if (/supervisor|manager|reason|duties|responsibilit|describe|description|summary|salary|wage|pay\b|contact|address|street|phone|zip|postal|email|fax/i.test(q)) return "";
   if (/^(job |work )?location\b/i.test(label)) return "location";
