@@ -117,11 +117,7 @@ export function Apply({
         </Button>
         <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} tabId={tab.id} />
         <ShortcutHint />
-        {staged && !entries.length && (
-          <Muted>
-            Uploads your tailored résumé <b className="break-all text-foreground">{staged}</b>.
-          </Muted>
-        )}
+        <ResumeChoice match={match} staged={staged} />
         {!filling && entries.length + needYou.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>
@@ -380,6 +376,120 @@ function ShortcutHint() {
         </button>
       )}
     </p>
+  );
+}
+
+interface ResumeRow {
+  id: string;
+  filename: string;
+  active: boolean;
+}
+
+/**
+ * "Filling from: <résumé> · Change" (spec 020): the résumé this application
+ * uploads AND fills jobs, schools and skills from. A linked job's own résumé
+ * is used by itself; a change is kept for this tab and saved to the job.
+ */
+export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged: string | null }) {
+  const { tab, reloadSaved } = usePanel();
+  const [resumes, setResumes] = React.useState<ResumeRow[] | null>(null);
+  // What the background says this application uses (spec 020): a choice made
+  // for this job or page, else the linked job's own résumé.
+  const [state, setState] = React.useState<{
+    choice: { resumeId: string | null; filename: string; usual?: boolean; failed?: boolean } | null;
+    resumeId: string | null;
+    jobResumeId: string | null;
+  }>({ choice: null, resumeId: null, jobResumeId: null });
+  const [open, setOpen] = React.useState(false);
+  const [note, setNote] = React.useState("");
+  const [retry, setRetry] = React.useState<string | null>(null);
+
+  const load = React.useCallback(async () => {
+    if (tab.id == null) return;
+    const r = await send({ type: "getResumeChoice", tabId: tab.id });
+    if (r?.ok) setState({ choice: r.choice || null, resumeId: r.resumeId || null, jobResumeId: r.jobResumeId || null });
+  }, [tab.id]);
+
+  React.useEffect(() => {
+    let live = true;
+    load();
+    send({ type: "listResumes" }).then((r) => live && r?.ok && setResumes(r.resumes));
+    return () => {
+      live = false;
+    };
+  }, [load, tab.url, match?.id, match?.resume_id]);
+
+  async function pick(id: string) {
+    if (tab.id == null) return;
+    const row = resumes?.find((r) => r.id === id);
+    const res = await send({ type: "chooseResume", tabId: tab.id, resumeId: id || null, filename: row?.filename || "" });
+    setOpen(false);
+    await load();
+    if (match) reloadSaved();
+    // A linked job only ever uses what's saved on the job: say so plainly.
+    if (match && res?.saved === false) {
+      const using = (jobResume && resumes?.find((r) => r.id === jobResume)?.filename) || "your usual résumé";
+      setNote(`Couldn't save it to this job, so it's still using ${using}.`);
+      setRetry(id);
+    } else {
+      setNote("");
+      setRetry(null);
+    }
+  }
+
+  const active = resumes?.find((r) => r.active) || null;
+  const { choice, resumeId, jobResumeId } = state;
+  const jobResume = jobResumeId;
+  const usingName = (resumeId && (resumes?.find((r) => r.id === resumeId)?.filename || choice?.filename)) || "";
+  const name = usingName || staged || active?.filename || "";
+  if (!name && !resumes?.length) return null;
+  return (
+    <div className="flex flex-col gap-1 text-xs" data-testid="resume-choice">
+      <p className="text-muted-foreground">
+        Filling from <b className="break-all text-foreground">{name || "your résumé"}</b>
+        {match && resumeId && resumeId === jobResumeId ? " (this job's résumé)" : ""}
+        {!!resumes?.length && (
+          <>
+            {" · "}
+            <button type="button" className="cursor-pointer text-primary underline underline-offset-2" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+              Change
+            </button>
+          </>
+        )}
+      </p>
+      {open && resumes && (
+        <Select aria-label="Résumé for this application" value={resumeId || ""} onChange={(e) => pick(e.target.value)}>
+          <option value="">{staged ? `Tailored: ${staged}` : `Your usual résumé${active ? ` (${active.filename})` : ""}`}</option>
+          {resumes.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.filename}
+            </option>
+          ))}
+        </Select>
+      )}
+      {open && <Muted>Uploads this résumé and fills jobs, schools and skills from it{match ? ", for this job from now on" : " on this page"}.</Muted>}
+      {choice?.failed && (
+        <div data-testid="resume-choice-failed">
+          <Alert tone="warning">
+            Couldn't load {usingName || choice.filename || "that résumé"}, so this application uses {staged || active?.filename || "your usual résumé"}. Press Change to try again or pick another.
+          </Alert>
+        </div>
+      )}
+      {note && (
+        <div data-testid="resume-choice-note">
+          <Alert tone="warning">
+            <span className="flex flex-wrap items-center justify-between gap-2">
+              <span>{note}</span>
+              {retry !== null && (
+                <Button variant="ghost" size="sm" onClick={() => pick(retry)}>
+                  Try again
+                </Button>
+              )}
+            </span>
+          </Alert>
+        </div>
+      )}
+    </div>
   );
 }
 

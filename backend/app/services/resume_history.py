@@ -1,23 +1,29 @@
-"""A résumé read once into work history and education (spec 015, R2).
+"""A résumé read once into its details (spec 015 R2, spec 020 R2).
 
-Autofill fills Workday's experience blocks and education questions from this.
-Reading takes the AI 10–20 s, so it happens ONCE per résumé — after upload, or
-the first time the autofill bundle finds it missing — and is stored on the
-résumé row (``parsed_history``). A failed reading stores empty lists, so it is
-not retried on every request; a new résumé is read again.
+Autofill fills job, school and skills sections from this: ``{work, education,
+skills, certifications, websites}``, stored on the résumé row
+(``parsed_history``). Reading happens ONCE per résumé — after upload, the first
+time the autofill bundle finds it missing, the hourly backfill, or "Read my
+résumé" in the app — and the user can edit the result in the app.
+
+No AI (spec 020): everything comes from the built-in reader
+(services/resume_reader.py). The free AI model was retired on 2026-11-05 and
+left every résumé unread; the owner wants autofill perfect without AI first.
+What the reader can't place, the user fixes in the app ("Check these").
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.database import AsyncSessionLocal
 from app.models.resume import Resume
-from app.services import ai_service
+from app.services import resume_reader
 
 logger = logging.getLogger(__name__)
 
@@ -27,18 +33,19 @@ _reading: set[uuid.UUID] = set()
 session_factory = AsyncSessionLocal
 
 
+# A résumé whose reading crashed or hung this many times is left alone; the
+# user can still type its details in the app.
+MAX_ATTEMPTS = 3
+
+
 async def read_resume(resume: Resume) -> dict:
-    """Read the résumé's text into {work, education} and store it on the row
-    (the caller commits). A reading that found nothing at all is NOT stored —
-    most likely the AI was unavailable — so it's tried again next time."""
+    """Read the résumé's text into its details and store them on the row (the
+    caller commits). The reader runs in a worker thread so it never holds up
+    the server; a résumé with no text is settled as empty, never re-read."""
     text = resume.extracted_text or ""
-    history = {
-        "work": await ai_service.parse_work_history(text),
-        "education": await ai_service.parse_education(text),
-    }
-    if history["work"] or history["education"]:
-        resume.parsed_history = history
-        resume.parsed_history_at = datetime.now(tz=UTC)
+    history = await asyncio.to_thread(resume_reader.read, text)
+    resume.parsed_history = history
+    resume.parsed_history_at = datetime.now(tz=UTC)
     return history
 
 
@@ -49,6 +56,33 @@ async def history_of(db: AsyncSession, resume: Resume) -> dict:
     history = await read_resume(resume)
     await db.commit()
     return history
+
+
+BACKFILL_PER_RUN = 5
+
+
+async def read_unread_resumes(session_maker=None) -> int:
+    """Read résumés that were never read (spec 020): the free AI was retired on
+    2026-11-05 and every reading since failed, so existing résumés have no
+    details. A few per run, newest first; returns how many were read."""
+    maker = session_maker or session_factory
+    async with maker() as db:
+        ids = list(
+            await db.scalars(
+                select(Resume.id)
+                .where(
+                    Resume.parsed_history_at.is_(None),
+                    Resume.extracted_text.is_not(None),
+                    func.length(func.trim(Resume.extracted_text)) > 0,
+                    Resume.read_attempts < MAX_ATTEMPTS,
+                )
+                .order_by(Resume.created_at.desc())
+                .limit(BACKFILL_PER_RUN)
+            )
+        )
+    for resume_id in ids:
+        await read_in_background(resume_id)
+    return len(ids)
 
 
 async def read_in_background(resume_id: uuid.UUID) -> None:
@@ -65,9 +99,15 @@ async def read_in_background(resume_id: uuid.UUID) -> None:
             )
             if resume is None or resume.parsed_history_at is not None:
                 return
+            if resume.read_attempts >= MAX_ATTEMPTS:
+                return
+            # Counted first: a reading that crashes or hangs still counts.
+            resume.read_attempts += 1
+            await db.commit()
             await read_resume(resume)
             await db.commit()
     except Exception as exc:  # a background task must never crash the app
-        logger.warning("reading résumé %s failed: %s", resume_id, exc)
+        # Only the kind of error: never the résumé's text.
+        logger.warning("reading résumé %s failed: %s", resume_id, type(exc).__name__)
     finally:
         _reading.discard(resume_id)

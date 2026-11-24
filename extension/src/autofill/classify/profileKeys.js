@@ -71,7 +71,7 @@ const AUTOCOMPLETE = {
 // Ordered: FIRST match wins, so specific beats generic.
 const RULES = [
   { key: "email_confirm", re: /(confirm|re-?enter|re-?type|verify|repeat)\s*(your\s*)?e-?mail/i },
-  { key: "preferred_name", re: /preferred[\s_-]*(first[\s_-]*)?name|nick[\s_-]*name|goes by/i },
+  { key: "preferred_name", re: /preferred[\s_-]*(first[\s_-]*)?name|nick[\s_-]*name|\bgo(es)? by\b/i },
   { key: "middle_name", re: /middle[\s_-]*(name|initial)/i },
   { key: "first_name", re: /first[\s_-]*name|given[\s_-]*name|forename/i },
   { key: "last_name", re: /last[\s_-]*name|surname|family[\s_-]*name/i },
@@ -142,9 +142,21 @@ export function profileKeyFor(field) {
   for (const { key, re } of RULES) {
     if (!(re.test(q) || (!q && re.test(text)))) continue;
     if (SHORT_ONLY.has(key) && q.length > 45) continue;
-    return key;
+    return inPreferredBlock(field, key);
   }
   return null;
+}
+
+// Workday's "Preferred Name" block labels its boxes plainly "First Name" and
+// "Last Name" (spec 020): there they're the preferred name, never the legal
+// one. Only the box's OWN group counts (scan.js groupTitle), and only a
+// preferred NAME — never "Preferred Qualifications" or "Preferred contact".
+const PREFERRED_BLOCK = /preferred\s*name|nick\s*name|name you (go|prefer)|\bgo(es)? by\b/i;
+function inPreferredBlock(field, key) {
+  if (!PREFERRED_BLOCK.test(field.hints?.group || "")) return key;
+  if (key === "first_name" || key === "full_name") return "preferred_name";
+  if (key === "last_name") return "preferred_last_name";
+  return key;
 }
 
 // ---- Values ---------------------------------------------------------------
@@ -199,6 +211,17 @@ export function degreeForms(degree) {
  * the rest are other ways a dropdown may word it ("OR" / "Oregon").
  * @returns {Record<string, string[]>}
  */
+/**
+ * Other ways a form may word a value of this kind ("Washington" → "WA"), so a
+ * dropdown still finds it — from the value itself, never another value.
+ */
+export function valueForms(key, value) {
+  const v = String(value ?? "").trim();
+  if (!v) return [];
+  const forms = key === "state" ? stateForms(v) : key === "country" ? countryForms(v) : key === "degree" ? degreeForms(v) : [v];
+  return [v, ...forms.filter((f) => f !== v)];
+}
+
 export function profileValues(profile, email, today = new Date(), history = null) {
   const p = profile || {};
   const edu = history?.education?.[0] || {};

@@ -86,7 +86,11 @@ export interface Pick {
   /** What Job Catcher would put there, and why. */
   known?: { source: "profile" | "learned" | "taught" | "none"; key: string; value?: string } | null;
   /** The box held something: saved for this box on this site (Undo). */
-  autoSaved?: { id: string; answer: string };
+  // Saved by clicking a box that held an answer: for that question on every
+  // site (key), or for this box on this site (id). Spec 020.
+  autoSaved?: { id?: string; key?: string; answer: string; scope?: "all" | "site" | "essay" };
+  // Where a correction to this box is remembered; null = this site only.
+  learn?: { scope: "all" | "site"; key: string; question_text: string } | null;
   /** The box already holds what Job Catcher would put there. */
   alreadySaved?: boolean;
 }

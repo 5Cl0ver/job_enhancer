@@ -2,6 +2,7 @@ import { useSearchParams } from "react-router-dom";
 import { ApplicationProfileCard } from "@/components/settings/ApplicationProfileCard";
 import { SavedAnswersCard } from "@/components/settings/SavedAnswersCard";
 import { TaughtBoxesCard } from "@/components/autofill/TaughtBoxesCard";
+import { ResumeDetailsCard } from "@/components/autofill/ResumeDetailsCard";
 
 /**
  * Autofill memory (spec 018): everything Job Catcher fills from and learns,
@@ -23,6 +24,7 @@ export default function AutofillMemoryPage() {
         </p>
       </div>
       <ApplicationProfileCard />
+      <ResumeDetailsCard />
       <SavedAnswersCard initialQuery={q} />
       <TaughtBoxesCard />
     </div>

@@ -19,10 +19,11 @@ import { guardReason, profileKeyFor, profileValues } from "./autofill/classify/p
 import { fingerprintOf, matchTaught } from "./autofill/fingerprint.js";
 import { createPicker } from "./autofill/pick.js";
 import { frameReport } from "./autofill/report.js";
-import { collectFields, fieldId, questionFor } from "./autofill/scan.js";
+import { collectFields, fieldId, hasOwnQuestion, questionFor } from "./autofill/scan.js";
 import { companyKnown, siteKey } from "./autofill/hosts.js";
-import { resolve } from "./autofill/resolve.js";
+import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
+import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
 import { fillAllWorkExperience, inWorkExperience, isWorkdayExperience } from "./autofill/workday.js";
 
@@ -190,6 +191,7 @@ async function loadCopy() {
     taught: copy.taught || [],
     history: copy.history || null,
     resumeFile,
+    resumeId: res.resumeId || null,
   };
   return lastCopy;
 }
@@ -267,7 +269,7 @@ async function fill(auto) {
     let work = copy.history?.work;
     if (!work?.length) {
       status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
-      work = (await send({ type: "getWorkHistory" }))?.entries;
+      work = (await send({ type: "getWorkHistory", resumeId: copy.resumeId || null }))?.entries;
     }
     if (work?.length) await fillAllWorkExperience(document, work);
   }
@@ -286,7 +288,7 @@ async function fill(auto) {
   usedHere = true;
   report();
   lastStep = session.stepFingerprint();
-  if (leftovers.length) {
+  if (AI_IN_AUTOFILL && leftovers.length) {
     const n = Math.min(leftovers.length, 40);
     const asking = { phase: "filling", done: lastReport.filled, total: lastReport.filled + n, note: `Asking the AI about ${n} question${n === 1 ? "" : "s"}…` };
     status(asking, { now: true });
@@ -515,15 +517,22 @@ const picker = createPicker({
       field.kind !== "file" &&
       guardReason(field.question, field.kind) !== "essay" &&
       value.length <= 300;
+    // Where a correction is remembered (spec 020): for this question on
+    // every site, unless it's about this company only. Boxes inside a past
+    // job's block belong to that job, so they stay with this box on this site.
+    const site = siteKey(location.href);
+    const inBlock = /\b(employ|experience|work history|education|reference)/i.test(field.hints?.section || "");
+    const learn = refused || inBlock || !hasOwnQuestion(control) ? null : learnKeyFor(field, site);
     send({
       type: "picked",
-      site: siteKey(location.href),
+      site,
       field: { id: field.id, label: (field.question || "").slice(0, 120), kind: field.kind, options: (field.options || []).map((o) => o.label).filter(Boolean).slice(0, 60) },
       fingerprint: fingerprintOf(field, fields),
       refused,
       value,
       known,
       saveable,
+      learn: learn && learn.scope !== "essay" ? { scope: learn.scope, key: learn.key, question_text: (field.question || "").slice(0, 500) || learn.key } : null,
     });
   },
   onCancel: () => send({ type: "pickCancelled" }),

@@ -30,8 +30,14 @@ const nums = (words) => new Set(words.filter((t) => /^\d+$/.test(t)));
 const differ = (a, b) => a.size !== b.size || [...a].some((x) => !b.has(x));
 
 /** True when two token lists disagree on a meaning-flipping token. */
+// Two-letter words that say nothing about which company or thing is meant.
+const SHORT_COMMON = new Set(["a", "an", "to", "of", "in", "on", "at", "by", "or", "is", "be", "do", "if", "it", "me", "my", "we", "us", "as", "so", "no", "up", "am", "go", "id"]);
+const shortNames = (words) => new Set(words.filter((t) => t.length === 2 && !SHORT_COMMON.has(t) && !/^\d+$/.test(t)));
+
 export function pivotConflict(aWords, bWords) {
   if (differ(nums(aWords), nums(bWords))) return true;
+  // "an EY alumni" is not "a GE alumni": short company names count.
+  if (differ(shortNames(aWords), shortNames(bWords))) return true;
   if (differ(subset(aWords, COUNTRY_WORDS), subset(bWords, COUNTRY_WORDS))) return true;
   const aNeg = aWords.some((t) => NEG_WORDS.has(t));
   const bNeg = bWords.some((t) => NEG_WORDS.has(t));
@@ -71,6 +77,29 @@ export function matchAnswer(questionKey, answers) {
     }
   }
   return bestScore >= 0.72 ? best : null;
+}
+
+/**
+ * The closest remembered answer to a question by wording (spec 020), with
+ * how close it is (0–1). No pivot conflicts; `answers` are plain-question ones.
+ * @returns {{answer: object, score: number} | null}
+ */
+export function closestAnswer(questionKey, answers) {
+  if (!questionKey || !answers?.length) return null;
+  const qWords = questionKey.split(" ").filter(Boolean);
+  if (qWords.filter((t) => t.length > 2).length < 2) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const a of answers) {
+    const aWords = (a.question_key || "").split(" ").filter(Boolean);
+    if (pivotConflict(qWords, aWords)) continue;
+    const score = jaccard(qWords, aWords);
+    if (score > bestScore) {
+      bestScore = score;
+      best = a;
+    }
+  }
+  return best ? { answer: best, score: bestScore } : null;
 }
 
 const clean = (s) =>
@@ -164,7 +193,7 @@ export function isPlaceholderOption(label) {
  * answer is saved for that company's site only, never reused elsewhere.
  */
 const COMPANY_SPECIFIC =
-  /\b(our|this) (company|organi[sz]ation|firm|business)\b|\b(previously |ever |currently )?(worked|been employed|applied|interviewed) (for|at|with)\b|\bwith us\b|\b(desired|expected|requested|minimum) (salary|pay|compensation|wage|rate)\b|\bsalary (for|expectations?)\b|\b(know|relatives?|family|friends?) (anyone )?(who )?(works?|employed) (here|for|at)\b/i;
+  /\b(our|this) (company|organi[sz]ation|firm|business)\b|\b(previously |ever |currently )?(worked|been employed|applied|interviewed) (for|at|with)\b|\bwith us\b|\b(desired|expected|requested|minimum) (salary|pay|compensation|wage|rate)\b|\bsalary (for|expectations?)\b|\b(know|relatives?|family|friends?) (anyone )?(who )?(works?|employed) (here|for|at)\b|\balumn(i|us|a|ae)\b|\bformer (employee|staff|team member|intern)\b|\bpreviously (been )?employed\b|\b(worked|been) (for|at|with) [\w&.' -]{1,40} before\b/i;
 // Everyday answers even when worded about this job ("How did you hear about this opportunity?").
 const EVERYDAY = /\bhow did you (hear|find|learn)\b|\bwhere did you (hear|find|see)\b/i;
 

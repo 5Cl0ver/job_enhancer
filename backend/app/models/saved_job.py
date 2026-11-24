@@ -62,6 +62,17 @@ class SavedJob(Base):
         UUID(as_uuid=True),
         ForeignKey("resume_tracks.id", ondelete="SET NULL"),
     )
+    # The résumé Job Catcher uploads and fills from for this job (spec 020);
+    # null = the résumé type's résumé, else the active one.
+    resume_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("resumes.id", ondelete="SET NULL"),
+    )
+    # The user chose "your usual résumé" for this job: the résumé type's résumé
+    # is NOT used (spec 020).
+    resume_usual: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     # How the job got here (see ORIGINS). Null = saved before this was recorded
     # and the app can't tell, so nothing is shown rather than a guess.
     origin: Mapped[str | None] = mapped_column(String(12))

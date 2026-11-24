@@ -1,0 +1,18 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 020: site A asks "Preferred First Name".
+     The user corrects it once with the pointer; every other site asking for a
+     preferred name (worded any way) then gets the correction. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Your details - Brightfold</title></head>
+  <body>
+    <h1>Your details</h1>
+    <form onsubmit="return false">
+      <p><label for="legal">Legal First Name</label><input id="legal"></p>
+      <p><label for="pref">Preferred First Name</label><input id="pref"></p>
+      <p><label for="last">Last Name</label><input id="last"></p>
+      <p><label for="heard">How did you hear about us?</label><input id="heard"></p>
+      <p><label for="salary">Desired salary</label><input id="salary"></p>
+      <p><label for="team">Which team are you most excited about at our company?</label><input id="team"></p>
+    </form>
+  </body>
+</html>

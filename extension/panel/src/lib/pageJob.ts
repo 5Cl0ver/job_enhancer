@@ -3,7 +3,7 @@
 // every panel agrees: the jobs the user said aren't this page ("Not this
 // job", undoable), and the job the user saved from this page (always linked).
 import * as React from "react";
-import { postingKey } from "../../../src/autofill/hosts.js";
+import { pageId as pageIdOf, postingKey } from "../../../src/autofill/hosts.js";
 import { bestJobMatch, type SavedJob } from "@/lib/context";
 import { usePanel } from "@/lib/store";
 
@@ -15,7 +15,7 @@ type NotThis = Record<string, string[]>;
 type Pinned = Record<string, string>;
 
 /** One page however it's reached: its posting, else its address without the #part. */
-export const pageId = (url: string) => postingKey(url)?.key || (url || "").split("#")[0];
+export const pageId = (url: string): string => pageIdOf(url);
 
 /** `map` with `page` set to `value` (or removed when undefined), newest last, capped. */
 function put<T>(map: Record<string, T>, page: string, value: T | undefined): Record<string, T> {

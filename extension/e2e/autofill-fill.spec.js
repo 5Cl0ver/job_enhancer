@@ -148,19 +148,15 @@ test("a sleeping server doesn't slow a press: it fills from the copy the extensi
   await page.close();
 });
 
-test("the AI answers what's left: a sure answer fills, an unsure one doesn't", async () => {
-  api.state.aiAnswers = {
-    "How did you hear about this job?": { value: "LinkedIn", confidence: 0.92 },
-    "Phone": { value: "nope", confidence: 0.99 }, // already filled: never asked over it
-  };
+test("no AI (spec 020): what Job Catcher doesn't know is left for you, and the AI is never asked", async () => {
+  api.state.aiAnswers = { "How did you hear about this job?": { value: "LinkedIn", confidence: 0.92 } };
+  const before = api.calls("/v1/ai/autofill-map").length;
   const page = await ext.context.newPage();
   await page.goto(lab.url("/lab/react-form/index.html"));
   await press(page);
-  await expect.poll(() => page.evaluate(() => window.__formData().hearAbout)).toBe("LinkedIn");
-  expect(await page.evaluate(() => window.__formData().phone)).toBe(PERSON.profile.phone);
-  const [{ body }] = api.calls("/v1/ai/autofill-map");
-  // Only questions and their choices are sent — never the page.
-  for (const f of body.fields) expect(Object.keys(f).sort()).toEqual(["id", "label", "options", "type"]);
-  expect(body.fields.map((f) => f.label)).not.toContain("Gender");
+  await expect.poll(() => page.evaluate(() => window.__formData().phone)).toBe(PERSON.profile.phone);
+  await page.waitForTimeout(800);
+  expect(await page.evaluate(() => window.__formData().hearAbout)).toBeFalsy();
+  expect(api.calls("/v1/ai/autofill-map").length).toBe(before);
   await page.close();
 });

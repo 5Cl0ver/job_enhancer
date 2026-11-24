@@ -68,6 +68,10 @@ export async function startFakeApi() {
     aiAnswers: {}, // question label -> {value, confidence} the fake AI gives
     taught: [], // boxes taught with "Point at a box": {id, site, fingerprint, profile_key, answer}
     resume: { filename: "wren-calloway.pdf", bytes: Buffer.from("%PDF-1.4\n% invented résumé\n") },
+    // The user's other résumés (spec 020): id -> {filename, bytes, details}.
+    resumes: {},
+    jobResumes: {}, // saved job id -> résumé id (PUT /v1/saved-jobs/:id/resume)
+    promoted: false, // one-site answers already made answers for every site (spec 020)
     // Job Catcher Connect (spec 019): the request under way, how long it lasts,
     // the newest version, the hellos received, the id the /connect page asks.
     connect: null,
@@ -154,6 +158,7 @@ export async function startFakeApi() {
           taught: state.taught,
           history: state.history,
           history_pending: false,
+          promoted: state.promoted,
           resume: state.resume
             ? { id: "resume-1", filename: state.resume.filename, mime: "application/pdf", updated_at: "2026-11-23T08:00:00Z" }
             : null,
@@ -236,8 +241,46 @@ export async function startFakeApi() {
       };
     },
     "GET /v1/ai/resumes": () => ({
-      body: [{ id: "resume-1", is_active: true, filename: "Wren_Calloway_Resume.pdf" }],
+      body: [
+        { id: "resume-1", is_active: true, filename: "Wren_Calloway_Resume.pdf" },
+        ...Object.entries(state.resumes).map(([id, r]) => ({ id, is_active: false, filename: r.filename })),
+      ],
     }),
+    "GET /v1/autofill/resumes/:id/file": (_b, req) => {
+      const r = state.resumes[decodeURIComponent(req.url.split("/")[4])];
+      if (!r) return { status: 404, body: { detail: "Not found" } };
+      return { raw: r.bytes, headers: { "content-type": "application/pdf", "X-Resume-Filename": r.filename } };
+    },
+    "GET /v1/autofill/resumes/:id/details": (_b, req) => {
+      const id = decodeURIComponent(req.url.split("/")[4]);
+      const r = state.resumes[id];
+      if (!r) return { status: 404, body: { detail: "Not found" } };
+      return { body: { resume_id: id, filename: r.filename, read: !r.unread, work: [], education: [], skills: [], certifications: [], websites: [], ...(r.unread ? {} : r.details || {}) } };
+    },
+    "PUT /v1/saved-jobs/:id/resume": (b, req) => {
+      const id = decodeURIComponent(req.url.split("/")[3]);
+      state.jobResumes[id] = b?.resume_id || (b?.usual ? "usual" : null);
+      const job = state.jobs.find((j) => j.id === id);
+      if (job) {
+        job.resume_id = b?.resume_id || null;
+        job.resume_usual = !b?.resume_id && !!b?.usual;
+      }
+      state.jobsVersion++;
+      return { status: 204 };
+    },
+    "POST /v1/autofill/resumes/:id/read": (_b, req) => {
+      const id = decodeURIComponent(req.url.split("/")[4]);
+      const r = state.resumes[id];
+      if (!r) return { status: 404, body: { detail: "Not found" } };
+      r.details = { ...(r.details || {}), ...(r.readsAs || {}) };
+      r.unread = false;
+      return { body: { resume_id: id, filename: r.filename, read: true, work: [], education: [], skills: [], certifications: [], websites: [], ...r.details } };
+    },
+    "POST /v1/autofill/promoted": () => {
+      state.promoted = true;
+      state.bundleVersion++;
+      return { status: 204 };
+    },
     "POST /v1/ai/generate": (b) => {
       const doc = {
         id: `doc-${state.documents.length + 1}`,
@@ -331,6 +374,10 @@ export async function startFakeApi() {
     let key = `${req.method} ${path}`;
     if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
     if (/^DELETE \/v1\/autofill\/taught\/[^/]+$/.test(key)) key = "DELETE /v1/autofill/taught/:id";
+    if (/^GET \/v1\/autofill\/resumes\/[^/]+\/file$/.test(key)) key = "GET /v1/autofill/resumes/:id/file";
+    if (/^GET \/v1\/autofill\/resumes\/[^/]+\/details$/.test(key)) key = "GET /v1/autofill/resumes/:id/details";
+    if (/^PUT \/v1\/saved-jobs\/[^/]+\/resume$/.test(key)) key = "PUT /v1/saved-jobs/:id/resume";
+    if (/^POST \/v1\/autofill\/resumes\/[^/]+\/read$/.test(key)) key = "POST /v1/autofill/resumes/:id/read";
     if (/^DELETE \/v1\/users\/me\/custom-answers\/[^/]+$/.test(key) && !key.endsWith("/used")) key = "DELETE /v1/users/me/custom-answers/:key";
     const o = overrides.get(path) ?? overrides.get(key);
     const wait = (typeof o === "object" && o?.delay) || delay;

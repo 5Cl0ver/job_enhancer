@@ -191,6 +191,8 @@ class SavedJobBase(BaseModel):
     collection_id: uuid.UUID | None
     pipeline_stage_id: uuid.UUID | None
     track_id: uuid.UUID | None = None
+    # The résumé chosen for this job (spec 020); null = the usual one.
+    resume_id: uuid.UUID | None = None
     # scout | email | extension | claude | search | manual; null = not known.
     origin: str | None = None
     scout: ScoutFit | None = None
@@ -254,6 +256,19 @@ class SavedJobSummary(BaseModel):
     location: str
     url: str
     applied_at: datetime | None = None
+    # The résumé Job Catcher uses for this job: its own, else its résumé
+    # type's; null = the usual one (spec 020).
+    resume_id: uuid.UUID | None = None
+    # The user picked "your usual résumé" for this job on purpose.
+    resume_usual: bool = False
+
+
+class JobResumeIn(BaseModel):
+    """Choose the résumé for one saved job. ``usual``: the usual résumé, on
+    purpose (the résumé type's is not used). Neither: back to the default."""
+
+    resume_id: uuid.UUID | None = None
+    usual: bool = False
 
 
 class SavedJobSummaryResponse(BaseModel):

@@ -172,7 +172,14 @@ class TestResumeReading:
         from app.services import resume_history
 
         r = await self._resume(db_session, test_user)
+        r.extracted_text = (
+            "EXPERIENCE\n"
+            "Data Analyst | Tidewell Labs | Mar 2023 - Present\n"
+            "EDUCATION\n"
+            "Lakeview College, B.A. Economics, 2018\n"
+        )
         v1 = (await client.get("/v1/autofill/bundle")).json()["version"]
+        # No AI in spec 020: the built-in reader reads it, the AI is never asked.
         work = AsyncMock(return_value=WORK)
         edu = AsyncMock(return_value=EDU)
         with (
@@ -183,48 +190,61 @@ class TestResumeReading:
             await db_session.flush()
             b = (await client.get(f"/v1/autofill/bundle?version={v1}")).json()
             assert b["changed"] is True  # the reading changed the version
-            assert b["history"] == {"work": WORK, "education": EDU}
+            assert b["history"]["work"][0]["company"] == "Tidewell Labs"
+            assert b["history"]["education"][0]["school"] == "Lakeview College"
+            assert set(b["history"]) == {
+                "work",
+                "education",
+                "skills",
+                "certifications",
+                "websites",
+            }
             assert b["history_pending"] is False
             # Workday's work-history call serves the stored reading.
             wh = (await client.post("/v1/ai/work-history")).json()
             assert wh["entries"][0]["company"] == "Tidewell Labs"
-        work.assert_awaited_once()
-        edu.assert_awaited_once()
+        work.assert_not_awaited()
+        edu.assert_not_awaited()
 
     async def test_no_resume_nothing_pending(self, client: AsyncClient):
         b = (await client.get("/v1/autofill/bundle")).json()
         assert b["history"] is None and b["history_pending"] is False
 
-    async def test_a_reading_that_found_nothing_is_tried_again(
+    async def test_the_built_in_reader_reads_it_without_any_ai(
         self, client: AsyncClient, db_session, test_user
     ):
-        """The AI down (an empty reading) must not freeze the résumé as empty."""
+        """No AI (spec 020): the built-in reader reads it, the AI is never asked."""
         from unittest.mock import AsyncMock, patch
 
         from app.services import resume_history
 
         r = await self._resume(db_session, test_user)
+        r.extracted_text = (
+            "EXPERIENCE\n"
+            "Data Analyst | Tidewell Labs | Mar 2023 - Present\n"
+            "- Built dashboards\n"
+            "SKILLS\nSQL, Python\n"
+        )
+        ai = AsyncMock(return_value=[])
         with (
-            patch(
-                "app.services.ai_service.parse_work_history",
-                new=AsyncMock(return_value=[]),
-            ),
-            patch(
-                "app.services.ai_service.parse_education",
-                new=AsyncMock(return_value=[]),
-            ),
+            patch("app.services.ai_service.parse_work_history", new=ai),
+            patch("app.services.ai_service.parse_education", new=ai),
         ):
-            await resume_history.read_resume(r)
-        assert r.parsed_history_at is None
-        with (
-            patch(
-                "app.services.ai_service.parse_work_history",
-                new=AsyncMock(return_value=WORK),
-            ),
-            patch(
-                "app.services.ai_service.parse_education",
-                new=AsyncMock(return_value=[]),
-            ),
-        ):
-            await resume_history.read_resume(r)
-        assert r.parsed_history == {"work": WORK, "education": []}
+            history = await resume_history.read_resume(r)
+        ai.assert_not_awaited()
+        assert r.parsed_history_at is not None
+        assert history["work"][0]["company"] == "Tidewell Labs"
+        assert history["work"][0]["current"] is True
+        assert history["skills"] == ["SQL", "Python"]
+
+    async def test_a_resume_without_text_is_settled_as_empty(
+        self, client: AsyncClient, db_session, test_user
+    ):
+        """Nothing to read: settled once (empty details), never re-read hourly."""
+        from app.services import resume_history
+
+        r = await self._resume(db_session, test_user)
+        r.extracted_text = ""
+        history = await resume_history.read_resume(r)
+        assert r.parsed_history_at is not None
+        assert history["work"] == [] and history["skills"] == []

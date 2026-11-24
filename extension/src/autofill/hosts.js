@@ -134,6 +134,11 @@ export function postingKey(url) {
   return { scope: host, key: `${host}${clean}${ids.length ? `?${ids.join("&")}` : ""}`, sure: false };
 }
 
+/** One page however it's reached: its posting, else its address without the #part. */
+export function pageId(url) {
+  return postingKey(url)?.key || String(url || "").split("#")[0];
+}
+
 /** Can one company be told from another here? Not on Indeed's or LinkedIn's apply pages. */
 export function companyKnown(url) {
   try {

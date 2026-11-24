@@ -3,7 +3,6 @@
 import re
 import uuid
 from pathlib import Path
-from urllib.parse import quote
 
 from fastapi import (
     APIRouter,
@@ -45,6 +44,7 @@ from app.schemas.resume import (
 from app.services import ai_service, resume_history, resume_parser
 from app.services import saved_jobs as sj_svc
 from app.services.match import skills_in_resume
+from app.utils.content_disposition import content_disposition, file_headers
 from app.utils.rate_limit import rate_limit_key
 
 _limiter = Limiter(key_func=rate_limit_key)
@@ -110,9 +110,9 @@ async def upload_resume(
     )
     db.add(resume)
     await db.commit()
-    # Read it into work history + education for autofill, after responding.
-    if activate:
-        background.add_task(resume_history.read_in_background, resume.id)
+    # Read it into its details for autofill, after responding (every résumé:
+    # any of them can be the one chosen for a job — spec 020).
+    background.add_task(resume_history.read_in_background, resume.id)
     return ResumeSchema.model_validate(resume)
 
 
@@ -138,20 +138,15 @@ async def download_active_resume_file(
     return StreamingResponse(
         io.BytesIO(resume.file_data),
         media_type=resume.mime_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{resume.filename}"',
-            # The extension needs these to rebuild the File object.
-            "X-Resume-Filename": resume.filename,
-        },
+        # The extension needs the name to rebuild the File object; any name
+        # works (RFC 6266 + percent-encoded X-Resume-Filename).
+        headers=file_headers(resume.filename),
     )
 
 
 def _inline(filename: str) -> str:
-    """A Content-Disposition that shows the file in the tab under its own name.
-    Headers are latin-1 only, so the name goes twice (RFC 6266): a plain-ASCII
-    stand-in every browser accepts, and the real name percent-encoded."""
-    plain = re.sub(r'[^\x20-\x7e]|["\\]', "", filename).strip() or "resume"
-    return f"inline; filename=\"{plain}\"; filename*=UTF-8''{quote(filename, safe='')}"
+    """A Content-Disposition that shows the file in the tab under its own name."""
+    return content_disposition("inline", filename)
 
 
 async def _own_resume(db: AsyncSession, user: User, resume_id: uuid.UUID) -> Resume:
@@ -363,6 +358,7 @@ async def autofill_map(
 @_limiter.limit("10/minute")
 async def work_history(
     request: Request,
+    resume_id: uuid.UUID | None = Query(None),
     user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> WorkHistoryResponse:
@@ -370,10 +366,14 @@ async def work_history(
     the extension fills 'Work Experience' sections (Workday et al.) from it.
     Read once and stored (services/resume_history.py). Grounded: only what's
     actually in the résumé."""
+    # The résumé chosen for this application (spec 020), else the active one.
+    mine = (
+        select(Resume).options(defer(Resume.file_data)).where(Resume.user_id == user.id)
+    )
     resume = await db.scalar(
-        select(Resume)
-        .options(defer(Resume.file_data))
-        .where(Resume.user_id == user.id, Resume.is_active.is_(True))
+        mine.where(Resume.id == resume_id)
+        if resume_id
+        else mine.where(Resume.is_active.is_(True))
         .order_by(Resume.created_at.desc())
         .limit(1)
     )

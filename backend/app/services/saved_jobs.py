@@ -16,6 +16,8 @@ from sqlalchemy.orm import defer, selectinload, with_expression
 from app.models.detected_event import DetectedEvent
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
+from app.models.resume import Resume
+from app.models.resume_track import ResumeTrack
 from app.models.saved_job import (
     ORIGIN_EMAIL,
     ORIGIN_EXTENSION,
@@ -127,12 +129,50 @@ async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list
             JobListing.company,
             JobListing.location,
             JobListing.apply_url,
+            SavedJob.resume_id.label("own_resume_id"),
+            ResumeTrack.resume_id.label("track_resume_id"),
+            SavedJob.resume_usual,
         )
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+        .outerjoin(ResumeTrack, SavedJob.track_id == ResumeTrack.id)
         .where(SavedJob.user_id == user_id, SavedJob.is_archived.is_(False))
         .order_by(SavedJob.created_at.desc())
     )
     return rows.all()
+
+
+def effective_resume_id(row) -> uuid.UUID | None:
+    """A job's résumé: its own, else (unless "usual" was chosen) its type's."""
+    if row.own_resume_id:
+        return row.own_resume_id
+    return None if row.resume_usual else row.track_resume_id
+
+
+async def set_job_resume(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    saved_job_id: uuid.UUID,
+    resume_id: uuid.UUID | None,
+    usual: bool = False,
+) -> SavedJob:
+    """The résumé Job Catcher uses for one saved job (spec 020): the user's own
+    résumé, or None for the usual one."""
+    sj = await db.scalar(
+        select(SavedJob).where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
+    )
+    if sj is None:
+        raise HTTPException(status_code=404, detail="Saved job not found")
+    if resume_id is not None:
+        owned = await db.scalar(
+            select(Resume.id).where(Resume.id == resume_id, Resume.user_id == user_id)
+        )
+        if owned is None:
+            raise HTTPException(status_code=404, detail="Résumé not found")
+    sj.resume_id = resume_id
+    sj.resume_usual = bool(usual and resume_id is None)
+    sj.updated_at = datetime.now(UTC)
+    await db.flush()
+    return sj
 
 
 async def get_saved_job(

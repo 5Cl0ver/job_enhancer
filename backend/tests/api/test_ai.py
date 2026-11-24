@@ -466,7 +466,7 @@ async def test_work_history_no_resume_is_empty(client: AsyncClient):
 async def test_work_history_parses_active_resume(
     client: AsyncClient, db_session, test_user
 ):
-    """With an active résumé, the endpoint returns the parsed (mocked) entries."""
+    """With an active résumé, the endpoint returns its jobs (built-in reader)."""
     import uuid as _uuid
 
     from app.models.resume import Resume
@@ -478,7 +478,10 @@ async def test_work_history_parses_active_resume(
             filename="r.pdf",
             mime_type="application/pdf",
             file_size_bytes=10,
-            extracted_text="IT Support Technician at Logical Position, 2022-2024",
+            extracted_text=(
+                "EXPERIENCE\n"
+                "IT Support Technician | Logical Position | Oct 2022 - Sep 2024\n"
+            ),
             is_active=True,
         )
     )
@@ -497,11 +500,11 @@ async def test_work_history_parses_active_resume(
             "description": "",
         }
     ]
-    with patch(
-        "app.api.v1.ai.ai_service.parse_work_history",
-        new=AsyncMock(return_value=entries),
-    ):
+    # No AI in spec 020: the built-in reader reads it; the AI is never asked.
+    ai = AsyncMock(return_value=entries)
+    with patch("app.services.ai_service.parse_work_history", new=ai):
         r = await client.post("/v1/ai/work-history", json={})
+    ai.assert_not_awaited()
     assert r.status_code == 200
     data = r.json()["entries"]
     assert len(data) == 1

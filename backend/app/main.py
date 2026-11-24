@@ -3,6 +3,7 @@
 import logging
 from collections.abc import AsyncGenerator
 from contextlib import AsyncExitStack, asynccontextmanager
+from datetime import UTC, datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from fastapi import FastAPI, Request, status
@@ -82,6 +83,18 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         hours=24,
         args=[AsyncSessionLocal],
         id="ingest_curated_jobs",
+        replace_existing=True,
+    )
+    from app.services.resume_history import read_unread_resumes
+
+    # Résumés never read into details (spec 020): soon after start, then hourly.
+    scheduler.add_job(
+        read_unread_resumes,
+        trigger="interval",
+        hours=1,
+        next_run_time=datetime.now(UTC) + timedelta(minutes=2),
+        args=[AsyncSessionLocal],
+        id="read_unread_resumes",
         replace_existing=True,
     )
     scheduler.start()
