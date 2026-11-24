@@ -1,30 +1,56 @@
-// The saved job the tab beside the panel is about (context.ts bestJobMatch),
-// minus the ones the user said aren't it ("Not this job"). Those are kept per
-// page in chrome.storage.local, so every view and every panel agrees.
+// The saved job the tab beside the panel is about (context.ts bestJobMatch).
+// Two small per-page memories in chrome.storage.local, so every view and
+// every panel agrees: the jobs the user said aren't this page ("Not this
+// job", undoable), and the job the user saved from this page (always linked).
 import * as React from "react";
 import { postingKey } from "../../../src/autofill/hosts.js";
 import { bestJobMatch, type SavedJob } from "@/lib/context";
 import { usePanel } from "@/lib/store";
 
-const KEY = "je_not_this";
+const NOT_THIS = "je_not_this";
+const PINNED = "je_page_job";
 const KEEP = 200; // pages remembered; the oldest go first
 
 type NotThis = Record<string, string[]>;
+type Pinned = Record<string, string>;
 
 /** One page however it's reached: its posting, else its address without the #part. */
 export const pageId = (url: string) => postingKey(url)?.key || (url || "").split("#")[0];
 
-export function usePageJob(): { match: SavedJob | null; notThisJob: (id: string) => Promise<void> } {
+/** `map` with `page` set to `value` (or removed when undefined), newest last, capped. */
+function put<T>(map: Record<string, T>, page: string, value: T | undefined): Record<string, T> {
+  const { [page]: _old, ...rest } = map;
+  const kept = Object.entries(rest).slice(-(KEEP - 1));
+  return value === undefined ? Object.fromEntries(kept) : { ...Object.fromEntries(kept), [page]: value };
+}
+
+async function read<T>(key: string): Promise<T> {
+  const got = await chrome.storage.local.get(key).catch(() => ({}) as Record<string, unknown>);
+  return ((got as Record<string, unknown>)[key] as T) || ({} as T);
+}
+
+export interface PageJob {
+  match: SavedJob | null;
+  /** Saved jobs the user unlinked from this page, to link again. */
+  hidden: SavedJob[];
+  notThisJob: (id: string) => Promise<void>;
+  linkAgain: (id: string) => Promise<void>;
+  /** The user saved this page as `id`: link it here from now on. */
+  savedHere: (id: string) => Promise<void>;
+}
+
+export function usePageJob(): PageJob {
   const { tab, saved } = usePanel();
-  const [all, setAll] = React.useState<NotThis>({});
+  const [notThis, setNotThis] = React.useState<NotThis>({});
+  const [pinned, setPinned] = React.useState<Pinned>({});
   React.useEffect(() => {
     let live = true;
-    chrome.storage.local
-      .get(KEY)
-      .then((got) => live && setAll((got[KEY] as NotThis) || {}))
-      .catch(() => {});
+    read<NotThis>(NOT_THIS).then((v) => live && setNotThis(v));
+    read<Pinned>(PINNED).then((v) => live && setPinned(v));
     const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === "local" && changes[KEY]) setAll((changes[KEY].newValue as NotThis) || {});
+      if (area !== "local") return;
+      if (changes[NOT_THIS]) setNotThis((changes[NOT_THIS].newValue as NotThis) || {});
+      if (changes[PINNED]) setPinned((changes[PINNED].newValue as Pinned) || {});
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => {
@@ -34,19 +60,43 @@ export function usePageJob(): { match: SavedJob | null; notThisJob: (id: string)
   }, []);
 
   const here = pageId(tab.url);
-  const match = bestJobMatch(tab, saved.jobs, all[here] || []);
+  const unlinked = notThis[here] || [];
+  const match = bestJobMatch(tab, saved.jobs, unlinked, pinned[here]);
+  const hidden = saved.jobs.filter((j) => unlinked.includes(j.id));
 
-  const notThisJob = React.useCallback(
-    async (id: string) => {
-      const got = await chrome.storage.local.get(KEY).catch(() => ({}) as Record<string, unknown>);
-      const current = ((got as Record<string, unknown>)[KEY] as NotThis) || {};
-      const { [here]: mine = [], ...rest } = current;
-      const kept = Object.entries(rest).slice(-(KEEP - 1));
-      const next: NotThis = { ...Object.fromEntries(kept), [here]: [...new Set([...mine, id])] };
-      setAll(next);
-      await chrome.storage.local.set({ [KEY]: next }).catch(() => {});
+  const setHidden = React.useCallback(
+    async (change: (ids: string[]) => string[]) => {
+      const current = await read<NotThis>(NOT_THIS);
+      const ids = change(current[here] || []);
+      const next = put(current, here, ids.length ? ids : undefined);
+      setNotThis(next);
+      await chrome.storage.local.set({ [NOT_THIS]: next }).catch(() => {});
     },
     [here],
   );
-  return { match, notThisJob };
+  const setPin = React.useCallback(
+    async (id: string | undefined) => {
+      const next = put(await read<Pinned>(PINNED), here, id);
+      setPinned(next);
+      await chrome.storage.local.set({ [PINNED]: next }).catch(() => {});
+    },
+    [here],
+  );
+
+  const notThisJob = React.useCallback(
+    async (id: string) => {
+      await setHidden((ids) => [...new Set([...ids, id])]);
+      if (pinned[here] === id) await setPin(undefined);
+    },
+    [setHidden, setPin, pinned, here],
+  );
+  const linkAgain = React.useCallback(async (id: string) => setHidden((ids) => ids.filter((x) => x !== id)), [setHidden]);
+  const savedHere = React.useCallback(
+    async (id: string) => {
+      await setHidden((ids) => ids.filter((x) => x !== id));
+      await setPin(id);
+    },
+    [setHidden, setPin],
+  );
+  return { match, hidden, notThisJob, linkAgain, savedHere };
 }

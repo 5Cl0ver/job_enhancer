@@ -168,7 +168,9 @@ async def mark_applied(
 ) -> MarkAppliedResult:
     """Auto-track: the extension detected an application SUBMIT on an ATS page.
     Moves the matching saved job to Applied (sets applied_at). No match → no-op."""
-    matched = await svc.mark_applied(db, user.id, data.title, data.company)
+    matched = await svc.mark_applied(
+        db, user.id, data.title, data.company, data.saved_job_id
+    )
     if matched:
         await db.commit()
     return MarkAppliedResult(matched=matched)

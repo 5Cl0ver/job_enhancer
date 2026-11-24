@@ -80,7 +80,7 @@ const companyCore = (c: string) => norm(c).replace(/\s+(inc|llc|ltd|corp|corpora
 /** The company named in the tab's title, or in its address (affirm.wd5…, /affirm/jobs/…). */
 function companyOnPage(page: { url: string; title: string }, company: string): boolean {
   const core = companyCore(company);
-  if (!core) return false;
+  if (!core || COMMON.has(core)) return false;
   if (hasWords(page.title, core)) return true;
   const flat = core.replace(/ /g, "");
   if (flat.length < 4) return false;
@@ -97,7 +97,8 @@ function companyOnPage(page: { url: string; title: string }, company: string): b
   return parts.some((p) => p === flat || (flat.length >= 5 && p.startsWith(flat)) || (firstOk && p === first));
 }
 
-const COMMON = new Set(["global", "united", "american", "national", "first", "general", "international", "north", "south", "pacific", "atlantic", "health", "group", "services", "solutions", "systems", "careers", "digital", "premier", "advanced", "western", "eastern", "central", "southern", "northern"]);
+// Words that are on job pages whatever the company: never proof of one.
+const COMMON = new Set(["remote", "hybrid", "onsite", "indeed", "linkedin", "greenhouse", "lever", "ashby", "workday", "glassdoor", "ziprecruiter", "smartrecruiters", "workable", "jobs", "job", "hiring", "global", "united", "american", "national", "first", "general", "international", "north", "south", "pacific", "atlantic", "health", "group", "services", "solutions", "systems", "careers", "digital", "premier", "advanced", "western", "eastern", "central", "southern", "northern"]);
 
 /**
  * The saved job this tab is about — or null. Never a guess on a shared
@@ -105,10 +106,17 @@ const COMMON = new Set(["global", "united", "american", "national", "first", "ge
  * Greenhouse, Lever, Workday…) wins; otherwise the saved job's whole title AND
  * its company must be on the page, and a saved job that is a different posting
  * on the same system never counts. `notThis`: saved jobs the user said aren't
- * this page.
+ * this page. `pinned`: the job the user saved from this very page, which wins.
  */
-export function bestJobMatch(page: { url: string; title: string }, jobs: SavedJob[], notThis: string[] = []): SavedJob | null {
+export function bestJobMatch(
+  page: { url: string; title: string },
+  jobs: SavedJob[],
+  notThis: string[] = [],
+  pinned?: string,
+): SavedJob | null {
   let pool = jobs.filter((j) => !notThis.includes(j.id));
+  const mine = pinned ? pool.find((j) => j.id === pinned) : undefined;
+  if (mine) return mine;
   const here = postingKey(page.url);
   if (here) {
     const same = pool.filter((j) => postingKey(j.url)?.key === here.key);
@@ -120,7 +128,7 @@ export function bestJobMatch(page: { url: string; title: string }, jobs: SavedJo
   const fits = pool.filter((j) => {
     if (!j.title || !j.company) return false;
     const theirs = postingKey(j.url);
-    if (here?.sure && theirs?.sure && theirs.scope === here.scope) return false;
+    if (here?.sure && theirs?.sure && theirs.scope === here.scope && theirs.key !== here.key) return false;
     return hasWords(page.title, j.title) && companyOnPage(page, j.company);
   });
   // The most specific title wins ("Software Engineer II" over "Software Engineer").

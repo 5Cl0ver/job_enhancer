@@ -78,6 +78,32 @@ describe("bestJobMatch never links a page to the wrong saved job", () => {
     expect(bestJobMatch({ url: hub, title: "Opaline Pay careers" }, two)).toBeNull();
   });
 
+  it("one posting saved twice (board and company site): still linked, not cancelled out", () => {
+    const twice = [SAVED[1], { ...SAVED[1], id: "a2", url: "https://opalinepay.example/careers?gh_jid=7002" }];
+    expect(["a", "a2"]).toContain(bestJobMatch(AFFIRM_LIKE, twice)?.id);
+    const edited = [SAVED[1], { ...SAVED[1], id: "a3", title: "SWE II Ads" }];
+    expect(bestJobMatch(AFFIRM_LIKE, edited)?.id).toBe("a");
+  });
+
+  it("the job saved from this page is linked to it, whatever its address", () => {
+    const fromOther = [{ ...SAVED[0], id: "p", url: "https://job-boards.greenhouse.io/brightfold/jobs/4001" }];
+    const page = { url: "https://job-boards.greenhouse.io/brightfold/jobs/4555", title: "Job Application for Software Engineer I at Brightfold" };
+    expect(bestJobMatch(page, fromOther)).toBeNull();
+    expect(bestJobMatch(page, fromOther, [], "p")?.id).toBe("p");
+    expect(bestJobMatch(page, fromOther, ["p"], "p")).toBeNull(); // Not this job still wins
+  });
+
+  it("a company that is a common word or a job site's name is never proof", () => {
+    const odd = [
+      { ...SAVED[0], id: "r", title: "Software Engineer", company: "Remote", url: "" },
+      { ...SAVED[0], id: "i", title: "Software Engineer", company: "Indeed", url: "" },
+      { ...SAVED[0], id: "g", title: "Software Engineer", company: "Greenhouse Software", url: "" },
+    ];
+    expect(bestJobMatch({ url: "https://acme.example/jobs/12", title: "Software Engineer (Remote) - Acme" }, odd)).toBeNull();
+    expect(bestJobMatch({ url: "https://www.indeed.com/viewjob?jk=abc123", title: "Software Engineer - Acme | Indeed.com" }, odd)).toBeNull();
+    expect(bestJobMatch({ url: "https://job-boards.greenhouse.io/acme/jobs/55", title: "Software Engineer at Acme" }, odd)).toBeNull();
+  });
+
   it("the most specific title wins", () => {
     const both = [
       { ...SAVED[1], id: "short", title: "Software Engineer", url: "" },
@@ -102,6 +128,9 @@ describe("postingKey: which posting an address is", () => {
     ["https://vellacor.wd5.myworkdayjobs.com/en-US/External/job/Portland_OR/IT-Analyst_JR-1234/apply/applyManually", "workday:vellacor.wd5.myworkdayjobs.com:jr-1234"],
     ["https://www.paycomonline.net/v4/ats/web.php/portal/0000NVF/jobs/ViewJobDetails?job=61770", "paycomonline.net/v4/ats/web.php/portal/0000nvf/jobs/viewjobdetails?job=61770"],
     ["https://careers.tidewell.example/jobs/42/apply", "careers.tidewell.example/jobs/42"],
+    // myworkdaysite.com is shared: the tenant in the path tells companies apart.
+    ["https://wd5.myworkdaysite.com/recruiting/vellacor/External/job/Portland/IT-Analyst_R-1234", "workday:wd5.myworkdaysite.com/vellacor:r-1234"],
+    ["https://wd5.myworkdaysite.com/recruiting/quillstone/External/job/Salem/Analyst_R-1234", "workday:wd5.myworkdaysite.com/quillstone:r-1234"],
   ])("%s", (url, key) => {
     expect(postingKey(url)?.key).toBe(key);
   });
@@ -110,6 +139,10 @@ describe("postingKey: which posting an address is", () => {
     expect(postingKey("https://careers.tidewell.example/")).toBeNull();
     expect(postingKey("https://tidewell.example/careers/apply")).toBeNull();
     expect(postingKey("not a url")).toBeNull();
+  });
+
+  it("a random id that starts with digits is not a SmartRecruiters posting id", () => {
+    expect(postingKey("https://jobs.smartrecruiters.com/oneclick-ui/company/Tidewell/publication/12345678-abcd-4ef0-9abc-0123456789ab")?.sure).not.toBe(true);
   });
 
   it("the systems' own ids are sure; a plain address is only a hint", () => {

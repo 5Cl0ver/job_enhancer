@@ -171,6 +171,7 @@ test("My jobs: search, mark applied, and a failed load offers Retry", async () =
   expect(api.calls("/v1/saved-jobs/mark-applied")[0].body).toEqual({
     title: "Help Desk Analyst",
     company: "Vellacor Robotics",
+    saved_job_id: "s1", // that exact job, no guessing by name
   });
   await Promise.all([tab.close(), panel.close()]);
 });

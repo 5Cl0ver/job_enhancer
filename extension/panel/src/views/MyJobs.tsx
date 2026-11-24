@@ -78,7 +78,7 @@ function JobRow({ job }: { job: SavedJob }) {
 
   async function markApplied() {
     setBusy(true);
-    await send({ type: "markApplied", job: { title: job.title, company: job.company } });
+    await send({ type: "markApplied", job: { id: job.id, title: job.title, company: job.company } });
     await reloadSaved();
     setBusy(false);
   }

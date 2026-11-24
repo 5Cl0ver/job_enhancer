@@ -15,7 +15,7 @@ import { Point, startPointing } from "@/views/Point";
 export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void }) {
   const { tab, fill } = usePanel();
   const ctx = tab.ctx;
-  const { match, notThisJob } = usePageJob();
+  const { match, hidden, notThisJob, linkAgain, savedHere } = usePageJob();
 
   if (ctx.kind === "none") return <Elsewhere />;
   if (ctx.kind === "indeed-myjobs") return <IndeedSync key={tab.url} />;
@@ -48,7 +48,8 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
       )}
       {/* A fresh card per page: nothing carries over from the last one. Always
           there: a page linked to a saved job can still be saved as its own. */}
-      <SaveJob key={tab.url} compact={applying || !!match || fill.entries.length > 0} site={ctx.site} match={match} />
+      <SaveJob key={tab.url} compact={applying || !!match || fill.entries.length > 0} site={ctx.site} match={match} onSaved={savedHere} />
+      {!match && hidden.length > 0 && <Unlinked jobs={hidden} onLink={linkAgain} />}
       {!applying && (apply || <NoForm known={!!p} />)}
     </div>
   );
@@ -119,7 +120,30 @@ async function readPage(tabId: number): Promise<ReadJob | null> {
   }
 }
 
-function SaveJob({ compact, site, match }: { compact: boolean; site: string; match: SavedJob | null }) {
+/** Jobs the user said aren't this page: one tap links one back. */
+function Unlinked({ jobs, onLink }: { jobs: SavedJob[]; onLink: (id: string) => void }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {jobs.map((j) => (
+        <Button key={j.id} variant="link" size="sm" className="self-start text-muted-foreground" onClick={() => onLink(j.id)}>
+          Unlinked {j.title}. Link it again
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function SaveJob({
+  compact,
+  site,
+  match,
+  onSaved,
+}: {
+  compact: boolean;
+  site: string;
+  match: SavedJob | null;
+  onSaved: (id: string) => Promise<void>;
+}) {
   const { tab, saved, reloadSaved, signedOut } = usePanel();
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [reading, setReading] = React.useState(false);
@@ -185,6 +209,9 @@ function SaveJob({ compact, site, match }: { compact: boolean; site: string; mat
         text: res?.ok ? `Saved: ${draft.title.trim()} at ${draft.company.trim()}` : "Already in My Jobs.",
       });
       setDraft(null);
+      // The job saved from this page belongs to it, even when the server
+      // handed back one saved before from another address.
+      if (res?.ok && res.saved?.id) await onSaved(String(res.saved.id));
       reloadSaved();
     } else if (res?.error === "NOT_SIGNED_IN") {
       signedOut();

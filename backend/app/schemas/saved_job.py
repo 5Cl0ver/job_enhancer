@@ -84,6 +84,9 @@ class MarkAppliedRequest(BaseModel):
 
     title: str = Field(default="", max_length=500)
     company: str = Field(default="", max_length=255)
+    # The saved job itself, when the caller knows it (the side panel's linked
+    # job): that one is moved, no matching by name.
+    saved_job_id: uuid.UUID | None = None
 
 
 class MarkAppliedResult(BaseModel):

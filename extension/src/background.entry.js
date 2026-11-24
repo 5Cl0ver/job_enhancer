@@ -749,7 +749,8 @@ async function markApplied(job) {
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ title: job.title || "", company: job.company || "" }),
+    // The saved job's own id when the panel knows it: that job, no guessing.
+    body: JSON.stringify({ title: job.title || "", company: job.company || "", ...(job.id ? { saved_job_id: job.id } : {}) }),
   });
   if (!res.ok) return { matched: false };
   return res.json();

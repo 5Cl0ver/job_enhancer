@@ -635,16 +635,27 @@ async def own_names(
 
 
 async def mark_applied(
-    db: AsyncSession, user_id: uuid.UUID, title: str, company: str
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    title: str,
+    company: str,
+    saved_job_id: uuid.UUID | None = None,
 ) -> bool:
     """Auto-track: the extension saw the user SUBMIT an application — move the
     matching saved job to Applied. Prefers a title+company match; falls back to
     company-only (Indeed's confirmation states just the company) picking the
     most recent not-yet-applied saved job there. No match → no-op: we never
-    invent tracker entries."""
+    invent tracker entries. With `saved_job_id` (the user's own job), that job."""
     title_norm = normalize(title)
     company_norm = normalize(company)
-    if not title_norm and not company_norm:
+    sj = None
+    if saved_job_id is not None:
+        sj = await db.scalar(
+            select(SavedJob).where(
+                SavedJob.id == saved_job_id, SavedJob.user_id == user_id
+            )
+        )
+    if sj is None and not title_norm and not company_norm:
         return False
 
     base = (
@@ -652,8 +663,7 @@ async def mark_applied(
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
         .where(SavedJob.user_id == user_id)
     )
-    sj = None
-    if title_norm and company_norm:
+    if sj is None and title_norm and company_norm:
         sj = await db.scalar(
             base.where(
                 JobListing.title_normalized == title_norm,

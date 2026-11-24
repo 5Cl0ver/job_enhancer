@@ -95,7 +95,7 @@ export function Apply({
   async function markApplied() {
     if (!match) return;
     setMarking(true);
-    await send({ type: "markApplied", job: { title: match.title, company: match.company } });
+    await send({ type: "markApplied", job: { id: match.id, title: match.title, company: match.company } });
     await reloadSaved();
     setMarking(false);
   }

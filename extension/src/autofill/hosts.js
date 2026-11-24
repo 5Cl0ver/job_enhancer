@@ -103,7 +103,11 @@ export function postingKey(url) {
   const ashby = q("ashby_jid") || (/(^|\.)ashbyhq\.com$/.test(host) && UUID.exec(path)?.[0]);
   if (ashby) return own("ashby", ashby);
   if (/(^|\.)lever\.co$/.test(host) && UUID.test(path)) return own("lever", UUID.exec(path)[0]);
-  if (/(^|\.)smartrecruiters\.com$/.test(host) && /\/(\d{6,})(?=[-/]|$)/.test(path)) return own("smartrecruiters", /\/(\d{6,})(?=[-/]|$)/.exec(path)[1]);
+  if (/(^|\.)smartrecruiters\.com$/.test(host)) {
+    // A posting id is all digits; the start of a random id (12345678-abcd-…) isn't one.
+    const m = /\/(\d{6,})(?=[-/]|$)/.exec(path);
+    if (m && UUID.exec(path.slice(m.index + 1))?.index !== 0) return own("smartrecruiters", m[1]);
+  }
   if (/(^|\.)workable\.com$/.test(host) && /\/j\/([0-9a-z]+)/i.test(path)) return own("workable", /\/j\/([0-9a-z]+)/i.exec(path)[1]);
   if (/(^|\.)linkedin\.com$/.test(host)) {
     const id = /\/jobs\/view\/(?:[^/]*?-)?(\d{6,})/.exec(path)?.[1] || q("currentjobid");
@@ -115,7 +119,9 @@ export function postingKey(url) {
     const job = /\/job\/(.+)$/i.exec(path.replace(/\/+$/, "").replace(/\/(apply|application)(\/.*)?$/i, ""))?.[1] || "";
     const last = job.split("/").pop() || "";
     const req = last.includes("_") ? last.slice(last.lastIndexOf("_") + 1) : "";
-    return req ? own(`workday:${host}`, req) : null;
+    // myworkdaysite.com is shared: the company is the path's /recruiting/<tenant>.
+    const tenant = /myworkdaysite\.com$/.test(host) ? /\/recruiting\/([^/]+)/i.exec(path)?.[1]?.toLowerCase() : "";
+    return req ? own(`workday:${host}${tenant ? `/${tenant}` : ""}`, req) : null;
   }
   // Anywhere else: the address itself, without "/apply" on the end — but only
   // when it names one posting (an id in the path or the query, or a job's
