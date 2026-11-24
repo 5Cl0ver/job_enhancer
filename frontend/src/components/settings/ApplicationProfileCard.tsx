@@ -25,6 +25,7 @@ import {
   useFillProfileFromResume,
   type ApplicationProfile,
 } from "@/hooks/useApplicationProfile";
+import { useUpdateOnboarding } from "@/hooks/useOnboarding";
 import { useResumes } from "@/hooks/useAI";
 
 /** Fields counted toward the completeness hint (what autofill can use). */
@@ -107,6 +108,7 @@ function TriState({
 export function ApplicationProfileCard() {
   const { data: saved, isLoading } = useApplicationProfile();
   const update = useUpdateApplicationProfile();
+  const reviewed = useUpdateOnboarding();
   const fillFromResume = useFillProfileFromResume();
   const { data: resumes = [] } = useResumes();
   const hasResume = resumes.some((r) => r.is_active);
@@ -174,7 +176,8 @@ export function ApplicationProfileCard() {
   const canSave = phoneOk(form.phone) && !update.isPending;
   const handleSave = () => {
     if (!canSave) return;
-    update.mutate(form);
+    // Saving the profile is what "Check your profile" on Getting started means.
+    update.mutate(form, { onSuccess: () => reviewed.mutate({ profile_reviewed: true }) });
   };
 
   return (

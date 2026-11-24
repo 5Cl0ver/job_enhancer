@@ -17,11 +17,23 @@ import JobCatcherPage from "@/routes/JobCatcherPage";
 import ConnectPage from "@/routes/ConnectPage";
 import ForgotPasswordPage from "@/routes/ForgotPasswordPage";
 import ResetPasswordPage from "@/routes/ResetPasswordPage";
+import WelcomePage from "@/routes/WelcomePage";
+import { RequireAuth } from "@/routes/RequireAuth";
 import { useIsPhone } from "@/hooks/useIsPhone";
+import { useOnboarding } from "@/hooks/useOnboarding";
 
-/** Where the app opens: on a phone you check on your jobs; at a desk you search. */
-function Home() {
-  return <Navigate to={useIsPhone() ? "/jobs" : "/search"} replace />;
+/**
+ * Where the app opens: a new account's Welcome (spec 019) until it's finished
+ * or skipped; then on a phone you check on your jobs, at a desk you search.
+ * Only the front door does this, so links, new tabs and Job Catcher's "Open
+ * in app" always land where they point.
+ */
+export function Home() {
+  const phone = useIsPhone();
+  const { data, isLoading } = useOnboarding();
+  if (isLoading) return null;
+  if (data && !data.welcome.done) return <Navigate to="/welcome" replace />;
+  return <Navigate to={phone ? "/jobs" : "/search"} replace />;
 }
 
 // The app's "map": which URL renders which component.
@@ -38,6 +50,15 @@ export const router = createBrowserRouter([
   { path: "/connect", element: <ConnectPage /> },
   { path: "/forgot-password", element: <ForgotPasswordPage /> },
   { path: "/reset-password", element: <ResetPasswordPage /> },
+  // The Welcome (spec 019): full-page, no sidebar, signed in only.
+  {
+    path: "/welcome",
+    element: (
+      <RequireAuth>
+        <WelcomePage />
+      </RequireAuth>
+    ),
+  },
 
   // Protected app — DashboardLayout renders the sidebar + <Outlet/> for children
   {

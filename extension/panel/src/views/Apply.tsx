@@ -16,7 +16,8 @@ import {
   Undo2,
   Zap,
 } from "lucide-react";
-import { Alert, Badge, Button, Card, Input, Muted, SectionTitle, Select, Switch } from "@/ui";
+import { Alert, Badge, Button, Card, InfoBubble, Input, Muted, SectionTitle, Select, Switch } from "@/ui";
+import { HELP } from "@/lib/help";
 import { cn } from "@/lib/utils";
 import { appUrl, send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
@@ -240,15 +241,18 @@ function SuperAutofill({ tabId }: { tabId: number | null }) {
     if (tabId != null) send({ type: "setKeepFilling", tabId, on: next });
   }
   return (
-    <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
-      <span>
-        <b className="font-medium">Super autofill</b>
+    <div className="flex items-start justify-between gap-3 text-xs">
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-center gap-1">
+          <b className="font-medium">Super autofill</b>
+          <InfoBubble help={HELP.superAutofill} />
+        </div>
         <span className="block text-muted-foreground">
           {on ? "On: after your first press, every next page fills by itself." : "Off: Job Catcher fills only when you press Autofill."}
         </span>
-      </span>
+      </div>
       <Switch checked={on} label="Super autofill" onCheckedChange={change} />
-    </label>
+    </div>
   );
 }
 

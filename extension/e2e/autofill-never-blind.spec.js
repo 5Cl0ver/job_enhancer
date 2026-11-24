@@ -156,7 +156,7 @@ test("point at a box no reader can name, say what goes there: it fills, and next
   await expect(status(panel)).toHaveText(/Nothing here matched/, { timeout: 15000 });
 
   // Point → click the plain box → "Email".
-  await panel.getByRole("button", { name: "Point at a box" }).click();
+  await panel.getByRole("button", { name: "Point at a box", exact: true }).click();
   await expect(panel.getByTestId("pointing")).toBeVisible();
   await clickBox(page, page.locator("#mystery"));
   const ask = panel.getByTestId("what-goes-here");

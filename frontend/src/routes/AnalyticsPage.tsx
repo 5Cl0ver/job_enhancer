@@ -3,6 +3,7 @@ import { StatCard } from "@/components/analytics/StatCard";
 import { ActivityChart } from "@/components/analytics/ActivityChart";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useAnalyticsSummary } from "@/hooks/useAnalytics";
+import { InfoBubble } from "@/components/common/InfoBubble";
 
 export default function AnalyticsPage() {
   const { data, isLoading, isError } = useAnalyticsSummary();
@@ -28,7 +29,7 @@ export default function AnalyticsPage() {
   return (
     <div className="container mx-auto max-w-4xl space-y-6 md:px-4 md:py-6">
       <div className="space-y-1 max-md:hidden">
-        <h1 className="text-2xl font-bold tracking-tight">Analytics</h1>
+        <h1 className="flex items-center gap-1 text-2xl font-bold tracking-tight">Analytics <InfoBubble topic="analytics" /></h1>
         <p className="text-sm text-muted-foreground">Your job search at a glance.</p>
       </div>
 

@@ -7,6 +7,7 @@ import { TopBarActions } from "@/components/layout/PhoneNav";
 import { KanbanBoard } from "@/components/tracker/KanbanBoard";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import { cn } from "@/lib/utils";
+import { GettingStarted } from "@/components/onboarding/GettingStarted";
 
 type View = "list" | "board";
 
@@ -117,6 +118,11 @@ export default function MyJobsPage() {
         </div>
       )}
 
+      {view === "list" && (
+        <div className="mb-4">
+          <GettingStarted />
+        </div>
+      )}
       {view === "board" ? <KanbanBoard /> : phone ? <PhoneJobList /> : <SavedJobsBody />}
     </div>
   );

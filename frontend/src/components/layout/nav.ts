@@ -12,6 +12,7 @@ import {
   type LucideIcon,
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import type { HelpKey } from "@/lib/help";
 
 export type NavItem = {
   to: string;
@@ -20,18 +21,20 @@ export type NavItem = {
   short?: string;
   icon: LucideIcon;
   adminOnly?: boolean;
+  /** Its ⓘ (spec 019): shown beside the title in the phone's top bar. */
+  help?: HelpKey;
 };
 
 /** Every page, in the desktop sidebar's order. */
 export const NAV: NavItem[] = [
   { to: "/search", label: "Find Jobs", icon: Search },
   { to: "/jobs", label: "My Jobs", icon: Briefcase },
-  { to: "/matches", label: "Matches", icon: Sparkles },
-  { to: "/email-updates", label: "Email Updates", short: "Email", icon: MailCheck },
-  { to: "/analytics", label: "Analytics", icon: BarChart3 },
-  { to: "/ai-apply", label: "AI Apply", icon: Bot },
-  { to: "/autofill", label: "Autofill memory", short: "Memory", icon: Brain },
-  { to: "/job-catcher", label: "Job Catcher", icon: Puzzle },
+  { to: "/matches", label: "Matches", icon: Sparkles, help: "matches" },
+  { to: "/email-updates", label: "Email Updates", short: "Email", icon: MailCheck, help: "emailUpdates" },
+  { to: "/analytics", label: "Analytics", icon: BarChart3, help: "analytics" },
+  { to: "/ai-apply", label: "AI Apply", icon: Bot, help: "aiApply" },
+  { to: "/autofill", label: "Autofill memory", short: "Memory", icon: Brain, help: "autofill" },
+  { to: "/job-catcher", label: "Job Catcher", icon: Puzzle, help: "jobCatcher" },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/admin", label: "Admin", icon: Shield, adminOnly: true },
 ];

@@ -59,6 +59,7 @@ import { InboxBar } from "@/components/settings/EmailConnectCard";
 import { ErrorState } from "@/components/common/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { InfoBubble } from "@/components/common/InfoBubble";
 
 const LOOK: Record<string, { icon: LucideIcon; tone: string }> = {
   interview: { icon: CalendarCheck, tone: "bg-emerald-500/10 text-emerald-600 dark:text-emerald-400" },
@@ -104,7 +105,7 @@ export default function EmailUpdatesPage() {
   return (
     <div className="container mx-auto max-w-3xl md:px-4 md:py-6">
       <header className="mb-6 space-y-1 max-md:hidden">
-        <h1 className="text-2xl font-bold tracking-tight">Email updates</h1>
+        <h1 className="flex items-center gap-1 text-2xl font-bold tracking-tight">Email updates <InfoBubble topic="emailUpdates" /></h1>
         <p className="text-sm text-muted-foreground">
           What your inbox says about your applications.
         </p>

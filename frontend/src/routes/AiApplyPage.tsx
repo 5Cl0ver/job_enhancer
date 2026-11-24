@@ -18,6 +18,7 @@ import { DocumentControls } from "@/components/ai/DocumentControls";
 import { useResumes, useGenerateDocument, useGeneratedDocument } from "@/hooks/useAI";
 import { useSavedJobs } from "@/hooks/useSavedJobs";
 import type { GeneratedDocument } from "@/types/api";
+import { InfoBubble } from "@/components/common/InfoBubble";
 
 // Radix <SelectItem> forbids an empty-string value, so the "no job" choice uses
 // a sentinel that maps back to "" (which the API treats as no target job).
@@ -65,7 +66,7 @@ export default function AIApplyPage() {
   return (
     <div className="container mx-auto max-w-4xl space-y-6 md:px-4 md:py-6">
       <div className="space-y-1 max-md:hidden">
-        <h1 className="text-2xl font-bold tracking-tight">AI Quick Apply</h1>
+        <h1 className="flex items-center gap-1 text-2xl font-bold tracking-tight">AI Quick Apply <InfoBubble topic="aiApply" /></h1>
         <p className="text-sm text-muted-foreground">
           Upload your resume, select a job, and get AI-tailored documents in seconds.
         </p>

@@ -9,7 +9,8 @@ const ALLOWED_TYPES = [
 ];
 const MAX_SIZE_MB = 10;
 
-export function ResumeUpload() {
+/** `onUploaded`: told about the new résumé once it's saved (the Welcome reads it next). */
+export function ResumeUpload({ onUploaded }: { onUploaded?: (resume: { id: string }) => void } = {}) {
   const inputRef = useRef<HTMLInputElement>(null);
   const [dragOver, setDragOver] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -27,7 +28,7 @@ export function ResumeUpload() {
       setError(`File must be under ${MAX_SIZE_MB} MB.`);
       return;
     }
-    upload.mutate(file);
+    upload.mutate(file, { onSuccess: (resume) => onUploaded?.(resume) });
   };
 
   const handleDrop = (e: React.DragEvent) => {

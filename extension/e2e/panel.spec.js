@@ -358,3 +358,25 @@ test("a failed lookup never overwrites the account's Claude link with an old one
   expect(api.calls("/v1/users/me/claude-project")).toHaveLength(0);
   await Promise.all([tab.close(), panel.close()]);
 });
+
+test("ⓘ bubbles explain Super autofill and Write, and close again", async () => {
+  const { tab, panel, errors } = await panelFor(APPLY_URL);
+  const about = panel.getByRole("button", { name: "About Super autofill" });
+  await about.click();
+  await expect(about).toHaveAttribute("aria-expanded", "true");
+  const note = panel.getByRole("note");
+  await expect(note).toContainText("every next page of the same application fills by itself");
+  await expect(note).toContainText("It never submits");
+  await panel.keyboard.press("Escape");
+  await expect(note).toHaveCount(0);
+  // Opening it never flips the switch beside it.
+  await expect(panel.getByRole("switch", { name: "Super autofill" })).toBeChecked();
+
+  await nav(panel, "Write");
+  await shown(panel).getByRole("button", { name: "About Write for this job" }).click();
+  await expect(shown(panel).getByRole("note")).toContainText("free writer is paused");
+  await shown(panel).getByRole("heading", { name: "Write for a job" }).click(); // anywhere else
+  await expect(shown(panel).getByRole("note")).toHaveCount(0);
+  expect(errors).toEqual([]);
+  await Promise.all([tab.close(), panel.close()]);
+});

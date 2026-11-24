@@ -297,3 +297,17 @@ async def test_the_posting_description_is_stored_verbatim(engine, monkeypatch):
     detail = await mcp_mod.get_job(saved["job_id"])
     assert detail["description"] == posting
     assert len(detail["description"]) > 2000  # nothing clipped it to a preview
+
+
+@pytest.mark.asyncio
+async def test_any_tool_call_ticks_claude_in_getting_started(engine, monkeypatch):
+    """Spec 019 part B: using the connector is what "Claude connected" means."""
+    from app.models.onboarding import UserOnboarding
+    from app.services import onboarding
+
+    onboarding._claude_ticked.clear()
+    maker = await _connected_user(engine, monkeypatch)
+    await mcp_mod.list_collections()
+    async with maker() as s:
+        row = (await s.scalars(select(UserOnboarding))).one()
+        assert row.claude_seen_at is not None

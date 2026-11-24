@@ -26,6 +26,7 @@ from app.models.extension import (  # noqa: E402, F401
 )
 from app.models.generated_document import GeneratedDocument  # noqa: E402, F401
 from app.models.job_listing import JobListing  # noqa: E402, F401
+from app.models.onboarding import UserOnboarding  # noqa: E402, F401
 from app.models.pipeline_stage import PipelineStage  # noqa: E402, F401
 from app.models.resume import Resume  # noqa: E402, F401
 from app.models.resume_track import ResumeTrack  # noqa: E402, F401
@@ -53,6 +54,7 @@ __all__ = [
     "DetectedEvent",
     "EmailAccount",
     "User",
+    "UserOnboarding",
     "JobListing",
     "Collection",
     "PipelineStage",

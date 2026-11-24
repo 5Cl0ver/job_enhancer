@@ -45,6 +45,7 @@ import {
 import { useJobEmailLatest } from "@/hooks/useEmailAccount";
 import { useProfile } from "@/hooks/useProfile";
 import { matchesSearch, searchWords, stageFor } from "@/lib/boardFilter";
+import { InfoBubble } from "@/components/common/InfoBubble";
 import { cn } from "@/lib/utils";
 import type { PipelineStage, SavedJob } from "@/types/api";
 
@@ -397,7 +398,8 @@ export function KanbanBoard() {
               : `${matchCount} ${matchCount === 1 ? "match" : "matches"} · Enter to jump`}
           </p>
         )}
-        <div className="ml-auto">
+        <div className="ml-auto flex items-center gap-1">
+          <InfoBubble topic="stages" />
           <AddStageDialog />
         </div>
       </div>

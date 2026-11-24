@@ -321,7 +321,7 @@ The owner can see who is stuck and help them. "Last active" reflects real use of
   
   The live-search reserve kept for the owner is 40 of the shared 200 a month. The day resets at midnight US Pacific time.
 - **Distribution:** Job Catcher is distributed only as a download for now. The Chrome Web Store is a later, separate feature. Phones can't run it.
-- **AI:** the free AI is the server's existing NVIDIA key, with no setup for users. Claude stays optional and uses the person's own Claude account; nothing here adds a paid service.
+- **AI:** paused for now (owner, 2026-11-24; research R13). The résumé step reads with the built-in reader and no AI; allowances count AI only when it runs. Later, the free AI is the server's existing NVIDIA key, with no setup for users. Claude stays optional and uses the person's own Claude account; nothing here adds a paid service.
 - **Email updates** keep today's app-password method and guides. Gmail and Outlook one-click sign-in stay out of scope.
 - **Pictures** for the install guide are made from a test Chrome profile with invented data, never real personal data.
 - **The owner** is the account set as admin today.
