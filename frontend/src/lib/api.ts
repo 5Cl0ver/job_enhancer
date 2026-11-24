@@ -21,8 +21,11 @@ class ApiError extends Error {
 /** FastAPI's `{"detail": "..."}` body as its sentence; anything else as is. */
 export function readableError(text: string): string {
   try {
-    const detail = (JSON.parse(text) as { detail?: unknown }).detail;
+    const body = JSON.parse(text) as { detail?: unknown; error?: unknown };
+    const detail = body.detail;
     if (typeof detail === "string" && detail) return detail;
+    // The per-minute limiter answers {"error": "Rate limit exceeded: …"}.
+    if (typeof body.error === "string" && body.error) return body.error;
     // Over a daily allowance (spec 019): {"detail": {"code": "ALLOWANCE", "message": …}}
     const message = (detail as { message?: unknown } | null)?.message;
     if (typeof message === "string" && message) return message;

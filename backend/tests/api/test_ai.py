@@ -70,7 +70,7 @@ async def test_upload_for_a_resume_type_keeps_the_main_resume(client: AsyncClien
 
 
 @pytest.mark.asyncio
-async def test_generate_document_mocked(client: AsyncClient):
+async def test_generate_document_mocked(ai_on, client: AsyncClient):
     """Generation returns content + transparency metadata (mocked NVIDIA)."""
     with patch(
         "app.api.v1.ai.resume_parser.parse_resume",
@@ -123,7 +123,7 @@ async def test_generate_requires_existing_resume(client: AsyncClient):
 
 
 @pytest.mark.asyncio
-async def test_autofill_map(client: AsyncClient):
+async def test_autofill_map(ai_on, client: AsyncClient):
     """The AI field mapper returns {id: value}; the LLM is mocked."""
     with patch(
         "app.api.v1.ai.ai_service.map_fields_scored",
@@ -573,7 +573,7 @@ async def test_list_documents_by_job(client: AsyncClient, db_session, test_user)
 
 @pytest.mark.asyncio
 async def test_autofill_map_never_grounds_on_another_companys_answers(
-    client: AsyncClient,
+    ai_on, client: AsyncClient
 ):
     """Spec 018: one company's saved answers ('site|question') and saved essays
     ('essay|question') never reach the AI for another application."""

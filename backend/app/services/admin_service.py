@@ -111,6 +111,23 @@ async def _check_endpoint(
         return ServiceStatus(name=name, status="down", detail=str(exc))
 
 
+_EXTERNAL_EVERY_S = 600
+_external: tuple[float, list[ServiceStatus]] | None = None
+
+
+async def _jsearch_status(db: AsyncSession) -> ServiceStatus:
+    from app.services import allowance
+
+    if not settings.jsearch_api_key:
+        return ServiceStatus(name="JSearch", status="down", detail="No key set")
+    shared = await allowance.usage_shared(db)
+    return ServiceStatus(
+        name="JSearch",
+        status="healthy" if shared["used"] < shared["cap"] else "degraded",
+        detail=f"{shared['used']} of {shared['cap']} used this month (not pinged)",
+    )
+
+
 async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
     statuses: list[ServiceStatus] = []
 
@@ -125,29 +142,27 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
     except Exception as exc:
         statuses.append(ServiceStatus(name="Database", status="down", detail=str(exc)))
 
-    # External APIs (checked concurrently)
-    import asyncio
+    # External APIs, checked at most every 10 minutes (each Adzuna check spends
+    # one of its daily calls). JSearch is never pinged: every request costs one
+    # of the ~200 shared a month (spec 019), so it shows this month's count.
+    global _external
+    if _external is None or time.monotonic() - _external[0] > _EXTERNAL_EVERY_S:
+        import asyncio
 
-    checks = await asyncio.gather(
-        _check_endpoint(
-            "NVIDIA NIM",
-            "https://integrate.api.nvidia.com/v1/models",
-            headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
-        ),
-        _check_endpoint(
-            "Adzuna",
-            f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id={settings.adzuna_app_id}&app_key={settings.adzuna_app_key}&results_per_page=1&what=python",
-        ),
-        _check_endpoint(
-            "JSearch",
-            "https://jsearch.p.rapidapi.com/search?query=test&num_pages=1",
-            headers={
-                "x-rapidapi-host": "jsearch.p.rapidapi.com",
-                "x-rapidapi-key": settings.jsearch_api_key,
-            },
-        ),
-    )
-    statuses.extend(checks)
+        checks = await asyncio.gather(
+            _check_endpoint(
+                "NVIDIA NIM",
+                "https://integrate.api.nvidia.com/v1/models",
+                headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
+            ),
+            _check_endpoint(
+                "Adzuna",
+                f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id={settings.adzuna_app_id}&app_key={settings.adzuna_app_key}&results_per_page=1&what=python",
+            ),
+        )
+        _external = (time.monotonic(), list(checks))
+    statuses.extend(_external[1])
+    statuses.append(await _jsearch_status(db))
     return statuses
 
 

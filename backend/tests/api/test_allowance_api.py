@@ -18,6 +18,16 @@ from app.services import allowance, job_search, releases
 pytestmark = pytest.mark.asyncio
 
 
+@pytest.fixture(autouse=True)
+def _fresh_rate_limits():
+    """These tests call the AI routes more than their per-minute limits allow."""
+    from app.api.v1 import ai as ai_api
+
+    ai_api._limiter.reset()
+    yield
+    ai_api._limiter.reset()
+
+
 async def _set(db: AsyncSession, **values):
     db.add(AppSetting(key="allowances", value=values))
     await db.commit()
@@ -46,11 +56,17 @@ async def test_usage_shows_whats_left(client: AsyncClient):
         "left": 5,
         "on": True,
     }
+    assert body["shared"] == {}  # the shared month is the owner's business
+
+
+async def test_the_owner_sees_the_shared_month(admin_client: AsyncClient):
+    body = (await admin_client.get("/v1/usage")).json()
+    assert body["exempt"] is True
     assert body["shared"]["jsearch_month"] == {"used": 0, "cap": 200, "reserve": 40}
 
 
 async def test_over_the_ai_allowance_is_a_friendly_429_and_nothing_spent(
-    client: AsyncClient, db_session: AsyncSession
+    ai_on, client: AsyncClient, db_session: AsyncSession
 ):
     await _set(db_session, ai_document=1)
     resume_id = await _resume(client)
@@ -70,7 +86,7 @@ async def test_over_the_ai_allowance_is_a_friendly_429_and_nothing_spent(
 
 
 async def test_a_failed_document_is_given_back(
-    client: AsyncClient, db_session: AsyncSession
+    ai_on, client: AsyncClient, db_session: AsyncSession
 ):
     resume_id = await _resume(client)
     with (
@@ -193,12 +209,87 @@ async def test_last_active_is_noted_at_most_every_15_minutes(
     assert test_user.last_active_at > first
 
 
-async def test_export_includes_usage(client: AsyncClient, db_session: AsyncSession):
-    await client.get("/v1/jobs/", params={"q": "zz-nothing"})  # empty pool: live
+async def test_export_includes_usage(
+    client: AsyncClient, db_session: AsyncSession, monkeypatch
+):
+    async def fake_ingest(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(job_search, "_ingest_live", fake_ingest)
+    await client.get("/v1/jobs/", params={"q": "zz-nothing", "refresh": "true"})
     export = json.loads((await client.get("/v1/users/me/export")).content)
     assert export["usage"][0]["kind"] == "live_search"
     rows = (await db_session.scalars(select(UsageCounter))).all()
     assert rows
+
+
+async def test_a_search_with_nothing_here_spends_nothing_and_skips_jsearch(
+    client: AsyncClient, monkeypatch
+):
+    seen = []
+
+    async def fake_ingest(db, q, location, page, page_size, sources, who=None):
+        seen.append(who)
+
+    monkeypatch.setattr(job_search, "_ingest_live", fake_ingest)
+    job_search._EMPTY_FETCHED.clear()
+    for _ in range(3):  # tab switches refetch it
+        r = await client.get("/v1/jobs/", params={"q": "zz-niche"})
+        assert r.status_code == 200
+    assert seen == [None]  # fetched once, as nobody (so never JSearch)
+    used = (await client.get("/v1/usage")).json()["kinds"]["live_search"]["used"]
+    assert used == 0
+
+
+async def test_paused_ai_is_refused_and_nothing_is_spent(client: AsyncClient):
+    resume_id = await _resume(client)
+    r = await client.post(
+        "/v1/ai/generate",
+        json={"resume_id": resume_id, "document_type": "cover_letter"},
+    )
+    assert r.status_code == 503 and "paused" in r.json()["detail"]
+    r = await client.post(
+        "/v1/ai/autofill-map",
+        json={"fields": [{"id": "f1", "label": "Why us?", "type": "text"}]},
+    )
+    assert r.status_code == 503
+    kinds = (await client.get("/v1/usage")).json()["kinds"]
+    assert kinds["ai_document"]["used"] == 0 and kinds["ai_autofill"]["used"] == 0
+
+
+async def test_an_empty_ai_answer_is_given_back(ai_on, client: AsyncClient):
+    with patch(
+        "app.api.v1.ai.ai_service.map_fields_scored",
+        new=AsyncMock(return_value=({}, {})),
+    ):
+        r = await client.post(
+            "/v1/ai/autofill-map",
+            json={"fields": [{"id": "f1", "label": "Why us?", "type": "text"}]},
+        )
+    assert r.status_code == 200 and r.json()["mappings"] == {}
+    used = (await client.get("/v1/usage")).json()["kinds"]["ai_autofill"]["used"]
+    assert used == 0
+
+
+async def test_health_never_spends_a_jsearch_request(
+    admin_client: AsyncClient, monkeypatch
+):
+    from app.services import admin_service
+
+    pinged = []
+
+    async def fake_check(name, url, headers=None):
+        pinged.append(name)
+        return admin_service.ServiceStatus(name=name, status="healthy")
+
+    monkeypatch.setattr(admin_service, "_check_endpoint", fake_check)
+    monkeypatch.setattr(admin_service, "_external", None)
+    monkeypatch.setattr(admin_service.settings, "jsearch_api_key", "k")
+    body = (await admin_client.get("/v1/admin/health")).json()
+    await admin_client.get("/v1/admin/health")  # cached: no second round
+    assert "JSearch" not in pinged and pinged.count("Adzuna") == 1
+    jsearch = next(s for s in body if s["name"] == "JSearch")
+    assert jsearch["detail"] == "0 of 200 used this month (not pinged)"
 
 
 async def test_usage_needs_sign_in(anon_client: AsyncClient):

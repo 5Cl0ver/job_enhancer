@@ -67,6 +67,16 @@ async def test_admin_is_counted_never_stopped(
     assert out["exempt"] is True and out["kinds"]["ai_document"]["used"] == 3
 
 
+async def test_a_timeout_is_not_given_back(db_session: AsyncSession, test_user: User):
+    from fastapi import HTTPException
+
+    with pytest.raises(HTTPException):
+        async with allowance.spending(db_session, test_user, "ai_document"):
+            raise HTTPException(503, "AI generation timed out — the model is busy.")
+    out = await allowance.usage(db_session, test_user)
+    assert out["kinds"]["ai_document"]["used"] == 1
+
+
 async def test_a_failed_call_gives_it_back(db_session: AsyncSession, test_user: User):
     with pytest.raises(RuntimeError):
         async with allowance.spending(db_session, test_user, "ai_document"):
@@ -89,8 +99,25 @@ async def test_jsearch_keeps_the_owners_reserve(
     assert not await allowance.jsearch_take(db_session, test_user)  # reserve left
     assert await allowance.jsearch_take(db_session, admin_user)  # the owner's
     assert not await allowance.jsearch_take(db_session, admin_user)  # the cap
-    rows = (await db_session.scalars(select(UsageCounter))).all()
-    assert len(rows) == 1 and rows[0].user_id is None and rows[0].count == 3
+    shared = await db_session.scalar(
+        select(UsageCounter.count).where(UsageCounter.user_id.is_(None))
+    )
+    mine = await db_session.scalar(
+        select(UsageCounter.count).where(UsageCounter.user_id == test_user.id)
+    )
+    assert shared == 3
+    assert mine == 2  # the refused third one isn't counted against them
+
+
+async def test_one_person_cant_take_everyones_jsearch_month(
+    db_session: AsyncSession, test_user: User
+):
+    await _set(db_session, jsearch_person_month=2)
+    assert await allowance.jsearch_take(db_session, test_user)
+    assert await allowance.jsearch_take(db_session, test_user)
+    assert not await allowance.jsearch_take(db_session, test_user)
+    # A scheduled job is not a person: it may use the owner's part.
+    assert await allowance.jsearch_take(db_session, allowance.SYSTEM)
 
 
 def test_settings_are_validated():
@@ -102,6 +129,7 @@ def test_settings_are_validated():
         {"live_search": "5"},
         {"surprise": 1},
         {"jsearch_month_cap": 10, "jsearch_owner_reserve": 11},
+        {"jsearch_month_cap": 10, "jsearch_person_month": 11},
     ):
         with pytest.raises(ValueError):
             allowance.validate(bad)

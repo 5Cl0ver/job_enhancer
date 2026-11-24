@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.application_profile import ApplicationProfile
@@ -316,6 +317,18 @@ def _user_data_text(
     return "\n".join(lines) or "(no saved data)"
 
 
+AI_PAUSED = (
+    "AI writing is paused for now. Use My Claude in Job Catcher, or write your own."
+)
+
+
+def _ai_on() -> None:
+    """AI is paused (owner, 2026-11-24; spec 019 R13): refuse before anything is
+    spent or sent to the model."""
+    if not settings.ai_writing_on:
+        raise HTTPException(status_code=503, detail=AI_PAUSED)
+
+
 @router.post("/autofill-map", response_model=AutofillMapResponse)
 @_limiter.limit("20/minute")
 async def autofill_map(
@@ -350,9 +363,19 @@ async def autofill_map(
     )
     user_data = _user_data_text(profile, answers, resume_text)
     fields = [f.model_dump() for f in data.fields]
-    async with allowance.spending(db, user, "ai_autofill"):
-        mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
+    _ai_on()
+    try:
+        async with allowance.spending(db, user, "ai_autofill"):
+            mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
+            if not mappings:  # the mapper swallows model errors: give it back
+                raise _NothingMapped
+    except _NothingMapped:
+        return AutofillMapResponse(mappings={})
     return AutofillMapResponse(mappings=mappings, confidence=confidence)
+
+
+class _NothingMapped(Exception):
+    """Nothing came back from the model: the use is given back (spec 019)."""
 
 
 @router.post("/work-history", response_model=WorkHistoryResponse)
@@ -431,6 +454,7 @@ async def generate_document(
     resume, job_description, job_title, company = await _load_resume_and_job(
         db, user, data.resume_id, data.job_listing_id
     )
+    _ai_on()
 
     # Generate content: one of today's free AI documents (spec 019), given
     # back if writing fails.

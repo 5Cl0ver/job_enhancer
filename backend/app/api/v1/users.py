@@ -1,7 +1,7 @@
 """User account endpoints (US6 — Account Management): profile, export, delete."""
 
 import json
-from datetime import datetime, timedelta
+from datetime import UTC, datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -335,7 +335,7 @@ async def export_data(
 
     onboarding_row = await db.get(UserOnboarding, user.id)
     # Free-service use, the last 90 days (spec 019 part C).
-    since = (datetime.utcnow() - timedelta(days=90)).date().isoformat()
+    since = allowance.period_for("live_search", datetime.now(UTC) - timedelta(days=90))
     usage_rows = (
         await db.scalars(
             select(UsageCounter).where(
@@ -355,6 +355,7 @@ async def export_data(
             "name": user.name,
             "role": user.role,
             "created_at": _dt(user.created_at),
+            "last_active_at": _dt(user.last_active_at),
         },
         "saved_jobs": [
             {

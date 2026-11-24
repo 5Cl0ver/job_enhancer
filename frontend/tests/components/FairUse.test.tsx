@@ -78,6 +78,9 @@ describe("what's left today", () => {
     });
     expect(readableError(body)).toBe("You've used today's 10 free AI documents.");
     expect(readableError(JSON.stringify({ detail: "Not found" }))).toBe("Not found");
+    expect(readableError(JSON.stringify({ error: "Rate limit exceeded: 5 per 1 minute" }))).toBe(
+      "Rate limit exceeded: 5 per 1 minute",
+    );
   });
 
   it("search says when the results aren't live", async () => {
@@ -123,11 +126,11 @@ describe("the owner's view", () => {
     expect(within(row).getByLabelText("Setup: Welcome, Résumé, Job Catcher")).toBeInTheDocument();
     expect(within(row).getByText("0.37.0 (old)")).toBeInTheDocument();
     expect(within(row).getByText("2 searches")).toBeInTheDocument();
-    expect(within(row).getByText("Nov 23")).toBeInTheDocument();
+    expect(within(row).getByText("Nov 23, 2026")).toBeInTheDocument();
   });
 
   it("saves new allowance numbers", async () => {
-    const values = { ai_document: 10, ai_read: 5, ai_autofill: 100, live_search: 5, jsearch_month_cap: 200, jsearch_owner_reserve: 40 };
+    const values = { ai_document: 10, ai_read: 5, ai_autofill: 100, live_search: 5, jsearch_month_cap: 200, jsearch_owner_reserve: 40, jsearch_person_month: 30 };
     get.mockResolvedValue(values);
     put.mockImplementation((_p: string, body: object) => Promise.resolve(body));
     wrap(<AllowancesCard />, "/admin");
@@ -143,7 +146,7 @@ describe("the owner's view", () => {
   });
 
   it("won't save something that isn't a number", async () => {
-    get.mockResolvedValue({ ai_document: 10, ai_read: 5, ai_autofill: 100, live_search: 5, jsearch_month_cap: 200, jsearch_owner_reserve: 40 });
+    get.mockResolvedValue({ ai_document: 10, ai_read: 5, ai_autofill: 100, live_search: 5, jsearch_month_cap: 200, jsearch_owner_reserve: 40, jsearch_person_month: 30 });
     wrap(<AllowancesCard />, "/admin");
     const box = await screen.findByLabelText("Live searches a day");
     await waitFor(() => expect(box).toHaveValue("5"));

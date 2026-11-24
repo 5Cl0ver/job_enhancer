@@ -48,6 +48,7 @@ class AllowancesIn(BaseModel):
     live_search: StrictInt | None = Field(None, ge=0, le=10_000)
     jsearch_month_cap: StrictInt | None = Field(None, ge=0, le=10_000)
     jsearch_owner_reserve: StrictInt | None = Field(None, ge=0, le=10_000)
+    jsearch_person_month: StrictInt | None = Field(None, ge=0, le=10_000)
 
 
 CLAUDE_URL_PREFIX = "https://claude.ai/"

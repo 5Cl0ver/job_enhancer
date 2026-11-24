@@ -111,7 +111,7 @@ export function UserTable() {
                       )}
                     </TableCell>
                     <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
-                      {u.last_active_at ? format(new Date(u.last_active_at), "MMM d") : "—"}
+                      {u.last_active_at ? format(new Date(u.last_active_at), "MMM d, yyyy") : "—"}
                     </TableCell>
                     <TableCell
                       className="whitespace-nowrap text-sm text-muted-foreground"

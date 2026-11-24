@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { useJobSearch, useRefreshSearch } from "@/hooks/useJobs";
 import { AllowanceNote } from "@/components/common/AllowanceNote";
 import { JobCard } from "@/components/jobs/JobCard";
@@ -37,6 +38,10 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
   };
   const { data, isLoading, isError, isFetching } = useJobSearch(params, !!query);
   const refresh = useRefreshSearch();
+  // A "used up" note belongs to the search it came from, not the next one.
+  const searchKey = JSON.stringify(params);
+  const { reset } = refresh;
+  useEffect(() => reset(), [searchKey, reset]);
 
   if (!query) {
     return (

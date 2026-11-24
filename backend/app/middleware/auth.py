@@ -11,6 +11,7 @@ A connected Job Catcher may instead send its own pass, `Bearer jcx_…` (spec
 """
 
 import logging
+from contextlib import suppress
 from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
@@ -20,6 +21,7 @@ from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.config import settings
 from app.database import get_db
@@ -154,17 +156,23 @@ async def touch_active(db: AsyncSession, user: User) -> None:
     if seen is not None and now - seen < _ACTIVE_EVERY:
         return
     try:
-        async with db.begin_nested():
-            await db.execute(
-                update(User)
-                .where(User.id == user.id)
-                .values(last_active_at=now)
-                .execution_options(synchronize_session=False)
-            )
+        await db.execute(
+            update(User)
+            .where(User.id == user.id)
+            # updated_at keeps meaning "profile edited", not "seen".
+            .values(last_active_at=now, updated_at=User.updated_at)
+            .execution_options(synchronize_session=False)
+        )
         await db.commit()
-        user.last_active_at = now
-    except Exception:
-        logger.warning("Could not note when this account was last active")
+        # Known as saved: the request's own commits don't write users again.
+        set_committed_value(user, "last_active_at", now)
+    except Exception as exc:
+        logger.warning(
+            "Could not note when this account was last active (%s)", type(exc).__name__
+        )
+        with suppress(Exception):
+            await db.rollback()
+            await db.refresh(user)  # a rollback expires it; load it back
 
 
 async def get_current_user(

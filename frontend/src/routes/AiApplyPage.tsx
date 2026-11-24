@@ -77,9 +77,10 @@ export default function AIApplyPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            {/* Over today's free allowance (429): its own plain message and reset time. */}
-            {(generateDoc.error as { status?: number } | null)?.status === 429
-              ? generateDoc.error?.message
+            {/* Paused (503) or over today's allowance (429): the server's own plain words. */}
+            {[429, 503].includes((generateDoc.error as { status?: number } | null)?.status ?? 0) &&
+            generateDoc.error?.message
+              ? generateDoc.error.message
               : "AI service is temporarily unavailable. All other features remain accessible."}
           </AlertDescription>
         </Alert>

@@ -14,6 +14,7 @@ const FIELDS: { key: keyof Allowances; label: string }[] = [
   { key: "ai_autofill", label: "AI autofill helps a day" },
   { key: "jsearch_month_cap", label: "JSearch a month (everyone)" },
   { key: "jsearch_owner_reserve", label: "Kept for you each month" },
+  { key: "jsearch_person_month", label: "JSearch a month (each person)" },
 ];
 
 /**

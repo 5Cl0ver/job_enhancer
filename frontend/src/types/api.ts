@@ -112,7 +112,13 @@ export interface AdminUserRow extends UserProfile {
 }
 
 export type Allowances = Record<
-  "ai_document" | "ai_read" | "ai_autofill" | "live_search" | "jsearch_month_cap" | "jsearch_owner_reserve",
+  | "ai_document"
+  | "ai_read"
+  | "ai_autofill"
+  | "live_search"
+  | "jsearch_month_cap"
+  | "jsearch_owner_reserve"
+  | "jsearch_person_month",
   number
 >;
 

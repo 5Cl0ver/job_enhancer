@@ -29,6 +29,9 @@ logger = logging.getLogger(__name__)
 PACIFIC = ZoneInfo("America/Los_Angeles")
 DAILY_KINDS = ("ai_document", "ai_read", "ai_autofill", "live_search")
 JSEARCH = "jsearch_month"
+# One person's share of the shared JSearch month, so two people can't use it
+# all up for everyone else.
+JSEARCH_PERSON = "jsearch_person_month"
 SETTING_KEY = "allowances"
 DEFAULTS: dict[str, int] = {
     "ai_document": 10,
@@ -37,6 +40,7 @@ DEFAULTS: dict[str, int] = {
     "live_search": 5,
     "jsearch_month_cap": 200,
     "jsearch_owner_reserve": 40,
+    "jsearch_person_month": 30,
 }
 MAX_VALUE = 10_000
 
@@ -79,7 +83,9 @@ def _now(now: datetime | None = None) -> datetime:
 def period_for(kind: str, now: datetime | None = None) -> str:
     """A Pacific day ("2026-11-24"), or the Pacific month for the shared row."""
     local = _now(now).astimezone(PACIFIC)
-    return local.strftime("%Y-%m") if kind == JSEARCH else local.date().isoformat()
+    if kind in (JSEARCH, JSEARCH_PERSON):
+        return local.strftime("%Y-%m")
+    return local.date().isoformat()
 
 
 def resets_at(now: datetime | None = None) -> datetime:
@@ -103,6 +109,8 @@ def validate(values: dict) -> dict[str, int]:
         out[key] = value
     if out["jsearch_owner_reserve"] > out["jsearch_month_cap"]:
         raise ValueError("The owner's reserve can't be more than the monthly cap")
+    if out["jsearch_person_month"] > out["jsearch_month_cap"]:
+        raise ValueError("One person's share can't be more than the monthly cap")
     return out
 
 
@@ -223,24 +231,74 @@ async def spending(db: AsyncSession, user: User, kind: str) -> AsyncIterator[Non
     period = await spend(db, user, kind)
     try:
         yield
-    except BaseException:
+    except BaseException as exc:
         with suppress(Exception):
             await db.rollback()
-        await refund(db, user_id, kind, period)
+        # A timeout may still have been done (and paid for) by the provider.
+        if not _timed_out(exc):
+            await refund(db, user_id, kind, period)
         raise
 
 
-async def jsearch_take(db: AsyncSession, user: User | None) -> bool:
-    """One request from the shared JSearch month, if this person may: everyone
-    stops at cap minus the owner's reserve; the owner (and scheduled jobs, with
-    no user) at the cap. Commits."""
+def _timed_out(exc: BaseException) -> bool:
+    return isinstance(exc, TimeoutError) or "timed out" in str(
+        getattr(exc, "detail", "")
+    )
+
+
+class _System:
+    """A scheduled job, not a person: may use the owner's part of JSearch."""
+
+
+SYSTEM = _System()
+
+
+async def jsearch_take(db: AsyncSession, who: "User | _System") -> bool:
+    """One request from the shared JSearch month, if ``who`` may: each person
+    up to their own monthly share, and everyone stops at cap minus the owner's
+    reserve; the owner and ``SYSTEM`` go to the cap. Commits."""
     cfg = await limits(db)
     cap = cfg["jsearch_month_cap"]
-    owner = user is None or user.role == "admin"
+    owner = isinstance(who, _System) or who.role == "admin"
+    month = period_for(JSEARCH)
+    if not owner and not await _bump(
+        db, who.id, JSEARCH_PERSON, month, cfg["jsearch_person_month"]
+    ):
+        await db.commit()
+        return False
     limit = cap if owner else max(0, cap - cfg["jsearch_owner_reserve"])
-    ok = await _bump(db, None, JSEARCH, period_for(JSEARCH), limit)
+    ok = await _bump(db, None, JSEARCH, month, limit)
+    if not ok and not owner:  # the shared month is full: give their share back
+        await db.execute(
+            update(UsageCounter)
+            .where(
+                _who(who.id),
+                UsageCounter.kind == JSEARCH_PERSON,
+                UsageCounter.period == month,
+                UsageCounter.count > 0,
+            )
+            .values(count=UsageCounter.count - 1)
+            .execution_options(synchronize_session=False)
+        )
     await db.commit()
     return ok
+
+
+async def usage_shared(db: AsyncSession, now: datetime | None = None) -> dict:
+    """The shared JSearch month so far (owner only)."""
+    cfg = await limits(db)
+    used = await db.scalar(
+        select(UsageCounter.count).where(
+            UsageCounter.user_id.is_(None),
+            UsageCounter.kind == JSEARCH,
+            UsageCounter.period == period_for(JSEARCH, now),
+        )
+    )
+    return {
+        "used": used or 0,
+        "cap": cfg["jsearch_month_cap"],
+        "reserve": cfg["jsearch_owner_reserve"],
+    }
 
 
 async def usage(db: AsyncSession, user: User, now: datetime | None = None) -> dict:
@@ -256,13 +314,6 @@ async def usage(db: AsyncSession, user: User, now: datetime | None = None) -> di
             )
         ).all()
     )
-    shared = await db.scalar(
-        select(UsageCounter.count).where(
-            UsageCounter.user_id.is_(None),
-            UsageCounter.kind == JSEARCH,
-            UsageCounter.period == period_for(JSEARCH, now),
-        )
-    )
     on = kinds_on()
     return {
         "exempt": user.role == "admin",
@@ -276,13 +327,10 @@ async def usage(db: AsyncSession, user: User, now: datetime | None = None) -> di
             }
             for kind in DAILY_KINDS
         },
-        "shared": {
-            JSEARCH: {
-                "used": shared or 0,
-                "cap": cfg["jsearch_month_cap"],
-                "reserve": cfg["jsearch_owner_reserve"],
-            }
-        },
+        # The shared month's numbers are for the owner only.
+        "shared": (
+            {JSEARCH: await usage_shared(db, now)} if user.role == "admin" else {}
+        ),
     }
 
 
