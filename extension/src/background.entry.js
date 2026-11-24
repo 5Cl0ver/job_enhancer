@@ -566,13 +566,21 @@ async function linkedJob(tab) {
   return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid]) || null;
 }
 
-/** This application's résumé: chosen here, else the linked job's own. */
+/**
+ * This application's résumé: a linked job's own (set in the panel or the app
+ * — the job is the one source of truth), else one chosen for this page.
+ */
 async function resumeFor(tab) {
   const job = await linkedJob(tab);
   const key = choiceKeyFor(job, tab?.url);
-  const { [key]: choice } = await chrome.storage.session.get(key);
-  const resumeId = choice ? choice.resumeId || null : job?.resume_id || null;
-  return { key, choice: choice || null, resumeId, job };
+  const { [key]: held } = await chrome.storage.session.get(key);
+  if (job) {
+    const resumeId = job.resume_id || null;
+    // A failure note only counts for the résumé it was about.
+    const failed = !!resumeId && held?.failedFor === resumeId;
+    return { key, choice: failed ? { resumeId, filename: held.filename || "", failed: true } : null, resumeId, job };
+  }
+  return { key, choice: held || null, resumeId: held ? held.resumeId || null : null, job: null };
 }
 
 // Your name, email and phone are learned only from an explicit "Always use
@@ -1197,7 +1205,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const got = await autofill.get({ resumeId });
         // Never a silent switch: the panel says the chosen résumé failed.
         if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
-          await chrome.storage.session.set({ [key]: { ...(choice || { resumeId, filename: "", fromJob: true }), failed: !!got.chosenFailed } });
+          const { job } = await resumeFor(tab);
+          const note = job ? { failedFor: got.chosenFailed ? resumeId : null, filename: choice?.filename || "" } : { ...(choice || { resumeId, filename: "" }), failed: !!got.chosenFailed };
+          await chrome.storage.session.set({ [key]: note });
           if (tab?.id != null) changed(tab.id);
         }
         sendResponse({ ok: true, ...got });
@@ -1212,10 +1222,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const key = choiceKeyFor(job, tab?.url);
         // Checked first: a résumé that can't be loaded is never used silently.
         const loads = msg.resumeId ? await autofill.canLoad(msg.resumeId) : true;
-        await chrome.storage.session.set({ [key]: { resumeId: msg.resumeId || null, filename: msg.filename || "", usual: !msg.resumeId, failed: !loads } });
         let saved = true;
-        if (job) saved = (await setJobResume(job.id, msg.resumeId || null, !msg.resumeId)).ok;
-        if (job) await listSaved(null).catch(() => {}); // the job's résumé changed
+        if (job) {
+          // A linked job's résumé lives on the job (one source of truth, also
+          // changed in the app); only a failure note for that résumé is kept.
+          saved = (await setJobResume(job.id, msg.resumeId || null, !msg.resumeId)).ok;
+          await listSaved(null).catch(() => {});
+          await chrome.storage.session.set({ [key]: { failedFor: loads ? null : msg.resumeId || null, filename: msg.filename || "" } });
+        } else {
+          await chrome.storage.session.set({ [key]: { resumeId: msg.resumeId || null, filename: msg.filename || "", usual: !msg.resumeId, failed: !loads } });
+        }
         changed(msg.tabId);
         sendResponse({ ok: true, saved, loads });
       } else if (msg.type === "getResumeChoice") {

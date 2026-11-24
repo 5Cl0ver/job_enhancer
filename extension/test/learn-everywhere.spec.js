@@ -141,8 +141,30 @@ describe("spec 020 correctness review", () => {
     expect(learnedFor(field("Are you a GE alumni?"), { answers })).toBeNull();
   });
 
-  it("a learned value goes first and keeps the profile's other wordings for dropdowns", () => {
+  it("a learned value comes with its own other wordings, never the profile's old ones", () => {
     const d = resolve(field("State"), { answers: [{ question_key: "@state", answer: "Washington" }], values: { state: ["Oregon", "OR"] }, site: "x" });
-    expect(d.values).toEqual(["Washington", "Oregon", "OR"]);
+    expect(d.values).toEqual(["Washington", "WA"]);
+  });
+});
+
+describe("spec 020 correctness re-review", () => {
+  it("a learned answer never brings back the profile's old value for a choice", () => {
+    const sponsor = resolve(field("Are you authorized to work in the US?"), {
+      answers: [{ question_key: "@authorized_to_work", answer: "No, I will need sponsorship" }],
+      values: { authorized_to_work: ["Yes"] },
+      site: "x",
+    });
+    expect(sponsor.values).toEqual(["No, I will need sponsorship"]);
+    const state = resolve(field("State"), { answers: [{ question_key: "@state", answer: "Washington" }], values: { state: ["Oregon", "OR"] }, site: "x" });
+    expect(state.values).toEqual(["Washington", "WA"]);
+  });
+
+  it("pay is per company: a salary answer is kept for that site and never used on another", () => {
+    const q = field("Desired salary");
+    expect(learnKeyFor(q, "x.example")).toEqual({ scope: "site", key: "x.example|desired salary" });
+    const answers = [{ question_key: "x.example|desired salary", answer: "95000" }];
+    const values = { desired_salary: ["80000"] };
+    expect(resolve(q, { answers, values, site: "x.example" }).values[0]).toBe("95000");
+    expect(resolve(q, { answers: [...answers, { question_key: "@desired_salary", answer: "120000" }], values, site: "y.example" }).values[0]).toBe("80000");
   });
 });

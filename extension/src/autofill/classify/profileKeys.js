@@ -211,6 +211,17 @@ export function degreeForms(degree) {
  * the rest are other ways a dropdown may word it ("OR" / "Oregon").
  * @returns {Record<string, string[]>}
  */
+/**
+ * Other ways a form may word a value of this kind ("Washington" → "WA"), so a
+ * dropdown still finds it — from the value itself, never another value.
+ */
+export function valueForms(key, value) {
+  const v = String(value ?? "").trim();
+  if (!v) return [];
+  const forms = key === "state" ? stateForms(v) : key === "country" ? countryForms(v) : key === "degree" ? degreeForms(v) : [v];
+  return [v, ...forms.filter((f) => f !== v)];
+}
+
 export function profileValues(profile, email, today = new Date(), history = null) {
   const p = profile || {};
   const edu = history?.education?.[0] || {};

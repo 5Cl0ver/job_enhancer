@@ -77,3 +77,25 @@ def test_skills_keep_brackets_together():
     assert "Azure (AD, Intune)" in skills
     assert "AWS" in skills
     assert "AD" not in skills and "Intune)" not in skills
+
+
+def test_prose_with_a_bare_year_range_is_not_a_job():
+    text = """EXPERIENCE
+Records Clerk | Kelso Labs | Mar 2018 - Present
+Managed migration of 2019-2020 records to the new system
+Kelso Labs 2016 - 2018
+"""
+    out = read(text)["work"]
+    assert [j["start_year"] for j in out] == [2018, 2016]
+
+
+def test_open_end_date_continues_on_the_next_line():
+    text = """EXPERIENCE
+Platform Engineer | Brightfold Labs | Aug 2024 -
+Present
+Support Analyst | Quillstone | 2021 –
+2024
+"""
+    out = read(text)["work"]
+    assert out[0]["current"] is True and out[0]["start_month"] == 8
+    assert (out[1]["start_year"], out[1]["end_year"]) == (2021, 2024)

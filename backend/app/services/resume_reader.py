@@ -157,10 +157,19 @@ def _dates(line: str) -> dict | None:
     if sy is None or (ey is None and not current):
         return None
     if not _HAS_MONTH.search(m.group(0)):
-        head = (line[: m.start()] + " " + line[m.end() :]).strip(" |·•,–—-\t()")
+        trim = " |·•,–—-\t()"
+        before = line[: m.start()].strip(trim)
+        after = line[m.end() :].strip(trim)
+        head = f"{before} {after}".strip()
         marked = bool(_HEAD_MARK.search(line[: m.start()]))
-        short = len(head) <= 60 and len(head.split()) <= 10
-        if head.endswith(".") or not (not head or marked or short):
+        # A dated header line: the years at one end, a few words naming the
+        # job — never prose ("Managed migration of 2019-2020 records").
+        header = (
+            (not before or not after)
+            and len(head.split()) <= 8
+            and not head[:1].islower()
+        )
+        if head.endswith(".") or not (not head or marked or header):
             return None
     return {
         "start_month": sm,
@@ -305,6 +314,7 @@ def _job_from(candidates: list[str], dates: dict) -> dict | None:
 # "Sep 2021 –" with "Jun 2023" on the next line: one range.
 _LONE_START = re.compile(rf"^\s*{_POINT}\s*(?:-|–|—|to)?\s*$", re.IGNORECASE)
 _LONE_END = re.compile(rf"^\s*(?:-|–|—|to)?\s*{_POINT}\s*$", re.IGNORECASE)
+_OPEN_END = re.compile(rf"{_POINT}\s*(?:-|–|—|to)\s*$", re.IGNORECASE)
 
 
 def _join_split_dates(lines: list[str]) -> list[str]:
@@ -312,6 +322,17 @@ def _join_split_dates(lines: list[str]) -> list[str]:
     i = 0
     while i < len(lines):
         line = lines[i]
+        if (
+            i + 1 < len(lines)
+            and _OPEN_END.search(line)
+            and _LONE_END.match(lines[i + 1])
+            and not _RANGE.search(line)
+            and not _LONE_START.match(line)
+        ):
+            # "Engineer | Acme | Aug 2024 –" with "Present" on the next line.
+            out.append(f"{line.rstrip()} {lines[i + 1].strip()}")
+            i += 2
+            continue
         if (
             i + 1 < len(lines)
             and _LONE_START.match(line)

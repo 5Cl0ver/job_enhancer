@@ -271,3 +271,36 @@ test("a chosen résumé that was never read is read on the spot; its sections ne
   expect((await page.evaluate(() => window.__formData()))["e1-company"]).toBe("Tidewell Labs");
   await page.close();
 });
+
+
+test("a typed salary is kept for this site only, never as an answer for every site", async () => {
+  const a = await ext.context.newPage();
+  await a.goto(lab.url("/lab/names-a.html"));
+  expect((await ext.autofill(a)).ok).toBe(true);
+  await a.locator("#salary").fill("95000");
+  await a.evaluate(() => window.dispatchEvent(new Event("pagehide")));
+  await expect.poll(() => api.state.answers.find((x) => x.answer === "95000")?.question_key, { timeout: 8000 }).toMatch(/\|desired salary$/);
+  expect(api.state.answers.some((x) => x.question_key === "@desired_salary")).toBe(false);
+  await a.close();
+});
+
+test("a job's résumé changed in the app wins over an earlier pick in the panel", async () => {
+  api.state.history = { work: [{ title: "Help Desk Analyst", company: "Quillstone", start_month: 6, start_year: 2020, end_month: 2, end_year: 2023, current: false }], education: [] };
+  api.state.resumes = { "resume-2": DATA_RESUME() };
+  const url = lab.url("/lab/employment.html");
+  api.state.jobs = [{ id: "j1", job_listing_id: "l1", title: "Application", company: "Opal Ridge Labs", location: "", url, applied_at: null, resume_id: null }];
+  api.state.jobsVersion++;
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  await ext.bg({ type: "chooseResume", tabId: await ext.tabIdOf(page), resumeId: "resume-2", filename: "wren-data.pdf" });
+  expect(api.state.jobResumes.j1).toBe("resume-2"); // written through to the job
+  // Then, in the app, the job goes back to the usual résumé.
+  api.state.jobs[0].resume_id = null;
+  api.state.jobs[0].resume_usual = true;
+  api.state.jobsVersion++;
+  await ext.bg({ type: "listSaved", version: null });
+  expect((await ext.autofill(page)).ok).toBe(true);
+  expect((await page.evaluate(() => window.__formData()))["e1-company"]).toBe("Quillstone");
+  await page.close();
+});

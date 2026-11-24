@@ -8,7 +8,7 @@ import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
-import { COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
+import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
 
 /** Case, spaces and punctuation don't count when deciding the user changed a box. */
 const loose = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -499,6 +499,13 @@ export function createSession(deps) {
       // legal name or email (only an explicit point-and-save changes those).
       // A box Job Catcher didn't fill is left to the profile save (typedProfile).
       const profileKey = profileKeyFor(field);
+      // Pay, or a question about this company: kept for this company only.
+      if (profileKey && (COMPANY_KEYS.has(profileKey) || isCompanySpecific(field.question))) {
+        const answer = readField(field).trim();
+        if (!answer || answer.length > 300 || (ours && loose(answer) === loose(ours.entry.value))) continue;
+        out.push({ question_key: normalizeQuestion(field.question), question_text: field.question.slice(0, 500), answer, company: true });
+        continue;
+      }
       if (profileKey) {
         if (!ours || IDENTITY_KEYS.has(profileKey) || COMPUTED_KEYS.has(profileKey) || FORMAT_KEYS.has(profileKey)) continue;
         const answer = readField(field).trim();

@@ -1,7 +1,7 @@
 // Decide what goes in a field: the profile, then a remembered answer, or a
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
 import { answerKey, closestAnswer, isCompanySpecific } from "./classify/answers.js";
-import { OTHER_PERSON, guardReason, profileKeyFor } from "./classify/profileKeys.js";
+import { OTHER_PERSON, guardReason, profileKeyFor, valueForms } from "./classify/profileKeys.js";
 
 /** The keys that make a page look like an application. */
 export const IDENTITY = new Set(["first_name", "last_name", "full_name", "email", "phone"]);
@@ -40,6 +40,9 @@ export function isResumeUpload(field) {
 /** Legal identity: learned only from an explicit point-and-save, never from typing. */
 export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "email", "email_confirm"]);
 
+/** Pay differs per job: a salary answer is kept for that company only. */
+export const COMPANY_KEYS = new Set(["desired_salary"]);
+
 /** Worked out fresh each time (today's date): never learned, never a saved answer. */
 export const COMPUTED_KEYS = new Set(["today_date"]);
 
@@ -71,8 +74,8 @@ export function learnKeyFor(field, site) {
   if (guard || field.kind === "file" || field.kind === "checkbox") return null;
   // About this company ("desired salary for this role"): this site only —
   // checked before the kind of box, so it never becomes "@desired_salary".
-  if (isCompanySpecific(field.question)) return site && field.key ? { scope: "site", key: answerKey("site", site, field.key) } : null;
   const profileKey = profileKeyFor(field);
+  if (isCompanySpecific(field.question) || COMPANY_KEYS.has(profileKey)) return site && field.key ? { scope: "site", key: answerKey("site", site, field.key) } : null;
   if (profileKey && COMPUTED_KEYS.has(profileKey)) return null;
   if (profileKey) return { scope: "all", key: `@${profileKey}`, profileKey };
   if (!field.key || field.key.length < 3) return null;
@@ -98,7 +101,7 @@ export function learnedFor(field, copy, profileKey = profileKeyFor(field)) {
       (copy.host && copy.host !== copy.site ? find(answerKey("site", copy.host, field.key)) : null)
     : null;
   if (own) return { ...own, tier: "site" };
-  if (isCompanySpecific(field.question)) return null;
+  if (isCompanySpecific(field.question) || COMPANY_KEYS.has(profileKey)) return null;
   if (profileKey) {
     const byKey = find(`@${profileKey}`);
     if (byKey) return { ...byKey, tier: "key" };
@@ -149,12 +152,9 @@ export function resolve(field, copy) {
   // What the user taught beats the profile (spec 020): correct a box once and
   // every site asking it gets the correction.
   const learned = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
-  // A learned answer goes first; the profile's other wordings stay behind it
-  // so a dropdown still finds "OR" when it says "Oregon" (spec 020 review).
-  const use = (l) => {
-    const forms = key ? (copy.values[key] || []).filter((v) => String(v).toLowerCase() !== String(l.answer).toLowerCase()) : [];
-    return { values: [l.answer, ...forms], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) };
-  };
+  // A learned answer, with its OWN other wordings ("Washington" → "WA") so a
+  // dropdown still finds it — never the profile's old value (spec 020 review).
+  const use = (l) => ({ values: key ? valueForms(key, l.answer) : [l.answer], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) });
   if (learned && learned.tier !== "close" && learned.tier !== "offer") return use(learned);
   if (key) {
     let values = copy.values[key] || [];
