@@ -92,6 +92,10 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `EmptyState.tsx` | Nothing here yet: what belongs on the screen + one button for the next step |
 | `ErrorState.tsx` | A load failed: plain words + Try again |
+| `InfoBubble.tsx` | The ⓘ (spec 019): what it is, why it helps, what it needs (text in `lib/help.ts`); hover or click on a computer, tap on a phone, Esc closes (Base UI Popover) |
+
+## `onboarding/` — the Welcome and Getting started (spec 019)
+| `ResumeStep.tsx` upload, read (no AI), check name/phone/city/LinkedIn, "We found N jobs" · `JobCatcherStep.tsx` get it (computer) or send the link (phone), Connected ✓ by itself · `ExtrasStep.tsx` email and Claude, optional · `GettingStarted.tsx` the checklist card on Find Jobs and My Jobs (I'm all set, Open the welcome again) |
 
 ## `ai/` (final phase)
 | File | Purpose |

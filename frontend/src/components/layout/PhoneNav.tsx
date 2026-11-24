@@ -9,6 +9,7 @@ import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, LogOut, Menu } from "lucide-react";
 import { MORE, TABS, allowed, pageFor, signOut } from "@/components/layout/nav";
+import { InfoBubble } from "@/components/common/InfoBubble";
 import {
   Dialog,
   DialogContent,
@@ -67,6 +68,7 @@ export function TopBar() {
               so its page isn't titled after any one of them. */}
           {inner ? "Job" : (page?.label ?? "Job Enhancer")}
         </p>
+        {!inner && page?.help && <InfoBubble topic={page.help} />}
         {/* The current page's own buttons land here (TopBarActions). */}
         <div id={ACTIONS_SLOT} className="-mr-2 ml-auto flex shrink-0 items-center gap-1" />
       </div>

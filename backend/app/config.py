@@ -29,6 +29,10 @@ class Settings(BaseSettings):
     # fast enough for interactive autofill. Override with NVIDIA_MODEL if needed;
     # verify a candidate first: GET https://integrate.api.nvidia.com/v1/models.
     nvidia_model: str = "meta/llama-3.2-11b-vision-instruct"
+    # AI is paused (owner, 2026-11-24; spec 019 research R13): filling the
+    # application profile from a résumé uses the built-in reader only. Turn on
+    # in the AI phase once a live model is set.
+    ai_in_profile_fill: bool = False
 
     # Job APIs — OPTIONAL. Adzuna + JSearch need keys; without them those two
     # sources just return nothing (the app still aggregates from the keyless

@@ -18,6 +18,7 @@ from app.models.custom_answer import CustomAnswer
 from app.models.extension import ExtensionInstall, ExtensionToken
 from app.models.generated_document import GeneratedDocument
 from app.models.job_listing import JobListing
+from app.models.onboarding import UserOnboarding
 from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
@@ -325,6 +326,8 @@ async def export_data(
         .all()
     )
 
+    onboarding_row = await db.get(UserOnboarding, user.id)
+
     def _dt(v: datetime | None) -> str | None:
         return v.isoformat() if v else None
 
@@ -422,6 +425,17 @@ async def export_data(
             }
             for i in ext_installs
         ],
+        "onboarding": (
+            {
+                "welcome_step": onboarding_row.welcome_step,
+                "welcome_done_at": _dt(onboarding_row.welcome_done_at),
+                "profile_reviewed_at": _dt(onboarding_row.profile_reviewed_at),
+                "checklist_hidden": onboarding_row.checklist_hidden,
+                "claude_seen_at": _dt(onboarding_row.claude_seen_at),
+            }
+            if onboarding_row
+            else None
+        ),
     }
 
     json_bytes = json.dumps(export, indent=2).encode()

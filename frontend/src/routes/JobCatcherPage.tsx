@@ -1,6 +1,4 @@
-import { useState } from "react";
-import { Check, Copy, Download, Laptop, Puzzle, Share2 } from "lucide-react";
-import { toast } from "sonner";
+import { Check, Download, Puzzle } from "lucide-react";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import {
   useDisconnectJobCatcher,
@@ -21,6 +19,8 @@ import {
   PinArt,
   UnzipArt,
 } from "@/components/jobcatcher/InstallArt";
+import { CopyButton, ShareJobCatcherCard } from "@/components/jobcatcher/ShareCard";
+import { InfoBubble } from "@/components/common/InfoBubble";
 
 /** Recently seen: an old copy someone removed long ago doesn't count. */
 const RECENT_MS = 30 * 24 * 3600 * 1000;
@@ -58,7 +58,7 @@ export default function JobCatcherPage() {
     <div className="container mx-auto flex max-w-2xl flex-col gap-3 md:gap-6 md:px-4 md:py-6">
       <div className="space-y-1">
         <h1 className="flex items-center gap-2 text-2xl font-bold tracking-tight">
-          <Puzzle className="h-6 w-6 text-primary" /> Job Catcher
+          <Puzzle className="h-6 w-6 text-primary" /> Job Catcher <InfoBubble topic="jobCatcher" />
         </h1>
         <p className="text-sm text-muted-foreground">
           Job Catcher sits in Chrome on your computer. It saves jobs from any site and fills job
@@ -92,7 +92,7 @@ export default function JobCatcherPage() {
               </span>
             )}
           </div>
-          {phone ? <PhoneCard /> : (
+          {phone ? <ShareJobCatcherCard /> : (
             <Button asChild size="lg" className="gap-2 self-start">
               <a href={release.data?.download_url || DOWNLOAD_URL}>
                 <Download className="h-4 w-4" /> Download Job Catcher (.zip)
@@ -165,56 +165,6 @@ export default function JobCatcherPage() {
 
       {live.length > 0 && <Connections rows={live} latest={latest} />}
     </div>
-  );
-}
-
-function PhoneCard() {
-  const link = `${window.location.origin}/job-catcher`;
-  const share = async () => {
-    try {
-      await navigator.share({ title: "Get Job Catcher", url: link });
-    } catch {
-      // closed the share sheet
-    }
-  };
-  return (
-    <div className="flex flex-col gap-2 rounded-lg border bg-muted/40 p-3">
-      <p className="flex items-center gap-2 text-sm">
-        <Laptop className="h-4 w-4" /> Job Catcher runs in Chrome on a computer.
-      </p>
-      <p className="text-sm text-muted-foreground">Send yourself the link to open it there later.</p>
-      <div className="flex gap-2">
-        {typeof navigator !== "undefined" && "share" in navigator && (
-          <Button onClick={share} className="gap-2">
-            <Share2 className="h-4 w-4" /> Share link
-          </Button>
-        )}
-        <CopyButton text={link} label="Copy link" />
-      </div>
-    </div>
-  );
-}
-
-function CopyButton({ text, label }: { text: string; label: string }) {
-  const [done, setDone] = useState(false);
-  return (
-    <Button
-      variant="outline"
-      size="sm"
-      className="gap-2 self-start"
-      onClick={async () => {
-        try {
-          await navigator.clipboard.writeText(text);
-          setDone(true);
-          setTimeout(() => setDone(false), 1500);
-        } catch {
-          toast.error("Couldn't copy. Select it and copy by hand.");
-        }
-      }}
-    >
-      {done ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
-      {done ? "Copied" : label}
-    </Button>
   );
 }
 

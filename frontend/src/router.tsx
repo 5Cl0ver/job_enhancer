@@ -17,6 +17,8 @@ import JobCatcherPage from "@/routes/JobCatcherPage";
 import ConnectPage from "@/routes/ConnectPage";
 import ForgotPasswordPage from "@/routes/ForgotPasswordPage";
 import ResetPasswordPage from "@/routes/ResetPasswordPage";
+import WelcomePage from "@/routes/WelcomePage";
+import { RequireAuth } from "@/routes/RequireAuth";
 import { useIsPhone } from "@/hooks/useIsPhone";
 
 /** Where the app opens: on a phone you check on your jobs; at a desk you search. */
@@ -38,6 +40,15 @@ export const router = createBrowserRouter([
   { path: "/connect", element: <ConnectPage /> },
   { path: "/forgot-password", element: <ForgotPasswordPage /> },
   { path: "/reset-password", element: <ResetPasswordPage /> },
+  // The Welcome (spec 019): full-page, no sidebar, signed in only.
+  {
+    path: "/welcome",
+    element: (
+      <RequireAuth>
+        <WelcomePage />
+      </RequireAuth>
+    ),
+  },
 
   // Protected app — DashboardLayout renders the sidebar + <Outlet/> for children
   {

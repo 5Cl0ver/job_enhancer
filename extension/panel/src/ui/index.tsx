@@ -278,3 +278,54 @@ export function Spinner({ label }: { label: string }) {
     </div>
   );
 }
+
+/**
+ * The little ⓘ (spec 019): a short note on what something is, why it helps
+ * and what it needs. Press to open (it opens right below, never over what it
+ * explains: put it in a flex-wrap row); press again, Esc or anywhere else to
+ * close.
+ */
+export function InfoBubble({ help }: { help: { title: string; what: string; why: string; needs?: string } }) {
+  const [open, setOpen] = React.useState(false);
+  const box = React.useRef<HTMLSpanElement>(null);
+  const id = React.useId();
+  React.useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => e.key === "Escape" && setOpen(false);
+    const onDown = (e: PointerEvent) => {
+      if (box.current && !box.current.contains(e.target as Node)) setOpen(false);
+    };
+    document.addEventListener("keydown", onKey);
+    document.addEventListener("pointerdown", onDown);
+    return () => {
+      document.removeEventListener("keydown", onKey);
+      document.removeEventListener("pointerdown", onDown);
+    };
+  }, [open]);
+  return (
+    <span ref={box} className="contents">
+      <button
+        type="button"
+        aria-label={`About ${help.title}`}
+        aria-expanded={open}
+        aria-controls={id}
+        onClick={() => setOpen((o) => !o)}
+        className="inline-flex size-5 shrink-0 items-center justify-center rounded-full align-middle text-muted-foreground hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+      >
+        <Info className="size-3.5" aria-hidden />
+      </button>
+      {open && (
+        <span
+          id={id}
+          role="note"
+          className="block w-full basis-full rounded-lg border bg-popover p-2.5 text-[11px] font-normal leading-relaxed text-popover-foreground shadow-sm"
+        >
+          <b className="block font-semibold">{help.title}</b>
+          <span className="block"><b className="font-medium">What it is: </b>{help.what}</span>
+          <span className="block"><b className="font-medium">Why it helps: </b>{help.why}</span>
+          {help.needs && <span className="block"><b className="font-medium">Needs: </b>{help.needs}</span>}
+        </span>
+      )}
+    </span>
+  );
+}

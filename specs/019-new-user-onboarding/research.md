@@ -235,3 +235,19 @@ Each decision lists what was chosen, why, and what else was considered. Facts ab
 - Every other onboarding step works on a phone.
 
 **Rationale**: browser extensions don't run on mobile Chrome. The share sheet reaches email and notes for free.
+
+## R13. Parts B and C with no AI (amendment, 2026-11-24)
+
+**Decision (the owner, 2026-11-24):** "no AI at all … we do AI later. Right now it's gotta be perfect without." The free AI's model was retired on 2026-11-05 and stays off until the AI phase. Parts B and C are built to work fully without it:
+
+- **The Welcome's résumé step uses no AI.**
+  - The upload is read by the built-in reader from spec 020 (jobs, schools, skills, links).
+  - The contact fields (name, email, phone, city and state, links) come from an extended **built-in** contact reader in `profile_extract.py`: the first lines, email, phone, "City, ST" and link patterns.
+  - The model call in `extract_profile` is skipped while `settings.ai_in_profile_fill` is false (the default). The review form is the safety net, so nothing is guessed silently.
+- **The wording never promises the free AI.**
+  - The résumé step says "Reading your résumé…".
+  - The bubbles describe AI Apply as "AI writing is paused for now; you can still upload résumés and write your own".
+  - SC-007's "free AI" is read as "what the app does for them".
+- **Fair use (part C) is still built in full,** because the live-search allowance protects a real shared limit today (JSearch at 200 a month).
+  - The AI kinds are counted and limited only when an AI call actually happens. With AI off, nothing is spent.
+  - The "left today" labels show only for kinds that are switched on.

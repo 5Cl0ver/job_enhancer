@@ -3,7 +3,8 @@
 // answer back). A tailored résumé is uploaded by the next Autofill.
 import * as React from "react";
 import { Bot, ClipboardCopy, Download, ExternalLink, FileText, Mail, Paperclip, PenLine, RotateCw, Save, Sparkles, X } from "lucide-react";
-import { Alert, Button, Card, Field, Muted, SectionTitle, Segmented, Select, Textarea } from "@/ui";
+import { Alert, Button, Card, Field, InfoBubble, Muted, SectionTitle, Segmented, Select, Textarea } from "@/ui";
+import { HELP } from "@/lib/help";
 import { copyText, hasClaudeTab, openClaude, openClaudeProject, pdfBlobUrl, send } from "@/lib/chrome";
 import { downloadFilename } from "@/lib/context";
 import { usePanel } from "@/lib/store";
@@ -172,7 +173,10 @@ export function Write({ preferJob }: { preferJob: string | null }) {
   const what = docType === "resume" ? "résumé" : "cover letter";
   return (
     <div className="flex flex-col gap-3">
-      <SectionTitle>Write for a job</SectionTitle>
+      <div className="flex flex-wrap items-center gap-1">
+        <SectionTitle>Write for a job</SectionTitle>
+        <InfoBubble help={HELP.writeForJob} />
+      </div>
       <Card className="flex flex-col gap-3">
         <Field label="Job">
           {(id) => (

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, Download, Trash2, Loader2, Check } from "lucide-react";
-import { Link, useLocation } from "react-router-dom";
+import { Link, useLocation, useNavigate } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
@@ -21,6 +21,10 @@ import { Label } from "@/components/ui/label";
 import { api, getAccessToken, API_BASE } from "@/lib/api";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { EmailConnectCard } from "@/components/settings/EmailConnectCard";
+import { InfoBubble } from "@/components/common/InfoBubble";
+import { Switch } from "@/components/ui/switch";
+import { useOnboarding, useUpdateOnboarding } from "@/hooks/useOnboarding";
+import type { HelpKey } from "@/lib/help";
 
 export default function SettingsPage() {
   const { data: profile } = useProfile();
@@ -35,17 +39,19 @@ export default function SettingsPage() {
 
       <Section id="appearance" title="Appearance">
         <AppearanceCard />
+        <GettingStartedCard />
       </Section>
       <Section id="profile" title="Application profile & saved answers">
         <AutofillMemoryLink />
       </Section>
-      <Section id="claude" title="Claude project">
+      <Section id="claude" title="Claude" help="settingsClaude">
+        <ConnectClaudeCard />
         <ClaudeProjectCard />
       </Section>
-      <Section id="email" title="Email">
+      <Section id="email" title="Email" help="settingsEmail">
         <EmailConnectCard />
       </Section>
-      <Section id="export" title="Export your data">
+      <Section id="export" title="Export your data" help="settingsExport">
         <DataExportCard />
       </Section>
       <Section id="delete" title="Delete account">
@@ -65,10 +71,13 @@ export default function SettingsPage() {
 function Section({
   id,
   title,
+  help,
   children,
 }: {
   id: string;
   title: string;
+  /** An ⓘ beside the title (spec 019). */
+  help?: HelpKey;
   children: React.ReactNode;
 }) {
   const { hash } = useLocation();
@@ -87,18 +96,26 @@ function Section({
       id={id}
       className="scroll-mt-16 max-md:overflow-hidden max-md:rounded-xl max-md:border max-md:bg-card md:contents"
     >
-      <button
-        type="button"
-        aria-expanded={open}
-        onClick={() => setOpen((o) => !o)}
-        className="flex min-h-14 w-full items-center justify-between gap-3 px-4 text-left text-base font-medium active:bg-accent md:hidden"
-      >
-        {title}
-        <ChevronDown
-          className={cn("h-5 w-5 text-muted-foreground transition-transform", open && "rotate-180")}
-          aria-hidden
-        />
-      </button>
+      <div className="flex items-center pr-2 md:hidden">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-h-14 flex-1 items-center justify-between gap-3 px-4 text-left text-base font-medium active:bg-accent"
+        >
+          {title}
+          <ChevronDown
+            className={cn("h-5 w-5 text-muted-foreground transition-transform", open && "rotate-180")}
+            aria-hidden
+          />
+        </button>
+        {help && <InfoBubble topic={help} />}
+      </div>
+      {help && (
+        <h2 className="-mb-3 flex items-center gap-1 text-sm font-semibold text-muted-foreground max-md:hidden">
+          {title} <InfoBubble topic={help} />
+        </h2>
+      )}
       {/* On a phone the card inside loses its own frame and title: the row is both. */}
       <div
         className={cn(
@@ -300,6 +317,83 @@ function AutofillMemoryLink() {
         <Link to="/autofill" className="text-sm font-medium text-primary underline underline-offset-2">
           Open Autofill memory
         </Link>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Getting started and the Welcome can always come back (spec 019). */
+function GettingStartedCard() {
+  const { data } = useOnboarding();
+  const update = useUpdateOnboarding();
+  const navigate = useNavigate();
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Getting started</CardTitle>
+        <CardDescription>The setup list on Find Jobs and My Jobs, and the welcome tour.</CardDescription>
+      </CardHeader>
+      <CardContent className="flex flex-col gap-3">
+        <label className="flex items-center justify-between gap-3 text-sm">
+          Show Getting started
+          <Switch
+            checked={data ? !data.checklist_hidden : true}
+            disabled={!data || update.isPending}
+            onCheckedChange={(on) => update.mutate({ checklist_hidden: !on })}
+          />
+        </label>
+        <Button
+          variant="outline"
+          className="self-start"
+          disabled={update.isPending}
+          onClick={() => update.mutate({ welcome_done: false }, { onSuccess: () => navigate("/welcome") })}
+        >
+          Show the welcome again
+        </Button>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** Where Claude connects (spec 019): the address and the four steps, in plain words. */
+function ConnectClaudeCard() {
+  const address = `${API_BASE}/mcp`;
+  const [copied, setCopied] = useState(false);
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle className="text-base">Connect Claude (optional)</CardTitle>
+        <CardDescription>
+          Lets your own Claude save jobs here, read your profile and run Claude Scout. Not needed
+          for anything else in the app.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-3 text-sm">
+        <ol className="list-decimal space-y-1 pl-5">
+          <li>
+            On claude.ai, open <b>Settings › Connectors</b> and press <b>Add custom connector</b>.
+          </li>
+          <li>Name it Job Enhancer and paste this address. Leave everything else empty.</li>
+          <li>Press Connect, sign in here if asked, then press Approve.</li>
+          <li>In a chat, try: “List my saved jobs”.</li>
+        </ol>
+        <div className="flex gap-2">
+          <Input readOnly value={address} aria-label="Connector address" className="font-mono text-xs" />
+          <Button
+            variant="outline"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(address);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 1500);
+              } catch {
+                // select it by hand
+              }
+            }}
+          >
+            {copied ? "Copied" : "Copy"}
+          </Button>
+        </div>
       </CardContent>
     </Card>
   );

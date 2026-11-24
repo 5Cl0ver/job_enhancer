@@ -5,6 +5,8 @@ import { SearchBar } from "@/components/jobs/SearchBar";
 import { SearchFilters } from "@/components/jobs/SearchFilters";
 import { SearchResults } from "@/components/jobs/SearchResults";
 import { ScoutPanel } from "@/components/scout/ScoutPanel";
+import { GettingStarted } from "@/components/onboarding/GettingStarted";
+import { InfoBubble } from "@/components/common/InfoBubble";
 import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
 
 const SCOUT = "scout";
@@ -45,6 +47,7 @@ export function SearchPage() {
   return (
     <div className="container mx-auto max-w-6xl space-y-6 md:px-4 md:py-6">
       <h1 className="text-2xl font-bold tracking-tight max-md:hidden">Find Jobs</h1>
+      <GettingStarted />
 
       <Tabs value={tab} onValueChange={setTab} className="space-y-6">
         <TabsList className="w-full sm:w-auto">
@@ -55,6 +58,11 @@ export function SearchPage() {
             <Bot className="h-4 w-4" aria-hidden /> Claude Scout
           </TabsTrigger>
         </TabsList>
+        {tab === SCOUT && (
+          <p className="-mt-3 flex items-center gap-1 text-sm text-muted-foreground">
+            What is Claude Scout? <InfoBubble topic="scout" />
+          </p>
+        )}
 
         <TabsContent value="boards" className="space-y-6">
           <p className="text-sm text-muted-foreground">

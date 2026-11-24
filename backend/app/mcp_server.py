@@ -38,8 +38,8 @@ from app.models.saved_job import ORIGIN_CLAUDE, SavedJob
 from app.models.user import User
 from app.schemas.saved_job import ManualJobCreate
 from app.services import collections as col_svc
+from app.services import onboarding, scout_log
 from app.services import saved_jobs as sj_svc
-from app.services import scout_log
 from app.services import scout_runs as scout_svc
 from app.services import tracker as tracker_svc
 
@@ -90,6 +90,10 @@ async def _session_user():
             raise ValueError(
                 f"No Job Enhancer account found for {email}. Sign in to the app first."
             )
+        # The Getting started "Claude" tick (spec 019); hourly, never raises.
+        # Its own session, so nothing it does can touch the tool's.
+        async with AsyncSessionLocal() as tick_db:
+            await onboarding.touch_claude(tick_db, user.id)
         yield db, user
 
 

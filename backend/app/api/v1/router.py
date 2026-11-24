@@ -12,6 +12,7 @@ from app.api.v1 import (
     email,
     extension,
     jobs,
+    onboarding,
     saved_jobs,
     saved_searches,
     scout,
@@ -39,3 +40,4 @@ api_router.include_router(attention.router, prefix="/attention", tags=["Attentio
 api_router.include_router(scout.router, prefix="/scout", tags=["Scout"])
 api_router.include_router(autofill.router, prefix="/autofill", tags=["Autofill"])
 api_router.include_router(extension.router, prefix="/extension", tags=["Job Catcher"])
+api_router.include_router(onboarding.router, tags=["Onboarding"])

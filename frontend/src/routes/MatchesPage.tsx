@@ -9,6 +9,7 @@ import { JobCard } from "@/components/jobs/JobCard";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
+import { InfoBubble } from "@/components/common/InfoBubble";
 
 export default function MatchesPage() {
   const { data, isLoading, isError } = useNewMatches();
@@ -19,7 +20,7 @@ export default function MatchesPage() {
     <div className="container mx-auto max-w-6xl md:px-4 md:py-6">
       <div className="mb-6 flex flex-wrap items-end justify-between gap-3">
         <div className="space-y-1 max-md:hidden">
-          <h1 className="text-2xl font-bold tracking-tight">New Matches</h1>
+          <h1 className="flex items-center gap-1 text-2xl font-bold tracking-tight">New Matches <InfoBubble topic="matches" /></h1>
           <p className="text-sm text-muted-foreground">
             Fresh results from your saved searches, checked daily.
           </p>

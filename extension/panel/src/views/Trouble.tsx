@@ -5,7 +5,8 @@
 // with no values or personal details) to paste to Claude.
 import * as React from "react";
 import { ClipboardCopy, MousePointerClick, RefreshCw } from "lucide-react";
-import { Button, Muted, Textarea } from "@/ui";
+import { Button, InfoBubble, Muted, Textarea } from "@/ui";
+import { HELP } from "@/lib/help";
 import { copyText, send } from "@/lib/chrome";
 import { formatReport } from "../../../src/autofill/report.js";
 
@@ -46,6 +47,7 @@ export function Trouble({ tabId, onPoint, quiet = false }: { tabId: number | nul
             Point at a box
           </Button>
         )}
+        {onPoint && <InfoBubble help={HELP.pointAtBox} />}
         <Button variant="ghost" size="sm" onClick={copy}>
           <ClipboardCopy />
           Copy what Job Catcher saw
