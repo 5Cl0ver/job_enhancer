@@ -7,7 +7,8 @@ import { OTHER_PERSON, guardReason, profileKeyFor } from "./classify/profileKeys
 export const IDENTITY = new Set(["first_name", "last_name", "full_name", "email", "phone"]);
 
 const RESUME = /r[ée]sum[ée]|\bcv\b|curriculum/i;
-const NOT_RESUME = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|other|additional|supporting|reference|certific/i;
+// Whole words: "another format" or "your preferences" don't make a box something else.
+const NOT_RESUME = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|\bother\b|\badditional\b|\bsupporting\b|\breferences?\b|certific/i;
 const DOC_ACCEPT = /pdf|msword|officedocument|rtf|\.docx?/i;
 
 /**

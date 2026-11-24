@@ -335,8 +335,10 @@ export function collectFields(root, opts = {}) {
 
   // An upload box that doesn't say what it's for is the résumé's only when
   // it's the page's one such box (resolve.js isResumeUpload).
+  // A box that clearly is the résumé's leaves none of the unclear ones to it.
   const files = fields.filter((f) => f.kind === "file");
-  const unclear = files.filter((f) => uploadKind(f) === "unclear").length;
+  const kinds = files.map(uploadKind);
+  const unclear = kinds.includes("resume") ? 99 : kinds.filter((k) => k === "unclear").length;
   for (const f of files) f.hints.unclearUploads = unclear;
 
   // Page order (groups were added last).
