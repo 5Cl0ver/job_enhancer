@@ -2,10 +2,10 @@
 // what's left; plus Fix, Undo and Show for the review in the side panel.
 // Nothing is ever submitted, nothing the user typed is overwritten, and
 // self-identification, agreements and essays are never touched.
-import { isCompanySpecific, normalizeQuestion, yesNo } from "./classify/answers.js";
+import { answerKey, isCompanySpecific, normalizeQuestion, yesNo } from "./classify/answers.js";
 import { PRIVATE, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 import { matchTaught } from "./fingerprint.js";
-import { PERSONAL, createJobBlocks, jobPart, jobValues, sectionKind } from "./classify/jobHistory.js";
+import { PERSONAL, classifySections, createJobBlocks, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
 import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
@@ -224,7 +224,7 @@ export function createSession(deps) {
    * @param {import("./resolve.js").Copy} copy
    * @returns {Promise<{leftovers: object[]}>}
    */
-  async function fillKnown(copy, { auto = false, onProgress } = {}) {
+  async function fillKnown(copy, { auto = false, onProgress, skipFiles = false } = {}) {
     const leftovers = [];
     if (!auto) declined.clear(); // a press means: fill again, undone ones too
     // A suggestion whose field left the page (a new step) is gone.
@@ -234,19 +234,22 @@ export function createSession(deps) {
     const list = scan();
     // Boxes the user pointed at and taught on this site come first (spec 017).
     const site = siteKey(doc.location?.href || "");
-    const taught = matchTaught((copy.taught || []).filter((t) => t.site === site), list);
+    // (Boxes taught before 0.34 on Paycom/ADP are keyed by the host alone.)
+    const host = doc.location?.hostname || "";
+    const taught = matchTaught((copy.taught || []).filter((t) => t.site === site || t.site === host), list);
     copy = { ...copy, site }; // this site's own answers first (spec 018)
     // "Retype your résumé" sections: which past job each box belongs to (spec 018).
+    const sections = classifySections(list);
     const blockOf = createJobBlocks();
     let i = 0;
     for (const field of list) {
       onProgress?.(++i, list.length);
-      const section = sectionKind(field);
+      const section = sections.get(field.id) || "";
       const part = section === "job" ? jobPart(field) : "";
-      const block = part ? blockOf(part) : 0;
+      const block = part ? blockOf(part, field) : 0;
       if (filled.has(field.id) || declined.has(field.id)) continue;
       if (field.kind !== "file" && hasValue(field)) continue;
-      if (field.kind === "file" && field.el.files?.length) continue;
+      if (field.kind === "file" && (field.el.files?.length || skipFiles)) continue;
       const d = taught.has(field.id)
         ? taughtDecision(field, taught.get(field.id), copy)
         : section
@@ -255,7 +258,7 @@ export function createSession(deps) {
       if (d.skip) {
         if (d.skip === "unknown" && AI_KINDS.has(field.kind)) leftovers.push(field);
         // An essay answer saved before is offered ("Use saved answer"), never filled.
-        const saved = d.skip === "essay" ? (copy.answers || []).find((a) => a.question_key === `essay|${field.key}`)?.answer : undefined;
+        const saved = d.skip === "essay" ? (copy.answers || []).find((a) => a.question_key === answerKey("essay", "", field.key))?.answer : undefined;
         leave(field, d.skip, saved);
         continue;
       }
@@ -385,10 +388,11 @@ export function createSession(deps) {
       const key = profileKeyFor(field);
       if (key) seen.set(key, (seen.get(key) || 0) + 1);
     }
+    const sections = classifySections(list);
     for (const field of list) {
       const key = profileKeyFor(field);
       if (!LEARNABLE_PROFILE.has(key)) continue;
-      if (sectionKind(field)) continue; // a past job's, a school's or a reference's — not the user's
+      if (sections.has(field.id)) continue; // a past job's, a school's or a reference's — not the user's
       // Two fields asking the same (yours and a company's, a shipping address)
       // or a question about a business: not clearly the user's own.
       if (seen.get(key) > 1 || NOT_MINE.test(field.question)) continue;
@@ -473,6 +477,7 @@ export function createSession(deps) {
   function typedAnswers() {
     const out = [];
     const list = scan();
+    const sections = classifySections(list);
     const keyCount = new Map();
     for (const f of list) keyCount.set(f.key, (keyCount.get(f.key) || 0) + 1);
     for (const field of list) {
@@ -483,7 +488,8 @@ export function createSession(deps) {
       const ours = filled.get(field.id);
       if (ours && readField(field).trim() === ours.entry.value.trim()) continue; // ours, untouched
       if (profileKeyFor(field) || field.kind === "file" || !field.key || field.key.length < 3) continue;
-      if (sectionKind(field)) continue; // about one past job / school / reference: never a general answer
+      const kind = sections.get(field.id);
+      if (kind === "job" || kind === "reference") continue; // about one past job / one person: never a general answer
       const d = resolve(field, { values: {}, answers: [] });
       // Essays are kept as saved answers (offered, never filled); sensitive
       // questions and agreements are never kept.
@@ -509,6 +515,8 @@ export function createSession(deps) {
     presence,
     fillPicked,
     useText,
+    /** What Job Catcher put in a box, if it filled it: {source, value}. */
+    filledEntry: (id) => filled.get(id)?.entry || null,
     uploadResume,
     fillKnown,
     fillWithAi,

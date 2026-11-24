@@ -172,3 +172,15 @@ export function isCompanySpecific(question) {
   const q = String(question || "");
   return COMPANY_SPECIFIC.test(q) && !EVERYDAY.test(q);
 }
+
+/**
+ * The key a saved answer is stored under (spec 018): the question, or
+ * "site|question" for one company's answer, or "essay|question" for an essay
+ * offered with "Use saved answer". Saving and looking up use this one rule,
+ * so a long question finds its answer again.
+ */
+export function answerKey(scope, site, questionKey) {
+  const base = String(questionKey || "").slice(0, 200);
+  const key = scope === "essay" ? `essay|${base}` : scope === "site" ? `${site}|${base}` : base;
+  return key.slice(0, 255);
+}

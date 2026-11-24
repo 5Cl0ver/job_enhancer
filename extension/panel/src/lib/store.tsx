@@ -83,7 +83,7 @@ export interface Pick {
   /** What the box holds now (inspect, spec 018) — the user's own panel only. */
   value?: string;
   /** What Job Catcher would put there, and why. */
-  known?: { source: "profile" | "learned" | "none"; key: string; value?: string } | null;
+  known?: { source: "profile" | "learned" | "taught" | "none"; key: string; value?: string } | null;
   /** The box held something: saved for this box on this site (Undo). */
   autoSaved?: { id: string; answer: string };
   /** The box already holds what Job Catcher would put there. */

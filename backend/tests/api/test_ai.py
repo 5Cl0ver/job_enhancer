@@ -566,3 +566,54 @@ async def test_list_documents_by_job(client: AsyncClient, db_session, test_user)
     r_all = await client.get("/v1/ai/documents")
     assert r_all.status_code == 200
     assert {d["id"] for d in r_all.json()} >= {str(mine.id), str(other.id)}
+
+
+@pytest.mark.asyncio
+async def test_autofill_map_never_grounds_on_another_companys_answers(
+    client: AsyncClient,
+):
+    """Spec 018: one company's saved answers ('site|question') and saved essays
+    ('essay|question') never reach the AI for another application."""
+    await client.put(
+        "/v1/users/me/custom-answers",
+        json={
+            "answers": [
+                {
+                    "question_key": "which shift do you prefer",
+                    "question_text": "Which shift do you prefer?",
+                    "answer": "Mornings",
+                },
+                {
+                    "question_key": "opus.example|have you worked for our company before",
+                    "question_text": "Have you worked for our company before?",
+                    "answer": "Yes",
+                },
+                {
+                    "question_key": "essay|why do you want to work here",
+                    "question_text": "Why do you want to work here?",
+                    "answer": "Opus's mission",
+                },
+            ]
+        },
+    )
+    mapper = AsyncMock(return_value=({}, {}))
+    with patch("app.api.v1.ai.ai_service.map_fields_scored", new=mapper):
+        await client.post(
+            "/v1/ai/autofill-map",
+            json={
+                "fields": [
+                    {
+                        "id": "f0",
+                        "label": "Have you worked for our company before?",
+                        "type": "text",
+                        "options": [],
+                    }
+                ]
+            },
+        )
+    grounding = str(mapper.call_args)
+    assert "Mornings" in grounding
+    assert (
+        "Opus's mission" not in grounding
+        and 'worked for our company before?" -> Yes' not in grounding
+    )

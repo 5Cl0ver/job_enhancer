@@ -202,7 +202,7 @@ describe("taught boxes: the second review's cases", async () => {
   it("one company's taught boxes never fill another's on a shared host", () => {
     expect(siteKey("https://boards.greenhouse.io/vellacor/jobs/1")).toBe("boards.greenhouse.io/vellacor");
     expect(siteKey("https://boards.greenhouse.io/quillstone/jobs/9")).toBe("boards.greenhouse.io/quillstone");
-    expect(siteKey("https://www.paycomonline.net/v4/ats/web.php/portal/X/career-page")).toBe("www.paycomonline.net");
+    expect(siteKey("https://www.paycomonline.net/v4/ats/web.php/portal/X/career-page")).toBe("www.paycomonline.net/X");
   });
 });
 

@@ -13,16 +13,16 @@
 // → widgets.js (write + read back) → session.js (the fill, Fix, Undo).
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
-import { readField } from "./autofill/widgets.js";
-import { profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
-import { fingerprintOf } from "./autofill/fingerprint.js";
+import { hasValue, readField } from "./autofill/widgets.js";
+import { isPlaceholderOption } from "./autofill/classify/answers.js";
+import { guardReason, profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
+import { fingerprintOf, matchTaught } from "./autofill/fingerprint.js";
 import { createPicker } from "./autofill/pick.js";
 import { frameReport } from "./autofill/report.js";
 import { collectFields, fieldId, questionFor } from "./autofill/scan.js";
-import { siteKey } from "./autofill/hosts.js";
-import { pointRefusal } from "./autofill/session.js";
+import { companyKnown, siteKey } from "./autofill/hosts.js";
 import { resolve } from "./autofill/resolve.js";
-import { createSession } from "./autofill/session.js";
+import { createSession, pointRefusal } from "./autofill/session.js";
 import { watchForSubmit } from "./autofill/track.js";
 import { fillAllWorkExperience, inWorkExperience, isWorkdayExperience } from "./autofill/workday.js";
 
@@ -98,6 +98,7 @@ let usedHere = false; // autofill ran on this page (learning only notices then)
 let lastStep = "";
 let lastCopy = null; // the profile's answers, for noticing typed ones
 let taughtHere = []; // boxes the user taught on this site (spec 017)
+let resumeDone = false; // the résumé already went up in this application (spec 018)
 
 // ---- Status for the side panel ------------------------------------------------
 
@@ -249,7 +250,11 @@ async function fill(auto) {
   }
 
   // The résumé first: many applicant systems read it and rewrite the form.
-  if (await session.uploadResume(copy, { auto })) {
+  // On an automatic step of an application it already went up in: never again.
+  const skipFiles = auto && resumeDone;
+  if (!skipFiles && (await session.uploadResume(copy, { auto }))) {
+    resumeDone = true;
+    send({ type: "resumeUploaded" });
     status({ phase: "filling", done: 0, total: 0, note: "Uploading your résumé…" }, { now: true });
     await settle();
   }
@@ -275,6 +280,7 @@ async function fill(auto) {
 
   const { leftovers, seen } = await session.fillKnown(copy, {
     auto,
+    skipFiles,
     onProgress: (done, total) => status({ phase: "filling", done, total, note: "Filling…" }),
   });
   usedHere = true;
@@ -332,7 +338,7 @@ function notice() {
   // checkout or any other form that merely looks similar.
   if (!usedHere || !presenceNow().app) return;
   const answers = session.typedAnswers();
-  if (answers.length) send({ type: "answersNoticed", answers, site: siteKey(location.href) });
+  if (answers.length) send({ type: "answersNoticed", answers, site: siteKey(location.href), companyKnown: companyKnown(location.href) });
   if (lastCopy) {
     const fields = session.typedProfile(lastCopy.values);
     if (Object.keys(fields).length) send({ type: "profileNoticed", fields });
@@ -478,15 +484,37 @@ const picker = createPicker({
     // Inspect (spec 018): what the box holds now, and what Job Catcher would
     // put there and why — shown only in the user's own panel. A refused box
     // (password, self-ID, agreement) never sends what it holds.
-    const value = refused ? "" : readField(field).trim().slice(0, 2000);
+    const raw = refused ? "" : readField(field).trim();
+    // Nothing real in it: empty, a "+1" on its own, "Please select".
+    const value = raw && hasValue(field) && !isPlaceholderOption(raw) ? raw.slice(0, 2000) : "";
     let known = null;
+    let taughtHereAlready = false;
     if (!refused) {
       const copy = lastCopy || (await loadCopy());
       if (!copy.signedOut && !copy.unreachable) {
-        const d = resolve(field, { ...copy, site: siteKey(location.href) });
-        known = d.skip ? { source: "none", key: d.key || "" } : { source: d.source, key: d.key || "", value: String(d.values?.[0] ?? "").slice(0, 2000) };
+        const site = siteKey(location.href);
+        const t = matchTaught((copy.taught || []).filter((x) => x.site === site || x.site === location.hostname), fields).get(field.id);
+        if (t) {
+          taughtHereAlready = true;
+          const v = t.profile_key ? copy.values[t.profile_key]?.[0] : t.answer;
+          known = { source: "taught", key: t.profile_key || "", value: String(v ?? "").slice(0, 2000) };
+        } else {
+          const d = resolve(field, { ...copy, site });
+          known = d.skip ? { source: "none", key: d.key || "" } : { source: d.source, key: d.key || "", value: String(d.values?.[0] ?? "").slice(0, 2000) };
+        }
       }
     }
+    // Saved by clicking only when it's the user's own answer in a box to type
+    // in: not what Job Catcher just filled, not a box already taught, never a
+    // file, an essay or a long text.
+    const ours = session.filledEntry(field.id);
+    const saveable =
+      !!value &&
+      !taughtHereAlready &&
+      !(ours && String(ours.value).trim() === value) &&
+      field.kind !== "file" &&
+      guardReason(field.question, field.kind) !== "essay" &&
+      value.length <= 300;
     send({
       type: "picked",
       site: siteKey(location.href),
@@ -495,6 +523,7 @@ const picker = createPicker({
       refused,
       value,
       known,
+      saveable,
     });
   },
   onCancel: () => send({ type: "pickCancelled" }),
@@ -529,13 +558,14 @@ function start() {
   send({ type: "getKeepFilling" }).then((r) => {
     keepOn = !!r?.on;
     keepUserOff = !!r?.userOff;
+    resumeDone = !!r?.resumeDone;
     if (keepOn) usedHere = true; // the application they're filling, next page
     if (keepOn) check();
   });
   watchForAdvance();
   check();
   // A frame holding a box the user taught here counts as a form, however small.
-  send({ type: "taughtHere", site: siteKey(location.href) }).then((r) => {
+  send({ type: "taughtHere", site: siteKey(location.href), host: location.hostname }).then((r) => {
     taughtHere = r?.taught || [];
     if (taughtHere.length) {
       lastSig = "";

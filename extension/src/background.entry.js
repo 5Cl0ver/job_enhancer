@@ -14,6 +14,8 @@ import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { sameBox } from "./autofill/fingerprint.js";
+import { answerKey } from "./autofill/classify/answers.js";
+import { siteKey } from "./autofill/hosts.js";
 import { profileValue } from "./autofill/session.js";
 
 importScripts("/config.js");
@@ -300,19 +302,25 @@ function updateSaved(tabId, change) {
  * kept for this site only ("site|question"); an essay as a saved answer
  * offered with "Use saved answer" ("essay|question"), never filled by itself.
  */
-async function autoSaveAnswers(tabId, answers, site) {
+async function autoSaveAnswers(tabId, answers, site, companyKnown = true) {
+  const { je_autofill: copy } = await chrome.storage.local.get("je_autofill");
+  const before = new Map((copy?.answers || []).map((a) => [a.question_key, a.answer]));
   const items = [];
   for (const a of answers) {
     if (!a?.question_key || !a.answer) continue;
-    const base = String(a.question_key).slice(0, 200);
-    const scope = a.essay ? "essay" : a.company && site ? "site" : "all";
-    const key = scope === "essay" ? `essay|${base}` : scope === "site" ? `${site}|${base}` : base;
+    // One company's answer where the company can't be told apart (Indeed's
+    // apply pages, LinkedIn): never saved, so it never reaches another company.
+    if (a.company && !a.essay && (!site || !companyKnown)) continue;
+    const scope = a.essay ? "essay" : a.company ? "site" : "all";
+    const key = answerKey(scope, site, a.question_key);
     items.push({
-      question_key: key.slice(0, 255),
+      question_key: key,
       question_text: String(a.question_text || "").slice(0, 500),
       answer: String(a.answer).slice(0, scope === "essay" ? 4000 : 2000),
       scope,
       site,
+      // What it was before: Undo puts it back (never deletes an older answer).
+      previous: before.get(key) ?? null,
     });
   }
   if (!items.length) return;
@@ -329,7 +337,10 @@ async function autoSaveAnswers(tabId, answers, site) {
     return;
   }
   autofill.refresh();
-  await updateSaved(tabId, (list) => [...list.filter((y) => !items.some((x) => x.question_key === y.question_key)), ...items.map((x) => ({ ...x, at: Date.now() }))]);
+  await updateSaved(tabId, (list) => [
+    ...list.filter((y) => !items.some((x) => x.question_key === y.question_key)),
+    ...items.filter((x) => x.previous !== x.answer).map((x) => ({ ...x, at: Date.now() })),
+  ]);
 }
 
 /** Profile answers typed on a page: the profile's empty fields are filled; changes wait for a tap. */
@@ -902,7 +913,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "taughtHere") {
         // Just this site's taught boxes (never the résumé): every frame asks on load.
         const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
-        sendResponse({ ok: true, taught: (held?.taught || []).filter((t) => t.site === msg.site) });
+        sendResponse({ ok: true, taught: (held?.taught || []).filter((t) => t.site === msg.site || t.site === msg.host) });
       } else if (msg.type === "getAutofillCopy") {
         sendResponse({ ok: true, ...(await autofill.get()) });
       } else if (msg.type === "refreshAutofillCopy") {
@@ -914,7 +925,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Saved straight away (spec 018): what the user answered, when they
         // moved on. Shown in the panel with Edit / Undo; kept for review if
         // the app can't be reached.
-        if (sender.tab?.id != null) await autoSaveAnswers(sender.tab.id, msg.answers || [], msg.site || "");
+        if (sender.tab?.id != null) await autoSaveAnswers(sender.tab.id, msg.answers || [], msg.site || "", msg.companyKnown !== false);
         sendResponse({ ok: true });
       } else if (msg.type === "profileNoticed") {
         // What the profile was missing is saved; a DIFFERENT value waits for
@@ -929,7 +940,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         }
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true });
       } else if (msg.type === "undoSavedAnswer") {
-        const out = await forgetCustomAnswer(msg.question_key);
+        // Back to what it was before (an older answer is restored, not lost).
+        const { [savedKey(msg.tabId)]: list = [] } = await chrome.storage.session.get(savedKey(msg.tabId));
+        const entry = list.find((x) => x.question_key === msg.question_key);
+        const out = entry?.previous
+          ? await saveCustomAnswers([{ question_key: entry.question_key, question_text: entry.question_text, answer: entry.previous }]).then((r) => (r.error ? { ok: false, error: r.error } : { ok: true }))
+          : await forgetCustomAnswer(msg.question_key);
         if (out.ok) {
           autofill.refresh();
           await updateSaved(msg.tabId, (list) => list.filter((x) => x.question_key !== msg.question_key));
@@ -939,7 +955,17 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await updateSaved(msg.tabId, () => []);
         sendResponse({ ok: true });
       } else if (msg.type === "savePendingAnswers") {
-        const out = await saveCustomAnswers(msg.answers || []);
+        const tabUrl = (await chrome.tabs.get(msg.tabId).catch(() => null))?.url || "";
+        const site = siteKey(tabUrl);
+        const out = await saveCustomAnswers(
+          (msg.answers || [])
+            .filter((a) => !(a.company && !a.essay && !site))
+            .map((a) => ({
+              question_key: a.essay || a.company ? answerKey(a.essay ? "essay" : "site", site, a.question_key) : a.question_key,
+              question_text: a.question_text,
+              answer: a.answer,
+            })),
+        );
         if (!out.error) {
           autofill.refresh();
           const keys = new Set((msg.answers || []).map((a) => a.question_key));
@@ -978,13 +1004,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
         }
         sendResponse({ ok: true });
+      } else if (msg.type === "resumeUploaded") {
+        // The résumé is in this application: automatic steps never upload it again.
+        if (sender.tab?.id != null) {
+          await chrome.storage.session.set({ [`je_resume:${sender.tab.id}`]: { site: siteOf(sender.tab.url || ""), at: Date.now() } });
+        }
+        sendResponse({ ok: true });
       } else if (msg.type === "getKeepFilling") {
         const tabId = sender.tab?.id;
         const { [keepKey(tabId)]: keep } = tabId != null ? await chrome.storage.session.get(keepKey(tabId)) : {};
         // Only on the same site: the application, not wherever the tab goes next.
         const here = siteOf(sender.tab?.url || sender.url || "");
+        const rk = `je_resume:${tabId}`;
+        const { [rk]: resume } = tabId != null ? await chrome.storage.session.get(rk) : {};
         sendResponse({
           ok: true,
+          resumeDone: !!resume && resume.site === here && Date.now() - resume.at < KEEP_MS,
           on: !!keep?.on && keep.site === here && (keep.until || 0) > Date.now(),
           userOff: !!keep?.userOff && keep.site === here,
         });
@@ -1014,7 +1049,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // A box that already holds something is saved for this box on this
           // site, straight away (Undo in the panel) — unless it's what Job
           // Catcher would put there anyway. The profile never changes here.
-          if (!pick.refused && pick.value) {
+          if (!pick.refused && pick.value && msg.saveable) {
             if (known?.value && known.value.trim().toLowerCase() === pick.value.trim().toLowerCase()) pick.alreadySaved = true;
             else {
               const out = await saveTaught({ site, fingerprint, answer: pick.value });

@@ -163,3 +163,30 @@ test("inspect: a profile box shows what's saved, and Update my profile changes i
   expect(api.state.taught.length).toBe(0); // the profile now says it: nothing per box
   await Promise.all([page.close(), panel.close()]);
 });
+
+test("Undo puts an older answer back (never loses it); clicking a box Job Catcher filled saves nothing", async () => {
+  api.state.answers = [{ question_key: "which shift do you prefer", question_text: "Which shift do you prefer?", answer: "Mornings" }];
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/learn.html"));
+  expect((await ext.autofill(page)).ok).toBe(true);
+  await expect(page.locator("#shift")).toHaveValue("Mornings");
+  await page.locator("#shift").fill("Nights");
+  await page.locator("#continue").click();
+  await expect.poll(() => api.state.answers.find((x) => x.question_key === "which shift do you prefer")?.answer, { timeout: 8000 }).toBe("Nights");
+  const panel = await panelFor(page);
+  const saved = panel.getByTestId("saved-now");
+  await saved.getByRole("button", { name: "Review" }).click();
+  await saved.getByRole("listitem").filter({ hasText: "Which shift" }).getByRole("button", { name: "Undo" }).click();
+  await expect.poll(() => api.state.answers.find((x) => x.question_key === "which shift do you prefer")?.answer).toBe("Mornings");
+
+  // Inspect the first name Job Catcher filled: shown, never saved per box.
+  await ext.bg({ type: "startPick", tabId: await ext.tabIdOf(page) });
+  await expect(panel.getByTestId("pointing")).toBeVisible({ timeout: 5000 });
+  await clickBox(page, page.locator("#fn"));
+  const ask = panel.getByTestId("what-goes-here");
+  await expect(ask.getByTestId("thinks")).toHaveText(/First name/, { timeout: 5000 });
+  await expect(ask.getByText(/Saved “/)).toHaveCount(0);
+  expect(api.state.taught.length).toBe(0);
+  await Promise.all([page.close(), panel.close()]);
+});

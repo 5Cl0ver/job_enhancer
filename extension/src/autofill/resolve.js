@@ -1,6 +1,6 @@
 // Decide what goes in a field: the profile, then a remembered answer, or a
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
-import { isCompanySpecific, matchAnswer } from "./classify/answers.js";
+import { answerKey, isCompanySpecific, matchAnswer } from "./classify/answers.js";
 import { OTHER_PERSON, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 
 /** The keys that make a page look like an application. */
@@ -45,7 +45,7 @@ export function isResumeUpload(field) {
  */
 export function learnedFor(field, copy) {
   const answers = copy.answers || [];
-  const own = copy.site ? answers.find((a) => a.question_key === `${copy.site}|${field.key}`) : null;
+  const own = copy.site ? answers.find((a) => a.question_key === answerKey("site", copy.site, field.key)) : null;
   if (own) return own;
   if (isCompanySpecific(field.question)) return null;
   return matchAnswer(field.key, answers.filter((a) => !String(a.question_key).includes("|")));

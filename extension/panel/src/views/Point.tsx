@@ -43,6 +43,12 @@ const REFUSED: Record<string, string> = {
   password: "That's a password box. Job Catcher never fills passwords.",
 };
 
+/** What the profile itself stores (so "Update my profile" really changes it). */
+const PROFILE_SAVES = new Set([
+  "first_name", "last_name", "phone", "address_line1", "address_line2", "city", "state",
+  "postal_code", "country", "linkedin_url", "github_url", "portfolio_url", "desired_salary", "notice_period",
+]);
+
 export function startPointing(tabId: number | null) {
   if (tabId != null) send({ type: "startPick", tabId });
 }
@@ -120,7 +126,9 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
       ? `${keyName(known.key)} (from your profile)`
       : known?.source === "learned"
         ? "A remembered answer"
-        : "Not known yet";
+        : known?.source === "taught"
+          ? "A box you taught"
+          : "Not known yet";
   const options = pick.field?.options || [];
   const q = query.trim().toLowerCase();
   const choices = ANSWERS.filter(([key, name]) => values[key]?.length && (!q || name.toLowerCase().includes(q) || String(values[key][0]).toLowerCase().includes(q)));
@@ -184,7 +192,7 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
             <Button size="sm" variant="outline" disabled={!answer || !!busy} busy={busy === "once"} onClick={() => fill({ answer }, false, "once")}>
               Fill once
             </Button>
-            {known?.source === "profile" && known.key && (
+            {known?.source === "profile" && PROFILE_SAVES.has(known.key) && (
               <Button size="sm" variant="outline" disabled={!answer || !!busy} busy={busy === "profile"} onClick={() => fill({ answer, updateProfile: true }, false, "profile")}>
                 Update my profile
               </Button>
