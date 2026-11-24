@@ -205,3 +205,35 @@ describe("taught boxes: the second review's cases", async () => {
     expect(siteKey("https://www.paycomonline.net/v4/ats/web.php/portal/X/career-page")).toBe("www.paycomonline.net");
   });
 });
+
+describe("which upload box is the résumé's", async () => {
+  const { isResumeUpload } = await import("../src/autofill/resolve.js");
+  const box = (question, context = "", unclearUploads = 1, accept = ".pdf,.docx") => ({ kind: "file", question, hints: { context, unclearUploads, accept } });
+  it("its own label decides first, then the heading above it", () => {
+    expect(isResumeUpload(box("Resume/CV"))).toBe(true);
+    expect(isResumeUpload(box("Cover letter"))).toBe(false);
+    expect(isResumeUpload(box("Drop a file or browse", "Resume", 2))).toBe(true);
+    expect(isResumeUpload(box("Drop a file or browse", "Cover Letter", 2))).toBe(false);
+  });
+  it("an unclear box is the résumé's only when it's the page's one upload box", () => {
+    expect(isResumeUpload(box("Upload", "", 1))).toBe(true);
+    expect(isResumeUpload(box("Upload", "", 2))).toBe(false);
+    expect(isResumeUpload(box("Upload", "", 1, "image/*"))).toBe(false);
+  });
+});
+
+describe("the review of PR #35: the résumé never lands twice", async () => {
+  const { collectFields } = await import("../src/autofill/scan.js");
+  const { isResumeUpload } = await import("../src/autofill/resolve.js");
+  it("a clearly labelled résumé box leaves an unclear second box alone", () => {
+    const doc = parse(`<label for="r">Resume</label><input type="file" id="r" accept=".pdf">
+      <div><input type="hidden" name="tok"><div class="card"><input type="file" id="x" accept=".pdf"></div></div>`);
+    const byId = Object.fromEntries(collectFields(doc, { visible: () => true }).map((f) => [f.el.id, f]));
+    expect(isResumeUpload(byId.r)).toBe(true);
+    expect(isResumeUpload(byId.x)).toBe(false);
+  });
+  it("whole words only: 'another format' is still the résumé's box", () => {
+    const box = { kind: "file", question: "Upload your resume or another format", hints: { accept: ".pdf" } };
+    expect(isResumeUpload(box)).toBe(true);
+  });
+});

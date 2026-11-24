@@ -129,7 +129,9 @@ export function Apply({
           <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
             <span>
               <b className="font-medium">Keep filling this application</b>
-              <span className="block text-muted-foreground">Each next step fills as it appears.</span>
+              <span className="block text-muted-foreground">
+                {fill.keep ? "On: each next step fills by itself." : "Off: Job Catcher fills only when you press Autofill."}
+              </span>
             </span>
             <Switch
               checked={fill.keep}

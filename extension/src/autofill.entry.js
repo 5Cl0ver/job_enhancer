@@ -86,9 +86,10 @@ const session = createSession({
 
 let state = "idle"; // idle | busy
 let lastReport = { filled: 0, need: 0 };
-// Keep filling (spec 015, Story 4): after one press, each later step of the
-// same application fills as it appears. Remembered per tab and site by the
-// background, so it carries across page loads; switchable in the panel.
+// Keep filling (spec 015, Story 4): each later step of the same application
+// fills as it appears. OFF unless the user switches it on in the panel — by
+// default Job Catcher fills only when pressed (the user's choice). Remembered
+// per tab and site by the background, so it carries across page loads.
 let keepOn = false;
 let keepUserOff = false; // switched off in the panel: a press doesn't turn it back on
 let usedHere = false; // autofill ran on this page (learning only notices then)
@@ -271,10 +272,6 @@ async function fill(auto) {
   usedHere = true;
   report();
   lastStep = session.stepFingerprint();
-  if (!auto && !keepOn && !keepUserOff) {
-    keepOn = true; // on by default after a press (switch it off in the panel)
-    send({ type: "setKeepFilling", on: true });
-  }
   if (leftovers.length) {
     const n = Math.min(leftovers.length, 40);
     const asking = { phase: "filling", done: lastReport.filled, total: lastReport.filled + n, note: `Asking the AI about ${n} question${n === 1 ? "" : "s"}…` };

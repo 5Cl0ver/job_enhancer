@@ -238,3 +238,13 @@ test("closing the panel while pointing lets the page go", async () => {
   await expect(page.locator("#mystery")).toHaveValue("typed by a person");
   await page.close();
 });
+
+test("the résumé goes in the Resume card only — never the Cover Letter's", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/uploads.html"));
+  expect((await ext.autofill(page)).ok).toBe(true);
+  await expect(page.locator("#fn")).toHaveValue("Wren");
+  expect(await page.locator("#up1").evaluate((el) => el.files[0]?.name)).toBe("wren-calloway.pdf");
+  expect(await page.locator("#up2").evaluate((el) => el.files.length)).toBe(0);
+  await page.close();
+});

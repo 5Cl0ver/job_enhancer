@@ -7,14 +7,34 @@ import { OTHER_PERSON, guardReason, profileKeyFor } from "./classify/profileKeys
 export const IDENTITY = new Set(["first_name", "last_name", "full_name", "email", "phone"]);
 
 const RESUME = /r[ée]sum[ée]|\bcv\b|curriculum/i;
-const NOT_RESUME = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|other|additional|supporting|reference|certific/i;
+// Whole words: "another format" or "your preferences" don't make a box something else.
+const NOT_RESUME = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|\bother\b|\badditional\b|\bsupporting\b|\breferences?\b|certific/i;
 const DOC_ACCEPT = /pdf|msword|officedocument|rtf|\.docx?/i;
 
-/** Is this file field the résumé upload (and not a cover letter etc.)? */
+/**
+ * What an upload box is for: its own label first, then the heading above it
+ * ("Cover Letter" over a Paycom card). "unclear" when it says neither but
+ * takes documents.
+ * @returns {"resume" | "other" | "unclear"}
+ */
+export function uploadKind(field) {
+  const own = [field.question, field.hints?.name, field.hints?.id].join(" ");
+  if (NOT_RESUME.test(own)) return "other";
+  if (RESUME.test(own)) return "resume";
+  const around = field.hints?.context || "";
+  if (NOT_RESUME.test(around)) return "other";
+  if (RESUME.test(around)) return "resume";
+  return DOC_ACCEPT.test(field.hints?.accept || "") ? "unclear" : "other";
+}
+
+/**
+ * Is this file field the résumé upload (and not a cover letter etc.)? An
+ * unclear box is the résumé's only when it's the page's ONLY unclear document
+ * box (scan.js counts them) — never a guess between several.
+ */
 export function isResumeUpload(field) {
-  const text = [field.question, field.hints?.name, field.hints?.id].join(" ");
-  if (NOT_RESUME.test(text)) return false;
-  return RESUME.test(text) || DOC_ACCEPT.test(field.hints?.accept || "");
+  const kind = uploadKind(field);
+  return kind === "resume" || (kind === "unclear" && (field.hints?.unclearUploads ?? 1) === 1);
 }
 
 /**

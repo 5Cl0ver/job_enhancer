@@ -57,10 +57,12 @@ async function panelFor(page) {
   return panel;
 }
 
-test("one press: every later step fills as it appears, from the profile and the résumé", async () => {
+test("Keep filling switched on: every later step fills as it appears, from the profile and the résumé", async () => {
   const page = await ext.context.newPage();
   await page.goto(URL);
   await ext.autofill(page);
+  // Off by default (fills only when pressed): the user switches it on.
+  await ext.bg({ type: "setKeepFilling", tabId: await ext.tabIdOf(page), on: true });
   // The step is done when its last field (after the country dropdown) is in.
   await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   const one = await form(page);
@@ -104,6 +106,7 @@ test("what you type is offered as you move on — answers and profile — and fi
   await page.locator("#addressSection_addressLine1").fill("12 Ferry Lane");
   await next(page);
   await next(page);
+  await ext.autofill(page); // each step fills when pressed
   await expect.poll(async () => (await form(page))["q-auth"], { timeout: 15000 }).toBe("Yes");
   // A question the app didn't know, answered by hand (once autofill is done
   // with this step: it asked the AI about it).
@@ -137,11 +140,12 @@ test("what you type is offered as you move on — answers and profile — and fi
   await expect.poll(async () => (await form(again)).addressSection_addressLine1, { timeout: 15000 }).toBe("12 Ferry Lane");
   await next(again);
   await next(again);
+  await ext.autofill(again); // each step fills when pressed
   await expect.poll(async () => (await form(again))["q-heard"], { timeout: 15000 }).toBe("Employee Referral");
   await Promise.all([page.close(), panel.close(), again.close()]);
 });
 
-test("Keep filling can be switched off in the panel", async () => {
+test("by default it fills only when pressed; Keep filling can be switched on in the panel", async () => {
   const page = await ext.context.newPage();
   await page.goto(URL);
   await ext.autofill(page);
@@ -149,12 +153,17 @@ test("Keep filling can be switched off in the panel", async () => {
   await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   const panel = await panelFor(page);
   const keep = panel.getByRole("switch", { name: "Keep filling this application" });
-  await expect(keep).toHaveAttribute("aria-checked", "true");
-  await keep.click();
   await expect(keep).toHaveAttribute("aria-checked", "false");
+  await expect(panel.getByText("Off: Job Catcher fills only when you press Autofill.")).toBeVisible();
+  // The next step: nothing fills until a press.
   await next(page);
   await page.waitForTimeout(3000);
   expect((await form(page))["wx-title"]).toBeUndefined();
+  // Switched on: the step after fills by itself.
+  await keep.click();
+  await expect(keep).toHaveAttribute("aria-checked", "true");
+  await next(page);
+  await expect.poll(async () => (await form(page))["q-auth"], { timeout: 15000 }).toBe("Yes");
   await Promise.all([page.close(), panel.close()]);
 });
 
@@ -167,6 +176,7 @@ test("an unsure AI answer is a suggestion: shown, filled only on Use", async () 
   await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   await next(page);
   await next(page);
+  await ext.autofill(page); // each step fills when pressed
   await expect.poll(async () => (await form(page))["q-auth"], { timeout: 15000 }).toBe("Yes");
   const panel = await panelFor(page);
   const row = panel.getByRole("listitem").filter({ hasText: "How did you hear about this opportunity?" });
