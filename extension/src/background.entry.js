@@ -13,6 +13,7 @@ import { parseSummary } from "./savedSync.js";
 import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
+import { createConnect } from "./background/connect.js";
 import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
 import { siteKey } from "./autofill/hosts.js";
@@ -28,6 +29,8 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   // so nothing needs a refresh (spec 015). Not on a Chrome update: the same
   // version is already running in those tabs.
   if (reason === "install" || reason === "update") reinjectOpenTabs().catch(() => {});
+  // A new version says hello again right away (the update note goes away).
+  chrome.storage.local.remove("je_hello_at").catch(() => {});
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
@@ -67,7 +70,13 @@ async function refreshToken(je_refresh) {
   } catch {
     return null; // network/timeout — treat as "couldn't refresh" instead of hanging
   }
-  if (!res.ok) return null;
+  if (res.status === 400 || res.status === 401) {
+    // The refresh token is dead (revoked, already used, signed out elsewhere):
+    // forget the session so we stop retrying and the panel shows Sign in.
+    await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
+    return null;
+  }
+  if (!res.ok) return null; // 5xx, 429: try again later
   const d = await res.json();
   await storeSession(d);
   return d.access_token;
@@ -101,6 +110,139 @@ async function login(email, password) {
   if (!res.ok) throw new Error(d.error_description || d.msg || "Sign-in failed");
   await storeSession(d, email);
 }
+
+// ---- One-press Connect + hello (spec 019) ---------------------------------
+// A connected Job Catcher holds its own pass ("jcx_…"), not a Supabase
+// session: it never expires on its own schedule (the server stops it after 90
+// days unused or a year), so it's stored with a far-off je_expires and no
+// refresh token. Every 401 below signs the panel out as usual.
+
+const TEN_YEARS = 10 * 365 * 24 * 3600;
+
+async function storePass(token, email) {
+  const { je_email: before } = await chrome.storage.local.get("je_email");
+  await chrome.storage.local.remove("je_refresh");
+  await chrome.storage.local.set({
+    je_token: token,
+    je_expires: Math.floor(Date.now() / 1000) + TEN_YEARS,
+    je_email: email,
+  });
+  // Another account's copy must never fill this one's forms.
+  if ((before || "").toLowerCase() !== (email || "").toLowerCase()) await autofill.wipe();
+  autofill.refresh();
+  hello(true).catch(() => {});
+  chrome.runtime.sendMessage({ type: "authChanged" }).catch(() => {});
+}
+
+const connect = createConnect({ cfg, onConnected: storePass, fetchFn: (url, opts) => wakeFetch(url, opts) });
+
+// Only the app's /connect page may ask (externally_connectable lists only the
+// app's address), and only gets the proof for the code we're waiting on.
+chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  connect.proofFor(msg, sender).then(sendResponse, () => sendResponse({}));
+  return true;
+});
+
+chrome.alarms?.onAlarm.addListener((alarm) => {
+  // The worker slept while waiting for approval: carry on the same loop.
+  if (alarm.name === connect.alarm) connect.status().catch(() => {});
+  if (alarm.name === REVOKE_ALARM) retryRevoke().catch(() => {});
+});
+
+function browserName() {
+  const brands = navigator.userAgentData?.brands || [];
+  const b =
+    brands.find((x) => /edge|brave|opera/i.test(x.brand)) ||
+    brands.find((x) => /chrome/i.test(x.brand) && !/chromium/i.test(x.brand)) ||
+    brands.find((x) => !/not.?a.?brand|chromium/i.test(x.brand));
+  return b ? `${b.brand.replace(/^Microsoft /, "").replace(/^Google /, "")} ${b.version}`.slice(0, 64) : "Chrome";
+}
+
+async function installId() {
+  const { je_install_id } = await chrome.storage.local.get("je_install_id");
+  if (je_install_id) return je_install_id;
+  const id = crypto.randomUUID();
+  await chrome.storage.local.set({ je_install_id: id });
+  return id;
+}
+
+/** Tell Job Enhancer which version this is (on sign-in, then at most hourly). */
+async function hello(force = false) {
+  const { je_hello_at } = await chrome.storage.local.get("je_hello_at");
+  if (!force && je_hello_at && Date.now() - je_hello_at < 3600_000) return;
+  const token = await getValidToken();
+  if (!token) return;
+  await chrome.storage.local.set({ je_hello_at: Date.now() });
+  const res = await fetch(`${cfg.API_BASE}/v1/extension/hello`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({
+      install_id: await installId(),
+      version: chrome.runtime.getManifest().version,
+      browser: browserName(),
+    }),
+  }).catch(() => null);
+  if (res?.ok) {
+    const d = await res.json().catch(() => ({}));
+    const latest = typeof d.latest === "string" ? d.latest : null;
+    const { je_latest: before } = await chrome.storage.local.get("je_latest");
+    await chrome.storage.local.set({ je_latest: latest });
+    // A newer version just became known: the panel shows the update note.
+    if (latest !== (before ?? null)) chrome.runtime.sendMessage({ type: "authChanged" }).catch(() => {});
+  }
+}
+
+function isOlder(have, latest) {
+  const parse = (v) => (typeof v === "string" && /^\d+(\.\d+){1,3}$/.test(v) ? v.split(".").map(Number) : null);
+  const a = parse(have);
+  const b = parse(latest);
+  if (!a || !b) return false;
+  for (let i = 0; i < Math.max(a.length, b.length); i++) {
+    const d = (a[i] ?? 0) - (b[i] ?? 0);
+    if (d) return d < 0;
+  }
+  return false;
+}
+
+/** Sign out: a pass is revoked on the server first, so it's dead everywhere.
+ *  If the server can't be reached, the revoke is kept and retried later. */
+const REVOKE_ALARM = "je-revoke";
+
+async function sendRevoke(token) {
+  try {
+    const res = await wakeFetch(`${cfg.API_BASE}/v1/extension/tokens/current`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    // 204 revoked; 401 already dead. Either way it's done.
+    return res.status === 204 || res.status === 401;
+  } catch {
+    return false;
+  }
+}
+
+async function revokePass() {
+  const { je_token } = await chrome.storage.local.get("je_token");
+  if (typeof je_token !== "string" || !je_token.startsWith("jcx_")) return;
+  if (!(await sendRevoke(je_token))) {
+    await chrome.storage.local.set({ je_pending_revoke: je_token });
+    chrome.alarms?.create(REVOKE_ALARM, { periodInMinutes: 30 });
+  }
+}
+
+async function retryRevoke() {
+  const { je_pending_revoke } = await chrome.storage.local.get("je_pending_revoke");
+  if (typeof je_pending_revoke !== "string") {
+    chrome.alarms?.clear(REVOKE_ALARM);
+    return;
+  }
+  if (await sendRevoke(je_pending_revoke)) {
+    await chrome.storage.local.remove("je_pending_revoke");
+    chrome.alarms?.clear(REVOKE_ALARM);
+  }
+}
+// A sign-out that couldn't reach the server: try again whenever we start.
+retryRevoke().catch(() => {});
 
 async function saveJob(job) {
   const token = await getValidToken();
@@ -590,7 +732,7 @@ async function getClaudeProjectUrl() {
 async function saveClaudeProjectUrl(url) {
   const token = await getValidToken();
   if (!token) return { ok: false };
-  const res = await fetch(`${cfg.API_BASE}/v1/users/me`, {
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me/claude-project`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ claude_project_url: url || "" }),
@@ -894,12 +1036,33 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await login(msg.email, msg.password);
         if ((before || "").toLowerCase() !== (msg.email || "").toLowerCase()) await autofill.wipe();
         autofill.refresh();
+        hello(true).catch(() => {});
         sendResponse({ ok: true });
       } else if (msg.type === "authStatus") {
         const token = await getValidToken();
-        const { je_email } = await chrome.storage.local.get("je_email");
-        sendResponse({ ok: true, signedIn: !!token, email: je_email || "" });
+        const { je_email, je_latest } = await chrome.storage.local.get(["je_email", "je_latest"]);
+        if (token) hello().catch(() => {});
+        const version = chrome.runtime.getManifest().version;
+        sendResponse({
+          ok: true,
+          signedIn: !!token,
+          email: je_email || "",
+          version,
+          latest: je_latest || null,
+          updateAvailable: isOlder(version, je_latest),
+        });
+      } else if (msg.type === "connectStart") {
+        sendResponse(await connect.start());
+      } else if (msg.type === "connectStatus") {
+        // Reads the state only (and wakes the one poller if it slept).
+        sendResponse({ ok: true, ...(await connect.status()) });
+      } else if (msg.type === "connectCancel") {
+        sendResponse(await connect.cancel());
+      } else if (msg.type === "connectOpenTab") {
+        await connect.openApproval();
+        sendResponse({ ok: true });
       } else if (msg.type === "signOut") {
+        await revokePass();
         await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email", "je_staged_resume"]);
         await autofill.wipe();
         sendResponse({ ok: true });

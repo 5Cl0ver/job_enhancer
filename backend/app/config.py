@@ -51,6 +51,11 @@ class Settings(BaseSettings):
     # this value + "/mcp". Empty disables the connector (skips mounting it).
     mcp_public_url: str = ""
 
+    # OPTIONAL read-only GitHub token for the Job Catcher release check (raises
+    # GitHub's rate limit). Not needed: one cached call every 30 minutes fits
+    # the unauthenticated limit. Never give it write access.
+    github_token: str = ""
+
     # Server
     debug: bool = False
     # Comma-separated origins in .env (e.g. "http://localhost:5173,http://x.com").

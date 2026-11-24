@@ -27,7 +27,7 @@ export function useClaudeUrlState(signedIn: boolean) {
       if (r.url) {
         setUrl(r.url);
         chrome.storage.local.set({ je_claude_url: r.url }).catch(() => {});
-      } else if (/^https?:\/\//i.test(local)) {
+      } else if (/^https:\/\/claude\.ai\//i.test(local)) {
         // The account answered that it has none, and this extension had one
         // from before the account kept it: move it up, once.
         send({ type: "saveClaudeProjectUrl", url: local });

@@ -49,6 +49,7 @@ export function App() {
   if (auth.state === "out") return <SignIn />;
 
   const openApp = () => chrome.tabs.create({ url: `${appUrl()}/saved` });
+  const howToUpdate = () => chrome.tabs.create({ url: `${appUrl()}/job-catcher#update` });
 
   return (
     <div className="flex h-dvh flex-col">
@@ -59,6 +60,14 @@ export function App() {
           <ExternalLink />
         </Button>
       </header>
+      {auth.latest && (
+        <div role="status" className="flex items-center gap-2 border-b bg-amber-500/10 px-3 py-2 text-sm" data-testid="update-banner">
+          <span className="flex-1">Update available ({auth.latest})</span>
+          <Button variant="link" size="sm" className="h-auto px-0" onClick={howToUpdate}>
+            How to update
+          </Button>
+        </div>
+      )}
 
       {/* Every view stays mounted and is only hidden, so work in progress (a
           letter just written, a job being checked) survives switching views. */}

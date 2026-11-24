@@ -8,7 +8,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.user import User
 from app.schemas.scout import (
     ActiveRunOut,
@@ -200,7 +200,7 @@ async def list_runs(
 # Before /runs/{run_id}, so "active" isn't read as a run id.
 @router.get("/runs/active", response_model=ActiveRunOut)
 async def active_run(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> ActiveRunOut:
     run = await runs.open_run(db, user.id)
@@ -325,7 +325,7 @@ async def recommended(user: User = Depends(get_current_user)) -> RecommendedOut:
 @router.post("/captures", response_model=CaptureOut)
 async def capture(
     data: CaptureIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> CaptureOut:
     """The extension's exact copy of a job page Claude opened during a run."""

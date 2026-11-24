@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { createClient } from "@/lib/supabase/client";
+import { takeRememberedRedirect } from "@/lib/safeRedirect";
 
 /**
  * Landing page for OAuth redirects (e.g. GitHub). supabase-js automatically
@@ -12,13 +13,15 @@ export function AuthCallback() {
 
   useEffect(() => {
     const supabase = createClient();
+    // Where the person was going before GitHub (kept by Login), checked safe.
+    const next = takeRememberedRedirect();
 
     supabase.auth.getSession().then(({ data }) => {
-      if (data.session) navigate("/", { replace: true });
+      if (data.session) navigate(next, { replace: true });
     });
 
     const { data: sub } = supabase.auth.onAuthStateChange((_event, session) => {
-      if (session) navigate("/", { replace: true });
+      if (session) navigate(next, { replace: true });
     });
 
     return () => sub.subscription.unsubscribe();

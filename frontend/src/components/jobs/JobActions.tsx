@@ -57,7 +57,7 @@ export function JobActions({
     // otherwise a fresh Claude chat. Set it in Settings → Claude Project.
     const url = profile?.claude_project_url?.trim();
     window.open(
-      url && /^https?:\/\//i.test(url) ? url : "https://claude.ai/new",
+      url && /^https:\/\/claude\.ai\//i.test(url) ? url : "https://claude.ai/new",
       "_blank",
       "noopener",
     );

@@ -1,14 +1,16 @@
 {
   "manifest_version": 3,
+  "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnJJaRYWwj0AQEzrHsqI3uZgxqu3tHGvGGF2VGPGllZsSVytw/LvS1pnOJHXdBYGWJ7N25wAnpz//r+7bO+6PGjKvnUrO79uGPnOhz4QDfaTjuyIWPoMVEMA2DNitqYIeWLKFrM1r1HIGo/H1aj7aSHWPDY7nhWJR/rE1kpcIZFe1eMX7QwkjbfLq9CvdMsE7VIgp9QtJg9KE3Tse+SrLA40fuHrqtDBxiuN8vFgUf/JbZWfvEfRFU5uwR8HFfC4TR0Ut8zyT+kJ/wWGPoDGUlt35+0ei0nD7auzBFO0txsBN0ek635JCNN8XpthXiklLn/KBTXkzDRrtjvkbOCZN8QIDAQAB",
   "name": "Job Enhancer — Job Catcher",
-  "version": "0.34.1",
+  "version": "0.35.0",
   "description": "Save jobs from any site to your Job Enhancer tracker — a side panel plus a one-click Save button on Indeed, LinkedIn & ZipRecruiter job pages.",
   "permissions": [
     "sidePanel",
     "storage",
     "scripting",
     "activeTab",
-    "unlimitedStorage"
+    "unlimitedStorage",
+    "alarms"
   ],
   "host_permissions": [
     "http://*/*",
@@ -99,6 +101,11 @@
     "16": "icons/icon16.png",
     "48": "icons/icon48.png",
     "128": "icons/icon128.png"
+  },
+  "externally_connectable": {
+    "matches": [
+      "https://job-enhancer-xxj1.vercel.app/*"
+    ]
   },
   "commands": {
     "autofill": {

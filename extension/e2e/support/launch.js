@@ -60,6 +60,11 @@ function installBuild(dir, from) {
   for (const cs of manifest.content_scripts || []) {
     if (cs.js.some((f) => /autofill/.test(f))) cs.matches = [...cs.matches, ...LAB_MATCHES];
   }
+  // The fake server stands in for the app: its /connect page may ask for the
+  // Connect proof (the live build lists only the real app's address).
+  if (manifest.externally_connectable) {
+    manifest.externally_connectable.matches = [...manifest.externally_connectable.matches, "http://127.0.0.1/*"];
+  }
   writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
 }
 
@@ -140,7 +145,17 @@ export async function launchExtension({ apiUrl, signedIn = true, from = ROOT }) 
     },
     /** Update to the current build, the way a user does: new files, then reload. */
     async upgrade() {
+      // A build from before the pinned "key" (0.35.0) has another id; adding
+      // the key would make the reload a different extension (people re-add it
+      // once). These tests check what an update does to open tabs, so the
+      // updated copy keeps the id it started with.
+      const hadKey = !!JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")).key;
       installBuild(dir, ROOT);
+      if (!hadKey) {
+        const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8"));
+        delete manifest.key;
+        writeFileSync(join(dir, "manifest.json"), JSON.stringify(manifest, null, 2));
+      }
       return ext.reload();
     },
     /** Send the background a message the way the side panel does (from an extension page). */

@@ -7,6 +7,7 @@
 //   api.override("/v1/ai/autofill-map", { status: 500 });
 //   api.calls("/v1/scout/captures")             // what the extension sent
 //   await api.close();
+import { createHash } from "node:crypto";
 import { createServer } from "node:http";
 
 /** The invented person every test fills forms for. */
@@ -67,6 +68,14 @@ export async function startFakeApi() {
     aiAnswers: {}, // question label -> {value, confidence} the fake AI gives
     taught: [], // boxes taught with "Point at a box": {id, site, fingerprint, profile_key, answer}
     resume: { filename: "wren-calloway.pdf", bytes: Buffer.from("%PDF-1.4\n% invented résumé\n") },
+    // Job Catcher Connect (spec 019): the request under way, how long it lasts,
+    // the newest version, the hellos received, the id the /connect page asks.
+    connect: null,
+    connectSeconds: 300,
+    connectAutoApprove: true,
+    latest: null,
+    hellos: [],
+    extensionId: "",
   };
   const log = []; // {method, path, body, at}
   const overrides = new Map(); // path -> {status, body, delay} | (req, body) => {status, body}
@@ -83,6 +92,11 @@ export async function startFakeApi() {
     "GET /v1/users/me": () => ({
       body: { email: state.email, claude_project_url: state.claudeProjectUrl },
     }),
+    // Job Catcher's one account setting (PATCH /v1/users/me is app-only).
+    "PATCH /v1/users/me/claude-project": (b) => {
+      if (typeof b?.claude_project_url === "string") state.claudeProjectUrl = b.claude_project_url;
+      return { body: { email: state.email, claude_project_url: state.claudeProjectUrl } };
+    },
     "PATCH /v1/users/me": (b) => {
       if (typeof b?.claude_project_url === "string") state.claudeProjectUrl = b.claude_project_url;
       return { body: { email: state.email, claude_project_url: state.claudeProjectUrl } };
@@ -248,6 +262,64 @@ export async function startFakeApi() {
       raw: Buffer.from("%PDF-1.4\n% invented document\n"),
       headers: { "content-type": "application/pdf" },
     }),
+    // ---- Job Catcher Connect + hello (spec 019) ----
+    "POST /v1/extension/connect/start": (b) => {
+      state.connect = {
+        code: "K7QM-3XPD",
+        pollToken: `poll-${Math.random().toString(36).slice(2)}-${"p".repeat(20)}`,
+        proofHash: String(b?.proof_hash || ""),
+        status: "pending",
+      };
+      return { body: { code: state.connect.code, poll_token: state.connect.pollToken, expires_in: state.connectSeconds } };
+    },
+    "POST /v1/extension/connect/approve": (b) => {
+      const c = state.connect;
+      const proofHash = createHash("sha256").update(String(b?.proof || "")).digest("hex");
+      if (!c || c.status !== "pending" || b?.code !== c.code || proofHash !== c.proofHash) {
+        return { status: 404, body: { detail: "That Connect link has expired." } };
+      }
+      c.status = "approved";
+      return { body: { status: "approved" } };
+    },
+    "POST /v1/extension/connect/poll": (b) => {
+      const c = state.connect;
+      if (!c || b?.poll_token !== c.pollToken) return { status: 404, body: { detail: "gone" } };
+      if (c.status === "approved") {
+        c.status = "used";
+        return { body: { status: "approved", token: `jcx_${"t".repeat(43)}`, email: state.email } };
+      }
+      return { body: { status: c.status } };
+    },
+    "POST /v1/extension/connect/cancel": () => {
+      if (state.connect) state.connect.status = "cancelled";
+      return { body: { status: "cancelled" } };
+    },
+    "POST /v1/extension/hello": (b) => {
+      state.hellos.push(b);
+      return { body: { latest: state.latest, update_available: false } };
+    },
+    "DELETE /v1/extension/tokens/current": () => ({ status: 204 }),
+    // The app's approval page, reduced to what matters: ask the Job Catcher in
+    // this browser for its proof, then approve with it.
+    "GET /connect": (_b, req) => {
+      const code = new URL(req.url, "http://x").searchParams.get("code") || "";
+      return {
+        raw: `<!doctype html><meta charset="utf-8"><title>Connect</title><p id="out">asking</p><script>
+          const out = document.getElementById("out");
+          const rt = window.chrome && chrome.runtime;
+          if (!rt || !rt.sendMessage) { out.textContent = "no-extension"; }
+          else rt.sendMessage(${JSON.stringify(state.extensionId)}, { type: "connectProof", code: ${JSON.stringify(code)} }, async (reply) => {
+            const proof = reply && reply.proof;
+            if (!proof) { out.textContent = "no-proof"; return; }
+            if (${JSON.stringify(state.connectAutoApprove)}) {
+              const r = await fetch("/v1/extension/connect/approve", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ code: ${JSON.stringify(code)}, proof }) });
+              out.textContent = r.ok ? "approved" : "refused";
+            } else out.textContent = "has-proof";
+          });
+        </script>`,
+        headers: { "content-type": "text/html; charset=utf-8" },
+      };
+    },
     "GET /v1/scout/runs/active": () => ({ body: state.scoutRun }),
     "POST /v1/scout/captures": () => ({ body: { stored: !!state.scoutRun.run_id } }),
   };

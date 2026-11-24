@@ -22,7 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.application_profile import ApplicationProfile
 from app.models.custom_answer import CustomAnswer
 from app.models.generated_document import GeneratedDocument
@@ -118,7 +118,7 @@ async def upload_resume(
 
 @router.get("/resumes/active/file")
 async def download_active_resume_file(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """The active resume's ORIGINAL file bytes — the extension attaches them to
@@ -203,7 +203,7 @@ async def resume_skills(
 
 @router.get("/resumes", response_model=list[ResumeSchema])
 async def list_resumes(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> list[ResumeSchema]:
     result = await db.execute(
@@ -254,7 +254,7 @@ async def _load_resume_and_job(
 @router.post("/prompt", response_model=PromptResponse)
 async def build_document_prompt(
     data: GeneratedDocumentCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> PromptResponse:
     """Return a ready-to-paste prompt (job + resume + instructions) for the
@@ -326,7 +326,7 @@ def _user_data_text(
 async def autofill_map(
     request: Request,
     data: AutofillMapRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> AutofillMapResponse:
     """AI field mapper: the extension sends the fields its deterministic pass
@@ -363,7 +363,7 @@ async def autofill_map(
 @_limiter.limit("10/minute")
 async def work_history(
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> WorkHistoryResponse:
     """The user's active résumé as a structured, ordered work-experience list —
@@ -390,7 +390,7 @@ async def work_history(
 )
 async def save_manual_document(
     data: ManualDocumentCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> GeneratedDocumentSchema:
     """Store content the user produced in their OWN AI (the bridge), so it flows
@@ -424,7 +424,7 @@ async def save_manual_document(
 async def generate_document(
     request: Request,
     data: GeneratedDocumentCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> GeneratedDocumentSchema:
     resume, job_description, job_title, company = await _load_resume_and_job(
@@ -784,7 +784,7 @@ def _render_markdown(pdf, text: str) -> None:
 @router.get("/documents/{doc_id}/pdf")
 async def download_document_pdf(
     doc_id: uuid.UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> StreamingResponse:
     """Render the latest content as a PDF. Uses fpdf2 — pure Python, so it works

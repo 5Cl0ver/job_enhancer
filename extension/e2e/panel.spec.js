@@ -92,6 +92,7 @@ test("sign in, then sign out from Settings", async () => {
   await ext.worker.evaluate(() => chrome.storage.local.clear());
   const { tab, panel, errors } = await panelFor(lab.url("/lab/posting.html"));
   await expect(panel.getByRole("heading", { name: "Sign in to Job Catcher" })).toBeVisible();
+  await panel.getByRole("button", { name: "or sign in with a password" }).click();
   await panel.getByLabel("Email").fill("wren@example.com");
   await panel.getByLabel("Password").fill("not-a-real-password");
   await panel.getByRole("button", { name: "Sign in" }).click();
@@ -354,5 +355,6 @@ test("a failed lookup never overwrites the account's Claude link with an old one
   await panel.waitForTimeout(1500);
   expect(api.state.claudeProjectUrl).toBe("https://claude.ai/project/new-one");
   expect(api.calls("/v1/users/me").filter((c) => c.method === "PATCH")).toHaveLength(0);
+  expect(api.calls("/v1/users/me/claude-project")).toHaveLength(0);
   await Promise.all([tab.close(), panel.close()]);
 });
