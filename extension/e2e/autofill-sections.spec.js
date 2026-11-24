@@ -153,6 +153,47 @@ test("Workday: 'I currently work here' ticked by the page for a job that ended i
   await page.close();
 });
 
+test("Workday: after Undo, Autofill again still corrects the cut title (its own fills and Undo are never 'yours')", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/workday-sections.html"));
+  await ext.autofill(page);
+  await expect(page.locator("#w1-title")).toHaveValue("Platform Engineer (Cloud & Tooling)");
+  const tabId = await ext.tabIdOf(page);
+  await ext.bg({ type: "fillAction", tabId, frameId: 0, action: "undo" });
+  await expect(page.locator("#w1-title")).toHaveValue("Platform Engineer");
+  await ext.autofill(page);
+  await expect(page.locator("#w1-title")).toHaveValue("Platform Engineer (Cloud & Tooling)");
+  await expect(page.locator("#w1-company")).toHaveValue("Brightfold Labs");
+  await page.close();
+});
+
+test("Workday: another résumé chosen since the last press — a press refills the rows Job Catcher filled", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/workday-sections.html"));
+  await ext.autofill(page);
+  await expect(page.locator("#w2-company")).toHaveValue("Quillstone");
+  api.state.history = { ...HISTORY, work: [{ ...WORK[0], title: "Cloud Engineer" }, { ...WORK[1], company: "Kelso Labs" }, WORK[2]] };
+  api.state.bundleVersion++;
+  // (Picking another résumé loads its details; here: the copy read afresh.)
+  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill"]));
+  await ext.autofill(page);
+  await expect(page.locator("#w1-title")).toHaveValue("Cloud Engineer");
+  await expect(page.locator("#w2-company")).toHaveValue("Kelso Labs");
+  await page.close();
+});
+
+test("Workday: clicking into the cut title and leaving it doesn't make it yours — a press still corrects it", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/workday-sections.html"));
+  await page.locator("#w1-title").click();
+  await page.locator("#w1-location").click();
+  await page.locator("#w1-desc").click();
+  await ext.autofill(page);
+  await expect(page.locator("#w1-title")).toHaveValue("Platform Engineer (Cloud & Tooling)");
+  await expect(page.locator("#w1-desc")).toHaveValue("Built CI/CD pipelines.");
+  await page.close();
+});
+
 test("Greenhouse-style rows: '+ Add another' until each job has a row; never Save", async () => {
   const page = await ext.context.newPage();
   await page.goto(lab.url("/lab/greenhouse-rows.html"));

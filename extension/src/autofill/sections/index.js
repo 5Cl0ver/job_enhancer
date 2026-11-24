@@ -6,6 +6,7 @@
 import { addRows } from "./generic.js";
 import { normalizeQuestion } from "../classify/answers.js";
 import { questionFor, sectionHeading } from "../scan.js";
+import { shownValue } from "../widgets.js";
 import { fillWorkday, inWorkdaySection, isWorkdaySections, workdayAddress } from "./workday.js";
 
 export { inWorkdaySection, isWorkdaySections };
@@ -29,12 +30,7 @@ export function editKey(el) {
   return `q|${normalizeQuestion(sectionHeading(el) || "")}|${q}|${Math.max(0, same.indexOf(el))}`;
 }
 
-/** What a box shows, to compare with what the user left in it. */
-export function shownValue(el) {
-  if (el.type === "checkbox" || el.type === "radio") return el.checked ? "Yes" : "No";
-  if (el.tagName === "BUTTON") return (el.textContent || "").trim();
-  return String(el.value ?? "").trim();
-}
+export { shownValue };
 
 /** What the sections are filled from. */
 export function sectionData(copy) {

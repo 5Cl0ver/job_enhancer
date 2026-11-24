@@ -16,6 +16,49 @@ const norm = (s) =>
     .replace(/[^a-z0-9+@.]+/g, " ")
     .trim();
 
+// ---- Job Catcher writing ----------------------------------------------------
+// While Job Catcher writes into the page (and a moment after), what the page
+// does is Job Catcher's doing — even TRUSTED events: moving focus fires a real
+// blur/focusout on the box before. The page script asks `writingNow()` before
+// taking anything as the user's own edit, and compares with what Job Catcher
+// last left in a box (`writtenValue`), so its fills and Undos never count.
+
+let writes = 0;
+let quietUntil = 0;
+const lastShown = new WeakMap();
+
+/** Is Job Catcher writing into the page right now (or just was)? */
+export function writingNow() {
+  return writes > 0 || Date.now() < quietUntil;
+}
+
+/** What Job Catcher last left in a box (its fill or its Undo), as `shownValue` reads it. */
+export function writtenValue(el) {
+  return lastShown.get(el);
+}
+
+/** What a box shows, the same way for every kind ("Yes"/"No" for a tick box). */
+export function shownValue(el) {
+  if (!el) return "";
+  if (el.type === "checkbox" || el.type === "radio") return el.checked ? "Yes" : "No";
+  if (el.tagName === "BUTTON" || el.isContentEditable) return (el.textContent || "").trim();
+  return String(el.value ?? "").trim();
+}
+
+/** Run a write as Job Catcher's (field: the box it writes; its result is remembered). */
+export async function asWriter(field, fn) {
+  writes++;
+  try {
+    return await fn();
+  } finally {
+    writes--;
+    quietUntil = Date.now() + 150;
+    for (const el of [field?.el, ...(field?.options || []).map((o) => o.el)]) {
+      if (el?.isConnected) lastShown.set(el, shownValue(el));
+    }
+  }
+}
+
 // ---- Events ---------------------------------------------------------------
 
 /** The window an element belongs to (its event classes and prototypes). */
@@ -281,41 +324,35 @@ function oneAtATime(fn) {
 }
 
 // The application's own pop-up window (LinkedIn Easy Apply, Paycom's "Getting
-// You Started"): never closed by closing a list.
+// You Started", a Bootstrap .modal): never closed by closing a list. Inside
+// one, nothing is ever clicked but the list's own button — a click on the
+// pop-up, its wrapper or its backdrop can dismiss it and lose the application.
 const DIALOG = 'dialog[open], [role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
-function openDialog(doc) {
-  const all = [...doc.querySelectorAll(DIALOG)].filter(shown);
-  return all.filter((d) => !all.some((o) => o !== d && d.contains(o))).pop() || null;
-}
+const inDialog = (el) => !!el?.closest?.(DIALOG);
 
-/**
- * Where a click closes a list without closing anything else: the page's main
- * area — or, with an application pop-up open, that pop-up itself, and only for
- * a list inside it. null: nowhere safe to click.
- */
-function neutralSpot(doc, owner) {
-  const dlg = openDialog(doc);
-  if (dlg) return owner && dlg.contains(owner) ? dlg : null;
-  return doc.querySelector('[data-automation-id="mainContent"]') || doc.body;
+/** Where a click closes a list without closing anything else: the page's main area — never inside a pop-up. */
+function neutralSpot(doc) {
+  const spot = doc.querySelector('[data-automation-id="mainContent"]') || doc.body;
+  return inDialog(spot) ? null : spot;
 }
 
 /** Lists this driver opened (control → the options that were showing before), until closed. */
 const ours = new Map();
 
 /**
- * Shut one list we opened. Outside an application pop-up: Escape, then a
- * click on the page. Inside one: never Escape (it would reach the pop-up) —
- * leave the box (a search box closes on blur), click the pop-up itself, or
- * press the list's own button again.
+ * Shut one list we opened. Outside an application pop-up: Escape, leave the
+ * box, a click on the page, the list's own button. Inside one: only leave the
+ * box or press the list's own button again — if it still won't close, it's
+ * left open (reported) rather than risk the pop-up.
  */
 async function shut(field, isOpen) {
   const el = field.el;
   const doc = el.ownerDocument;
   const closed = () => !isOpen();
   if (closed()) return true;
-  const inDialog = !!openDialog(doc)?.contains(el);
-  if (!inDialog) {
+  const inside = inDialog(el);
+  if (!inside) {
     key(el, "Escape");
     if (await until(closed, 200)) return true;
   }
@@ -325,31 +362,33 @@ async function shut(field, isOpen) {
     el.blur?.();
     if (await until(closed, 200)) return true;
   }
-  const spot = neutralSpot(doc, el);
-  if (spot) {
-    pointerClick(spot);
-    if (await until(closed, 200)) return true;
+  if (!inside) {
+    const spot = neutralSpot(doc);
+    if (spot) {
+      pointerClick(spot);
+      if (await until(closed, 200)) return true;
+    }
   }
-  // A toggle button that ignores all that: press it once more — only while open.
+  // Its own toggle button: press it once more — only while open.
   if (el.tagName !== "INPUT" && !closed()) pointerClick(el);
   return until(closed, 300);
 }
 
 /**
  * Before opening a list: close the lists THIS driver left open, and on a
- * Workday page Workday's own open list (its stacked lists are the bug). Never
- * anything else the page has open, never the application's pop-up.
+ * Workday page Workday's own open list (its stacked lists are the bug) unless
+ * it sits inside a pop-up. Never anything else the page has open.
  */
 async function closeOpenLists(doc, quiet = 400) {
   const mine = () => [...ours].filter(([el, before]) => el.isConnected && listOpen({ el }, before));
-  const workday = () => openPopups(doc);
+  const workday = () => openPopups(doc).filter((p) => !inDialog(p));
   const open = () => mine().length + workday().length > 0;
   for (let round = 0; round < 3 && open(); round++) {
     for (const [el, before] of mine()) await shut({ el }, () => listOpen({ el }, before));
-    if (workday().length && !openDialog(doc)) {
-      for (const c of expandedControls(doc)) if (c.matches('button[aria-haspopup="listbox"]')) key(c, "Escape");
+    if (workday().length) {
+      for (const c of expandedControls(doc)) if (c.matches('button[aria-haspopup="listbox"]') && !inDialog(c)) key(c, "Escape");
       if (!(await until(() => !workday().length, 150))) {
-        const spot = neutralSpot(doc, null);
+        const spot = neutralSpot(doc);
         if (spot) pointerClick(spot);
         await until(() => !workday().length, 150);
       }
@@ -545,7 +584,7 @@ async function writeComboNow(field, candidates, { wait = 2500 } = {}) {
 /** Peek at a dropdown's options without choosing (for the AI's question). */
 export function peekOptions(field) {
   if (field.kind !== "combobox") return Promise.resolve((field.options || []).map((o) => o.label));
-  return oneAtATime(async () => {
+  return oneAtATime(() => asWriter(null, async () => {
     await closeOpenLists(field.el.ownerDocument);
     const before = new Set(visibleOptions(field).map((o) => o.el));
     openCombo(field);
@@ -553,7 +592,7 @@ export function peekOptions(field) {
     const opts = await waitForOptions(field, 1500, before);
     await closeCombo(field, before);
     return opts.map((o) => o.label).slice(0, 60);
-  });
+  }));
 }
 
 // ---- Search prompts: Workday's multi-select (skills, schools, fields) -----
@@ -739,7 +778,11 @@ function clearControl(field) {
   return box.querySelector?.('[aria-label*="clear" i], [aria-label*="remove" i], [class*="clear-indicator"], [class*="ClearIndicator"]');
 }
 
-export async function restore(field, snap) {
+export function restore(field, snap) {
+  return asWriter(field, () => restoreNow(field, snap));
+}
+
+async function restoreNow(field, snap) {
   const el = field.el;
   switch (field.kind) {
     case "radio": {
@@ -801,7 +844,11 @@ export async function restore(field, snap) {
  * @param {Array<string|File>} candidates
  * @returns {Promise<{ok: boolean, actual?: string, reason?: string}>}
  */
-export async function writeField(field, candidates) {
+export function writeField(field, candidates) {
+  return asWriter(field, () => writeFieldNow(field, candidates));
+}
+
+async function writeFieldNow(field, candidates) {
   if (!candidates?.length) return { ok: false, reason: "no_data" };
   try {
     switch (field.kind) {

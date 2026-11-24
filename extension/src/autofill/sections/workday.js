@@ -16,7 +16,7 @@
 import { degreeForms } from "../classify/profileKeys.js";
 import { abilityOf, levelFor, levelOption } from "../classify/languages.js";
 import { fieldId, textOf } from "../scan.js";
-import { pointerClick, readField, setNativeValue, writeField } from "../widgets.js";
+import { asWriter, pointerClick, readField, setNativeValue, writeField } from "../widgets.js";
 
 const FF = (id) => `[data-automation-id="formField-${id}"]`;
 const ROW =
@@ -166,7 +166,7 @@ async function fixPartialDate(ctx, container) {
   const mv = (m?.value || "").trim();
   const yv = (y?.value || "").trim();
   if ((mv && !yv) || (!mv && yv)) {
-    for (const el of [m, y]) if (el && (el.value || "").trim() && !ctx.userEdited(el)) setNativeValue(el, "");
+    for (const el of [m, y]) if (el && (el.value || "").trim() && !ctx.userEdited(el)) await asWriter({ el }, () => setNativeValue(el, ""));
   }
 }
 

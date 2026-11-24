@@ -272,3 +272,45 @@ describe("search prompts (skills, schools)", () => {
     expect(m.chips.children.length).toBe(1);
   });
 });
+
+describe("a Bootstrap-style modal (dismissed by a click on its own wrapper) is never clicked", () => {
+  it("the list inside is closed with its own button; the modal stays", async () => {
+    const ctx = page();
+    const { doc } = ctx;
+    const wrapper = doc.createElement("div");
+    wrapper.className = "modal";
+    wrapper.setAttribute("role", "dialog");
+    wrapper.setAttribute("aria-modal", "true");
+    wrapper.innerHTML = '<div class="modal-dialog"><div class="modal-content"></div></div>';
+    doc.body.appendChild(wrapper);
+    // Bootstrap 5: mousedown AND click both on the wrapper itself → dismissed.
+    let downOnWrapper = false;
+    wrapper.addEventListener("mousedown", (e) => (downOnWrapper = e.target === wrapper));
+    wrapper.addEventListener("click", (e) => downOnWrapper && e.target === wrapper && wrapper.remove());
+    doc.addEventListener("keydown", (e) => e.key === "Escape" && wrapper.remove());
+    const content = wrapper.querySelector(".modal-content");
+    const a = listbox(ctx, "a", ["Yes", "No"], { container: content, plain: true, sticky: true });
+    const res = await writeField(a.field, ["No"]);
+    expect(res.ok).toBe(true);
+    expect(a.btn.textContent).toBe("No");
+    expect(wrapper.isConnected).toBe(true);
+    expect(ctx.stats.open).toBe(0);
+  });
+});
+
+describe("a cookie banner or chat window elsewhere doesn't stop closing Workday's leftover list", () => {
+  it("closes the stray Workday list (not inside the banner) before opening the next", async () => {
+    const ctx = page();
+    const banner = ctx.doc.createElement("div");
+    banner.setAttribute("role", "dialog");
+    banner.textContent = "We use cookies";
+    ctx.doc.body.appendChild(banner);
+    const a = listbox(ctx, "a", ["Yes", "No"]);
+    const b = listbox(ctx, "b", ["Yes", "No"]);
+    a.btn.click();
+    expect((await writeField(b.field, ["Yes"])).ok).toBe(true);
+    expect(ctx.stats.max).toBe(1);
+    expect(ctx.stats.open).toBe(0);
+    expect(banner.isConnected).toBe(true);
+  });
+});

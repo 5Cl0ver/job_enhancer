@@ -13,7 +13,7 @@
 // → widgets.js (write + read back) → session.js (the fill, Fix, Undo).
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
-import { hasValue, readField } from "./autofill/widgets.js";
+import { hasValue, readField, shownValue, writingNow, writtenValue } from "./autofill/widgets.js";
 import { isPlaceholderOption } from "./autofill/classify/answers.js";
 import { guardReason, profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
 import { fingerprintOf, matchTaught } from "./autofill/fingerprint.js";
@@ -25,7 +25,7 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
-import { editKey, fillSections, inWorkdaySection, isWorkdaySections, shownValue } from "./autofill/sections/index.js";
+import { editKey, fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
 
 // This copy owns the page (see orphan.js): drop what older copies drew.
 const isCurrent = claimPage("autofill");
@@ -79,14 +79,20 @@ function openModal() {
   return shown.filter((el) => !shown.some((o) => o !== el && el.contains(o))).pop() || null;
 }
 
-// Boxes the user typed in or chose on this page (real input only — never our
-// own writes): a fill never changes them (spec 020). Remembered per tab by
-// where the box is, not just the element, so a page that redraws its rows
-// (Workday's Back, a resumed draft) still knows: a box showing what the user
-// left in it is theirs.
+// Boxes the user typed in or chose on this page (spec 020): a fill never
+// changes them. Only a REAL change counts — a trusted input/change (or a
+// choice made with a click) while Job Catcher isn't writing, leaving the box
+// different from what Job Catcher last put there and from what it held
+// before the user touched it. Focus and blur alone never count (Job
+// Catcher's own focus moves fire trusted blurs). Remembered per tab by where
+// the box is, so a page that redraws its rows (Workday's Back, a resumed
+// draft) still knows: a box showing what the user left in it is theirs.
 const userEdited = new WeakSet();
+const beforeUser = new WeakMap(); // box → what it held when the user started on it
 let savedEdits = {}; // where → what the user left there (this tab, this site)
 const CONTROL = 'input, textarea, select, [role="combobox"], [contenteditable="true"], button[aria-haspopup]';
+const controlOf = (e) => (e.composedPath?.()[0] || e.target)?.closest?.(CONTROL) || null;
+
 function rememberEdit(el) {
   try {
     const key = editKey(el);
@@ -98,22 +104,41 @@ function rememberEdit(el) {
     /* a box gone mid-way */
   }
 }
-function noteUser(e) {
-  if (!e.isTrusted) return;
-  const el = (e.composedPath?.()[0] || e.target)?.closest?.(CONTROL);
-  if (!el) return;
-  userEdited.add(el);
-  if (e.type === "change" || e.type === "focusout") rememberEdit(el);
+
+/** Did the user really change this box (not Job Catcher, not just a visit)? */
+function reallyChanged(el) {
+  const now = shownValue(el);
+  if (now === writtenValue(el)) return false;
+  return !beforeUser.has(el) || now !== beforeUser.get(el);
 }
-for (const type of ["input", "change", "focusout"]) document.addEventListener(type, noteUser, true);
-// A list button the user opened themselves is theirs too (its choice is read once it's made).
+
+function startTouch(e) {
+  if (!e.isTrusted || writingNow()) return;
+  const el = controlOf(e);
+  if (el && !beforeUser.has(el)) beforeUser.set(el, shownValue(el));
+}
+for (const type of ["keydown", "pointerdown", "paste", "drop"]) document.addEventListener(type, startTouch, true);
+
+function noteUser(e) {
+  if (!e.isTrusted || writingNow()) return;
+  const el = controlOf(e);
+  if (!el || !reallyChanged(el)) return;
+  userEdited.add(el);
+  if (e.type === "change") rememberEdit(el);
+}
+for (const type of ["input", "change"]) document.addEventListener(type, noteUser, true);
+// A list drawn as a button: its choice shows in the button once made.
 document.addEventListener(
   "click",
   (e) => {
-    const btn = e.isTrusted && e.target?.closest?.('button[aria-haspopup="listbox"]');
+    if (!e.isTrusted || writingNow()) return;
+    const btn = e.target?.closest?.('button[aria-haspopup="listbox"]');
     if (!btn) return;
-    userEdited.add(btn);
-    setTimeout(() => rememberEdit(btn), 1500);
+    setTimeout(() => {
+      if (writingNow() || !btn.isConnected || !reallyChanged(btn)) return;
+      userEdited.add(btn);
+      rememberEdit(btn);
+    }, 1500);
   },
   true,
 );

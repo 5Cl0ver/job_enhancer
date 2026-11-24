@@ -314,7 +314,12 @@ export function createSession(deps) {
       const section = sections.get(field.id) || "";
       const part = section === "job" ? jobPart(field) : section === "education" ? eduPart(field) : "";
       const block = part ? (section === "job" ? blockOf : schoolOf)(part, field) : 0;
-      if (filled.has(field.id) || declined.has(field.id)) continue;
+      if (declined.has(field.id)) continue;
+      // Filled by Job Catcher before: left — except a past job's or school's
+      // part on a press, still as we left it, which follows the résumé now
+      // chosen (another résumé picked since the last press).
+      const mine = filled.get(field.id);
+      if (mine && (auto || !part || !agrees(field, readField(field), mine.entry.value))) continue;
       // A box the page filled itself: left alone — except a past job's or a
       // school's part, which is corrected from the résumé when it's wrong
       // (an applicant system's own résumé reading cuts titles; spec 020).
