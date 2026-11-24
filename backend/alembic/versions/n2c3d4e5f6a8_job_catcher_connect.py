@@ -60,6 +60,7 @@ def upgrade() -> None:
         sa.Column("code", sa.String(9), nullable=False, unique=True),
         sa.Column("poll_token_hash", sa.String(64), nullable=False, unique=True),
         sa.Column("proof_hash", sa.String(64), nullable=False),
+        sa.Column("client_hash", sa.String(64), nullable=False, server_default=""),
         _user_fk(nullable=True),
         sa.Column("status", sa.String(16), nullable=False, server_default="pending"),
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
@@ -74,6 +75,11 @@ def upgrade() -> None:
         "ix_extension_connect_requests_status_expires",
         "extension_connect_requests",
         ["status", "expires_at"],
+    )
+    op.create_index(
+        "ix_extension_connect_requests_client",
+        "extension_connect_requests",
+        ["client_hash", "status"],
     )
 
     op.create_table(
@@ -103,6 +109,10 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_extension_installs_user_id", table_name="extension_installs")
     op.drop_table("extension_installs")
+    op.drop_index(
+        "ix_extension_connect_requests_client",
+        table_name="extension_connect_requests",
+    )
     op.drop_index(
         "ix_extension_connect_requests_status_expires",
         table_name="extension_connect_requests",

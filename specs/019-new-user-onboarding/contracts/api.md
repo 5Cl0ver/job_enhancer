@@ -152,8 +152,9 @@ Lists the Job Catchers that said hello on this account, newest first: `[{version
   - start: 10 an hour;
   - poll: 90 a minute (Job Catcher polls 30 a minute);
   - cancel: 30 a minute.
-- Behind Render's proxy, the IP is the **rightmost** X-Forwarded-For entry, and only when the direct peer is a private address. Entries a client adds to the left are never trusted.
-- At most **500** Connect requests may wait at once across everyone; above that, start returns `503 "Busy right now. Try again in a minute."`
+- Behind Render (a private peer, with Cloudflare in front), the client is taken from the first valid one of: CF-Connecting-IP, True-Client-IP, the second-from-right X-Forwarded-For entry, the peer. It is never the leftmost entry, and IPv6 is bucketed by /64. A public peer is used as-is.
+- At most **3** Connects may wait from one address (`429 "Too many Connects waiting from here…"`), and **500** across everyone (`503 "Busy right now. Try again in a minute."`).
+- `PATCH /users/me/claude-project` and `PATCH /users/me` accept only `https://claude.ai/…` or empty; anything else is a 422.
 - Old requests are deleted by a scheduled job every 6 hours, never during a request.
 
 ## Admin

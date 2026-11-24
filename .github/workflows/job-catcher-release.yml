@@ -3,12 +3,14 @@
 # live app. The app's "Get Job Catcher" page links to
 #   https://github.com/5Cl0ver/job_enhancer/releases/latest/download/job-catcher.zip
 #
-# Safety:
-# - The zip's config.js is built from repository VARIABLES (public values) and
-#   the release FAILS if any is empty, not https://, or points at localhost.
-# - Only GITHUB_TOKEN is used; only the release job may write, and only contents.
-# - Third-party actions are pinned to full commit SHAs.
-# - latest.json and the release notes carry the zip's SHA-256.
+# Three jobs, least privilege:
+# - check:   read-only token; which version, and is it released already?
+# - build:   NO token at all. npm ci --ignore-scripts, build, write config.js
+#            from repository VARIABLES (public values; fails if any is empty,
+#            not https, or local), zip, verify, SHA-256, upload as an artifact.
+# - publish: contents: write; no npm, no build. Downloads the artifact, checks
+#            its SHA-256 matches what build reported, then creates the release.
+# Third-party actions are pinned to full commit SHAs.
 name: Job Catcher release
 
 on:
@@ -26,32 +28,29 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  release:
-    name: Build and publish the Job Catcher zip
+  check:
+    name: Which version
     runs-on: ubuntu-latest
     permissions:
-      contents: write
-    defaults:
-      run:
-        shell: bash
-        working-directory: extension
-    env:
-      JC_API_BASE: ${{ vars.JC_API_BASE }}
-      JC_APP_URL: ${{ vars.JC_APP_URL }}
-      JC_SUPABASE_URL: ${{ vars.JC_SUPABASE_URL }}
-      JC_SUPABASE_ANON_KEY: ${{ vars.JC_SUPABASE_ANON_KEY }}
+      contents: read
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      tag: ${{ steps.version.outputs.tag }}
+      exists: ${{ steps.version.outputs.exists }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
           persist-credentials: false
-
-      - name: Which version
+          sparse-checkout: extension/manifest.json
+          sparse-checkout-cone-mode: false
+      - name: Read the version; is it released?
         id: version
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          version="$(node -p "require('./manifest.json').version")"
+          version="$(jq -r .version extension/manifest.json)"
           if ! [[ "$version" =~ ^[0-9]+(\.[0-9]+){1,3}$ ]]; then
             echo "::error::manifest.json version '$version' isn't a plain version number"
             exit 1
@@ -66,15 +65,36 @@ jobs:
             echo "exists=false" >> "$GITHUB_OUTPUT"
           fi
 
+  build:
+    name: Build the zip (no token)
+    needs: check
+    if: needs.check.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      sha256: ${{ steps.zip.outputs.sha256 }}
+    defaults:
+      run:
+        shell: bash
+        working-directory: extension
+    env:
+      JC_API_BASE: ${{ vars.JC_API_BASE }}
+      JC_APP_URL: ${{ vars.JC_APP_URL }}
+      JC_SUPABASE_URL: ${{ vars.JC_SUPABASE_URL }}
+      JC_SUPABASE_ANON_KEY: ${{ vars.JC_SUPABASE_ANON_KEY }}
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
       - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
-        if: steps.version.outputs.exists == 'false'
         with:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: extension/package-lock.json
 
       - name: Build
-        if: steps.version.outputs.exists == 'false'
         run: |
           set -euo pipefail
           # No package install scripts: nothing from npm runs during the install.
@@ -82,7 +102,6 @@ jobs:
           npm run build
 
       - name: Write config.js for the live app (refuse anything else)
-        if: steps.version.outputs.exists == 'false'
         run: |
           set -euo pipefail
           node <<'EOF'
@@ -123,13 +142,13 @@ jobs:
           );
           EOF
 
-      - name: Zip and check every file the manifest needs is inside
-        if: steps.version.outputs.exists == 'false'
+      - name: Zip, check every file the manifest needs is inside, SHA-256
+        id: zip
         run: |
           set -euo pipefail
-          rm -f ../job-catcher.zip
-          zip -r -q ../job-catcher.zip manifest.json config.js icons dist
-          unzip -Z1 ../job-catcher.zip > ../zip-contents.txt
+          mkdir -p ../out
+          zip -r -q ../out/job-catcher.zip manifest.json config.js icons dist
+          unzip -Z1 ../out/job-catcher.zip > ../zip-contents.txt
           node <<'EOF'
           const fs = require("fs");
           const have = new Set(fs.readFileSync("../zip-contents.txt", "utf8").split(/\r?\n/).filter(Boolean));
@@ -153,17 +172,52 @@ jobs:
           }
           console.log(`zip ok: ${have.size} files`);
           EOF
+          sha="$(sha256sum ../out/job-catcher.zip | cut -d' ' -f1)"
+          echo "sha256=$sha" >> "$GITHUB_OUTPUT"
+          echo "SHA-256: $sha"
 
-      - name: Publish the release
-        if: steps.version.outputs.exists == 'false'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: job-catcher-zip
+          path: out/job-catcher.zip
+          if-no-files-found: error
+          retention-days: 7
+
+  publish:
+    name: Publish the release
+    needs: [check, build]
+    if: needs.check.outputs.exists == 'false'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      # Only for the release notes (the notice file and the commit's subject):
+      # nothing from the repo is run here.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+          sparse-checkout: extension/release-notices.txt
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        with:
+          name: job-catcher-zip
+          path: out
+
+      - name: Check the zip is the one build made, then publish
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          VERSION: ${{ steps.version.outputs.version }}
-          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ needs.check.outputs.version }}
+          TAG: ${{ needs.check.outputs.tag }}
+          EXPECTED_SHA: ${{ needs.build.outputs.sha256 }}
         run: |
           set -euo pipefail
-          cd ..
-          sha="$(sha256sum job-catcher.zip | cut -d' ' -f1)"
+          sha="$(sha256sum out/job-catcher.zip | cut -d' ' -f1)"
+          if [[ ! "$EXPECTED_SHA" =~ ^[0-9a-f]{64}$ || "$sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::the zip's SHA-256 ($sha) isn't the one build reported ($EXPECTED_SHA)"
+            exit 1
+          fi
           subject="$(git log -1 --pretty=%s)"
           # A one-time notice for this version, if extension/release-notices.txt
           # has a line "<version>: …" (0.35.0 changes the extension id).
@@ -171,18 +225,18 @@ jobs:
           VERSION="$VERSION" SHA="$sha" SUBJECT="$subject" NOTICE="$notice" node -e '
             const subject = process.env.SUBJECT.replace(/\s*\(#\d+\)$/, "").slice(0, 300);
             const notes = (process.env.NOTICE ? `${process.env.NOTICE} ` : "") + subject;
-            require("fs").writeFileSync("latest.json", JSON.stringify({
+            require("fs").writeFileSync("out/latest.json", JSON.stringify({
               version: process.env.VERSION,
               notes: notes.slice(0, 500),
               sha256: process.env.SHA,
               published_at: new Date().toISOString(),
             }, null, 2) + "\n");
-            require("fs").writeFileSync("release-notes.md",
+            require("fs").writeFileSync("out/release-notes.md",
               `${process.env.NOTICE ? `**${process.env.NOTICE}**\n\n` : ""}${subject}\n\nDownload job-catcher.zip, unzip it into a folder you keep, then load it in chrome://extensions (Developer mode → Load unpacked). Updating: unzip over the same folder and press reload.\n\nSHA-256 of job-catcher.zip: \`${process.env.SHA}\`\n`);
           '
-          gh release create "$TAG" job-catcher.zip latest.json \
+          gh release create "$TAG" out/job-catcher.zip out/latest.json \
             --repo "$GITHUB_REPOSITORY" \
             --target "$GITHUB_SHA" \
             --title "Job Catcher $VERSION" \
-            --notes-file release-notes.md \
+            --notes-file out/release-notes.md \
             --latest

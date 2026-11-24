@@ -42,7 +42,7 @@ vi.mock("@/hooks/useIsPhone", () => ({ useIsPhone: () => phone }));
 import ConnectPage, { NOT_HERE } from "@/routes/ConnectPage";
 import JobCatcherPage from "@/routes/JobCatcherPage";
 import ForgotPasswordPage, { RESET_SENT } from "@/routes/ForgotPasswordPage";
-import ResetPasswordPage, { DISCONNECTED } from "@/routes/ResetPasswordPage";
+import ResetPasswordPage, { DISCONNECTED, NOT_DISCONNECTED } from "@/routes/ResetPasswordPage";
 import { isOlder } from "@/lib/jobCatcher";
 
 function wrap(ui: React.ReactElement) {
@@ -234,5 +234,27 @@ describe("Forgot and reset password", () => {
     // Every Job Catcher is signed out too, and the page says so.
     expect(await screen.findByText(DISCONNECTED)).toBeInTheDocument();
     expect(post).toHaveBeenCalledWith("/v1/extension/tokens/revoke-all", {});
+  });
+
+  it("never claims Job Catcher was disconnected when that failed", async () => {
+    updateUser.mockResolvedValue({ error: null });
+    post.mockRejectedValue(new Error("waking up"));
+    wrap(<ResetPasswordPage retryMs={[0, 0]} />);
+    await userEvent.type(await screen.findByLabelText("New password"), "a-long-password");
+    await userEvent.type(screen.getByLabelText("New password again"), "a-long-password");
+    await userEvent.click(screen.getByRole("button", { name: "Save new password" }));
+    expect(await screen.findByText(NOT_DISCONNECTED)).toBeInTheDocument();
+    expect(screen.queryByText(DISCONNECTED)).not.toBeInTheDocument();
+    expect(post).toHaveBeenCalledTimes(3); // tried again while the server woke
+  });
+
+  it("a second try that works still counts", async () => {
+    updateUser.mockResolvedValue({ error: null });
+    post.mockRejectedValueOnce(new Error("waking up")).mockResolvedValue({ revoked: 1 });
+    wrap(<ResetPasswordPage retryMs={[0, 0]} />);
+    await userEvent.type(await screen.findByLabelText("New password"), "a-long-password");
+    await userEvent.type(screen.getByLabelText("New password again"), "a-long-password");
+    await userEvent.click(screen.getByRole("button", { name: "Save new password" }));
+    expect(await screen.findByText(DISCONNECTED)).toBeInTheDocument();
   });
 });

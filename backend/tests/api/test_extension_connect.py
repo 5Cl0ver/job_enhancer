@@ -293,7 +293,11 @@ async def test_someone_elses_connection_cannot_be_revoked(
 @pytest.mark.asyncio
 async def test_connect_start_is_rate_limited(anon_client: AsyncClient):
     for _ in range(10):
-        await _start(anon_client)
+        started, _ = await _start(anon_client)
+        # Cancelled, so the three-waiting cap isn't what stops us.
+        await anon_client.post(
+            "/v1/extension/connect/cancel", json={"poll_token": started["poll_token"]}
+        )
     _, proof_hash = _proof()
     r = await anon_client.post(
         "/v1/extension/connect/start", json={"proof_hash": proof_hash}
@@ -420,19 +424,83 @@ def test_versions_compare_as_numbers():
     assert app is not None
 
 
-def test_client_ip_trusts_only_what_the_proxy_added():
-    class _Req:
-        def __init__(self, peer, forwarded=""):
-            self.client = type("C", (), {"host": peer})()
-            self.headers = {"x-forwarded-for": forwarded} if forwarded else {}
+class _Req:
+    def __init__(self, peer: str, **headers: str):
+        self.client = type("C", (), {"host": peer})()
+        self.headers = {k.replace("_", "-"): v for k, v in headers.items()}
 
-    # Behind Render's proxy (a private peer): the rightmost hop is the client;
-    # whatever the client typed to its left is ignored.
-    assert client_ip(_Req("10.1.2.3", "6.6.6.6, 203.0.113.9")) == "203.0.113.9"
-    assert client_ip(_Req("10.1.2.3", "203.0.113.9")) == "203.0.113.9"
-    # A public peer is the client itself; its forwarded header is ignored.
-    assert client_ip(_Req("8.8.4.4", "6.6.6.6")) == "8.8.4.4"
-    assert client_ip(_Req("10.1.2.3", "not-an-ip")) == "10.1.2.3"
+
+@pytest.mark.parametrize(
+    ("peer", "headers", "expected"),
+    [
+        # Behind Render (a private peer) and Cloudflare: Cloudflare's header wins.
+        (
+            "10.1.2.3",
+            {
+                "cf_connecting_ip": "203.0.113.9",
+                "x_forwarded_for": "6.6.6.6, 203.0.113.9, 172.64.1.1",
+            },
+            "203.0.113.9",
+        ),
+        # No CF-Connecting-IP: True-Client-IP.
+        ("10.1.2.3", {"true_client_ip": "203.0.113.10"}, "203.0.113.10"),
+        # Neither: second from the right (the rightmost is Cloudflare's edge).
+        (
+            "10.1.2.3",
+            {"x_forwarded_for": "6.6.6.6, 203.0.113.11, 172.64.1.1"},
+            "203.0.113.11",
+        ),
+        # The leftmost (typed by the client) is never used, even when it's all
+        # there is besides the edge.
+        ("10.1.2.3", {"x_forwarded_for": "6.6.6.6"}, "10.1.2.3"),
+        # Invalid values are skipped.
+        (
+            "10.1.2.3",
+            {
+                "cf_connecting_ip": "not-an-ip",
+                "true_client_ip": "1.2.3.4.5",
+                "x_forwarded_for": "x, y",
+            },
+            "10.1.2.3",
+        ),
+        (
+            "10.1.2.3",
+            {"cf_connecting_ip": "evil", "true_client_ip": "203.0.113.12"},
+            "203.0.113.12",
+        ),
+        # A public peer is the client itself; its headers are ignored.
+        (
+            "8.8.4.4",
+            {"cf_connecting_ip": "6.6.6.6", "x_forwarded_for": "6.6.6.6, 7.7.7.7"},
+            "8.8.4.4",
+        ),
+        # IPv6 counts by its /64.
+        ("10.1.2.3", {"cf_connecting_ip": "2001:db8:1:2:aaaa::1"}, "2001:db8:1:2::/64"),
+        ("2606:4700::1111", {}, "2606:4700::/64"),
+    ],
+)
+def test_client_ip_behind_render_and_cloudflare(peer, headers, expected):
+    assert client_ip(_Req(peer, **headers)) == expected
+
+
+@pytest.mark.asyncio
+async def test_at_most_three_waiting_connects_per_address(
+    anon_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    for _ in range(3):
+        await _start(anon_client)
+    _, proof_hash = _proof()
+    r = await anon_client.post(
+        "/v1/extension/connect/start", json={"proof_hash": proof_hash}
+    )
+    assert r.status_code == 429 and "waiting from here" in r.text
+    # Another address can still start one.
+    r = await anon_client.post(
+        "/v1/extension/connect/start",
+        json={"proof_hash": proof_hash},
+        headers={"CF-Connecting-IP": "203.0.113.50"},
+    )
+    assert r.status_code == 200
 
 
 @pytest.mark.asyncio
@@ -441,7 +509,11 @@ async def test_start_says_busy_when_too_many_wait(
 ):
     monkeypatch.setattr(svc, "MAX_PENDING", 2)
     await _start(anon_client)
-    await _start(anon_client)
+    await anon_client.post(
+        "/v1/extension/connect/start",
+        json={"proof_hash": _proof()[1]},
+        headers={"CF-Connecting-IP": "203.0.113.60"},
+    )
     _, proof_hash = _proof()
     r = await anon_client.post(
         "/v1/extension/connect/start", json={"proof_hash": proof_hash}

@@ -149,9 +149,32 @@ async def test_a_pass_works_on_job_catcher_routes(
     )
     assert r.status_code == 200
     assert r.json()["claude_project_url"] == "https://claude.ai/project/abc"
-    bad = await anon_client.patch(
-        "/v1/users/me/claude-project",
-        json={"claude_project_url": "javascript:alert(1)"},
-        headers=auth,
+    for bad_url in (
+        "javascript:alert(1)",
+        "https://evil.example/project",
+        "http://claude.ai/project/x",
+        "https://claude.ai.evil.example/",
+        "https://claude.ai/ x",
+    ):
+        bad = await anon_client.patch(
+            "/v1/users/me/claude-project",
+            json={"claude_project_url": bad_url},
+            headers=auth,
+        )
+        assert bad.status_code == 422, bad_url
+    cleared = await anon_client.patch(
+        "/v1/users/me/claude-project", json={"claude_project_url": ""}, headers=auth
+    )
+    assert cleared.json()["claude_project_url"] is None
+
+
+@pytest.mark.asyncio
+async def test_the_apps_own_settings_take_only_claude_links(client: AsyncClient):
+    ok = await client.patch(
+        "/v1/users/me", json={"claude_project_url": "https://claude.ai/project/abc"}
+    )
+    assert ok.status_code == 200
+    bad = await client.patch(
+        "/v1/users/me", json={"claude_project_url": "https://evil.example/x"}
     )
     assert bad.status_code == 422

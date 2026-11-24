@@ -99,7 +99,12 @@ async def connect_start(
     request: Request, data: StartIn, db: AsyncSession = Depends(get_db)
 ) -> StartOut:
     try:
-        req, poll_token = await svc.start(db, data.proof_hash)
+        req, poll_token = await svc.start(db, data.proof_hash, client_ip(request))
+    except svc.TooManyHere as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Too many Connects waiting from here. Finish or cancel one first.",
+        ) from exc
     except svc.Busy as exc:
         raise HTTPException(
             status_code=503, detail="Busy right now. Try again in a minute."

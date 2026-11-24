@@ -20,6 +20,9 @@ class UserProfile(BaseModel):
     model_config = {"from_attributes": True}
 
 
+CLAUDE_URL_PREFIX = "https://claude.ai/"
+
+
 class UserUpdate(BaseModel):
     name: str | None = None
     follow_up_days: int | None = Field(None, ge=1, le=90)
@@ -28,11 +31,12 @@ class UserUpdate(BaseModel):
     @field_validator("claude_project_url")
     @classmethod
     def _http_or_empty(cls, v: str | None) -> str | None:
-        # Empty string clears it; otherwise it must be a real URL.
+        # Empty string clears it; otherwise only a claude.ai address (it's
+        # opened from the app and Job Catcher, so nothing else may ride in).
         if not v:
             return None
-        if not v.startswith(("http://", "https://")):
-            raise ValueError("Claude project link must start with http:// or https://")
+        if not v.startswith(CLAUDE_URL_PREFIX) or any(c.isspace() for c in v):
+            raise ValueError("Claude project link must start with https://claude.ai/")
         return v
 
 

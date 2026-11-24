@@ -12,19 +12,37 @@ export const MIN_PASSWORD = 8;
 
 export const DISCONNECTED =
   "Your password is changed. Job Catcher was disconnected on all computers; press Connect in Job Catcher again.";
+export const NOT_DISCONNECTED =
+  "Your password is changed, but we couldn't disconnect Job Catcher right now. Open Job Catcher › Connected computers to disconnect them.";
+
+/** Waits between tries when the server is waking up (Render's free tier). */
+const RETRY_MS = [1500, 4000];
+
+/** Disconnect every Job Catcher, trying again while the server wakes. */
+async function revokeAll(waits: number[]): Promise<boolean> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      await api.post("/v1/extension/tokens/revoke-all", {});
+      return true;
+    } catch {
+      if (attempt >= waits.length) return false;
+      await new Promise((r) => setTimeout(r, waits[attempt]));
+    }
+  }
+}
 
 /**
  * Choose a new password (spec 019). Reached from the emailed reset link,
  * which signs the person in for this one purpose.
  */
-export default function ResetPasswordPage() {
+export default function ResetPasswordPage({ retryMs = RETRY_MS }: { retryMs?: number[] } = {}) {
   const navigate = useNavigate();
   const [ready, setReady] = useState<"checking" | "yes" | "no">("checking");
   const [password, setPassword] = useState("");
   const [again, setAgain] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<"" | "all" | "password-only">("");
 
   useEffect(() => {
     const supabase = createClient();
@@ -55,9 +73,9 @@ export default function ResetPasswordPage() {
     }
     // A reset may mean someone else knew the password: sign Job Catcher out
     // everywhere too.
-    await api.post("/v1/extension/tokens/revoke-all", {}).catch(() => {});
+    const revoked = await revokeAll(retryMs);
     setBusy(false);
-    setDone(true);
+    setDone(revoked ? "all" : "password-only");
   };
 
   return (
@@ -81,7 +99,12 @@ export default function ResetPasswordPage() {
           )}
           {done && (
             <div className="space-y-3" role="status">
-              <p className="text-sm">{DISCONNECTED}</p>
+              <p className="text-sm">{done === "all" ? DISCONNECTED : NOT_DISCONNECTED}</p>
+              {done === "password-only" && (
+                <Button variant="outline" className="w-full" onClick={() => navigate("/job-catcher")}>
+                  Open Connected computers
+                </Button>
+              )}
               <Button className="w-full" onClick={() => navigate("/", { replace: true })}>
                 Continue
               </Button>

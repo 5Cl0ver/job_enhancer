@@ -39,6 +39,8 @@ MAX_TOKENS = 10
 TOUCH_EVERY = timedelta(minutes=15)
 # Connects waiting at once, across everyone: above this, start says "busy".
 MAX_PENDING = 500
+# …and from one address (one person rarely needs more than one).
+MAX_PENDING_PER_CLIENT = 3
 # No 0/O, 1/I/L: a code people can read aloud and compare at a glance.
 _CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
@@ -53,6 +55,10 @@ def same_hash(a: str, b: str) -> bool:
 
 class Busy(Exception):
     """Too many Connects waiting right now."""
+
+
+class TooManyHere(Exception):
+    """Too many Connects waiting from this address."""
 
 
 def _now() -> datetime:
@@ -84,11 +90,13 @@ def _state(req: ExtensionConnectRequest) -> str:
 
 
 async def start(
-    db: AsyncSession, proof_hash: str
+    db: AsyncSession, proof_hash: str, client: str = ""
 ) -> tuple[ExtensionConnectRequest, str]:
     """A new request; returns it and the raw poll token (never stored).
     ``proof_hash``: sha256 of a secret only the starting Job Catcher holds.
-    Raises ``Busy`` when too many are already waiting."""
+    ``client``: the starter's rate-limit address (stored only as a hash).
+    Raises ``Busy`` when too many are waiting overall, ``TooManyHere`` when
+    too many are waiting from this address."""
     pending = await db.scalar(
         select(func.count())
         .select_from(ExtensionConnectRequest)
@@ -99,6 +107,19 @@ async def start(
     )
     if (pending or 0) >= MAX_PENDING:
         raise Busy()
+    client_hash = hash_secret(client) if client else ""
+    if client_hash:
+        here = await db.scalar(
+            select(func.count())
+            .select_from(ExtensionConnectRequest)
+            .where(
+                ExtensionConnectRequest.client_hash == client_hash,
+                ExtensionConnectRequest.status == "pending",
+                ExtensionConnectRequest.expires_at > _now(),
+            )
+        )
+        if (here or 0) >= MAX_PENDING_PER_CLIENT:
+            raise TooManyHere()
     poll_token = secrets.token_urlsafe(32)
     for _ in range(5):
         code = _new_code()
@@ -113,6 +134,7 @@ async def start(
         code=code,
         poll_token_hash=hash_secret(poll_token),
         proof_hash=proof_hash.lower(),
+        client_hash=client_hash,
         status="pending",
         expires_at=_now() + REQUEST_TTL,
     )

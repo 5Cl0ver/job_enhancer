@@ -108,6 +108,13 @@ Each decision lists what was chosen, why, and what else was considered. Facts ab
   - A sign-out revoke that fails is kept and retried at the next start or every 30 minutes.
   - A dead refresh token (400/401) is forgotten instead of retried forever.
 
+**Security re-review fixes (2026-11-24)**:
+- **Client address on Render:** Render sits behind Cloudflare and appends Cloudflare's edge to X-Forwarded-For. Behind a private peer, the order is CF-Connecting-IP, then True-Client-IP, then the second-from-right X-Forwarded-For entry, then the peer. Values are validated; IPv6 is bucketed by /64; the leftmost entry is never used.
+- **Per-address cap:** at most 3 Connects may wait from one address (stored as a hash), on top of the global 500.
+- **Password reset:** the app retries revoke-all while the server wakes. If it still fails, the page says so and points to Connected computers; it never claims success.
+- **Claude Project link:** only `https://claude.ai/…` (or empty to clear), in the app, the Job Catcher endpoint and wherever it's opened.
+- **Release:** three jobs. `check` uses a read-only token; `build` has no token (`npm ci --ignore-scripts`, zip, SHA-256, artifact); `publish` has `contents: write` and runs no npm. It verifies the artifact's SHA-256 against build's output, then releases. Actions are pinned by SHA.
+
 **Alternatives considered**:
 - **Supabase admin `generate_link` + `verify`.** It gives a separate Supabase session, confirmed in the Supabase Auth docs. But it needs the service-role key on Render, which the owner wanted no setup for, and that key is far more powerful than needed.
 - **The app posts its own session to the extension:** shares one refresh token, leading to reuse detection and surprise sign-outs.

@@ -88,7 +88,8 @@ export async function hasClaudeTab(): Promise<boolean> {
 
 /** Résumé drafts always land on the user's Claude Project. */
 export async function openClaudeProject(projectUrl: string): Promise<"focused" | "navigated" | "opened"> {
-  const url = /^https?:\/\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW;
+  // Only ever a claude.ai address (the account allows nothing else either).
+  const url = /^https:\/\/claude\.ai\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW;
   const [existing] = await claudeTabs();
   if (existing?.id) {
     try {
@@ -128,6 +129,6 @@ export async function openClaude(projectUrl: string): Promise<"focused" | "opene
       /* the tab closed meanwhile: open a new one */
     }
   }
-  await openTab(/^https?:\/\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW);
+  await openTab(/^https:\/\/claude\.ai\//i.test(projectUrl) ? projectUrl : CLAUDE_NEW);
   return "opened";
 }

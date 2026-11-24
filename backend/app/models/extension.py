@@ -51,6 +51,7 @@ class ExtensionConnectRequest(Base):
     __table_args__ = (
         Index("ix_extension_connect_requests_created_at", "created_at"),
         Index("ix_extension_connect_requests_status_expires", "status", "expires_at"),
+        Index("ix_extension_connect_requests_client", "client_hash", "status"),
     )
 
     id: Mapped[uuid.UUID] = mapped_column(
@@ -62,6 +63,9 @@ class ExtensionConnectRequest(Base):
     )
     # sha256 of the starting Job Catcher's proof: approval must present it.
     proof_hash: Mapped[str] = mapped_column(String(64), nullable=False)
+    # sha256 of the starter's rate-limit address (never the address itself):
+    # caps how many may wait from one place.
+    client_hash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
     user_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"), nullable=True
     )
