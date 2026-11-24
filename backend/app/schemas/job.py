@@ -53,6 +53,11 @@ class PaginatedMeta(BaseModel):
 class JobSearchResponse(BaseModel):
     results: list[JobListingSchema]
     meta: PaginatedMeta
+    # False when a live fetch was wanted but today's live searches are used up
+    # (spec 019): the results are from jobs already in the app, and ``note``
+    # says so.
+    live: bool = True
+    note: str | None = None
 
 
 class MatchResponse(BaseModel):

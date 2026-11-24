@@ -10,13 +10,15 @@ A connected Job Catcher may instead send its own pass, `Bearer jcx_…` (spec
 019): looked up by hash, revocable, never a Supabase token.
 """
 
+import logging
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 import httpx
 from fastapi import Depends, HTTPException, status
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -24,6 +26,7 @@ from app.database import get_db
 from app.models.user import User
 from app.services.extension_connect import TOKEN_PREFIX, user_for_token
 
+logger = logging.getLogger(__name__)
 _bearer = HTTPBearer(auto_error=False)
 
 # Supabase's public signing keys, cached in-process. Keys rotate rarely; on a
@@ -105,6 +108,7 @@ async def _resolve_user(
         user = await user_for_token(db, credentials.credentials)
         if user is None:
             raise _unauthorized("Job Catcher is disconnected. Connect it again.")
+        await touch_active(db, user)
         return user
 
     claims = await _decode_token(credentials.credentials)
@@ -133,7 +137,34 @@ async def _resolve_user(
             admin_email=settings.admin_email,
         )
 
+    await touch_active(db, user)
     return user
+
+
+_ACTIVE_EVERY = timedelta(minutes=15)
+
+
+async def touch_active(db: AsyncSession, user: User) -> None:
+    """Note real use of the app or Job Catcher (spec 019 R10): at most one
+    write per person every 15 minutes. Never fails a request."""
+    now = datetime.now(UTC)
+    seen = user.last_active_at
+    if seen is not None and seen.tzinfo is None:  # SQLite hands back naive times
+        seen = seen.replace(tzinfo=UTC)
+    if seen is not None and now - seen < _ACTIVE_EVERY:
+        return
+    try:
+        async with db.begin_nested():
+            await db.execute(
+                update(User)
+                .where(User.id == user.id)
+                .values(last_active_at=now)
+                .execution_options(synchronize_session=False)
+            )
+        await db.commit()
+        user.last_active_at = now
+    except Exception:
+        logger.warning("Could not note when this account was last active")
 
 
 async def get_current_user(

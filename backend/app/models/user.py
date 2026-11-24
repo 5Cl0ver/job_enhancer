@@ -28,6 +28,9 @@ class User(Base):
     # When Job Catcher turned this account's one-site answers into answers for
     # every site (spec 020): once per account, so a deleted one stays deleted.
     learn_promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Real use of the app or Job Catcher (spec 019 R10), touched at most every
+    # 15 minutes by auth. The admin's "active" counts and user list read it.
+    last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

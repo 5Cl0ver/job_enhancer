@@ -86,42 +86,42 @@
 
 ### Phase 6: Polish (PR B)
 - [X] T026 Update `MANIFEST.md`s (backend models, services, frontend routes, components, hooks, lib). Bump the extension version to 0.38.0 (`manifest.json`, `package.json`, release notes).
-- [ ] T027 All suites pass: backend pytest + ruff; frontend vitest + `npm run build` + lint; extension check + unit + Playwright. Then PR, independent review (code + security), fixes, green CI, squash-merge, and the live migration check.
+- [X] T027 All suites pass: backend pytest + ruff; frontend vitest + `npm run build` + lint; extension check + unit + Playwright. Then PR, independent review (code + security), fixes, green CI, squash-merge, and the live migration check.
 
 ## PR C: Fair use + owner view (branch `019c-fair-use-admin`)
 
 ### Phase 7: Setup
-- [ ] T028 Migration `r6a7b8c9d0e2_fair_use.py`:
+- [X] T028 Migration `r6a7b8c9d0e2_fair_use.py`:
   - Create table `usage_counters`: id, user_id nullable FK with cascade, kind, period, count; unique (user_id, kind, period) with `postgresql_nulls_not_distinct=True`; RLS.
   - Create table `app_settings` (key PK, value JSON, updated_at; RLS).
   - Add `users.last_active_at`, backfilled from updated_at.
-- [ ] T029 [P] Models `UsageCounter` and `AppSetting` in `backend/app/models/usage.py`; `User.last_active_at` in `backend/app/models/user.py`.
+- [X] T029 [P] Models `UsageCounter` and `AppSetting` in `backend/app/models/usage.py`; `User.last_active_at` in `backend/app/models/user.py`.
 
 ### Phase 8: US6, fair use of the shared services (P2)
 
 **Independent test:** with live_search set to 1, a normal user's second live search falls back to the pool with a note and nothing spent. AI kinds return 429 ALLOWANCE when over. The admin is never blocked. The JSearch reserve keeps the last 40 for the owner.
 
-- [ ] T030 [P] [US6] Tests in `backend/tests/services/test_allowance.py`:
+- [X] T030 [P] [US6] Tests in `backend/tests/services/test_allowance.py`:
   - spend and remaining; at the limit, raises and spends nothing;
   - refund never goes below 0;
   - admin exempt (counted, not blocked);
   - Pacific day rollover;
   - the jsearch reserve;
   - settings fallback and validation.
-- [ ] T031 [US6] Service `backend/app/services/allowance.py`:
+- [X] T031 [US6] Service `backend/app/services/allowance.py`:
   - `DEFAULTS`, `limits(db)`, `period_for(kind, now)`, `resets_at(now)`;
   - `spend(db, user, kind)` (a conditional upsert-increment that refuses at the limit), `refund`, `usage(db, user)`;
   - `jsearch_allowed(db, user)` and `spend_jsearch(db)`;
   - `AllowanceExceeded`, with an exception handler giving 429 `{detail:{code:"ALLOWANCE",…}}`.
-- [ ] T032 [US6] Hook the services up:
+- [X] T032 [US6] Hook the services up:
   - `/ai/generate` (ai_document);
   - `/ai/autofill-map` (ai_autofill);
   - `/ai/work-history` and `from-resume`, **only when the AI runs** (ai_read);
   - refund on failure (`backend/app/api/v1/ai.py`, `backend/app/api/v1/users.py`);
   - live search (refresh, or an empty pool) spends `live_search`. Over the allowance → pool only, plus `live:false` and a `note` (`backend/app/api/v1/jobs.py`, `backend/app/services/job_search.py`, `backend/app/schemas/job.py`);
   - JSearch counted per request, and skipped for non-admins past cap−reserve.
-- [ ] T033 [US6] `GET /v1/usage` (session only) in `backend/app/api/v1/onboarding.py`. Tests in `backend/tests/api/test_allowance_api.py`, including the 429 shape and the search fallback.
-- [ ] T034 [US6] Frontend:
+- [X] T033 [US6] `GET /v1/usage` (session only) in `backend/app/api/v1/usage.py`. Tests in `backend/tests/api/test_allowance_api.py`, including the 429 shape and the search fallback.
+- [X] T034 [US6] Frontend:
   - `useUsage` hook;
   - `AllowanceNote` ("N of M left today ⓘ", shown only for kinds that are on);
   - the 429 message through `readableError` (it reads `detail.message`);
@@ -132,17 +132,17 @@
 
 **Independent test:** the admin user list shows each user's setup ticks, Job Catcher version (amber if outdated), last active, and use today and this month. A non-admin gets 403.
 
-- [ ] T035 [US7] `last_active_at` touched in `_resolve_user` when it is older than 15 minutes (`backend/app/middleware/auth.py`). Admin stats active counts use it (`backend/app/services/admin_service.py`).
-- [ ] T036 [US7] Admin endpoints:
+- [X] T035 [US7] `last_active_at` touched in `_resolve_user` when it is older than 15 minutes (`backend/app/middleware/auth.py`). Admin stats active counts use it (`backend/app/services/admin_service.py`).
+- [X] T036 [US7] Admin endpoints:
   - `GET /admin/users` adds `last_active_at`, `onboarding` ticks, `job_catcher {version, last_seen_at, outdated}`, `usage_today` and `usage_month` (an `AdminUserRow` schema);
   - `GET` and `PUT /admin/allowances`, validated;
   - files: `backend/app/api/v1/admin.py`, `backend/app/services/admin_service.py`, `backend/app/schemas/user.py`;
   - tests in `backend/tests/api/test_admin.py`.
-- [ ] T037 [US7] Frontend: the `UserTable` columns (setup ticks with titles, version, last active, AI and searches today) and an `AllowancesCard` with number inputs and Save. Files: `frontend/src/components/admin/{UserTable,AllowancesCard}.tsx`, `frontend/src/hooks/useAdmin.ts`, `frontend/src/routes/AdminPage.tsx`. Include tests.
-- [ ] T038 [US7] The export includes `usage` (the last 90 days); the purge job deletes daily counters older than 400 days (`backend/app/api/v1/users.py`, `backend/app/main.py`).
+- [X] T037 [US7] Frontend: the `UserTable` columns (setup ticks with titles, version, last active, AI and searches today) and an `AllowancesCard` with number inputs and Save. Files: `frontend/src/components/admin/{UserTable,AllowancesCard}.tsx`, `frontend/src/hooks/useAdmin.ts`, `frontend/src/routes/AdminPage.tsx`. Include tests.
+- [X] T038 [US7] The export includes `usage` (the last 90 days); the purge job deletes daily counters older than 400 days (`backend/app/api/v1/users.py`, `backend/app/main.py`).
 
 ### Phase 10: Polish (PR C)
-- [ ] T039 Update the MANIFESTs and docs. All suites; PR; independent review (code + security); fixes; green CI; squash-merge; live migration and endpoint check.
+- [X] T039 Update the MANIFESTs and docs. All suites; PR; independent review (code + security); fixes; green CI; squash-merge; live migration and endpoint check.
 
 ## Dependencies
 

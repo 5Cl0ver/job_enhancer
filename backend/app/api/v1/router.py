@@ -17,6 +17,7 @@ from app.api.v1 import (
     saved_searches,
     scout,
     tracker,
+    usage,
     users,
 )
 
@@ -41,3 +42,4 @@ api_router.include_router(scout.router, prefix="/scout", tags=["Scout"])
 api_router.include_router(autofill.router, prefix="/autofill", tags=["Autofill"])
 api_router.include_router(extension.router, prefix="/extension", tags=["Job Catcher"])
 api_router.include_router(onboarding.router, tags=["Onboarding"])
+api_router.include_router(usage.router, tags=["Usage"])

@@ -19,8 +19,11 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.config import settings
 from app.models.job_listing import JobListing
+from app.models.user import User
 from app.schemas.job import JobListingSchema, JobSearchResponse, PaginatedMeta
+from app.services import allowance
 from app.services.dedup import is_duplicate, job_content_hash, normalize
 from app.services.sources import get_sources
 
@@ -157,8 +160,16 @@ async def _ingest_live(
     page: int,
     page_size: int,
     sources: frozenset[str],
+    user: User | None = None,
 ) -> None:
-    """Fetch the selected sources in parallel and upsert them into the pool."""
+    """Fetch the selected sources in parallel and upsert them into the pool.
+    JSearch only while the shared month allows this person (spec 019)."""
+    if (
+        "jsearch" in sources
+        and settings.jsearch_api_key
+        and not await allowance.jsearch_take(db, user)
+    ):
+        sources = sources - {"jsearch"}
     active = get_sources(sources)
     if not active:
         return
@@ -233,6 +244,7 @@ async def aggregate_and_deduplicate(
     page_size: int = 20,
     refresh: bool = False,
     sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive", "jobicy"}),
+    user: User | None = None,
 ) -> JobSearchResponse:
     """Cache-first job search.
 
@@ -240,6 +252,10 @@ async def aggregate_and_deduplicate(
     when ``refresh`` is requested or the pool has nothing for this query — keeping
     the request path fast and reserving API budgets for scheduled ingestion.
     See docs/job-data-architecture.md.
+
+    With a ``user`` (an interactive search), a live fetch spends one of their
+    live searches today (spec 019). Over the allowance, the results come from
+    the pool only, with ``live`` false and a note; searching never errors.
     """
     result = await _query_page(
         db,
@@ -254,7 +270,18 @@ async def aggregate_and_deduplicate(
         page_size,
     )
     if refresh or result.meta.total == 0:
-        await _ingest_live(db, q, location, page, page_size, sources)
+        if user is not None:
+            try:
+                await allowance.spend(db, user, "live_search")
+            except allowance.AllowanceExceeded as over:
+                result.live = False
+                result.note = (
+                    f"You've used today's {over.limit} live searches, so these are "
+                    "jobs already in the app. Live searches come back at midnight "
+                    "(Pacific)."
+                )
+                return result
+        await _ingest_live(db, q, location, page, page_size, sources, user)
         result = await _query_page(
             db,
             q,

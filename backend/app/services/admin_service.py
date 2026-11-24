@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
 from app.models.user import User
+from app.schemas.user import AdminJobCatcher, AdminUserRow, UserProfile
 
 logger = logging.getLogger(__name__)
 
@@ -47,14 +48,14 @@ async def get_platform_stats(db: AsyncSession) -> PlatformStats:
         await db.scalar(
             select(func.count())
             .select_from(User)
-            .where(User.updated_at >= day_7, User.deleted_at.is_(None))
+            .where(User.last_active_at >= day_7, User.deleted_at.is_(None))
         )
     ) or 0
     active_30d = (
         await db.scalar(
             select(func.count())
             .select_from(User)
-            .where(User.updated_at >= day_30, User.deleted_at.is_(None))
+            .where(User.last_active_at >= day_30, User.deleted_at.is_(None))
         )
     ) or 0
     new_7d = (
@@ -148,3 +149,81 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
     )
     statuses.extend(checks)
     return statuses
+
+
+# --------------------------------------------------------------------------- #
+# The owner's user list (spec 019 part C, US7)
+# --------------------------------------------------------------------------- #
+
+
+async def _users_with(db: AsyncSession, model, user_ids: list) -> set:
+    return set(
+        await db.scalars(
+            select(model.user_id).where(model.user_id.in_(user_ids)).distinct()
+        )
+    )
+
+
+async def user_rows(db: AsyncSession, users: list[User]) -> list[AdminUserRow]:
+    """Each person's setup progress, Job Catcher version, real last activity
+    and free-service use, in a few batched queries (one page of users)."""
+    from app.models.email_account import EmailAccount
+    from app.models.extension import ExtensionInstall
+    from app.models.onboarding import UserOnboarding
+    from app.models.resume import Resume
+    from app.models.saved_job import SavedJob
+    from app.services import allowance, releases
+
+    ids = [u.id for u in users]
+    if not ids:
+        return []
+    onboarding = {
+        r.user_id: r
+        for r in await db.scalars(
+            select(UserOnboarding).where(UserOnboarding.user_id.in_(ids))
+        )
+    }
+    with_resume = await _users_with(db, Resume, ids)
+    with_job = await _users_with(db, SavedJob, ids)
+    with_email = await _users_with(db, EmailAccount, ids)
+    newest: dict = {}
+    for install in await db.scalars(
+        select(ExtensionInstall)
+        .where(ExtensionInstall.user_id.in_(ids))
+        .order_by(ExtensionInstall.last_seen_at.desc())
+    ):
+        newest.setdefault(install.user_id, install)
+    latest = (await releases.latest()).get("version")
+    today, month = await allowance.usage_by_user(db, ids)
+
+    rows = []
+    for u in users:
+        ob = onboarding.get(u.id)
+        jc = newest.get(u.id)
+        rows.append(
+            AdminUserRow(
+                **UserProfile.model_validate(u).model_dump(),
+                last_active_at=u.last_active_at,
+                onboarding={
+                    "welcome_done": bool(ob and ob.welcome_done_at),
+                    "resume": u.id in with_resume,
+                    "profile": bool(ob and ob.profile_reviewed_at),
+                    "job_catcher": jc is not None,
+                    "first_job": u.id in with_job,
+                    "email": u.id in with_email,
+                    "claude": bool((ob and ob.claude_seen_at) or u.claude_project_url),
+                },
+                job_catcher=(
+                    AdminJobCatcher(
+                        version=jc.version,
+                        last_seen_at=jc.last_seen_at,
+                        outdated=releases.is_older(jc.version, latest),
+                    )
+                    if jc
+                    else None
+                ),
+                usage_today=today.get(u.id, {}),
+                usage_month=month.get(u.id, {}),
+            )
+        )
+    return rows

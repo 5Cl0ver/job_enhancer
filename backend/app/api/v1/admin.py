@@ -9,8 +9,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.database import get_db
 from app.middleware.auth import require_admin
 from app.models.user import User
-from app.schemas.user import AdminUserUpdate, UserProfile
-from app.services import admin_service
+from app.schemas.user import AdminUserRow, AdminUserUpdate, AllowancesIn, UserProfile
+from app.services import admin_service, allowance
 from app.services.users import soft_delete_user
 
 router = APIRouter()
@@ -42,13 +42,13 @@ async def get_health(
     return await admin_service.check_service_health(db)
 
 
-@router.get("/users", response_model=list[UserProfile])
+@router.get("/users", response_model=list[AdminUserRow])
 async def list_users(
     page: int = Query(1, ge=1),
     page_size: int = Query(25, ge=1, le=100),
     _user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
-) -> list[UserProfile]:
+) -> list[AdminUserRow]:
     offset = (page - 1) * page_size
     result = await db.execute(
         select(User)
@@ -57,7 +57,8 @@ async def list_users(
         .offset(offset)
         .limit(page_size)
     )
-    return [UserProfile.model_validate(u) for u in result.scalars().all()]
+    # Setup progress, Job Catcher, last active and use (spec 019 part C).
+    return await admin_service.user_rows(db, list(result.scalars().all()))
 
 
 @router.patch("/users/{user_id}", response_model=UserProfile)
@@ -94,3 +95,28 @@ async def remove_user(
         )
     target = await _get_active_user_or_404(db, user_id)
     await soft_delete_user(db, target)
+
+
+@router.get("/allowances")
+async def get_allowances(
+    _user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """The daily free allowances and the shared live-search month (spec 019)."""
+    return await allowance.limits(db)
+
+
+@router.put("/allowances")
+async def put_allowances(
+    data: AllowancesIn,
+    _user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, int]:
+    """Change them; the new numbers apply from each person's next use."""
+    current = await allowance.limits(db)
+    try:
+        return await allowance.save_limits(
+            db, current | data.model_dump(exclude_none=True)
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc

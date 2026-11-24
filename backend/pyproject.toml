@@ -42,6 +42,9 @@ dependencies = [
     # Deduplication
     "rapidfuzz>=3.9.0",
 
+    # Time zones (fair-use days reset at midnight Pacific; slim images ship none)
+    "tzdata>=2024.1",
+
     # Resume parsing
     "pdfplumber>=0.11.0",
     "python-docx>=1.1.0",

@@ -4,7 +4,7 @@ import uuid
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, EmailStr, Field, field_validator
+from pydantic import BaseModel, EmailStr, Field, StrictInt, field_validator
 
 
 class UserProfile(BaseModel):
@@ -18,6 +18,36 @@ class UserProfile(BaseModel):
     created_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class AdminJobCatcher(BaseModel):
+    version: str
+    last_seen_at: datetime
+    outdated: bool
+
+
+class AdminUserRow(UserProfile):
+    """A row of the owner's user list (spec 019 part C, US7)."""
+
+    last_active_at: datetime | None = None
+    # welcome_done, resume, profile, job_catcher, first_job, email, claude
+    onboarding: dict[str, bool]
+    job_catcher: AdminJobCatcher | None = None
+    usage_today: dict[str, int]
+    usage_month: dict[str, int]
+
+
+class AllowancesIn(BaseModel):
+    """The owner's allowance numbers (validated in services/allowance)."""
+
+    model_config = {"extra": "forbid"}
+
+    ai_document: StrictInt | None = Field(None, ge=0, le=10_000)
+    ai_read: StrictInt | None = Field(None, ge=0, le=10_000)
+    ai_autofill: StrictInt | None = Field(None, ge=0, le=10_000)
+    live_search: StrictInt | None = Field(None, ge=0, le=10_000)
+    jsearch_month_cap: StrictInt | None = Field(None, ge=0, le=10_000)
+    jsearch_owner_reserve: StrictInt | None = Field(None, ge=0, le=10_000)
 
 
 CLAUDE_URL_PREFIX = "https://claude.ai/"

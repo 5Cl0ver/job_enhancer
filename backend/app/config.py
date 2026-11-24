@@ -33,6 +33,9 @@ class Settings(BaseSettings):
     # application profile from a résumé uses the built-in reader only. Turn on
     # in the AI phase once a live model is set.
     ai_in_profile_fill: bool = False
+    # The same pause for writing documents and the Autofill AI pass: while
+    # off, the app shows no "AI documents left today" labels (spec 019 R13).
+    ai_writing_on: bool = False
 
     # Job APIs — OPTIONAL. Adzuna + JSearch need keys; without them those two
     # sources just return nothing (the app still aggregates from the keyless

@@ -41,7 +41,7 @@ from app.schemas.resume import (
     WorkExperienceEntry,
     WorkHistoryResponse,
 )
-from app.services import ai_service, resume_history, resume_parser
+from app.services import ai_service, allowance, resume_history, resume_parser
 from app.services import saved_jobs as sj_svc
 from app.services.match import skills_in_resume
 from app.utils.content_disposition import content_disposition, file_headers
@@ -350,7 +350,8 @@ async def autofill_map(
     )
     user_data = _user_data_text(profile, answers, resume_text)
     fields = [f.model_dump() for f in data.fields]
-    mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
+    async with allowance.spending(db, user, "ai_autofill"):
+        mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
     return AutofillMapResponse(mappings=mappings, confidence=confidence)
 
 
@@ -431,15 +432,21 @@ async def generate_document(
         db, user, data.resume_id, data.job_listing_id
     )
 
-    # Generate content
-    if data.document_type == "resume":
-        content, model_used, generation_ms = await ai_service.generate_tailored_resume(
-            resume.extracted_text, job_description, job_title, company
-        )
-    else:
-        content, model_used, generation_ms = await ai_service.generate_cover_letter(
-            resume.extracted_text, job_description, job_title, company
-        )
+    # Generate content: one of today's free AI documents (spec 019), given
+    # back if writing fails.
+    async with allowance.spending(db, user, "ai_document"):
+        if data.document_type == "resume":
+            (
+                content,
+                model_used,
+                generation_ms,
+            ) = await ai_service.generate_tailored_resume(
+                resume.extracted_text, job_description, job_title, company
+            )
+        else:
+            content, model_used, generation_ms = await ai_service.generate_cover_letter(
+                resume.extracted_text, job_description, job_title, company
+            )
 
     doc = GeneratedDocument(
         id=uuid.uuid4(),

@@ -16,6 +16,7 @@ from app.api.v1.router import api_router
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.mcp_server import build_mcp_app
+from app.services.allowance import AllowanceExceeded
 from app.utils.rate_limit import rate_limit_key
 
 logger = logging.getLogger(__name__)
@@ -55,6 +56,16 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         hours=6,
         args=[AsyncSessionLocal],
         id="purge_connect_requests",
+        replace_existing=True,
+    )
+    from app.services.allowance import purge_old_usage
+
+    scheduler.add_job(
+        purge_old_usage,
+        trigger="interval",
+        hours=24,
+        args=[AsyncSessionLocal],
+        id="purge_old_usage",
         replace_existing=True,
     )
     from app.services.saved_searches import refresh_saved_searches
@@ -151,6 +162,15 @@ async def validation_exception_handler(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
         content={"detail": str(exc)},
     )
+
+
+@app.exception_handler(AllowanceExceeded)
+async def allowance_exceeded_handler(
+    request: Request, exc: AllowanceExceeded
+) -> JSONResponse:
+    """Over today's free allowance (spec 019): a plain message, the reset time
+    and what still works. Nothing was spent."""
+    return JSONResponse(status_code=429, content={"detail": exc.detail()})
 
 
 @app.exception_handler(Exception)

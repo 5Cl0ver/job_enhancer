@@ -19,6 +19,7 @@ import { useResumes, useGenerateDocument, useGeneratedDocument } from "@/hooks/u
 import { useSavedJobs } from "@/hooks/useSavedJobs";
 import type { GeneratedDocument } from "@/types/api";
 import { InfoBubble } from "@/components/common/InfoBubble";
+import { AllowanceNote } from "@/components/common/AllowanceNote";
 
 // Radix <SelectItem> forbids an empty-string value, so the "no job" choice uses
 // a sentinel that maps back to "" (which the API treats as no target job).
@@ -76,7 +77,10 @@ export default function AIApplyPage() {
         <Alert variant="destructive">
           <AlertCircle className="h-4 w-4" />
           <AlertDescription>
-            AI service is temporarily unavailable. All other features remain accessible.
+            {/* Over today's free allowance (429): its own plain message and reset time. */}
+            {(generateDoc.error as { status?: number } | null)?.status === 429
+              ? generateDoc.error?.message
+              : "AI service is temporarily unavailable. All other features remain accessible."}
           </AlertDescription>
         </Alert>
       )}
@@ -145,6 +149,7 @@ export default function AIApplyPage() {
             </Button>
           </div>
 
+          <AllowanceNote kind="ai_document" />
           {!activeResume && (
             <p className="text-xs text-muted-foreground">
               Upload a resume above to enable document generation.

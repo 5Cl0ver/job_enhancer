@@ -75,6 +75,12 @@ export const HELP = {
     why: "Interview invites and rejections move your jobs for you.",
     needs: "An app password: a separate password your email gives out for apps. We show you how to get one.",
   },
+  allowance: {
+    title: "Daily allowance",
+    what: "Some free services are shared by everyone, so each person gets a daily amount. It comes back at midnight (Pacific).",
+    why: "One person can't use it all up for everyone else.",
+    needs: "Nothing. Searching the jobs already in the app is never limited.",
+  },
   settingsExport: {
     title: "Export",
     what: "A file with everything you keep in Job Enhancer.",

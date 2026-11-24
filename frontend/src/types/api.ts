@@ -40,6 +40,9 @@ export interface PaginatedMeta {
 export interface JobSearchResponse {
   results: JobListing[];
   meta: PaginatedMeta;
+  /** False when today's live searches were used up (spec 019): `note` says so. */
+  live?: boolean;
+  note?: string | null;
 }
 
 export interface Collection {
@@ -95,6 +98,23 @@ export interface UserProfile {
   follow_up_days: number;
   created_at: string;
 }
+
+/** A row of the owner's user list (spec 019 part C). */
+export interface AdminUserRow extends UserProfile {
+  last_active_at: string | null;
+  onboarding: Record<
+    "welcome_done" | "resume" | "profile" | "job_catcher" | "first_job" | "email" | "claude",
+    boolean
+  >;
+  job_catcher: { version: string; last_seen_at: string; outdated: boolean } | null;
+  usage_today: Record<string, number>;
+  usage_month: Record<string, number>;
+}
+
+export type Allowances = Record<
+  "ai_document" | "ai_read" | "ai_autofill" | "live_search" | "jsearch_month_cap" | "jsearch_owner_reserve",
+  number
+>;
 
 export interface GeneratedDocument {
   id: string;

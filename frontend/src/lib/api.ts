@@ -23,6 +23,9 @@ export function readableError(text: string): string {
   try {
     const detail = (JSON.parse(text) as { detail?: unknown }).detail;
     if (typeof detail === "string" && detail) return detail;
+    // Over a daily allowance (spec 019): {"detail": {"code": "ALLOWANCE", "message": …}}
+    const message = (detail as { message?: unknown } | null)?.message;
+    if (typeof message === "string" && message) return message;
   } catch {
     // not JSON: show the text itself
   }

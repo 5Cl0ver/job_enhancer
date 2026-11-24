@@ -1,7 +1,7 @@
 """User account endpoints (US6 — Account Management): profile, export, delete."""
 
 import json
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import StreamingResponse
@@ -10,6 +10,7 @@ from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
+from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.application_profile import ApplicationProfile
@@ -23,6 +24,7 @@ from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.taught_field import TaughtField
+from app.models.usage import UsageCounter
 from app.models.user import User
 from app.schemas.user import (
     ApplicationProfileSchema,
@@ -34,6 +36,7 @@ from app.schemas.user import (
     UserProfile,
     UserUpdate,
 )
+from app.services import allowance
 from app.services.profile_extract import extract_profile
 from app.services.users import soft_delete_user
 from app.utils.rate_limit import rate_limit_key
@@ -126,7 +129,11 @@ async def fill_profile_from_resume(
     if not resume or not resume.extracted_text:
         raise HTTPException(status_code=404, detail="Upload a resume first")
 
-    extracted = await extract_profile(resume.extracted_text)
+    if settings.ai_in_profile_fill:  # one of today's free AI reads (spec 019)
+        async with allowance.spending(db, user, "ai_read"):
+            extracted = await extract_profile(resume.extracted_text)
+    else:  # AI paused: the built-in reader only, nothing spent
+        extracted = await extract_profile(resume.extracted_text)
 
     profile = await db.scalar(
         select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
@@ -327,6 +334,15 @@ async def export_data(
     )
 
     onboarding_row = await db.get(UserOnboarding, user.id)
+    # Free-service use, the last 90 days (spec 019 part C).
+    since = (datetime.utcnow() - timedelta(days=90)).date().isoformat()
+    usage_rows = (
+        await db.scalars(
+            select(UsageCounter).where(
+                UsageCounter.user_id == user.id, UsageCounter.period >= since
+            )
+        )
+    ).all()
 
     def _dt(v: datetime | None) -> str | None:
         return v.isoformat() if v else None
@@ -436,6 +452,9 @@ async def export_data(
             if onboarding_row
             else None
         ),
+        "usage": [
+            {"kind": u.kind, "day": u.period, "count": u.count} for u in usage_rows
+        ],
     }
 
     json_bytes = json.dumps(export, indent=2).encode()
