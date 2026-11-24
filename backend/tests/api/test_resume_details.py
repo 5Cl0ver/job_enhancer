@@ -180,7 +180,7 @@ async def _a_pass(db: AsyncSession, user: User) -> str:
     return token
 
 
-async def test_job_catcher_can_read_but_not_edit_or_reread(
+async def test_job_catcher_can_read_but_not_edit(
     anon_client: AsyncClient, db_session, test_user
 ):
     r = await _resume(db_session, test_user)
@@ -195,9 +195,6 @@ async def test_job_catcher_can_read_but_not_edit_or_reread(
         await anon_client.put(
             f"/v1/autofill/resumes/{r.id}/details", headers=auth, json={}
         )
-    ).status_code == 401
-    assert (
-        await anon_client.post(f"/v1/autofill/resumes/{r.id}/read", headers=auth)
     ).status_code == 401
 
 
@@ -320,3 +317,74 @@ async def test_a_failed_reading_never_logs_the_resume(db_session, test_user, cap
     ):
         await resume_history.read_in_background(r.id)
     assert "SECRET-LINE-123" not in caplog.text
+
+
+async def test_your_usual_resume_on_purpose_beats_the_resume_types(
+    client: AsyncClient, db_session, test_user
+):
+    """A job whose résumé type has a résumé: picking "your usual résumé" sticks."""
+    from app.models.resume_track import ResumeTrack
+    from app.models.saved_job import SavedJob
+
+    typed = await _resume(db_session, test_user, name="type.pdf")
+    saved = (
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": "https://careers.example/jobs/9",
+                "title": "Analyst",
+                "company": "Kelso Labs",
+            },
+        )
+    ).json()
+    track = ResumeTrack(user_id=test_user.id, name="Data", resume_id=typed.id)
+    db_session.add(track)
+    await db_session.flush()
+    sj = await db_session.get(SavedJob, uuid.UUID(saved["id"]))
+    sj.track_id = track.id
+    await db_session.commit()
+    jobs = (await client.get("/v1/saved-jobs/summary")).json()["jobs"]
+    assert jobs[0]["resume_id"] == str(typed.id)  # the résumé type's
+
+    await client.put(
+        f"/v1/saved-jobs/{saved['id']}/resume", json={"resume_id": None, "usual": True}
+    )
+    jobs = (await client.get("/v1/saved-jobs/summary")).json()["jobs"]
+    assert jobs[0]["resume_id"] is None and jobs[0]["resume_usual"] is True
+
+
+async def test_promotion_is_recorded_once_per_account(
+    client: AsyncClient, db_session, test_user
+):
+    assert (await client.get("/v1/autofill/bundle")).json()["promoted"] is False
+    assert (await client.post("/v1/autofill/promoted")).status_code == 204
+    assert (await client.get("/v1/autofill/bundle")).json()["promoted"] is True
+
+
+async def test_work_history_from_the_chosen_resume(
+    client: AsyncClient, db_session, test_user
+):
+    active = await _resume(db_session, test_user, name="usual.pdf")
+    active.is_active = True
+    other = await _resume(
+        db_session,
+        test_user,
+        name="data.pdf",
+        text="EXPERIENCE\nData Analyst | Opaline Pay | 2021 - 2023\n",
+    )
+    await db_session.commit()
+    usual = (await client.post("/v1/ai/work-history", json={})).json()["entries"]
+    chosen = (
+        await client.post(f"/v1/ai/work-history?resume_id={other.id}", json={})
+    ).json()["entries"]
+    assert usual[0]["company"] == "Tidewell Labs"
+    assert chosen[0]["company"] == "Opaline Pay"
+
+
+async def test_job_catcher_can_read_a_chosen_resume_that_was_never_read(
+    anon_client: AsyncClient, db_session, test_user
+):
+    r = await _resume(db_session, test_user)
+    auth = {"Authorization": f"Bearer {await _a_pass(db_session, test_user)}"}
+    got = await anon_client.post(f"/v1/autofill/resumes/{r.id}/read", headers=auth)
+    assert got.status_code == 200 and got.json()["read"] is True

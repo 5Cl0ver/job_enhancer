@@ -75,7 +75,8 @@ export function useSetJobResume() {
   const qc = useQueryClient();
   return useMutation({
     mutationFn: ({ savedJobId, resumeId }: { savedJobId: string; resumeId: string | null }) =>
-      api.put(`/v1/saved-jobs/${encodeURIComponent(savedJobId)}/resume`, { resume_id: resumeId }),
+      // No résumé picked = "your usual résumé" on purpose (not the résumé type's).
+      api.put(`/v1/saved-jobs/${encodeURIComponent(savedJobId)}/resume`, { resume_id: resumeId, usual: resumeId === null }),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["saved-jobs"] }),
   });
 }

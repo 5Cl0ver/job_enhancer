@@ -25,6 +25,9 @@ class User(Base):
     # The user's Claude Project link — shared source of truth so the extension
     # and the web app both open drafts/research in the same place (edit either).
     claude_project_url: Mapped[str | None] = mapped_column(String(2048))
+    # When Job Catcher turned this account's one-site answers into answers for
+    # every site (spec 020): once per account, so a deleted one stays deleted.
+    learn_promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

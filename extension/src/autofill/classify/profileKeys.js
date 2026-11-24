@@ -148,10 +148,12 @@ export function profileKeyFor(field) {
 }
 
 // Workday's "Preferred Name" block labels its boxes plainly "First Name" and
-// "Last Name" (spec 020): there they're the preferred name, never the legal one.
-const PREFERRED_BLOCK = /\bpreferred\b|\bnick ?name\b|\bgoes by\b/i;
+// "Last Name" (spec 020): there they're the preferred name, never the legal
+// one. Only the box's OWN group counts (scan.js groupTitle), and only a
+// preferred NAME — never "Preferred Qualifications" or "Preferred contact".
+const PREFERRED_BLOCK = /preferred\s*name|nick\s*name|name you (go|prefer)|\bgo(es)? by\b/i;
 function inPreferredBlock(field, key) {
-  if (!PREFERRED_BLOCK.test(field.hints?.section || "")) return key;
+  if (!PREFERRED_BLOCK.test(field.hints?.group || "")) return key;
   if (key === "first_name" || key === "full_name") return "preferred_name";
   if (key === "last_name") return "preferred_last_name";
   return key;

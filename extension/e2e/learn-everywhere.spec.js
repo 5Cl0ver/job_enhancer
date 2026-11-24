@@ -28,9 +28,16 @@ test.beforeEach(async () => {
   api.state.answers = [];
   api.state.taught = [];
   api.state.resumes = {};
+  api.state.jobs = [];
+  api.state.jobsVersion++;
   api.state.history = null;
+  api.state.promoted = true; // promotion has its own test
   api.state.bundleVersion++;
-  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill", "je_chosen_resume", "je_promoted_020"]));
+  await ext.worker.evaluate(async () => {
+    await chrome.storage.local.remove(["je_autofill", "je_chosen_resume", "je_saved_cache", "je_not_this", "je_page_job"]);
+    const all = await chrome.storage.session.get(null);
+    await chrome.storage.session.remove(Object.keys(all).filter((k) => k.startsWith("je_resume_choice:")));
+  });
 });
 
 async function clickBox(page, box) {
@@ -120,10 +127,10 @@ test("answers taught on one site before 0.36 are promoted once: preferred name e
     { id: "t1", site: "apply.example.com", fingerprint: { label: "preferred name", kind: "text", section: "" }, profile_key: null, answer: "Ren", updated_at: "2026-11-20T00:00:00Z" },
     { id: "t2", site: "acme.wd5.myworkdayjobs.com", fingerprint: { label: "first name", kind: "text", section: "" }, profile_key: null, answer: "Ren", updated_at: "2026-11-23T00:00:00Z" },
   ];
+  api.state.promoted = false;
   api.state.bundleVersion++;
-  // A refresh still running from an earlier test may have marked it done.
-  await new Promise((r) => setTimeout(r, 500));
-  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill", "je_promoted_020"]));
+  await new Promise((r) => setTimeout(r, 300));
+  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill"]));
   await ext.bg({ type: "refreshAutofillCopy" });
   await expect.poll(() => api.state.answers.map((x) => `${x.question_key}=${x.answer}`), { timeout: 8000 }).toEqual(["@preferred_name=Ren"]);
   const b = await ext.context.newPage();
@@ -131,10 +138,15 @@ test("answers taught on one site before 0.36 are promoted once: preferred name e
   expect((await ext.autofill(b)).ok).toBe(true);
   await expect(b.locator("#nick")).toHaveValue("Ren");
   await expect(b.locator("#first")).toHaveValue(PERSON.profile.first_name);
-  // Once only.
-  const before = api.calls("/v1/users/me/custom-answers").length;
+  // Once per ACCOUNT: recorded on the account, so deleting the answer in the
+  // app sticks, even on another computer (a fresh copy).
+  await expect.poll(() => api.state.promoted).toBe(true);
+  api.state.answers = [];
+  api.state.bundleVersion++;
+  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill"]));
   await ext.bg({ type: "refreshAutofillCopy" });
-  expect(api.calls("/v1/users/me/custom-answers").length).toBe(before);
+  await new Promise((r) => setTimeout(r, 500));
+  expect(api.state.answers).toEqual([]);
   await b.close();
 });
 
@@ -176,4 +188,86 @@ test("a chosen résumé that can't be loaded is never swapped silently: the pane
   await choice.getByLabel("Résumé for this application").selectOption("resume-3");
   await expect(panel.getByTestId("resume-choice-failed")).toContainText("Couldn't load wren-broken.pdf");
   await Promise.all([page.close(), panel.close()]);
+});
+
+
+test("pointing at a name box never saves it by itself; only Always use this does", async () => {
+  const a = await ext.context.newPage();
+  await a.goto(lab.url("/lab/names-a.html"));
+  await a.locator("#legal").fill("Renata");
+  const panel = await panelFor(a);
+  await ext.bg({ type: "startPick", tabId: await ext.tabIdOf(a) });
+  await expect(panel.getByTestId("pointing")).toBeVisible({ timeout: 5000 });
+  await clickBox(a, a.locator("#legal"));
+  const ask = panel.getByTestId("what-goes-here");
+  await expect(ask.getByLabel("The answer")).toHaveValue("Renata", { timeout: 5000 });
+  await a.waitForTimeout(500);
+  expect(api.state.answers).toEqual([]); // nothing saved by pointing alone
+  await expect(ask.getByText(/Saved “/)).toHaveCount(0);
+  await Promise.all([a.close(), panel.close()]);
+});
+
+const DATA_RESUME = () => ({
+  filename: "wren-data.pdf",
+  bytes: Buffer.from("%PDF-1.4\n% invented data résumé\n"),
+  details: { work: [{ title: "Data Analyst", company: "Tidewell Labs", location: "Harborview, OR", start_month: 3, start_year: 2023, end_month: null, end_year: null, current: true, description: "" }] },
+});
+
+test("with the panel closed, a press uses the linked job's own résumé", async () => {
+  api.state.history = { work: [{ title: "Help Desk Analyst", company: "Quillstone", start_month: 6, start_year: 2020, end_month: 2, end_year: 2023, current: false }], education: [] };
+  api.state.resumes = { "resume-2": DATA_RESUME() };
+  const url = lab.url("/lab/employment.html");
+  api.state.jobs = [{ id: "j1", job_listing_id: "l1", title: "Application", company: "Opal Ridge Labs", location: "", url, applied_at: null, resume_id: "resume-2" }];
+  api.state.jobsVersion++;
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  expect((await ext.autofill(page)).ok).toBe(true); // no panel open
+  const f = await page.evaluate(() => window.__formData());
+  expect(f["e1-company"]).toBe("Tidewell Labs");
+  expect(api.calls("/v1/autofill/resumes/resume-2/file").length).toBeGreaterThan(0);
+  await page.close();
+});
+
+test("a résumé chosen on one page doesn't follow you to another page in the same tab", async () => {
+  api.state.history = { work: [{ title: "Help Desk Analyst", company: "Quillstone", start_month: 6, start_year: 2020, end_month: 2, end_year: 2023, current: false }], education: [] };
+  api.state.resumes = { "resume-2": DATA_RESUME() };
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/employment.html"));
+  await ext.bg({ type: "chooseResume", tabId: await ext.tabIdOf(page), resumeId: "resume-2", filename: "wren-data.pdf" });
+  await page.goto(lab.url("/lab/employment.html?step=2"));
+  expect((await ext.autofill(page)).ok).toBe(true);
+  expect((await page.evaluate(() => window.__formData()))["e1-company"]).toBe("Quillstone");
+  await page.close();
+});
+
+test("choosing your usual résumé for a job sticks, over the job's own", async () => {
+  api.state.history = { work: [{ title: "Help Desk Analyst", company: "Quillstone", start_month: 6, start_year: 2020, end_month: 2, end_year: 2023, current: false }], education: [] };
+  api.state.resumes = { "resume-2": DATA_RESUME() };
+  const url = lab.url("/lab/employment.html");
+  api.state.jobs = [{ id: "j1", job_listing_id: "l1", title: "Application", company: "Opal Ridge Labs", location: "", url, applied_at: null, resume_id: "resume-2" }];
+  api.state.jobsVersion++;
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  await ext.bg({ type: "chooseResume", tabId: await ext.tabIdOf(page), resumeId: null, filename: "" });
+  expect(api.state.jobResumes.j1).toBe("usual");
+  expect((await ext.autofill(page)).ok).toBe(true);
+  expect((await page.evaluate(() => window.__formData()))["e1-company"]).toBe("Quillstone");
+  await page.close();
+});
+
+test("a chosen résumé that was never read is read on the spot; its sections never come from another résumé", async () => {
+  api.state.history = { work: [{ title: "Help Desk Analyst", company: "Quillstone", start_month: 6, start_year: 2020, end_month: 2, end_year: 2023, current: false }], education: [] };
+  const r = DATA_RESUME();
+  api.state.resumes = { "resume-2": { ...r, unread: true, readsAs: r.details, details: {} } };
+  api.state.bundleVersion++;
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/employment.html"));
+  await ext.bg({ type: "chooseResume", tabId: await ext.tabIdOf(page), resumeId: "resume-2", filename: "wren-data.pdf" });
+  expect((await ext.autofill(page)).ok).toBe(true);
+  expect(api.calls("/v1/autofill/resumes/resume-2/read").length).toBeGreaterThan(0);
+  expect((await page.evaluate(() => window.__formData()))["e1-company"]).toBe("Tidewell Labs");
+  await page.close();
 });

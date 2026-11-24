@@ -40,6 +40,8 @@ PASS_ROUTES = {
     ("GET", "/v1/autofill/taught"),
     ("DELETE", "/v1/autofill/taught/{taught_id}"),
     ("GET", "/v1/autofill/resumes/{resume_id}/details"),
+    ("POST", "/v1/autofill/resumes/{resume_id}/read"),
+    ("POST", "/v1/autofill/promoted"),
     ("GET", "/v1/autofill/resumes/{resume_id}/file"),
     ("PUT", "/v1/saved-jobs/{saved_job_id}/resume"),
     ("GET", "/v1/ai/resumes"),

@@ -28,9 +28,10 @@ def test_hostile_text_is_read_fast(text):
 
 
 def test_years_out_of_range_are_dropped():
-    out = read("EXPERIENCE\nAnalyst | Kelso Labs | Jan 1066 - Dec 9999\n")
-    job = out["work"][0]
-    assert job["start_year"] is None and job["end_year"] is None
+    # Impossible years make no date range, so no job is made from that line.
+    assert (
+        read("EXPERIENCE\nAnalyst | Kelso Labs | Jan 1066 - Dec 9999\n")["work"] == []
+    )
     edu = read("EDUCATION\nLakeview College, B.A. Economics, 3010\n")["education"][0]
     assert edu["end_year"] is None
 

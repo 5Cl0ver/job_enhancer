@@ -93,6 +93,11 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
         .limit(1)
     )
     read = resume is not None and resume.parsed_history_at is not None
+    from app.models.user import User
+
+    promoted_at = await db.scalar(
+        select(User.learn_promoted_at).where(User.id == user_id)
+    )
     return {
         "changed": True,
         "version": await bundle_version(db, user_id, email),
@@ -124,6 +129,9 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
             }
             for t in taught
         ],
+        # Job Catcher already turned this account's one-site answers into
+        # answers for every site (spec 020): never again.
+        "promoted": promoted_at is not None,
         "history": (resume.parsed_history or None) if read else None,
         "history_pending": resume is not None
         and not read

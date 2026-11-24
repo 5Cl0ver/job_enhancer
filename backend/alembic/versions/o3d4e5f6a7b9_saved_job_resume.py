@@ -27,9 +27,18 @@ def upgrade() -> None:
                 "read_attempts", sa.Integer(), nullable=False, server_default="0"
             )
         )
+    with op.batch_alter_table("users") as batch:
+        batch.add_column(
+            sa.Column("learn_promoted_at", sa.DateTime(timezone=True), nullable=True)
+        )
     with op.batch_alter_table("saved_jobs") as batch:
         batch.add_column(
             sa.Column("resume_id", postgresql.UUID(as_uuid=True), nullable=True)
+        )
+        batch.add_column(
+            sa.Column(
+                "resume_usual", sa.Boolean(), nullable=False, server_default=sa.false()
+            )
         )
         batch.create_foreign_key(
             "fk_saved_jobs_resume_id",
@@ -43,6 +52,9 @@ def upgrade() -> None:
 def downgrade() -> None:
     with op.batch_alter_table("saved_jobs") as batch:
         batch.drop_constraint("fk_saved_jobs_resume_id", type_="foreignkey")
+        batch.drop_column("resume_usual")
         batch.drop_column("resume_id")
+    with op.batch_alter_table("users") as batch:
+        batch.drop_column("learn_promoted_at")
     with op.batch_alter_table("resumes") as batch:
         batch.drop_column("read_attempts")

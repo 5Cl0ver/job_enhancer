@@ -101,7 +101,7 @@ _URL = re.compile(
 # is a page or two, and every pattern runs on one short line at a time.
 MAX_TEXT = 50_000
 MAX_LINE = 400
-YEARS = range(1900, 2101)
+YEARS = range(1950, 2101)
 
 
 def _year(value: str) -> int | None:
@@ -141,12 +141,27 @@ def _point(text: str) -> tuple[int | None, int | None, bool]:
     return None, None, False
 
 
+_HAS_MONTH = re.compile(rf"{_MONTH}\s+\d{{4}}|\b\d{{1,2}}/\d{{4}}", re.IGNORECASE)
+_HEAD_MARK = re.compile(r"\||·|•|—|–|@|\bat\b|,|\s{3,}|\t")
+
+
 def _dates(line: str) -> dict | None:
+    """A job's date range on this line, or None. Years alone ("2019 - 2021")
+    count only on a short line that names something next to them — never a
+    sentence, a shift ("0800-1700") or prose that mentions years."""
     m = _RANGE.search(line)
     if not m:
         return None
     sm, sy, _ = _point(m.group("start"))
     em, ey, current = _point(m.group("end"))
+    if sy is None or (ey is None and not current):
+        return None
+    if not _HAS_MONTH.search(m.group(0)):
+        head = (line[: m.start()] + " " + line[m.end() :]).strip(" |·•,–—-\t()")
+        marked = bool(_HEAD_MARK.search(line[: m.start()]))
+        short = len(head) <= 60 and len(head.split()) <= 10
+        if head.endswith(".") or not (not head or marked or short):
+            return None
     return {
         "start_month": sm,
         "start_year": sy,
@@ -287,7 +302,34 @@ def _job_from(candidates: list[str], dates: dict) -> dict | None:
     }
 
 
+# "Sep 2021 –" with "Jun 2023" on the next line: one range.
+_LONE_START = re.compile(rf"^\s*{_POINT}\s*(?:-|–|—|to)?\s*$", re.IGNORECASE)
+_LONE_END = re.compile(rf"^\s*(?:-|–|—|to)?\s*{_POINT}\s*$", re.IGNORECASE)
+
+
+def _join_split_dates(lines: list[str]) -> list[str]:
+    out: list[str] = []
+    i = 0
+    while i < len(lines):
+        line = lines[i]
+        if (
+            i + 1 < len(lines)
+            and _LONE_START.match(line)
+            and _LONE_END.match(lines[i + 1])
+            and not _RANGE.search(line)
+        ):
+            start = line.strip().rstrip("-–— ").removesuffix(" to").strip()
+            end = re.sub(r"^\s*(?:-|–|—|to)\s*", "", lines[i + 1].strip())
+            out.append(f"{start} - {end}")
+            i += 2
+            continue
+        out.append(line)
+        i += 1
+    return out
+
+
 def _work(lines: list[str]) -> list[dict]:
+    lines = _join_split_dates(lines)
     jobs: list[dict] = []
     pending: list[str] = []  # lines naming the next job, before its dates
     in_bullets = False
@@ -306,10 +348,14 @@ def _work(lines: list[str]) -> list[dict]:
             head = (line[:a] + " " + line[b:]).strip(" |·•,–—-\t")
             candidates = _pieces(head)
             # A dates line that names the job on its own needs nothing else;
-            # otherwise the line just above holds the rest ("Title" over
-            # "Company | City | dates", "Company, City" over "Title  dates").
-            if len([c for c in candidates if not _PLACE.match(c)]) < 2 and pending:
-                candidates = _pieces(pending[-1]) + candidates
+            # otherwise the lines just above hold the rest ("Title" over
+            # "Company | City | dates", "Company, City" over "Title  dates", or
+            # "Title" / "Company" / "dates" on three lines).
+            named = lambda c: [x for x in c if not _PLACE.match(x)]  # noqa: E731
+            for prev in reversed(pending[-2:]):
+                if len(named(candidates)) >= 2:
+                    break
+                candidates = _pieces(prev) + candidates
             job = _job_from(candidates, dates)
             if job:
                 jobs.append(job)
@@ -379,6 +425,23 @@ def _education(lines: list[str]) -> list[dict]:
     return schools[:6]
 
 
+def _split_top(text: str) -> list[str]:
+    """Split on , ; | • · — but not inside brackets: "Azure (AD, Intune)"."""
+    parts, cur, depth = [], "", 0
+    for ch in text:
+        if ch in "([":
+            depth += 1
+        elif ch in ")]" and depth:
+            depth -= 1
+        if depth == 0 and ch in ",;|•·":
+            parts.append(cur)
+            cur = ""
+        else:
+            cur += ch
+    parts.append(cur)
+    return [p.strip() for p in parts]
+
+
 def _list(lines: list[str]) -> list[str]:
     items: list[str] = []
     for line in lines:
@@ -386,7 +449,7 @@ def _list(lines: list[str]) -> list[str]:
         # "Endpoints: Windows 10/11, macOS" — drop the group label.
         if ":" in text and len(text.split(":", 1)[0]) <= 30:
             text = text.split(":", 1)[1]
-        for part in re.split(r"\s*[,;|•·]\s*", text):
+        for part in _split_top(text):
             part = part.strip(" .")
             if 1 < len(part) <= 60 and part.lower() not in (i.lower() for i in items):
                 items.append(part)

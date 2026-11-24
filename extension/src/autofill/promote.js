@@ -32,7 +32,7 @@ export function promotions(taught, answers) {
       question: label,
       key: label,
       kind: fp.kind || "text",
-      hints: { section: fp.section || "", autocomplete: fp.autocomplete || "" },
+      hints: { section: fp.section || "", group: fp.section || "", autocomplete: fp.autocomplete || "" },
     };
     const learn = learnKeyFor(field, t.site);
     if (!learn || learn.scope !== "all") return;

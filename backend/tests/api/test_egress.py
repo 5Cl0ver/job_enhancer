@@ -206,6 +206,7 @@ class TestSummaryChangeCheck:
             "url",
             "applied_at",
             "resume_id",  # the résumé chosen for the job (spec 020)
+            "resume_usual",  # "your usual résumé" chosen on purpose
         }
         assert job["id"] == str(sj.id) and job["url"] == "https://jobs.example/1"
         assert len(r.content) < 600  # a few hundred bytes per job, no description

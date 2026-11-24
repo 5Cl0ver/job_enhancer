@@ -17,10 +17,10 @@ describe("one key per kind of box", () => {
   });
 
   it("a First Name box inside a Preferred name block is the preferred name", () => {
-    const f = field("First Name", { hints: { section: "preferred name" } });
+    const f = field("First Name", { hints: { group: "Preferred name" } });
     expect(profileKeyFor(f)).toBe("preferred_name");
     expect(profileKeyFor(field("First Name"))).toBe("first_name");
-    expect(profileKeyFor(field("Last Name", { hints: { section: "preferred name" } }))).toBe("preferred_last_name");
+    expect(profileKeyFor(field("Last Name", { hints: { group: "Preferred name" } }))).toBe("preferred_last_name");
   });
 
   it("company-only questions stay with the company; essays are offered; agreements never", () => {
@@ -111,5 +111,38 @@ describe("worked-out answers are never learned", () => {
     expect(learnKeyFor(field("Today's Date"), "x")).toBeNull();
     const d = resolve(field("Today's Date"), copy([{ question_key: "@today_date", answer: "01/01/2020" }], { today_date: ["11/24/2026"] }));
     expect(d.values[0]).toBe("11/24/2026");
+  });
+});
+
+describe("spec 020 correctness review", () => {
+  it("'Preferred Qualifications' or 'Preferred contact method' never makes a legal name the preferred name", () => {
+    for (const group of ["Preferred Qualifications", "Preferred contact method", ""]) {
+      expect(profileKeyFor(field("First Name", { hints: { group, section: "preferred qualifications" } }))).toBe("first_name");
+      expect(profileKeyFor(field("Legal Last Name", { hints: { group } }))).toBe("last_name");
+    }
+    expect(profileKeyFor(field("First Name", { hints: { group: "Preferred Name" } }))).toBe("preferred_name");
+  });
+
+  it("a salary question about this job stays with this site and fills back there", () => {
+    const q = field("What is your desired salary for this role?");
+    const learn = learnKeyFor(q, "x.example");
+    expect(learn).toEqual({ scope: "site", key: "x.example|what is your desired salary for this role" });
+    const answers = [{ question_key: learn.key, answer: "95000" }];
+    const values = { desired_salary: ["80000"] };
+    expect(resolve(q, { answers, values, site: "x.example" }).values[0]).toBe("95000");
+    expect(resolve(q, { answers, values, site: "y.example" }).values[0]).toBe("80000");
+  });
+
+  it("alumni / former employee / worked at X before are about one company; EY is not GE", () => {
+    for (const q of ["Are you an EY alumni?", "Are you a former employee?", "Have you previously been employed by us?", "Have you worked at Kelso Labs before?"]) {
+      expect(learnKeyFor(field(q), "x.example")?.scope).toBe("site");
+    }
+    const answers = [{ question_key: "are you an ey alumni", answer: "Yes" }];
+    expect(learnedFor(field("Are you a GE alumni?"), { answers })).toBeNull();
+  });
+
+  it("a learned value goes first and keeps the profile's other wordings for dropdowns", () => {
+    const d = resolve(field("State"), { answers: [{ question_key: "@state", answer: "Washington" }], values: { state: ["Oregon", "OR"] }, site: "x" });
+    expect(d.values).toEqual(["Washington", "Oregon", "OR"]);
   });
 });

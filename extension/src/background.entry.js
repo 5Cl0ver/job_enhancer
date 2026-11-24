@@ -16,7 +16,8 @@ import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
 import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
-import { siteKey } from "./autofill/hosts.js";
+import { pageId, siteKey } from "./autofill/hosts.js";
+import { bestJobMatch } from "../panel/src/lib/context.ts";
 import { profileValue } from "./autofill/session.js";
 import { promotions } from "./autofill/promote.js";
 
@@ -384,12 +385,11 @@ const autofill = createAutofillCopy({
 });
 
 // Spec 020: answers taught on one site before 0.36 become answers for every
-// site, once per account (src/autofill/promote.js). Retried until it saves.
-const PROMOTED = "je_promoted_020";
+// site, once per ACCOUNT (src/autofill/promote.js): recorded on the account,
+// so another computer never repeats it and an answer deleted in the app stays
+// deleted. Retried until it saves.
 async function promoteOnce(copy) {
-  if (!copy?.email) return;
-  const { [PROMOTED]: done = [] } = await chrome.storage.local.get(PROMOTED);
-  if (done.includes(copy.email)) return;
+  if (!copy?.email || copy.promoted) return;
   const items = promotions(copy.taught || [], copy.answers || []);
   if (items.length) {
     const out = await saveCustomAnswers(items);
@@ -401,7 +401,12 @@ async function promoteOnce(copy) {
       await chrome.storage.local.set({ je_autofill: held });
     }
   }
-  await chrome.storage.local.set({ [PROMOTED]: [...done, copy.email].slice(-10) });
+  const token = await getValidToken();
+  if (!token) return;
+  const res = await wakeFetch(`${cfg.API_BASE}/v1/autofill/promoted`, { method: "POST", headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+  if (!res?.ok) return;
+  const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+  if (held?.email === copy.email) await chrome.storage.local.set({ je_autofill: { ...held, promoted: true } });
 }
 
 // Per-tab fill sessions (what each frame filled), for the side panel's review.
@@ -537,8 +542,42 @@ async function autoSaveProfile(tabId, fields) {
   }
 }
 
-// The résumé picked for one tab's application (spec 020).
-const choiceKey = (tabId) => `je_resume_choice:${tabId}`;
+// The résumé picked for an application (spec 020), kept per saved job (or per
+// page when the page isn't a saved job) — never per tab, so going to another
+// job in the same tab never takes the last job's résumé along.
+const choiceKeyFor = (job, url) => (job ? `je_resume_choice:job:${job.id}` : `je_resume_choice:page:${pageId(url || "")}`);
+
+// The saved jobs, held here so the background can tell which job a page is
+// even with the panel closed (the panel's own matching, shared).
+const SAVED_CACHE = "je_saved_cache";
+const SAVED_CACHE_MS = 2 * 60_000;
+
+async function linkedJob(tab) {
+  if (!tab?.url) return null;
+  let { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+  if (!cache || Date.now() - (cache.at || 0) > SAVED_CACHE_MS) {
+    await listSaved(cache?.version || null).catch(() => {});
+    ({ [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE));
+  }
+  const jobs = cache?.jobs || [];
+  if (!jobs.length) return null;
+  const { je_not_this: notThis = {}, je_page_job: pinned = {} } = await chrome.storage.local.get(["je_not_this", "je_page_job"]);
+  const pid = pageId(tab.url);
+  return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid]) || null;
+}
+
+/** This application's résumé: chosen here, else the linked job's own. */
+async function resumeFor(tab) {
+  const job = await linkedJob(tab);
+  const key = choiceKeyFor(job, tab?.url);
+  const { [key]: choice } = await chrome.storage.session.get(key);
+  const resumeId = choice ? choice.resumeId || null : job?.resume_id || null;
+  return { key, choice: choice || null, resumeId, job };
+}
+
+// Your name, email and phone are learned only from an explicit "Always use
+// this", never from pointing alone (spec 020 review).
+const IDENTITY_LEARN = new Set(["@first_name", "@last_name", "@full_name", "@email", "@email_confirm", "@phone"]);
 
 async function listResumes() {
   const token = await getValidToken();
@@ -549,13 +588,13 @@ async function listResumes() {
   return { ok: true, resumes: (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, filename: r.filename, active: !!r.is_active })) };
 }
 
-async function setJobResume(jobId, resumeId) {
+async function setJobResume(jobId, resumeId, usual = false) {
   const token = await getValidToken();
   if (!token) return { ok: false };
   const res = await wakeFetch(`${cfg.API_BASE}/v1/saved-jobs/${encodeURIComponent(jobId)}/resume`, {
     method: "PUT",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    body: JSON.stringify({ resume_id: resumeId }),
+    body: JSON.stringify({ resume_id: resumeId, usual }),
   }).catch(() => null);
   return { ok: !!res?.ok };
 }
@@ -769,10 +808,11 @@ async function aiMapFields(fields) {
 
 // The résumé parsed into structured work history — the extension fills Workday
 // "Work Experience" sections from it. Returns { entries: [...] } (never throws).
-async function getWorkHistory() {
+async function getWorkHistory(resumeId) {
   const token = await getValidToken();
   if (!token) return { entries: [] };
-  const res = await fetch(`${cfg.API_BASE}/v1/ai/work-history`, {
+  const qs = resumeId ? `?resume_id=${encodeURIComponent(resumeId)}` : "";
+  const res = await fetch(`${cfg.API_BASE}/v1/ai/work-history${qs}`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: "{}",
@@ -1061,6 +1101,11 @@ async function listSaved(version) {
     return { signedIn: true, error: `Couldn't load your saved jobs (error ${res.status}).` };
   }
   const parsed = parseSummary(await res.json().catch(() => null));
+  if (parsed.changed && parsed.jobs) await chrome.storage.local.set({ [SAVED_CACHE]: { version: parsed.version, jobs: parsed.jobs, at: Date.now() } });
+  else if (parsed.changed === false) {
+    const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+    if (cache?.version === parsed.version) await chrome.storage.local.set({ [SAVED_CACHE]: { ...cache, at: Date.now() } });
+  }
   return { signedIn: true, ...parsed };
 }
 
@@ -1128,7 +1173,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "signOut") {
         await revokePass();
-        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email", "je_staged_resume"]);
+        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email", "je_staged_resume", SAVED_CACHE]);
         await autofill.wipe();
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
@@ -1144,32 +1189,39 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
         sendResponse({ ok: true, taught: (held?.taught || []).filter((t) => t.site === msg.site || t.site === msg.host) });
       } else if (msg.type === "getAutofillCopy") {
-        // The résumé picked for this tab's application, if any (spec 020).
-        const tabId = sender.tab?.id;
-        const { [choiceKey(tabId)]: choice } = tabId != null ? await chrome.storage.session.get(choiceKey(tabId)) : {};
-        const got = await autofill.get({ resumeId: choice?.resumeId || null });
+        // The résumé for this application (spec 020): chosen for this job or
+        // page, else the linked job's own — worked out here, so a press with
+        // the panel closed (toolbar, Alt+Shift+J) uses it too.
+        const tab = sender.tab;
+        const { key, choice, resumeId } = await resumeFor(tab);
+        const got = await autofill.get({ resumeId });
         // Never a silent switch: the panel says the chosen résumé failed.
-        if (choice && !!got.chosenFailed !== !!choice.failed) {
-          await chrome.storage.session.set({ [choiceKey(tabId)]: { ...choice, failed: !!got.chosenFailed } });
-          changed(tabId);
+        if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
+          await chrome.storage.session.set({ [key]: { ...(choice || { resumeId, filename: "", fromJob: true }), failed: !!got.chosenFailed } });
+          if (tab?.id != null) changed(tab.id);
         }
         sendResponse({ ok: true, ...got });
       } else if (msg.type === "listResumes") {
         sendResponse(await listResumes());
       } else if (msg.type === "chooseResume") {
-        // "Filling from … · Change" (spec 020): this tab's application uses
-        // this résumé; with a linked job, the job keeps it too.
+        // "Filling from … · Change" (spec 020): this job's (or this page's)
+        // application uses this résumé; a linked job keeps it in the account.
+        // `resumeId` null = your usual résumé, on purpose.
+        const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
+        const job = await linkedJob(tab);
+        const key = choiceKeyFor(job, tab?.url);
         // Checked first: a résumé that can't be loaded is never used silently.
         const loads = msg.resumeId ? await autofill.canLoad(msg.resumeId) : true;
-        if (msg.resumeId) await chrome.storage.session.set({ [choiceKey(msg.tabId)]: { resumeId: msg.resumeId, filename: msg.filename || "", failed: !loads } });
-        else await chrome.storage.session.remove(choiceKey(msg.tabId));
+        await chrome.storage.session.set({ [key]: { resumeId: msg.resumeId || null, filename: msg.filename || "", usual: !msg.resumeId, failed: !loads } });
         let saved = true;
-        if (msg.jobId && msg.remember !== false) saved = (await setJobResume(msg.jobId, msg.resumeId || null)).ok;
+        if (job) saved = (await setJobResume(job.id, msg.resumeId || null, !msg.resumeId)).ok;
+        if (job) await listSaved(null).catch(() => {}); // the job's résumé changed
         changed(msg.tabId);
         sendResponse({ ok: true, saved, loads });
       } else if (msg.type === "getResumeChoice") {
-        const { [choiceKey(msg.tabId)]: choice } = await chrome.storage.session.get(choiceKey(msg.tabId));
-        sendResponse({ ok: true, choice: choice || null });
+        const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
+        const { choice, resumeId, job } = await resumeFor(tab);
+        sendResponse({ ok: true, choice: choice || null, resumeId, jobResumeId: job?.resume_id || null, jobId: job?.id || null });
       } else if (msg.type === "refreshAutofillCopy") {
         sendResponse({ ok: await autofill.refresh() });
       } else if (msg.type === "sessionUpdate") {
@@ -1306,7 +1358,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // "learn" key); a box with no such key stays with this site.
           if (!pick.refused && pick.value && msg.saveable) {
             if (known?.value && known.value.trim().toLowerCase() === pick.value.trim().toLowerCase()) pick.alreadySaved = true;
-            else if (pick.learn) {
+            else if (pick.learn && IDENTITY_LEARN.has(pick.learn.key)) {
+              // Your name, email or phone: only an explicit "Always use this"
+              // changes it, never just pointing at a box (spec 020 review).
+            } else if (pick.learn) {
               const out = await learnAnswer(pick.learn, pick.value);
               if (out.ok) pick.autoSaved = { key: pick.learn.key, previous: out.previous, answer: pick.value, scope: pick.learn.scope };
             } else {
@@ -1398,7 +1453,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "aiMapFields") {
         sendResponse({ ok: true, ...(await aiMapFields(msg.fields || [])) });
       } else if (msg.type === "getWorkHistory") {
-        sendResponse({ ok: true, ...(await getWorkHistory()) });
+        sendResponse({ ok: true, ...(await getWorkHistory(msg.resumeId || null)) });
       } else if (msg.type === "getClaudeProjectUrl") {
         sendResponse(await getClaudeProjectUrl());
       } else if (msg.type === "saveClaudeProjectUrl") {

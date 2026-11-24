@@ -84,6 +84,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
           taught: b.taught || [],
           history: b.history || null,
           resume: b.resume || null,
+          promoted: !!b.promoted,
         },
       });
       if (b.resume) await fetchResume(headers, b.resume, gen).catch(() => {});
@@ -131,8 +132,13 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
       wakeFetch(`${api}/v1/autofill/resumes/${id}/details`, { headers }).catch(() => null),
     ]);
     if (!fileRes?.ok || !detailsRes?.ok) return null;
-    const details = await detailsRes.json().catch(() => null);
+    let details = await detailsRes.json().catch(() => null);
     if (!details) return null;
+    // Never read yet: read it now, so its sections come from IT (spec 020).
+    if (!details.read) {
+      const readRes = await wakeFetch(`${api}/v1/autofill/resumes/${id}/read`, { method: "POST", headers }).catch(() => null);
+      if (readRes?.ok) details = (await readRes.json().catch(() => null)) || details;
+    }
     const out = {
       id: resumeId,
       email,
@@ -178,15 +184,18 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     }
     // The résumé picked for this application (spec 020) wins — for the file
     // AND the jobs, schools and skills filled — then a staged tailored one,
-    // then the usual one.
+    // then the usual one. Sections only ever come from the résumé uploaded:
+    // a chosen one with no details leaves them for the user.
     const chosen = resumeId ? await chosenResume(t, resumeId, held.email || "").catch(() => null) : null;
     const staged = chosen ? null : await stagedResume(t).catch(() => null);
     const { [RESUME]: usual } = await chrome.storage.local.get(RESUME);
     const r = chosen || staged || usual || null;
+    const history = chosen ? chosen.history : held.history;
     return {
       signedIn: true,
       waited,
-      copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history: chosen?.history || held.history },
+      resumeId: chosen ? resumeId : null,
+      copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history },
       resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime } : null,
       // The chosen résumé couldn't be loaded: this fill used the usual one.
       ...(resumeId && !chosen ? { chosenFailed: true } : {}),

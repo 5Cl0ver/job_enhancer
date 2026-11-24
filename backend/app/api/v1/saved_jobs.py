@@ -93,7 +93,8 @@ async def saved_jobs_summary(
                 location=r.location,
                 url=r.apply_url,
                 applied_at=r.applied_at,
-                resume_id=r.resume_id,
+                resume_id=svc.effective_resume_id(r),
+                resume_usual=bool(r.resume_usual),
             )
             for r in rows
         ],
@@ -263,7 +264,7 @@ async def choose_job_resume(
 ) -> Response:
     """The résumé Job Catcher uploads and fills from for this job (spec 020).
     Job Catcher's "Filling from … · Change" and the app's job page both set it."""
-    await svc.set_job_resume(db, user.id, saved_job_id, data.resume_id)
+    await svc.set_job_resume(db, user.id, saved_job_id, data.resume_id, data.usual)
     await db.commit()
     return Response(status_code=204)
 

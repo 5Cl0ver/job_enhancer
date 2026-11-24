@@ -129,7 +129,9 @@ async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list
             JobListing.company,
             JobListing.location,
             JobListing.apply_url,
-            func.coalesce(SavedJob.resume_id, ResumeTrack.resume_id).label("resume_id"),
+            SavedJob.resume_id.label("own_resume_id"),
+            ResumeTrack.resume_id.label("track_resume_id"),
+            SavedJob.resume_usual,
         )
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
         .outerjoin(ResumeTrack, SavedJob.track_id == ResumeTrack.id)
@@ -139,11 +141,19 @@ async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list
     return rows.all()
 
 
+def effective_resume_id(row) -> uuid.UUID | None:
+    """A job's résumé: its own, else (unless "usual" was chosen) its type's."""
+    if row.own_resume_id:
+        return row.own_resume_id
+    return None if row.resume_usual else row.track_resume_id
+
+
 async def set_job_resume(
     db: AsyncSession,
     user_id: uuid.UUID,
     saved_job_id: uuid.UUID,
     resume_id: uuid.UUID | None,
+    usual: bool = False,
 ) -> SavedJob:
     """The résumé Job Catcher uses for one saved job (spec 020): the user's own
     résumé, or None for the usual one."""
@@ -159,6 +169,7 @@ async def set_job_resume(
         if owned is None:
             raise HTTPException(status_code=404, detail="Résumé not found")
     sj.resume_id = resume_id
+    sj.resume_usual = bool(usual and resume_id is None)
     sj.updated_at = datetime.now(UTC)
     await db.flush()
     return sj

@@ -259,12 +259,16 @@ class SavedJobSummary(BaseModel):
     # The résumé Job Catcher uses for this job: its own, else its résumé
     # type's; null = the usual one (spec 020).
     resume_id: uuid.UUID | None = None
+    # The user picked "your usual résumé" for this job on purpose.
+    resume_usual: bool = False
 
 
 class JobResumeIn(BaseModel):
-    """Choose the résumé for one saved job; null goes back to the usual one."""
+    """Choose the résumé for one saved job. ``usual``: the usual résumé, on
+    purpose (the résumé type's is not used). Neither: back to the default."""
 
     resume_id: uuid.UUID | None = None
+    usual: bool = False
 
 
 class SavedJobSummaryResponse(BaseModel):

@@ -110,9 +110,9 @@ async def upload_resume(
     )
     db.add(resume)
     await db.commit()
-    # Read it into work history + education for autofill, after responding.
-    if activate:
-        background.add_task(resume_history.read_in_background, resume.id)
+    # Read it into its details for autofill, after responding (every résumé:
+    # any of them can be the one chosen for a job — spec 020).
+    background.add_task(resume_history.read_in_background, resume.id)
     return ResumeSchema.model_validate(resume)
 
 
@@ -358,6 +358,7 @@ async def autofill_map(
 @_limiter.limit("10/minute")
 async def work_history(
     request: Request,
+    resume_id: uuid.UUID | None = Query(None),
     user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> WorkHistoryResponse:
@@ -365,10 +366,14 @@ async def work_history(
     the extension fills 'Work Experience' sections (Workday et al.) from it.
     Read once and stored (services/resume_history.py). Grounded: only what's
     actually in the résumé."""
+    # The résumé chosen for this application (spec 020), else the active one.
+    mine = (
+        select(Resume).options(defer(Resume.file_data)).where(Resume.user_id == user.id)
+    )
     resume = await db.scalar(
-        select(Resume)
-        .options(defer(Resume.file_data))
-        .where(Resume.user_id == user.id, Resume.is_active.is_(True))
+        mine.where(Resume.id == resume_id)
+        if resume_id
+        else mine.where(Resume.is_active.is_(True))
         .order_by(Resume.created_at.desc())
         .limit(1)
     )

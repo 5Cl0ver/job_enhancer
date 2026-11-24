@@ -137,6 +137,34 @@ export function questionFor(el) {
 }
 
 /**
+ * The title of the box's OWN group (spec 020 review): its fieldset's legend, a
+ * role=group/region's name (Workday's panels), or the nearest heading inside
+ * the same form before it — never a heading outside the form (a job
+ * description's "Preferred Qualifications" above an application).
+ */
+export function groupTitle(el) {
+  const root = el.getRootNode?.() || el.ownerDocument;
+  for (let n = el.parentElement; n; n = n.parentElement) {
+    if (n.tagName === "FIELDSET") {
+      const legend = [...n.children].find((c) => c.tagName === "LEGEND");
+      if (legend && clean(legend.textContent)) return clean(legend.textContent).slice(0, 120);
+    }
+    const role = n.getAttribute?.("role");
+    if (role === "group" || role === "region") {
+      const named = clean(n.getAttribute("aria-label")) || (n.getAttribute("aria-labelledby") ? byIds(root, n.getAttribute("aria-labelledby"), el) : "");
+      if (named) return named.slice(0, 120);
+    }
+    if (n.tagName === "FORM") break;
+  }
+  const form = el.closest?.("form");
+  if (!form) return "";
+  const before = [...form.querySelectorAll("h1, h2, h3, h4, h5, h6, [role=heading]")].filter(
+    (h) => h.compareDocumentPosition(el) & 4, // the box comes after the heading
+  );
+  return before.length ? clean(before[before.length - 1].textContent).slice(0, 120) : "";
+}
+
+/**
  * Does the control have a name of its own — a label, aria name, placeholder,
  * or text right beside it — rather than a page heading further up? Only such
  * a question is learned for every site (spec 020): "Quick apply" over an
@@ -263,6 +291,7 @@ export function collectFields(root, opts = {}) {
     accept: el.getAttribute?.("accept") || "",
     maxLength: Number(el.getAttribute?.("maxlength")) || 0,
     section: sectionHeading(el),
+    group: groupTitle(el),
   });
 
   for (const el of els) {

@@ -393,52 +393,51 @@ interface ResumeRow {
 export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged: string | null }) {
   const { tab, reloadSaved } = usePanel();
   const [resumes, setResumes] = React.useState<ResumeRow[] | null>(null);
-  const [choice, setChoice] = React.useState<{ resumeId: string; filename: string; failed?: boolean } | null>(null);
+  // What the background says this application uses (spec 020): a choice made
+  // for this job or page, else the linked job's own résumé.
+  const [state, setState] = React.useState<{
+    choice: { resumeId: string | null; filename: string; usual?: boolean; failed?: boolean } | null;
+    resumeId: string | null;
+    jobResumeId: string | null;
+  }>({ choice: null, resumeId: null, jobResumeId: null });
   const [open, setOpen] = React.useState(false);
   const [note, setNote] = React.useState("");
 
+  const load = React.useCallback(async () => {
+    if (tab.id == null) return;
+    const r = await send({ type: "getResumeChoice", tabId: tab.id });
+    if (r?.ok) setState({ choice: r.choice || null, resumeId: r.resumeId || null, jobResumeId: r.jobResumeId || null });
+  }, [tab.id]);
+
   React.useEffect(() => {
     let live = true;
-    if (tab.id == null) return;
-    send({ type: "getResumeChoice", tabId: tab.id }).then((r) => live && setChoice(r?.choice || null));
+    load();
     send({ type: "listResumes" }).then((r) => live && r?.ok && setResumes(r.resumes));
     return () => {
       live = false;
     };
-  }, [tab.id]);
-
-  // The linked job has its own résumé: use it for this tab unless changed here.
-  const jobResume = match?.resume_id || null;
-  React.useEffect(() => {
-    if (tab.id == null || !jobResume || choice) return;
-    const filename = resumes?.find((r) => r.id === jobResume)?.filename || "";
-    send({ type: "chooseResume", tabId: tab.id, resumeId: jobResume, filename, remember: false }).then((r) =>
-      setChoice({ resumeId: jobResume, filename, failed: r?.loads === false }),
-    );
-  }, [tab.id, jobResume, choice, resumes]);
+  }, [load, tab.url, match?.id, match?.resume_id]);
 
   async function pick(id: string) {
     if (tab.id == null) return;
     const row = resumes?.find((r) => r.id === id);
-    const res = await send({ type: "chooseResume", tabId: tab.id, resumeId: id || null, filename: row?.filename || "", jobId: match?.id });
-    setChoice(id ? { resumeId: id, filename: row?.filename || "", failed: res?.loads === false } : null);
+    const res = await send({ type: "chooseResume", tabId: tab.id, resumeId: id || null, filename: row?.filename || "" });
     setOpen(false);
     setNote(match && res?.saved === false ? "Using it here, but couldn't save it to the job. Try again later." : "");
+    await load();
     if (match) reloadSaved();
   }
 
   const active = resumes?.find((r) => r.active) || null;
-  const name =
-    (choice && (resumes?.find((r) => r.id === choice.resumeId)?.filename || choice.filename)) ||
-    staged ||
-    active?.filename ||
-    "";
+  const { choice, resumeId, jobResumeId } = state;
+  const usingName = (resumeId && (resumes?.find((r) => r.id === resumeId)?.filename || choice?.filename)) || "";
+  const name = usingName || staged || active?.filename || "";
   if (!name && !resumes?.length) return null;
   return (
     <div className="flex flex-col gap-1 text-xs" data-testid="resume-choice">
       <p className="text-muted-foreground">
         Filling from <b className="break-all text-foreground">{name || "your résumé"}</b>
-        {match && choice && choice.resumeId === jobResume ? " (this job's résumé)" : ""}
+        {match && resumeId && resumeId === jobResumeId ? " (this job's résumé)" : ""}
         {!!resumes?.length && (
           <>
             {" · "}
@@ -449,7 +448,7 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
         )}
       </p>
       {open && resumes && (
-        <Select aria-label="Résumé for this application" value={choice?.resumeId || ""} onChange={(e) => pick(e.target.value)}>
+        <Select aria-label="Résumé for this application" value={resumeId || ""} onChange={(e) => pick(e.target.value)}>
           <option value="">{staged ? `Tailored: ${staged}` : `Your usual résumé${active ? ` (${active.filename})` : ""}`}</option>
           {resumes.map((r) => (
             <option key={r.id} value={r.id}>
@@ -458,11 +457,11 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
           ))}
         </Select>
       )}
-      {open && <Muted>Uploads this résumé and fills jobs, schools and skills from it{match ? ", for this job from now on" : ""}.</Muted>}
+      {open && <Muted>Uploads this résumé and fills jobs, schools and skills from it{match ? ", for this job from now on" : " on this page"}.</Muted>}
       {choice?.failed && (
         <div data-testid="resume-choice-failed">
           <Alert tone="warning">
-            Couldn't load {choice.filename || "that résumé"}, so this application uses {staged || active?.filename || "your usual résumé"}. Press Change to try again or pick another.
+            Couldn't load {usingName || choice.filename || "that résumé"}, so this application uses {staged || active?.filename || "your usual résumé"}. Press Change to try again or pick another.
           </Alert>
         </div>
       )}

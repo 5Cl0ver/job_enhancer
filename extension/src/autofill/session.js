@@ -8,7 +8,10 @@ import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
-import { COMPUTED_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
+import { COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
+
+/** Case, spaces and punctuation don't count when deciding the user changed a box. */
+const loose = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
 import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
 
 const STYLE_ID = "jec-fill-style";
@@ -497,9 +500,11 @@ export function createSession(deps) {
       // A box Job Catcher didn't fill is left to the profile save (typedProfile).
       const profileKey = profileKeyFor(field);
       if (profileKey) {
-        if (!ours || IDENTITY_KEYS.has(profileKey) || COMPUTED_KEYS.has(profileKey)) continue;
+        if (!ours || IDENTITY_KEYS.has(profileKey) || COMPUTED_KEYS.has(profileKey) || FORMAT_KEYS.has(profileKey)) continue;
         const answer = readField(field).trim();
         if (!answer || answer.length > 300) continue;
+        // The site reformatted what Job Catcher put ("oregon" → "Oregon"): no change.
+        if (loose(answer) === loose(ours.entry.value)) continue;
         out.push({ question_key: `@${profileKey}`, question_text: field.question.slice(0, 500), answer });
         continue;
       }

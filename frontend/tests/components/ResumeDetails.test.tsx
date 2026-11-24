@@ -94,7 +94,7 @@ describe("Résumé for this job", () => {
     wrap(<JobResumePicker jobListingId="l1" />);
     const pick = await screen.findByLabelText("Résumé for this job");
     await userEvent.selectOptions(pick, "r2");
-    expect(put).toHaveBeenCalledWith("/v1/saved-jobs/sj1/resume", { resume_id: "r2" });
+    expect(put).toHaveBeenCalledWith("/v1/saved-jobs/sj1/resume", { resume_id: "r2", usual: false });
   });
 });
 

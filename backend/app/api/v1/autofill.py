@@ -359,14 +359,31 @@ async def edit_resume_details(
     return _details(resume)
 
 
+@router.post("/promoted", status_code=204)
+async def mark_promoted(
+    user: User = Depends(get_user_or_pass),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """Job Catcher turned this account's one-site answers into answers for every
+    site (spec 020). Recorded once per account, so it never runs again — not on
+    another computer, and an answer deleted in the app stays deleted."""
+    from datetime import UTC, datetime
+
+    if user.learn_promoted_at is None:
+        user.learn_promoted_at = datetime.now(tz=UTC)
+        await db.commit()
+    return Response(status_code=204)
+
+
 @router.post("/resumes/{resume_id}/read", response_model=ResumeDetailsOut)
 async def reread_resume(
     resume_id: uuid.UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> ResumeDetailsOut:
-    """Read my résumé: read the file again (free AI, else the built-in reader),
-    replacing the stored details."""
+    """Read my résumé: read the file again (built-in reader, no AI), replacing
+    the stored details. Job Catcher also calls it for a chosen résumé that was
+    never read (spec 020), so its sections never come from another résumé."""
     resume = await _own_resume(db, user, resume_id)
     if not (resume.extracted_text or "").strip():
         raise HTTPException(

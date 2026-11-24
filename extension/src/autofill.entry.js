@@ -191,6 +191,7 @@ async function loadCopy() {
     taught: copy.taught || [],
     history: copy.history || null,
     resumeFile,
+    resumeId: res.resumeId || null,
   };
   return lastCopy;
 }
@@ -268,7 +269,7 @@ async function fill(auto) {
     let work = copy.history?.work;
     if (!work?.length) {
       status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
-      work = (await send({ type: "getWorkHistory" }))?.entries;
+      work = (await send({ type: "getWorkHistory", resumeId: copy.resumeId || null }))?.entries;
     }
     if (work?.length) await fillAllWorkExperience(document, work);
   }

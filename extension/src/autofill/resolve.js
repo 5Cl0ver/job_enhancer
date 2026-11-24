@@ -43,6 +43,12 @@ export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "e
 /** Worked out fresh each time (today's date): never learned, never a saved answer. */
 export const COMPUTED_KEYS = new Set(["today_date"]);
 
+/**
+ * Boxes whose answer a site reformats (phone numbers, zip codes, start dates):
+ * never learned from typing, only from an explicit point-and-save.
+ */
+export const FORMAT_KEYS = new Set(["notice_period", "phone", "phone_type", "phone_country", "postal_code"]);
+
 // How close two wordings must be (spec 020, research R3): close enough fills,
 // near is only offered ("Use saved answer"), anything less is a new question.
 export const CLOSE = 0.85;
@@ -63,11 +69,13 @@ export function learnKeyFor(field, site) {
   const guard = guardReason(field.question, field.kind);
   if (guard === "essay") return field.key ? { scope: "essay", key: answerKey("essay", site, field.key) } : null;
   if (guard || field.kind === "file" || field.kind === "checkbox") return null;
+  // About this company ("desired salary for this role"): this site only —
+  // checked before the kind of box, so it never becomes "@desired_salary".
+  if (isCompanySpecific(field.question)) return site && field.key ? { scope: "site", key: answerKey("site", site, field.key) } : null;
   const profileKey = profileKeyFor(field);
   if (profileKey && COMPUTED_KEYS.has(profileKey)) return null;
   if (profileKey) return { scope: "all", key: `@${profileKey}`, profileKey };
   if (!field.key || field.key.length < 3) return null;
-  if (isCompanySpecific(field.question)) return site ? { scope: "site", key: answerKey("site", site, field.key) } : null;
   return { scope: "all", key: answerKey("all", site, field.key) };
 }
 
@@ -141,7 +149,12 @@ export function resolve(field, copy) {
   // What the user taught beats the profile (spec 020): correct a box once and
   // every site asking it gets the correction.
   const learned = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
-  const use = (l) => ({ values: [l.answer], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) });
+  // A learned answer goes first; the profile's other wordings stay behind it
+  // so a dropdown still finds "OR" when it says "Oregon" (spec 020 review).
+  const use = (l) => {
+    const forms = key ? (copy.values[key] || []).filter((v) => String(v).toLowerCase() !== String(l.answer).toLowerCase()) : [];
+    return { values: [l.answer, ...forms], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) };
+  };
   if (learned && learned.tier !== "close" && learned.tier !== "offer") return use(learned);
   if (key) {
     let values = copy.values[key] || [];
