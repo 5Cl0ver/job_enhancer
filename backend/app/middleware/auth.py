@@ -84,15 +84,12 @@ async def _decode_token(token: str) -> dict:
         raise _unauthorized("Invalid or expired token") from exc
 
 
-async def get_current_user(
-    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    db: Annotated[AsyncSession, Depends(get_db)],
+async def _resolve_user(
+    credentials: HTTPAuthorizationCredentials | None,
+    db: AsyncSession,
+    *,
+    allow_pass: bool,
 ) -> User:
-    """Resolve the authenticated User from the Supabase JWT.
-
-    Creates the user on first login if they don't exist yet.
-    Raises 401 if the token is missing/invalid or the account is deleted.
-    """
     if credentials is None:
         raise HTTPException(
             status_code=status.HTTP_401_UNAUTHORIZED,
@@ -101,6 +98,10 @@ async def get_current_user(
         )
 
     if credentials.credentials.startswith(TOKEN_PREFIX):
+        if not allow_pass:
+            # Job Catcher's pass only opens what Job Catcher does; account,
+            # admin, email and connection settings need the app itself.
+            raise _unauthorized("Sign in to the Job Enhancer app to do this.")
         user = await user_for_token(db, credentials.credentials)
         if user is None:
             raise _unauthorized("Job Catcher is disconnected. Connect it again.")
@@ -135,18 +136,28 @@ async def get_current_user(
     return user
 
 
-async def get_session_user(
+async def get_current_user(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    user: Annotated[User, Depends(get_current_user)],
+    db: Annotated[AsyncSession, Depends(get_db)],
 ) -> User:
-    """The user, signed in to the app itself, never through a Job Catcher pass:
-    for approving a Job Catcher and managing connected computers."""
-    if credentials is not None and credentials.credentials.startswith(TOKEN_PREFIX):
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Do this in the Job Enhancer app.",
-        )
-    return user
+    """Resolve the authenticated User from the app's Supabase session.
+
+    Creates the user on first login if they don't exist yet. Refuses a Job
+    Catcher pass: every route is app-session only unless it opts in with
+    ``get_user_or_pass``. Raises 401 if the token is missing/invalid or the
+    account is deleted.
+    """
+    return await _resolve_user(credentials, db, allow_pass=False)
+
+
+async def get_user_or_pass(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    db: Annotated[AsyncSession, Depends(get_db)],
+) -> User:
+    """Like ``get_current_user``, but a connected Job Catcher's pass is also
+    accepted. ONLY for the routes Job Catcher calls (see
+    tests/api/test_pass_routes.py, which holds the allowlist)."""
+    return await _resolve_user(credentials, db, allow_pass=True)
 
 
 async def require_admin(

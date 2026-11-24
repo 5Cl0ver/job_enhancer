@@ -17,14 +17,16 @@ from slowapi import Limiter
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user, get_session_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.user import User
 from app.services import extension_connect as svc
 from app.services import releases
-from app.utils.rate_limit import rate_limit_key
+from app.utils.rate_limit import client_ip, rate_limit_key
 
 router = APIRouter()
 _limiter = Limiter(key_func=rate_limit_key)
+# Public Connect endpoints: the client's IP only, whatever Authorization says.
+_ip_limiter = Limiter(key_func=client_ip)
 _bearer = HTTPBearer(auto_error=False)
 
 _GONE = "That Connect link has expired. Press Connect in Job Catcher again."
@@ -63,7 +65,7 @@ class HelloOut(BaseModel):
 async def hello(
     data: HelloIn,
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> HelloOut:
     """A Job Catcher says which version it is (on sign-in, then hourly)."""
@@ -92,11 +94,16 @@ class StartOut(BaseModel):
 
 
 @router.post("/connect/start", response_model=StartOut)
-@_limiter.limit("10/hour")
+@_ip_limiter.limit("10/hour")
 async def connect_start(
     request: Request, data: StartIn, db: AsyncSession = Depends(get_db)
 ) -> StartOut:
-    req, poll_token = await svc.start(db, data.proof_hash)
+    try:
+        req, poll_token = await svc.start(db, data.proof_hash)
+    except svc.Busy as exc:
+        raise HTTPException(
+            status_code=503, detail="Busy right now. Try again in a minute."
+        ) from exc
     await db.commit()
     return StartOut(
         code=req.code, poll_token=poll_token, expires_in=svc.seconds_left(req)
@@ -117,7 +124,7 @@ class StatusOut(BaseModel):
 async def connect_status(
     request: Request,
     data: CodeIn,
-    user: User = Depends(get_session_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> StatusOut:
     """For the app's approval page: is this code still waiting?"""
@@ -138,7 +145,7 @@ class ApproveIn(CodeIn):
 async def connect_approve(
     request: Request,
     data: ApproveIn,
-    user: User = Depends(get_session_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     req = await svc.by_code(db, data.code)
@@ -157,7 +164,7 @@ class CancelIn(BaseModel):
 
 
 @router.post("/connect/cancel")
-@_limiter.limit("30/minute")
+@_ip_limiter.limit("30/minute")
 async def connect_cancel(
     request: Request,
     data: CancelIn,
@@ -182,7 +189,7 @@ class PollIn(BaseModel):
 
 
 @router.post("/connect/poll")
-@_limiter.limit("60/minute")
+@_ip_limiter.limit("90/minute")
 async def connect_poll(
     request: Request, data: PollIn, db: AsyncSession = Depends(get_db)
 ) -> dict:
@@ -209,7 +216,7 @@ class TokenOut(BaseModel):
 
 @router.get("/tokens", response_model=list[TokenOut])
 async def list_tokens(
-    user: User = Depends(get_session_user), db: AsyncSession = Depends(get_db)
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
 ) -> list[TokenOut]:
     rows = await svc.list_tokens(db, user.id)
     versions = {i.install_id: i.version for i in await svc.installs(db, user.id)}
@@ -225,10 +232,28 @@ async def list_tokens(
     ]
 
 
+class InstallOut(BaseModel):
+    version: str
+    browser: str | None
+    last_seen_at: datetime
+
+
+@router.get("/installs", response_model=list[InstallOut])
+async def list_installs(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> list[InstallOut]:
+    """Job Catchers that said hello on this account (any sign-in, password
+    too): newest first. The app's status chip and update note read this."""
+    return [
+        InstallOut(version=i.version, browser=i.browser, last_seen_at=i.last_seen_at)
+        for i in await svc.installs(db, user.id)
+    ]
+
+
 @router.delete("/tokens/current", status_code=204)
 async def revoke_current(
     credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Sign out in Job Catcher: its own pass stops working everywhere."""
@@ -239,10 +264,21 @@ async def revoke_current(
     return Response(status_code=204)
 
 
+@router.post("/tokens/revoke-all")
+async def revoke_all(
+    user: User = Depends(get_current_user), db: AsyncSession = Depends(get_db)
+) -> dict:
+    """Disconnect Job Catcher on every computer (the app calls this after a
+    password reset)."""
+    count = await svc.revoke_all(db, user.id)
+    await db.commit()
+    return {"revoked": count}
+
+
 @router.delete("/tokens/{token_id}", status_code=204)
 async def revoke(
     token_id: uuid.UUID,
-    user: User = Depends(get_session_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     """Disconnect one computer, from the app."""

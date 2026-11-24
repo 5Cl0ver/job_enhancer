@@ -20,33 +20,35 @@ export function SignIn() {
   const [error, setError] = React.useState("");
   const [withPassword, setWithPassword] = React.useState(false);
 
-  // Pick up a Connect already under way (the panel was closed and reopened),
-  // then check every 2 s while waiting: each check also polls the app.
+  // The Connect under way, if any (the panel was closed and reopened). The
+  // background does the waiting; this only reads its state and hears
+  // "connectChanged" / "authChanged". Nothing runs while just signed out.
+  const check = React.useCallback(async () => {
+    const res = await send({ type: "connectStatus" });
+    if (!res) return;
+    if (res.state === "waiting") setConnect({ state: "waiting", code: res.code, deadline: res.deadline });
+    else if (res.state === "expired" || res.state === "cancelled") {
+      setConnect((c) => (c.state === "waiting" ? { state: res.state } : c));
+    } else setConnect((c) => (c.state === "waiting" ? { state: "idle" } : c));
+  }, []);
+
   React.useEffect(() => {
-    let live = true;
-    const check = async () => {
-      const res = await send({ type: "connectStatus" });
-      if (!live || !res) return;
-      if (res.state === "waiting") setConnect({ state: "waiting", code: res.code, deadline: res.deadline });
-      else if (res.state === "expired" || res.state === "cancelled") {
-        setConnect((c) => (c.state === "waiting" ? { state: res.state } : c));
-      } else if (res.state === "idle") {
-        const auth = await send({ type: "authStatus" });
-        if (auth?.signedIn) refreshAuth();
-      }
-    };
     check();
-    const timer = setInterval(check, 2000);
     const onMessage = (msg: { type?: string }) => {
       if (msg?.type === "authChanged") refreshAuth();
+      if (msg?.type === "connectChanged") check();
     };
     chrome.runtime.onMessage.addListener(onMessage);
-    return () => {
-      live = false;
-      clearInterval(timer);
-      chrome.runtime.onMessage.removeListener(onMessage);
-    };
-  }, [refreshAuth]);
+    return () => chrome.runtime.onMessage.removeListener(onMessage);
+  }, [check, refreshAuth]);
+
+  // While waiting, a cheap look every few seconds (reads local state only) in
+  // case a message was missed while the worker slept.
+  React.useEffect(() => {
+    if (connect.state !== "waiting") return;
+    const timer = setInterval(check, 3000);
+    return () => clearInterval(timer);
+  }, [connect.state, check]);
 
   async function start() {
     setStarting(true);

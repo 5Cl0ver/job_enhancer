@@ -21,8 +21,8 @@ import secrets
 import uuid
 from datetime import UTC, datetime, timedelta
 
-from sqlalchemy import delete, select, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import delete, func, select, update
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.extension import (
     ExtensionConnectRequest,
@@ -37,6 +37,8 @@ TOKEN_IDLE_LIMIT = timedelta(days=90)
 TOKEN_MAX_AGE = timedelta(days=365)
 MAX_TOKENS = 10
 TOUCH_EVERY = timedelta(minutes=15)
+# Connects waiting at once, across everyone: above this, start says "busy".
+MAX_PENDING = 500
 # No 0/O, 1/I/L: a code people can read aloud and compare at a glance.
 _CODE_CHARS = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"
 
@@ -47,6 +49,10 @@ def hash_secret(value: str) -> str:
 
 def same_hash(a: str, b: str) -> bool:
     return hmac.compare_digest(a.encode(), b.encode())
+
+
+class Busy(Exception):
+    """Too many Connects waiting right now."""
 
 
 def _now() -> datetime:
@@ -81,13 +87,18 @@ async def start(
     db: AsyncSession, proof_hash: str
 ) -> tuple[ExtensionConnectRequest, str]:
     """A new request; returns it and the raw poll token (never stored).
-    ``proof_hash``: sha256 of a secret only the starting Job Catcher holds."""
-    # Old requests are useless after a day: keep the table tiny.
-    await db.execute(
-        delete(ExtensionConnectRequest).where(
-            ExtensionConnectRequest.created_at < _now() - timedelta(days=1)
+    ``proof_hash``: sha256 of a secret only the starting Job Catcher holds.
+    Raises ``Busy`` when too many are already waiting."""
+    pending = await db.scalar(
+        select(func.count())
+        .select_from(ExtensionConnectRequest)
+        .where(
+            ExtensionConnectRequest.status == "pending",
+            ExtensionConnectRequest.expires_at > _now(),
         )
     )
+    if (pending or 0) >= MAX_PENDING:
+        raise Busy()
     poll_token = secrets.token_urlsafe(32)
     for _ in range(5):
         code = _new_code()
@@ -255,6 +266,32 @@ async def revoke_raw(db: AsyncSession, user_id: uuid.UUID, token: str) -> bool:
     row.revoked_at = _now()
     await db.flush()
     return True
+
+
+async def revoke_all(db: AsyncSession, user_id: uuid.UUID) -> int:
+    """Disconnect every Job Catcher of this account (after a password reset)."""
+    result = await db.execute(
+        update(ExtensionToken)
+        .where(ExtensionToken.user_id == user_id, ExtensionToken.revoked_at.is_(None))
+        .values(revoked_at=_now())
+    )
+    await db.flush()
+    return result.rowcount or 0
+
+
+async def purge_connect_requests(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> int:
+    """Delete Connect requests older than a day (they last 5 minutes). Runs on
+    the scheduler, never on a request."""
+    async with session_factory() as db:
+        result = await db.execute(
+            delete(ExtensionConnectRequest).where(
+                ExtensionConnectRequest.created_at < _now() - timedelta(days=1)
+            )
+        )
+        await db.commit()
+        return result.rowcount or 0
 
 
 async def revoke(db: AsyncSession, user_id: uuid.UUID, token_id: uuid.UUID) -> bool:

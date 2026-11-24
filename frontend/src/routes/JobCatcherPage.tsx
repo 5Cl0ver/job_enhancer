@@ -5,6 +5,7 @@ import { useIsPhone } from "@/hooks/useIsPhone";
 import {
   useDisconnectJobCatcher,
   useJobCatcherConnections,
+  useJobCatcherInstalls,
   useJobCatcherRelease,
   type JobCatcherConnection,
 } from "@/hooks/useJobCatcher";
@@ -20,6 +21,9 @@ import {
   PinArt,
   UnzipArt,
 } from "@/components/jobcatcher/InstallArt";
+
+/** Recently seen: an old copy someone removed long ago doesn't count. */
+const RECENT_MS = 30 * 24 * 3600 * 1000;
 
 const STEPS = [
   { art: UnzipArt, text: "Unzip the download into a folder you'll keep, for example Documents › Job Catcher." },
@@ -39,10 +43,16 @@ export default function JobCatcherPage() {
   const phone = useIsPhone();
   const release = useJobCatcherRelease();
   const connections = useJobCatcherConnections();
+  const installs = useJobCatcherInstalls();
   const latest = release.data?.version ?? null;
   const live = connections.data ?? [];
-  const newest = live.find((c) => c.version) ?? null;
-  const outdated = live.some((c) => isOlder(c.version, latest));
+  // Seen recently, by any sign-in (Connect or password), newest first.
+  const seen = (installs.data ?? []).filter(
+    (i) => Date.now() - new Date(i.last_seen_at).getTime() < RECENT_MS,
+  );
+  const connected = seen.length > 0 || live.length > 0;
+  const newestVersion = seen[0]?.version ?? live.find((c) => c.version)?.version ?? null;
+  const behind = seen.find((i) => isOlder(i.version, latest))?.version ?? null;
 
   return (
     <div className="container mx-auto flex max-w-2xl flex-col gap-3 md:gap-6 md:px-4 md:py-6">
@@ -56,18 +66,23 @@ export default function JobCatcherPage() {
         </p>
       </div>
 
+      <div role="note" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+        <span className="font-medium">New in 0.35.0:</span> remove the old Job Catcher first, then load
+        the new folder and press Connect. You'll need to connect once; later updates keep you signed in.
+      </div>
+
       <Card>
         <CardContent className="flex flex-col gap-3 pt-6">
           <div className="flex flex-wrap items-center gap-2" data-testid="jc-status">
-            {live.length === 0 ? (
+            {!connected ? (
               <Badge variant="secondary">Not installed yet</Badge>
-            ) : outdated ? (
+            ) : behind ? (
               <Badge className="bg-amber-500/15 text-amber-700 dark:text-amber-300">
-                Update available: you have {live.find((c) => isOlder(c.version, latest))?.version}
+                Update available: you have {behind}
               </Badge>
             ) : (
               <Badge className="bg-green-600/15 text-green-700 dark:text-green-300">
-                <Check className="mr-1 h-3 w-3" /> Connected{newest?.version ? ` (${newest.version})` : ""}
+                <Check className="mr-1 h-3 w-3" /> Connected{newestVersion ? ` (${newestVersion})` : ""}
               </Badge>
             )}
             {latest && (
@@ -134,8 +149,9 @@ export default function JobCatcherPage() {
           <div id="update">
             <p className="font-medium">Updating</p>
             <p className="text-muted-foreground">
-              Download the new zip, unzip it over the same folder (replace the files), then press ↻
-              on Job Catcher in chrome://extensions. You stay signed in.
+              Download the new zip and unzip it into the same folder, replacing the files. Then
+              press ↻ (reload) on Job Catcher in chrome://extensions. You stay signed in. (Coming
+              from a version before 0.35.0? Remove the old one and connect once instead, as above.)
             </p>
           </div>
           <div>

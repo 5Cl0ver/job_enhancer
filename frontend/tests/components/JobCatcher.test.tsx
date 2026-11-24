@@ -42,7 +42,7 @@ vi.mock("@/hooks/useIsPhone", () => ({ useIsPhone: () => phone }));
 import ConnectPage, { NOT_HERE } from "@/routes/ConnectPage";
 import JobCatcherPage from "@/routes/JobCatcherPage";
 import ForgotPasswordPage, { RESET_SENT } from "@/routes/ForgotPasswordPage";
-import ResetPasswordPage from "@/routes/ResetPasswordPage";
+import ResetPasswordPage, { DISCONNECTED } from "@/routes/ResetPasswordPage";
 import { isOlder } from "@/lib/jobCatcher";
 
 function wrap(ui: React.ReactElement) {
@@ -132,9 +132,12 @@ describe("Get Job Catcher page", () => {
     download_url: "https://github.com/5Cl0ver/job_enhancer/releases/latest/download/job-catcher.zip",
   };
 
-  function api(connections: unknown[]) {
+  const now = () => new Date().toISOString();
+  function api(connections: unknown[], installs: unknown[] = []) {
     get.mockImplementation((path: string) =>
-      Promise.resolve(path.endsWith("/latest") ? RELEASE : connections),
+      Promise.resolve(
+        path.endsWith("/latest") ? RELEASE : path.endsWith("/installs") ? installs : connections,
+      ),
     );
   }
 
@@ -151,13 +154,31 @@ describe("Get Job Catcher page", () => {
     expect(screen.getByText(RELEASE.sha256)).toBeInTheDocument();
   });
 
+  it("tells everyone about the one-time reconnect in 0.35.0", async () => {
+    api([]);
+    wrap(<JobCatcherPage />);
+    expect(await screen.findByText(/remove the old Job Catcher first/)).toBeInTheDocument();
+  });
+
+  it("a password sign-in (no pass) still shows as connected, from its hello", async () => {
+    api([], [{ version: "0.35.0", browser: "Edge 142", last_seen_at: now() }]);
+    wrap(<JobCatcherPage />);
+    expect(await screen.findByText(/Connected \(0.35.0\)/)).toBeInTheDocument();
+  });
+
   it("connected and current, then outdated with a way to disconnect", async () => {
-    api([{ id: "t1", browser: "Chrome 142", version: "0.35.0", created_at: "2026-11-23", last_used_at: null }]);
+    api(
+      [{ id: "t1", browser: "Chrome 142", version: "0.35.0", created_at: "2026-11-23", last_used_at: null }],
+      [{ version: "0.35.0", browser: "Chrome 142", last_seen_at: now() }],
+    );
     const { unmount } = wrap(<JobCatcherPage />);
     expect(await screen.findByText(/Connected \(0.35.0\)/)).toBeInTheDocument();
     unmount();
 
-    api([{ id: "t1", browser: "Chrome 142", version: "0.34.1", created_at: "2026-11-23", last_used_at: null }]);
+    api(
+      [{ id: "t1", browser: "Chrome 142", version: "0.34.1", created_at: "2026-11-23", last_used_at: null }],
+      [{ version: "0.34.1", browser: "Chrome 142", last_seen_at: now() }],
+    );
     wrap(<JobCatcherPage />);
     expect(await screen.findByText(/Update available: you have 0.34.1/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Disconnect Chrome 142" }));
@@ -207,7 +228,11 @@ describe("Forgot and reset password", () => {
 
     await userEvent.clear(screen.getByLabelText("New password again"));
     await userEvent.type(screen.getByLabelText("New password again"), "a-long-password");
+    post.mockResolvedValue({ revoked: 2 });
     await userEvent.click(screen.getByRole("button", { name: "Save new password" }));
     await waitFor(() => expect(updateUser).toHaveBeenCalledWith({ password: "a-long-password" }));
+    // Every Job Catcher is signed out too, and the page says so.
+    expect(await screen.findByText(DISCONNECTED)).toBeInTheDocument();
+    expect(post).toHaveBeenCalledWith("/v1/extension/tokens/revoke-all", {});
   });
 });

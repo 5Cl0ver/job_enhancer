@@ -2,8 +2,9 @@
 
 The release workflow publishes ``job-catcher-v<version>`` on GitHub with
 ``job-catcher.zip`` and ``latest.json`` (version, notes, sha256). One cached
-call every 10 minutes keeps us far under GitHub's unauthenticated limit; when
-GitHub can't be reached, the last known answer stands.
+call every 30 minutes keeps us far under GitHub's unauthenticated limit (an
+optional read-only GITHUB_TOKEN raises it); when GitHub can't be reached, the
+last known answer stands and the failure is logged once, not per request.
 """
 
 import logging
@@ -13,16 +14,18 @@ from typing import Any
 
 import httpx
 
+from app.config import settings
+
 logger = logging.getLogger(__name__)
 
 REPO = "5Cl0ver/job_enhancer"
 TAG_PREFIX = "job-catcher-v"
 DOWNLOAD_URL = f"https://github.com/{REPO}/releases/latest/download/job-catcher.zip"
-CACHE_SECONDS = 600
+CACHE_SECONDS = 1800
 _VERSION = re.compile(r"^\d+(\.\d+){1,3}$")
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
-_cache: dict[str, Any] = {"next": 0.0, "value": None}
+_cache: dict[str, Any] = {"next": 0.0, "value": None, "failing": False}
 
 
 def _empty() -> dict[str, Any]:
@@ -47,9 +50,10 @@ def is_older(have: str | None, latest: str | None) -> bool:
 
 
 async def _fetch() -> dict[str, Any] | None:
-    async with httpx.AsyncClient(
-        timeout=8.0, headers={"Accept": "application/vnd.github+json"}
-    ) as client:
+    headers = {"Accept": "application/vnd.github+json"}
+    if settings.github_token:
+        headers["Authorization"] = f"Bearer {settings.github_token}"
+    async with httpx.AsyncClient(timeout=8.0, headers=headers) as client:
         resp = await client.get(
             f"https://api.github.com/repos/{REPO}/releases", params={"per_page": 20}
         )
@@ -104,10 +108,14 @@ async def latest() -> dict[str, Any]:
     try:
         info = await _fetch()
     except (httpx.HTTPError, ValueError, KeyError, TypeError) as exc:
-        logger.warning("Job Catcher release check failed: %s", type(exc).__name__)
+        if not _cache["failing"]:
+            logger.warning("Job Catcher release check failed: %s", type(exc).__name__)
+        _cache["failing"] = True
         info = None
     if info is not None:
-        _cache.update(next=now + CACHE_SECONDS, value=info)
+        if _cache["failing"]:
+            logger.info("Job Catcher release check works again")
+        _cache.update(next=now + CACHE_SECONDS, value=info, failing=False)
     else:
         # Keep the last good answer; try GitHub again in a minute, not per request.
         _cache["next"] = now + 60
@@ -115,4 +123,4 @@ async def latest() -> dict[str, Any]:
 
 
 def reset_cache() -> None:
-    _cache.update(next=0.0, value=None)
+    _cache.update(next=0.0, value=None, failing=False)

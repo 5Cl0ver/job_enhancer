@@ -158,3 +158,62 @@ test("an older Job Catcher shows Update available with how to update", async () 
   expect(page.url()).toBe(`${api.url}/job-catcher#update`);
   await Promise.all([page.close(), panel.close()]);
 });
+
+test("one poller: waiting for approval asks the server at most every 2 seconds", async () => {
+  api.state.connectAutoApprove = false;
+  const { panel } = await openPanel();
+  await panel.getByRole("button", { name: "Connect to Job Enhancer" }).click();
+  await expect(panel.getByTestId("connect-waiting")).toBeVisible();
+  api.clearCalls();
+  await panel.waitForTimeout(6000);
+  const polls = api.calls("/v1/extension/connect/poll").length;
+  expect(polls).toBeGreaterThanOrEqual(2);
+  expect(polls).toBeLessThanOrEqual(4); // 6 s at one every 2 s, never doubled by the panel
+  await panel.getByRole("button", { name: "Cancel" }).click();
+  for (const p of ext.context.pages()) if (p.url().includes("/connect?code=")) await p.close();
+  await panel.close();
+});
+
+test("sign-out that can't reach the server revokes the pass later", async () => {
+  await ext.worker.evaluate(() =>
+    chrome.storage.local.set({
+      je_token: `jcx_${"q".repeat(43)}`,
+      je_expires: Math.floor(Date.now() / 1000) + 3600 * 24 * 365,
+      je_email: "wren@example.com",
+    }),
+  );
+  api.override("DELETE /v1/extension/tokens/current", { status: 500, body: { detail: "down" } });
+  const { panel } = await openPanel();
+  await panel.getByRole("navigation").getByRole("button", { name: "Settings" }).click();
+  await panel.getByRole("button", { name: "Sign out" }).click();
+  await expect(panel.getByRole("heading", { name: "Sign in to Job Catcher" })).toBeVisible({ timeout: 30_000 });
+  const pending = await ext.worker.evaluate(() => chrome.storage.local.get("je_pending_revoke"));
+  expect(pending.je_pending_revoke).toBe(`jcx_${"q".repeat(43)}`);
+
+  // The server is back: the next start (an update, a browser restart) finishes it.
+  api.reset();
+  api.clearCalls();
+  await ext.reload();
+  await expect.poll(() => api.calls("/v1/extension/tokens/current").length).toBeGreaterThan(0);
+  await expect
+    .poll(async () => (await ext.worker.evaluate(() => chrome.storage.local.get("je_pending_revoke"))).je_pending_revoke)
+    .toBeUndefined();
+  await panel.close();
+});
+
+test("a dead refresh token is forgotten instead of retried forever", async () => {
+  await ext.worker.evaluate(() =>
+    chrome.storage.local.set({
+      je_token: "old-token",
+      je_expires: Math.floor(Date.now() / 1000) - 60,
+      je_refresh: "revoked-refresh",
+      je_email: "wren@example.com",
+    }),
+  );
+  api.override("POST /auth/v1/token", { status: 400, body: { error_description: "Invalid Refresh Token" } });
+  const { panel } = await openPanel();
+  await expect(panel.getByRole("heading", { name: "Sign in to Job Catcher" })).toBeVisible();
+  const left = await ext.worker.evaluate(() => chrome.storage.local.get(["je_token", "je_refresh"]));
+  expect(left).toEqual({});
+  await panel.close();
+});

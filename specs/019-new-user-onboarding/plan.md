@@ -89,7 +89,7 @@ Ships as **3 PRs**, each independently useful:
 | VI. Clean architecture | ✅ New logic sits in services (`onboarding`, `allowance`, `extension_connect`, `releases`). Routers stay thin. Help text is in one module. |
 | VII. Simplicity | ✅ No new frontend dependency (Base UI already there), no Redis (Postgres counters), GitHub Releases rather than new hosting. One justified addition below. |
 
-**Complexity justified**: the auth layer accepts a second credential type, the Job Catcher pass. It is hashed, revocable, idle- and age-limited, capped per account, and refused for account-management actions. This avoids putting the far more powerful Supabase service-role key on the server (R4).
+**Complexity justified**: the auth layer has a second credential type, the Job Catcher pass. It is hashed, revocable, idle- and age-limited, and capped per account. It is **refused by default**: only the routes Job Catcher calls opt in (`get_user_or_pass`), and a route-table test enforces the allowlist. This avoids putting the far more powerful Supabase service-role key on the server (R4).
 
 *Re-checked after Phase 1 design: no new violations.*
 

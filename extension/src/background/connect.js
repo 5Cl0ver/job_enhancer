@@ -6,8 +6,10 @@
 //    That page asks THIS Job Catcher for the proof (externally_connectable,
 //    app origin only) and we answer only for our own waiting code. A link
 //    someone else sends can't connect their Job Catcher to this account.
-// 3. Poll every 2 s (also on each panel message and a 30 s alarm, so a
-//    sleeping service worker picks it up again) until we get our own pass.
+// 3. ONE poller: this worker asks every 2 s while it's awake (≤ 30 a minute);
+//    if Chrome puts it to sleep, a 30 s alarm or the panel opening wakes it
+//    and the same loop carries on. The panel only reads the state (and hears
+//    "connectChanged"), it never polls the server itself.
 //
 // The proof and poll token live in chrome.storage.session (trusted contexts
 // only: never content scripts, never written to disk) and are never logged.
@@ -19,23 +21,39 @@ const POLL_MS = 2000;
 const hex = (buf) => [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
 
-/** `onConnected(token, email)` stores the pass and refreshes the panel. */
-export function createConnect({ cfg, onConnected, openTab = (url) => chrome.tabs.create({ url }) }) {
+/**
+ * `onConnected(token, email)` stores the pass and refreshes the panel.
+ * `fetchFn`: the worker's fetch that waits out a sleeping server (wakeFetch).
+ */
+export function createConnect({
+  cfg,
+  onConnected,
+  fetchFn = fetch,
+  openTab = (url) => chrome.tabs.create({ url }),
+  notify = () => chrome.runtime.sendMessage({ type: "connectChanged" }).catch(() => {}),
+}) {
   let inFlight = null;
   let timer = null;
 
   const read = async () => (await chrome.storage.session.get(KEY))[KEY] || null;
   const write = (state) => chrome.storage.session.set({ [KEY]: state });
+  const post = (path, body) =>
+    fetchFn(`${cfg.API_BASE}${path}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
 
-  /** What the panel shows: waiting (with code), expired, failed, or nothing. */
+  /** What the panel shows: waiting (with code), expired, cancelled, or idle. */
   async function status() {
     const c = await read();
     if (!c) return { state: "idle" };
     if (c.state === "waiting" && Date.now() > c.deadline) {
-      await write({ ...c, state: "expired" });
+      await finish({ ...c, state: "expired" });
       return { state: "expired" };
     }
-    return { state: c.state, code: c.code, deadline: c.deadline, error: c.error };
+    if (c.state === "waiting") resume();
+    return { state: c.state, code: c.code, deadline: c.deadline };
   }
 
   async function start() {
@@ -43,13 +61,9 @@ export function createConnect({ cfg, onConnected, openTab = (url) => chrome.tabs
     const proofHash = hex(await crypto.subtle.digest("SHA-256", new TextEncoder().encode(proof)));
     let res;
     try {
-      res = await fetch(`${cfg.API_BASE}/v1/extension/connect/start`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ proof_hash: proofHash }),
-      });
+      res = await post("/v1/extension/connect/start", { proof_hash: proofHash });
     } catch {
-      return { ok: false, error: "Couldn't reach Job Enhancer. Check your connection and try again." };
+      return { ok: false, error: "Couldn't reach Job Enhancer. It may be waking up; try again in a minute." };
     }
     if (res.status === 429) return { ok: false, error: "Too many tries. Wait a few minutes, then try again." };
     if (!res.ok) return { ok: false, error: "Couldn't start connecting. Try again." };
@@ -77,19 +91,27 @@ export function createConnect({ cfg, onConnected, openTab = (url) => chrome.tabs
   function loop() {
     clearTimeout(timer);
     timer = setTimeout(async () => {
-      const r = await poll();
+      timer = null;
+      const r = await poll().catch(() => ({ state: "waiting" }));
       if (r.state === "waiting") loop();
     }, POLL_MS);
   }
 
+  /** Carry on waiting after the worker slept (alarm, panel opened). */
+  function resume() {
+    if (!timer && !inFlight) loop();
+  }
+
   async function finish(state) {
     clearTimeout(timer);
+    timer = null;
     chrome.alarms?.clear(ALARM);
     if (state) await write(state);
     else await chrome.storage.session.remove(KEY);
+    notify();
   }
 
-  /** One poll; shared by every caller so the pass is only taken once. */
+  /** One poll at a time, so the pass is only ever taken once. */
   function poll() {
     if (!inFlight) {
       inFlight = pollOnce().finally(() => {
@@ -108,13 +130,9 @@ export function createConnect({ cfg, onConnected, openTab = (url) => chrome.tabs
     }
     let res;
     try {
-      res = await fetch(`${cfg.API_BASE}/v1/extension/connect/poll`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ poll_token: c.pollToken }),
-      });
+      res = await post("/v1/extension/connect/poll", { poll_token: c.pollToken });
     } catch {
-      return { state: "waiting" }; // offline for a moment: try again
+      return { state: "waiting" }; // offline or waking: try again
     }
     if (res.status === 404) {
       await finish({ ...c, state: "expired" });
@@ -137,11 +155,7 @@ export function createConnect({ cfg, onConnected, openTab = (url) => chrome.tabs
     const c = await read();
     await finish(null);
     if (c?.pollToken && c.state === "waiting") {
-      await fetch(`${cfg.API_BASE}/v1/extension/connect/cancel`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ poll_token: c.pollToken }),
-      }).catch(() => {});
+      await post("/v1/extension/connect/cancel", { poll_token: c.pollToken }).catch(() => {});
     }
     return { ok: true };
   }
@@ -164,5 +178,5 @@ export function createConnect({ cfg, onConnected, openTab = (url) => chrome.tabs
     return { proof: c.proof };
   }
 
-  return { start, status, poll, cancel, openApproval, proofFor, alarm: ALARM };
+  return { start, status, poll, resume, cancel, openApproval, proofFor, alarm: ALARM };
 }

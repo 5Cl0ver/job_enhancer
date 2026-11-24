@@ -40,7 +40,6 @@ jobs:
       JC_APP_URL: ${{ vars.JC_APP_URL }}
       JC_SUPABASE_URL: ${{ vars.JC_SUPABASE_URL }}
       JC_SUPABASE_ANON_KEY: ${{ vars.JC_SUPABASE_ANON_KEY }}
-      GH_TOKEN: ${{ github.token }}
     steps:
       - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
         with:
@@ -48,6 +47,8 @@ jobs:
 
       - name: Which version
         id: version
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           version="$(node -p "require('./manifest.json').version")"
@@ -76,7 +77,8 @@ jobs:
         if: steps.version.outputs.exists == 'false'
         run: |
           set -euo pipefail
-          npm ci
+          # No package install scripts: nothing from npm runs during the install.
+          npm ci --ignore-scripts --no-audit --no-fund
           npm run build
 
       - name: Write config.js for the live app (refuse anything else)
@@ -155,6 +157,7 @@ jobs:
       - name: Publish the release
         if: steps.version.outputs.exists == 'false'
         env:
+          GH_TOKEN: ${{ github.token }}
           VERSION: ${{ steps.version.outputs.version }}
           TAG: ${{ steps.version.outputs.tag }}
         run: |
@@ -162,16 +165,20 @@ jobs:
           cd ..
           sha="$(sha256sum job-catcher.zip | cut -d' ' -f1)"
           subject="$(git log -1 --pretty=%s)"
-          VERSION="$VERSION" SHA="$sha" SUBJECT="$subject" node -e '
-            const notes = process.env.SUBJECT.replace(/\s*\(#\d+\)$/, "").slice(0, 300);
+          # A one-time notice for this version, if extension/release-notices.txt
+          # has a line "<version>: …" (0.35.0 changes the extension id).
+          notice="$(grep -F "${VERSION}: " extension/release-notices.txt 2>/dev/null | head -1 | cut -d' ' -f2- || true)"
+          VERSION="$VERSION" SHA="$sha" SUBJECT="$subject" NOTICE="$notice" node -e '
+            const subject = process.env.SUBJECT.replace(/\s*\(#\d+\)$/, "").slice(0, 300);
+            const notes = (process.env.NOTICE ? `${process.env.NOTICE} ` : "") + subject;
             require("fs").writeFileSync("latest.json", JSON.stringify({
               version: process.env.VERSION,
-              notes,
+              notes: notes.slice(0, 500),
               sha256: process.env.SHA,
               published_at: new Date().toISOString(),
             }, null, 2) + "\n");
             require("fs").writeFileSync("release-notes.md",
-              `${notes}\n\nDownload job-catcher.zip, unzip it into a folder you keep, then load it in chrome://extensions (Developer mode → Load unpacked). Updating: unzip over the same folder and press reload.\n\nSHA-256 of job-catcher.zip: \`${process.env.SHA}\`\n`);
+              `${process.env.NOTICE ? `**${process.env.NOTICE}**\n\n` : ""}${subject}\n\nDownload job-catcher.zip, unzip it into a folder you keep, then load it in chrome://extensions (Developer mode → Load unpacked). Updating: unzip over the same folder and press reload.\n\nSHA-256 of job-catcher.zip: \`${process.env.SHA}\`\n`);
           '
           gh release create "$TAG" job-catcher.zip latest.json \
             --repo "$GITHUB_REPOSITORY" \

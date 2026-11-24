@@ -28,6 +28,10 @@ describe("safeRedirect: after sign-in, only ever a page inside the app", () => {
     "",
     "jobs",
     "/%E0%A4%A", // broken encoding
+    "/.//evil.com",
+    "/a/..//evil.com",
+    "/%2e%2e//evil.com",
+    "/./%2e/..//evil.com",
   ])("refuses %s", (input) => {
     expect(safeRedirect(input)).toBe("/");
   });

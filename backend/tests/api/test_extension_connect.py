@@ -13,7 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.v1 import extension as ext_api
 from app.main import app
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.extension import (
     ExtensionConnectRequest,
     ExtensionInstall,
@@ -23,28 +23,33 @@ from app.models.user import User
 from app.services import extension_connect as svc
 from app.services import releases
 from app.services.users import create_user
-from app.utils.rate_limit import rate_limit_key
+from app.utils.rate_limit import client_ip, rate_limit_key
 
 
 @pytest_asyncio.fixture(autouse=True)
 async def _fresh_limits():
     ext_api._limiter.reset()
+    ext_api._ip_limiter.reset()
     releases.reset_cache()
     yield
     ext_api._limiter.reset()
+    ext_api._ip_limiter.reset()
     releases.reset_cache()
 
 
 async def _with_pass(c: AsyncClient, token: str, method: str, url: str, **kw):
     """A request as Job Catcher with its pass: the real auth, not the tests'
     stand-in user (the clients share the app's dependency overrides)."""
-    saved = app.dependency_overrides.pop(get_current_user, None)
+    saved = {
+        dep: app.dependency_overrides.pop(dep)
+        for dep in (get_current_user, get_user_or_pass)
+        if dep in app.dependency_overrides
+    }
     try:
         headers = {"Authorization": f"Bearer {token}"}
         return await c.request(method, url, headers=headers, **kw)
     finally:
-        if saved is not None:
-            app.dependency_overrides[get_current_user] = saved
+        app.dependency_overrides.update(saved)
 
 
 def _proof() -> tuple[str, str]:
@@ -244,7 +249,8 @@ async def test_at_most_ten_computers(client: AsyncClient, anon_client: AsyncClie
     first = await _connect(client)
     for _ in range(4):
         await _connect(client)
-    ext_api._limiter.reset()  # start allows 10 an hour
+    ext_api._ip_limiter.reset()  # start and approve allow 10 an hour
+    ext_api._limiter.reset()
     for _ in range(6):
         await _connect(client)
     assert len((await client.get("/v1/extension/tokens")).json()) == 10
@@ -265,9 +271,9 @@ async def test_job_catcher_cannot_approve_or_manage_connections(
         "/v1/extension/connect/approve",
         json={"code": started["code"], "proof": proof},
     )
-    assert r.status_code == 403
+    assert r.status_code == 401  # only the app itself can approve
     r = await _with_pass(anon_client, token, "GET", "/v1/extension/tokens")
-    assert r.status_code == 403
+    assert r.status_code == 401
 
 
 @pytest.mark.asyncio
@@ -412,3 +418,80 @@ def test_versions_compare_as_numbers():
     assert not releases.is_older("0.35.0", "0.35.0")
     assert not releases.is_older(None, "0.35.0")
     assert app is not None
+
+
+def test_client_ip_trusts_only_what_the_proxy_added():
+    class _Req:
+        def __init__(self, peer, forwarded=""):
+            self.client = type("C", (), {"host": peer})()
+            self.headers = {"x-forwarded-for": forwarded} if forwarded else {}
+
+    # Behind Render's proxy (a private peer): the rightmost hop is the client;
+    # whatever the client typed to its left is ignored.
+    assert client_ip(_Req("10.1.2.3", "6.6.6.6, 203.0.113.9")) == "203.0.113.9"
+    assert client_ip(_Req("10.1.2.3", "203.0.113.9")) == "203.0.113.9"
+    # A public peer is the client itself; its forwarded header is ignored.
+    assert client_ip(_Req("8.8.4.4", "6.6.6.6")) == "8.8.4.4"
+    assert client_ip(_Req("10.1.2.3", "not-an-ip")) == "10.1.2.3"
+
+
+@pytest.mark.asyncio
+async def test_start_says_busy_when_too_many_wait(
+    anon_client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+):
+    monkeypatch.setattr(svc, "MAX_PENDING", 2)
+    await _start(anon_client)
+    await _start(anon_client)
+    _, proof_hash = _proof()
+    r = await anon_client.post(
+        "/v1/extension/connect/start", json={"proof_hash": proof_hash}
+    )
+    assert r.status_code == 503 and "Busy" in r.text
+
+
+@pytest.mark.asyncio
+async def test_password_reset_disconnects_every_job_catcher(
+    client: AsyncClient, anon_client: AsyncClient
+):
+    first = await _connect(client)
+    second = await _connect(client)
+    r = await client.post("/v1/extension/tokens/revoke-all")
+    assert r.json() == {"revoked": 2}
+    for token in (first, second):
+        me = await _with_pass(anon_client, token, "GET", "/v1/users/me")
+        assert me.status_code == 401
+    # Only the app itself can do it.
+    third = await _connect(client)
+    r = await _with_pass(anon_client, third, "POST", "/v1/extension/tokens/revoke-all")
+    assert r.status_code == 401
+
+
+@pytest.mark.asyncio
+async def test_installs_show_password_sign_ins_too(client: AsyncClient):
+    await client.post(
+        "/v1/extension/hello",
+        json={
+            "install_id": "install-abc123",
+            "version": "0.35.0",
+            "browser": "Edge 142",
+        },
+    )
+    rows = (await client.get("/v1/extension/installs")).json()
+    assert [(r["version"], r["browser"]) for r in rows] == [("0.35.0", "Edge 142")]
+
+
+@pytest.mark.asyncio
+async def test_release_failures_are_logged_once(
+    anon_client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+):
+    async def down():
+        raise httpx.ConnectError("down")
+
+    monkeypatch.setattr(releases, "_fetch", down)
+    for _ in range(3):
+        releases._cache["next"] = 0.0
+        await anon_client.get("/v1/extension/latest")
+    warnings = [r for r in caplog.records if "release check failed" in r.getMessage()]
+    assert len(warnings) == 1

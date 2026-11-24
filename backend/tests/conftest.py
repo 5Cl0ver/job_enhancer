@@ -16,7 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.database import get_db
 from app.main import app
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models import Base
 from app.models.user import User
 from app.services.users import create_user
@@ -68,6 +68,7 @@ def _make_client(db_session: AsyncSession, user: User | None):
     app.dependency_overrides[get_db] = override_get_db
     if user is not None:
         app.dependency_overrides[get_current_user] = lambda: user
+        app.dependency_overrides[get_user_or_pass] = lambda: user
     return AsyncClient(transport=ASGITransport(app=app), base_url="http://testserver")
 
 

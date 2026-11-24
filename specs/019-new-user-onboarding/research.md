@@ -95,6 +95,19 @@ Each decision lists what was chosen, why, and what else was considered. Facts ab
   - A pass can't approve a Connect or list or revoke connections (403: "Do this in the Job Enhancer app"). Revoking only ever touches the owner's own passes.
   - Rate limiting keys a pass as `ext:` + 12 hex characters of its hash, never the pass itself.
 
+**Security review fixes (2026-11-24)**:
+- **Pass refused by default.** `get_current_user` is app-session only; `get_user_or_pass` opts in only Job Catcher's own routes, enforced by a route-table test. The Claude Project link moved to `PATCH /users/me/claude-project`, so `PATCH /users/me` stays app-only.
+- **Real client IP for the public Connect limits.** These use the rightmost X-Forwarded-For entry, and only when the peer is Render's private proxy. We don't use uvicorn `--forwarded-allow-ips='*'`, because that trusts the leftmost entry, which a client can fake.
+- **Load:** a global cap of 500 waiting requests; indexes on `created_at` and `(status, expires_at)`; cleanup on the scheduler.
+- **After a password reset,** the app revokes every pass and says Job Catcher must connect again.
+- **Login redirects** re-check the tidied path, so `/.//evil.com` and `/a/..//evil.com` fall back to `/`.
+- **Release workflow:** the token only on the two steps that use it, and `npm ci --ignore-scripts` (verified: esbuild and vite still build).
+- **Robustness:**
+  - One poller in the background (2 s, ≤ 30 a minute), resumed by an alarm. The panel only reads state.
+  - Connect calls use the wake-up retry for Render's cold start.
+  - A sign-out revoke that fails is kept and retried at the next start or every 30 minutes.
+  - A dead refresh token (400/401) is forgotten instead of retried forever.
+
 **Alternatives considered**:
 - **Supabase admin `generate_link` + `verify`.** It gives a separate Supabase session, confirmed in the Supabase Auth docs. But it needs the service-role key on Render, which the owner wanted no setup for, and that key is far more powerful than needed.
 - **The app posts its own session to the extension:** shares one refresh token, leading to reuse detection and surprise sign-outs.

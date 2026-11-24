@@ -355,5 +355,6 @@ test("a failed lookup never overwrites the account's Claude link with an old one
   await panel.waitForTimeout(1500);
   expect(api.state.claudeProjectUrl).toBe("https://claude.ai/project/new-one");
   expect(api.calls("/v1/users/me").filter((c) => c.method === "PATCH")).toHaveLength(0);
+  expect(api.calls("/v1/users/me/claude-project")).toHaveLength(0);
   await Promise.all([tab.close(), panel.close()]);
 });

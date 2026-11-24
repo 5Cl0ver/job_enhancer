@@ -6,7 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.job_listing import JobListing
 from app.models.saved_job import ORIGIN_EXTENSION
 from app.models.user import User
@@ -40,7 +40,7 @@ async def list_saved_jobs(
     collection_id: uuid.UUID | None = Query(None),
     pipeline_stage_id: uuid.UUID | None = Query(None),
     is_archived: bool = Query(False),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> list[SavedJobListItem]:
     """Saved jobs for the list and board views. Listings carry a short
@@ -67,7 +67,7 @@ async def list_saved_jobs(
 @router.get("/summary", response_model=SavedJobSummaryResponse)
 async def saved_jobs_summary(
     version: str | None = Query(None, max_length=64),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSummaryResponse:
     """Slim saved-job list for the browser extension, with a change check.
@@ -114,7 +114,7 @@ async def save_job(
 async def save_manual_job(
     data: ManualJobCreate,
     request: Request,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> SavedJobSchema:
     """Add a job found on an external site by URL + details (FR-004a)."""
@@ -131,7 +131,7 @@ async def save_manual_job(
 @router.post("/check", response_model=JobSavedResult)
 async def check_saved(
     data: JobSavedCheck,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> JobSavedResult:
     """Is this job already in the user's tracker? Used by the extension to show
@@ -148,7 +148,7 @@ async def check_saved(
 @router.post("/backfill", response_model=BackfillResult)
 async def backfill_details(
     data: ManualJobCreate,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> BackfillResult:
     """Passive backfill: upgrade an already-saved job's listing with the full
@@ -163,7 +163,7 @@ async def backfill_details(
 @router.post("/mark-applied", response_model=MarkAppliedResult)
 async def mark_applied(
     data: MarkAppliedRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> MarkAppliedResult:
     """Auto-track: the extension detected an application SUBMIT on an ATS page.
@@ -179,7 +179,7 @@ async def mark_applied(
 @router.post("/sync-applications", response_model=ApplicationSyncResult)
 async def sync_applications(
     data: ApplicationSyncRequest,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> ApplicationSyncResult:
     """Bulk-reconcile applications the user already made on a job board (read off

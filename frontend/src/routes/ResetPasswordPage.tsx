@@ -2,12 +2,16 @@ import { useEffect, useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { api } from "@/lib/api";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 
 export const MIN_PASSWORD = 8;
+
+export const DISCONNECTED =
+  "Your password is changed. Job Catcher was disconnected on all computers; press Connect in Job Catcher again.";
 
 /**
  * Choose a new password (spec 019). Reached from the emailed reset link,
@@ -20,6 +24,7 @@ export default function ResetPasswordPage() {
   const [again, setAgain] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [done, setDone] = useState(false);
 
   useEffect(() => {
     const supabase = createClient();
@@ -43,12 +48,16 @@ export default function ResetPasswordPage() {
     }
     setBusy(true);
     const { error } = await createClient().auth.updateUser({ password });
-    setBusy(false);
     if (error) {
+      setBusy(false);
       setError("Couldn't save the new password. Open the link from the email again.");
       return;
     }
-    navigate("/", { replace: true });
+    // A reset may mean someone else knew the password: sign Job Catcher out
+    // everywhere too.
+    await api.post("/v1/extension/tokens/revoke-all", {}).catch(() => {});
+    setBusy(false);
+    setDone(true);
   };
 
   return (
@@ -70,7 +79,15 @@ export default function ResetPasswordPage() {
               .
             </p>
           )}
-          {ready === "yes" && (
+          {done && (
+            <div className="space-y-3" role="status">
+              <p className="text-sm">{DISCONNECTED}</p>
+              <Button className="w-full" onClick={() => navigate("/", { replace: true })}>
+                Continue
+              </Button>
+            </div>
+          )}
+          {ready === "yes" && !done && (
             <form onSubmit={save} className="space-y-3">
               <div className="space-y-1.5">
                 <Label htmlFor="new-password">New password</Label>

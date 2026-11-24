@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer, selectinload
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.application_profile import ApplicationProfile
 from app.models.collection import Collection
 from app.models.custom_answer import CustomAnswer
@@ -25,6 +25,7 @@ from app.models.taught_field import TaughtField
 from app.models.user import User
 from app.schemas.user import (
     ApplicationProfileSchema,
+    ClaudeProjectUpdate,
     CustomAnswerSchema,
     CustomAnswersUpsert,
     CustomAnswersUsed,
@@ -42,7 +43,7 @@ router = APIRouter()
 
 
 @router.get("/me", response_model=UserProfile)
-async def get_profile(user: User = Depends(get_current_user)) -> UserProfile:
+async def get_profile(user: User = Depends(get_user_or_pass)) -> UserProfile:
     return UserProfile.model_validate(user)
 
 
@@ -59,9 +60,23 @@ async def update_profile(
     return UserProfile.model_validate(user)
 
 
+@router.patch("/me/claude-project", response_model=UserProfile)
+async def update_claude_project(
+    data: ClaudeProjectUpdate,
+    user: User = Depends(get_user_or_pass),
+    db: AsyncSession = Depends(get_db),
+) -> UserProfile:
+    """Just the Claude Project link: the one account setting Job Catcher
+    changes (PATCH /me stays app-only)."""
+    user.claude_project_url = data.claude_project_url
+    await db.commit()
+    await db.refresh(user)
+    return UserProfile.model_validate(user)
+
+
 @router.get("/me/application-profile", response_model=ApplicationProfileSchema)
 async def get_application_profile(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> ApplicationProfileSchema:
     """The user's profile vault (empty defaults if never filled)."""
@@ -76,7 +91,7 @@ async def get_application_profile(
 @router.put("/me/application-profile", response_model=ApplicationProfileSchema)
 async def update_application_profile(
     data: ApplicationProfileSchema,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> ApplicationProfileSchema:
     """Upsert the profile vault. Only the fields sent are changed, so partial
@@ -152,7 +167,7 @@ async def get_custom_answers(
 @router.put("/me/custom-answers", response_model=list[CustomAnswerSchema])
 async def upsert_custom_answers(
     data: CustomAnswersUpsert,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> list[CustomAnswerSchema]:
     """Save answers the user just taught us — upsert by question_key so
@@ -181,7 +196,7 @@ async def upsert_custom_answers(
 async def mark_answers_used(
     request: Request,
     data: CustomAnswersUsed,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Autofill just reused these learned answers — bump use_count + last_used_at
@@ -207,7 +222,7 @@ async def mark_answers_used(
 @router.delete("/me/custom-answers/{question_key:path}", status_code=204)
 async def delete_custom_answer(
     question_key: str,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> None:
     """Forget one learned answer (the user fixed/removed it in Settings)."""

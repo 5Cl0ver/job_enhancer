@@ -29,6 +29,9 @@ export function safeRedirect(target: unknown, fallback = "/"): string {
     const base = window.location.origin;
     const url = new URL(target, base);
     if (url.origin !== base) return fallback;
+    // After the browser tidies it ("/.//evil.com" → "//evil.com"), it must
+    // still be a plain path: never "//host", never a backslash.
+    if (url.pathname.startsWith("//") || url.pathname.includes("\\")) return fallback;
     return url.pathname + url.search + url.hash;
   } catch {
     return fallback;

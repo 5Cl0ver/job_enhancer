@@ -46,6 +46,16 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="purge_deleted_users",
         replace_existing=True,
     )
+    from app.services.extension_connect import purge_connect_requests
+
+    scheduler.add_job(
+        purge_connect_requests,
+        trigger="interval",
+        hours=6,
+        args=[AsyncSessionLocal],
+        id="purge_connect_requests",
+        replace_existing=True,
+    )
     from app.services.saved_searches import refresh_saved_searches
 
     scheduler.add_job(

@@ -1,0 +1,3 @@
+# One-time notices shown in a Job Catcher release's notes.
+# Format: <version>: <text>. Only the line for the version being released is used.
+0.35.0: New in 0.35.0: remove the old Job Catcher first, then load the new folder and press Connect. You'll need to connect once; later updates keep you signed in.

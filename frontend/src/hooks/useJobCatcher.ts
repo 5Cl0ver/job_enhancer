@@ -21,6 +21,20 @@ export interface JobCatcherConnection {
   last_used_at: string | null;
 }
 
+export interface JobCatcherInstall {
+  version: string;
+  browser: string | null;
+  last_seen_at: string;
+}
+
+/** Job Catchers that said hello on this account (password sign-ins too). */
+export function useJobCatcherInstalls() {
+  return useQuery<JobCatcherInstall[]>({
+    queryKey: ["job-catcher", "installs"],
+    queryFn: () => api.get<JobCatcherInstall[]>("/v1/extension/installs"),
+  });
+}
+
 export function useJobCatcherRelease() {
   return useQuery<JobCatcherRelease>({
     queryKey: ["job-catcher", "latest"],

@@ -65,6 +65,16 @@ def upgrade() -> None:
         sa.Column("expires_at", sa.DateTime(timezone=True), nullable=False),
         _ts("created_at"),
     )
+    op.create_index(
+        "ix_extension_connect_requests_created_at",
+        "extension_connect_requests",
+        ["created_at"],
+    )
+    op.create_index(
+        "ix_extension_connect_requests_status_expires",
+        "extension_connect_requests",
+        ["status", "expires_at"],
+    )
 
     op.create_table(
         "extension_installs",
@@ -93,6 +103,14 @@ def upgrade() -> None:
 def downgrade() -> None:
     op.drop_index("ix_extension_installs_user_id", table_name="extension_installs")
     op.drop_table("extension_installs")
+    op.drop_index(
+        "ix_extension_connect_requests_status_expires",
+        table_name="extension_connect_requests",
+    )
+    op.drop_index(
+        "ix_extension_connect_requests_created_at",
+        table_name="extension_connect_requests",
+    )
     op.drop_table("extension_connect_requests")
     op.drop_index("ix_extension_tokens_user_id", table_name="extension_tokens")
     op.drop_table("extension_tokens")

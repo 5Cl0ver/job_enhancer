@@ -36,6 +36,16 @@ class UserUpdate(BaseModel):
         return v
 
 
+class ClaudeProjectUpdate(BaseModel):
+    """Just the Claude Project link (Job Catcher's one account setting)."""
+
+    claude_project_url: str | None = Field(None, max_length=2048)
+
+    _http_or_empty = field_validator("claude_project_url")(
+        UserUpdate._http_or_empty.__func__  # type: ignore[attr-defined]
+    )
+
+
 class AdminUserUpdate(BaseModel):
     """Admin-only change to another user's role (promote/demote)."""
 

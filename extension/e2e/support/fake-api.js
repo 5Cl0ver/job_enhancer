@@ -92,6 +92,11 @@ export async function startFakeApi() {
     "GET /v1/users/me": () => ({
       body: { email: state.email, claude_project_url: state.claudeProjectUrl },
     }),
+    // Job Catcher's one account setting (PATCH /v1/users/me is app-only).
+    "PATCH /v1/users/me/claude-project": (b) => {
+      if (typeof b?.claude_project_url === "string") state.claudeProjectUrl = b.claude_project_url;
+      return { body: { email: state.email, claude_project_url: state.claudeProjectUrl } };
+    },
     "PATCH /v1/users/me": (b) => {
       if (typeof b?.claude_project_url === "string") state.claudeProjectUrl = b.claude_project_url;
       return { body: { email: state.email, claude_project_url: state.claudeProjectUrl } };

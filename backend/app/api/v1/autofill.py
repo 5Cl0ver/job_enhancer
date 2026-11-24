@@ -9,7 +9,7 @@ from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import get_current_user
+from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.taught_field import TaughtField
 from app.models.user import User
 from app.services import autofill_bundle as svc
@@ -22,7 +22,7 @@ router = APIRouter()
 async def get_bundle(
     background: BackgroundTasks,
     version: str | None = Query(None, max_length=64),
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Everything autofill needs, or ``{"changed": false}`` when the version
@@ -94,7 +94,7 @@ def _same_box(a: dict, b: dict) -> bool:
 @router.post("/taught", status_code=201)
 async def teach(
     body: TaughtIn,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """Remember a taught box (re-teaching the same box replaces it)."""
@@ -140,7 +140,7 @@ async def teach(
 
 @router.get("/taught")
 async def list_taught(
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
     rows = await db.scalars(
@@ -198,7 +198,7 @@ async def edit_taught(
 @router.delete("/taught/{taught_id}", status_code=204)
 async def forget_taught(
     taught_id: uuid.UUID,
-    user: User = Depends(get_current_user),
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> Response:
     gone = await db.execute(

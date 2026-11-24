@@ -70,7 +70,13 @@ async function refreshToken(je_refresh) {
   } catch {
     return null; // network/timeout — treat as "couldn't refresh" instead of hanging
   }
-  if (!res.ok) return null;
+  if (res.status === 400 || res.status === 401) {
+    // The refresh token is dead (revoked, already used, signed out elsewhere):
+    // forget the session so we stop retrying and the panel shows Sign in.
+    await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh"]);
+    return null;
+  }
+  if (!res.ok) return null; // 5xx, 429: try again later
   const d = await res.json();
   await storeSession(d);
   return d.access_token;
@@ -128,7 +134,7 @@ async function storePass(token, email) {
   chrome.runtime.sendMessage({ type: "authChanged" }).catch(() => {});
 }
 
-const connect = createConnect({ cfg, onConnected: storePass });
+const connect = createConnect({ cfg, onConnected: storePass, fetchFn: (url, opts) => wakeFetch(url, opts) });
 
 // Only the app's /connect page may ask (externally_connectable lists only the
 // app's address), and only gets the proof for the code we're waiting on.
@@ -138,7 +144,9 @@ chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
 });
 
 chrome.alarms?.onAlarm.addListener((alarm) => {
-  if (alarm.name === connect.alarm) connect.poll().catch(() => {});
+  // The worker slept while waiting for approval: carry on the same loop.
+  if (alarm.name === connect.alarm) connect.status().catch(() => {});
+  if (alarm.name === REVOKE_ALARM) retryRevoke().catch(() => {});
 });
 
 function browserName() {
@@ -196,15 +204,45 @@ function isOlder(have, latest) {
   return false;
 }
 
-/** Sign out: a pass is revoked on the server first, so it's dead everywhere. */
+/** Sign out: a pass is revoked on the server first, so it's dead everywhere.
+ *  If the server can't be reached, the revoke is kept and retried later. */
+const REVOKE_ALARM = "je-revoke";
+
+async function sendRevoke(token) {
+  try {
+    const res = await wakeFetch(`${cfg.API_BASE}/v1/extension/tokens/current`, {
+      method: "DELETE",
+      headers: { Authorization: `Bearer ${token}` },
+    });
+    // 204 revoked; 401 already dead. Either way it's done.
+    return res.status === 204 || res.status === 401;
+  } catch {
+    return false;
+  }
+}
+
 async function revokePass() {
   const { je_token } = await chrome.storage.local.get("je_token");
   if (typeof je_token !== "string" || !je_token.startsWith("jcx_")) return;
-  await fetchWithTimeout(`${cfg.API_BASE}/v1/extension/tokens/current`, {
-    method: "DELETE",
-    headers: { Authorization: `Bearer ${je_token}` },
-  }).catch(() => {});
+  if (!(await sendRevoke(je_token))) {
+    await chrome.storage.local.set({ je_pending_revoke: je_token });
+    chrome.alarms?.create(REVOKE_ALARM, { periodInMinutes: 30 });
+  }
 }
+
+async function retryRevoke() {
+  const { je_pending_revoke } = await chrome.storage.local.get("je_pending_revoke");
+  if (typeof je_pending_revoke !== "string") {
+    chrome.alarms?.clear(REVOKE_ALARM);
+    return;
+  }
+  if (await sendRevoke(je_pending_revoke)) {
+    await chrome.storage.local.remove("je_pending_revoke");
+    chrome.alarms?.clear(REVOKE_ALARM);
+  }
+}
+// A sign-out that couldn't reach the server: try again whenever we start.
+retryRevoke().catch(() => {});
 
 async function saveJob(job) {
   const token = await getValidToken();
@@ -694,7 +732,7 @@ async function getClaudeProjectUrl() {
 async function saveClaudeProjectUrl(url) {
   const token = await getValidToken();
   if (!token) return { ok: false };
-  const res = await fetch(`${cfg.API_BASE}/v1/users/me`, {
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me/claude-project`, {
     method: "PATCH",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({ claude_project_url: url || "" }),
@@ -1016,9 +1054,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "connectStart") {
         sendResponse(await connect.start());
       } else if (msg.type === "connectStatus") {
-        // Each panel check also polls, so waiting never depends on the worker
-        // staying awake.
-        await connect.poll().catch(() => {});
+        // Reads the state only (and wakes the one poller if it slept).
         sendResponse({ ok: true, ...(await connect.status()) });
       } else if (msg.type === "connectCancel") {
         sendResponse(await connect.cancel());

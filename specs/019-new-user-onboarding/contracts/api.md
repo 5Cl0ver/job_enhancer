@@ -123,10 +123,38 @@ Disconnects one of the person's own computers. Returns 404 for anyone else's.
 
 Job Catcher's sign-out. Returns 204.
 
-### Auth
+### `POST /extension/tokens/revoke-all` (app session only)
 
-- Every endpoint that takes a user also accepts `Bearer jcx_…`, except approve, tokens list and delete-by-id, which return 403 "Do this in the Job Enhancer app."
+Disconnects every Job Catcher. The app calls it right after a password reset. Returns `{"revoked": n}`.
+
+### `GET /extension/installs` (app session only)
+
+Lists the Job Catchers that said hello on this account, newest first: `[{version, browser, last_seen_at}]`. A password sign-in shows here too, so the status chip works for every kind of sign-in.
+
+### Auth: the pass opens only what Job Catcher does
+
+- **Session only by default.** `get_current_user` refuses a `jcx_` pass with 401 "Sign in to the Job Enhancer app to do this." Only routes that opt in with `get_user_or_pass` accept one.
+- **The allowlist** is `PASS_ROUTES` in `backend/tests/api/test_pass_routes.py`. A test walks the whole route table and fails if any other route accepts a pass, so new routes are session-only unless added on purpose. It holds exactly the calls Job Catcher makes:
+  - `GET /users/me`, `PATCH /users/me/claude-project`;
+  - application profile read and update;
+  - custom-answers save, used and delete;
+  - saved-jobs list, summary, manual, check, backfill, mark-applied and sync-applications;
+  - autofill bundle, and taught add, list and delete;
+  - AI: resumes, active résumé file, prompt, autofill-map, work-history, manual documents, generate, document PDF;
+  - scout active run and captures;
+  - extension hello and `tokens/current`.
+- **Never with a pass:** account delete, export, `PATCH /users/me`, all `/admin`, email, Connect approve and status, and the token list, revoke and revoke-all.
 - Revoked, idle (90 days), old (365 days) or unknown passes get 401.
+
+### Rate limits and the client's address
+
+- The public Connect endpoints are limited by the **client's IP only**, ignoring Authorization:
+  - start: 10 an hour;
+  - poll: 90 a minute (Job Catcher polls 30 a minute);
+  - cancel: 30 a minute.
+- Behind Render's proxy, the IP is the **rightmost** X-Forwarded-For entry, and only when the direct peer is a private address. Entries a client adds to the left are never trusted.
+- At most **500** Connect requests may wait at once across everyone; above that, start returns `503 "Busy right now. Try again in a minute."`
+- Old requests are deleted by a scheduled job every 6 hours, never during a request.
 
 ## Admin
 
