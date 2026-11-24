@@ -13,6 +13,7 @@
 // → widgets.js (write + read back) → session.js (the fill, Fix, Undo).
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
+import { readField } from "./autofill/widgets.js";
 import { profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
 import { fingerprintOf } from "./autofill/fingerprint.js";
 import { createPicker } from "./autofill/pick.js";
@@ -469,17 +470,31 @@ const picked = new Map(); // id → field, for the answer the panel sends back
 const picker = createPicker({
   alive: () => isCurrent() && !runtimeGone(),
   labelFor: (el) => questionFor(el).slice(0, 60),
-  onPick: (control) => {
+  onPick: async (control) => {
     const { field, fields } = fieldFor(control);
     picked.set(field.id, field);
     const type = (control.getAttribute?.("type") || "").toLowerCase();
     const refused = type === "password" ? "password" : pointRefusal(field);
+    // Inspect (spec 018): what the box holds now, and what Job Catcher would
+    // put there and why — shown only in the user's own panel. A refused box
+    // (password, self-ID, agreement) never sends what it holds.
+    const value = refused ? "" : readField(field).trim().slice(0, 2000);
+    let known = null;
+    if (!refused) {
+      const copy = lastCopy || (await loadCopy());
+      if (!copy.signedOut && !copy.unreachable) {
+        const d = resolve(field, { ...copy, site: siteKey(location.href) });
+        known = d.skip ? { source: "none", key: d.key || "" } : { source: d.source, key: d.key || "", value: String(d.values?.[0] ?? "").slice(0, 2000) };
+      }
+    }
     send({
       type: "picked",
       site: siteKey(location.href),
       field: { id: field.id, label: (field.question || "").slice(0, 120), kind: field.kind, options: (field.options || []).map((o) => o.label).filter(Boolean).slice(0, 60) },
       fingerprint: fingerprintOf(field, fields),
       refused,
+      value,
+      known,
     });
   },
   onCancel: () => send({ type: "pickCancelled" }),

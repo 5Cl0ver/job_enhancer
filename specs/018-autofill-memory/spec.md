@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-23
 
-**Status**: Building
+**Status**: Built (PR, 0.34.0)
 
 **Input**: From the user's real applications with 0.33.x:
 - "Make it automated so it saves everything we do, but I have the option to change it easily, then and there, for the next application, or view it."

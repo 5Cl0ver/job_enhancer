@@ -103,3 +103,63 @@ test("answers are saved as you move on: everyday ones everywhere, this company's
   await expect(other.locator("#why")).toHaveValue(/Brightfold's mission/);
   await Promise.all([page.close(), panel.close(), other.close(), p2.close()]);
 });
+
+// ---- Inspect a box (spec 018, US3) -------------------------------------------
+
+async function clickBox(page, box) {
+  const b = await box.boundingBox();
+  await page.mouse.move(b.x + b.width / 2, b.y + b.height / 2, { steps: 3 });
+  await page.mouse.click(b.x + b.width / 2, b.y + b.height / 2);
+}
+
+async function panelFor(page) {
+  const p = await ext.context.newPage();
+  await p.setViewportSize({ width: 380, height: 900 });
+  await p.goto(`chrome-extension://${ext.extensionId}/dist/panel/index.html?tab=${await ext.tabIdOf(page)}`);
+  return p;
+}
+
+test("inspect: a box you filled is saved for this box by clicking it (Undo takes it back); Fill once remembers nothing", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/unlabeled.html"));
+  await page.locator("#mystery").fill("Wren C.");
+  const panel = await panelFor(page);
+  await ext.bg({ type: "startPick", tabId: await ext.tabIdOf(page) });
+  await expect(panel.getByTestId("pointing")).toBeVisible({ timeout: 5000 });
+  await clickBox(page, page.locator("#mystery"));
+  const ask = panel.getByTestId("what-goes-here");
+  await expect(ask.getByText(/Saved “Wren C\.” for this box/)).toBeVisible({ timeout: 5000 });
+  await expect(ask.getByTestId("thinks")).toHaveText(/Not known yet/);
+  await expect(ask.getByLabel("The answer")).toHaveValue("Wren C.");
+  await expect.poll(() => api.state.taught.map((t) => t.answer)).toEqual(["Wren C."]);
+  await ask.getByRole("button", { name: "Undo" }).click();
+  await expect.poll(() => api.state.taught.length).toBe(0);
+
+  // Another box: typed in the panel, filled once — nothing remembered.
+  await ask.getByRole("button", { name: "Point at another box" }).click();
+  await clickBox(page, page.locator("#other"));
+  await expect(ask.getByTestId("thinks")).toBeVisible({ timeout: 5000 });
+  await ask.getByLabel("The answer").fill("Just this once");
+  await ask.getByRole("button", { name: "Fill once" }).click();
+  await expect(page.locator("#other")).toHaveValue("Just this once");
+  expect(api.state.taught.length).toBe(0);
+  await Promise.all([page.close(), panel.close()]);
+});
+
+test("inspect: a profile box shows what's saved, and Update my profile changes it everywhere", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/classic.html"));
+  const panel = await panelFor(page);
+  await ext.bg({ type: "startPick", tabId: await ext.tabIdOf(page) });
+  await expect(panel.getByTestId("pointing")).toBeVisible({ timeout: 5000 });
+  await clickBox(page, page.locator("#first"));
+  const ask = panel.getByTestId("what-goes-here");
+  await expect(ask.getByTestId("thinks")).toHaveText(/First name \(from your profile\)/, { timeout: 5000 });
+  await expect(ask.getByLabel("The answer")).toHaveValue("Wren");
+  await ask.getByLabel("The answer").fill("Renny");
+  await ask.getByRole("button", { name: "Update my profile" }).click();
+  await expect(page.locator("#first")).toHaveValue("Renny");
+  await expect.poll(() => api.state.profile.first_name).toBe("Renny");
+  expect(api.state.taught.length).toBe(0); // the profile now says it: nothing per box
+  await Promise.all([page.close(), panel.close()]);
+});

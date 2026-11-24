@@ -21,13 +21,14 @@ class TestTaught:
         assert r.status_code == 201
         tid = r.json()["id"]
         listed = (await client.get("/v1/autofill/taught")).json()
-        assert listed == [
+        assert [{k: v for k, v in r.items() if k != "created_at"} for r in listed] == [
             {
                 "id": tid,
                 "site": SITE,
                 "label": "legal first name",
                 "profile_key": "first_name",
                 "answer_preview": None,
+                "answer": None,
             }
         ]
         assert (await client.delete(f"/v1/autofill/taught/{tid}")).status_code == 204
@@ -172,3 +173,29 @@ async def test_two_boxes_under_one_heading_are_both_kept(client: AsyncClient):
         r["profile_key"] for r in (await client.get("/v1/autofill/taught")).json()
     )
     assert keys == ["email", "first_name", "last_name"]
+
+
+@pytest.mark.asyncio
+async def test_edit_a_taught_box(client: AsyncClient, db_session):
+    tid = (
+        await client.post(
+            "/v1/autofill/taught",
+            json={"site": SITE, "fingerprint": FP, "profile_key": "first_name"},
+        )
+    ).json()["id"]
+    r = await client.patch(f"/v1/autofill/taught/{tid}", json={"answer": "Renny"})
+    assert r.status_code == 200
+    [row] = (await client.get("/v1/autofill/taught")).json()
+    assert row["answer"] == "Renny" and row["profile_key"] is None
+    bad = await client.patch(
+        f"/v1/autofill/taught/{tid}", json={"answer": "x", "profile_key": "email"}
+    )
+    assert bad.status_code == 422
+    other = await _other_user(db_session)
+    theirs = TaughtField(
+        user_id=other.id, site=SITE, fingerprint=FP, profile_key="email"
+    )
+    db_session.add(theirs)
+    await db_session.commit()
+    r = await client.patch(f"/v1/autofill/taught/{theirs.id}", json={"answer": "x"})
+    assert r.status_code == 404

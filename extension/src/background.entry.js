@@ -14,6 +14,7 @@ import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { sameBox } from "./autofill/fingerprint.js";
+import { profileValue } from "./autofill/session.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -412,6 +413,7 @@ async function saveTaught({ site, fingerprint, profile_key, answer }) {
     body: JSON.stringify(profile_key ? { site, fingerprint, profile_key } : { site, fingerprint, answer }),
   }).catch(() => null);
   if (!res?.ok) return { error: "Couldn't remember it this time" };
+  const body = await res.clone().json().catch(() => ({}));
   // In the copy right away (the next page fills it even before the copy is
   // fetched again), then the account's version.
   const { id } = await res.json().catch(() => ({}));
@@ -425,7 +427,7 @@ async function saveTaught({ site, fingerprint, profile_key, answer }) {
   }
   autofill.refresh();
   chrome.runtime.sendMessage({ type: "taughtChanged" }).catch(() => {});
-  return { ok: true };
+  return { ok: true, id: body.id };
 }
 
 async function taughtApi(method, path = "") {
@@ -1006,11 +1008,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // A frame's box was clicked: the other frames stop pointing.
         const tabId = sender.tab?.id;
         if (tabId != null) {
-          const { field, fingerprint, site, refused } = msg;
-          await chrome.storage.session.set({
-            [pickKey(tabId)]: { state: "picked", frameId: sender.frameId ?? 0, field, fingerprint, site, refused: refused || "", at: Date.now() },
-          });
+          const { field, fingerprint, site, refused, value, known } = msg;
+          const pick = { state: "picked", frameId: sender.frameId ?? 0, field, fingerprint, site, refused: refused || "", value: value || "", known: known || null, at: Date.now() };
           chrome.tabs.sendMessage(tabId, { type: "stopPick" }).catch(() => {});
+          // A box that already holds something is saved for this box on this
+          // site, straight away (Undo in the panel) — unless it's what Job
+          // Catcher would put there anyway. The profile never changes here.
+          if (!pick.refused && pick.value) {
+            if (known?.value && known.value.trim().toLowerCase() === pick.value.trim().toLowerCase()) pick.alreadySaved = true;
+            else {
+              const out = await saveTaught({ site, fingerprint, answer: pick.value });
+              if (out.ok) pick.autoSaved = { id: out.id, answer: pick.value };
+            }
+          }
+          await chrome.storage.session.set({ [pickKey(tabId)]: pick });
           changed(tabId);
         }
         sendResponse({ ok: true });
@@ -1024,6 +1035,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (!pick?.field || pick.refused) {
           sendResponse({ ok: false, reason: pick?.refused || "gone" });
         } else {
+          // "Update my profile": the profile answer changes everywhere first.
+          if (msg.updateProfile && pick.known?.key && msg.answer) {
+            const v = profileValue(pick.known.key, msg.answer);
+            if (v == null) return sendResponse({ ok: false, reason: "not_profile" });
+            const saved = await saveProfileFields({ [pick.known.key]: v });
+            if (!saved.ok) return sendResponse({ ok: false, reason: "profile" });
+            autofill.refresh();
+          }
           const out = await chrome.tabs
             .sendMessage(msg.tabId, { type: "fillPicked", fieldId: pick.field.id, profile_key: msg.profile_key, answer: msg.answer }, { frameId: pick.frameId })
             .catch(() => null);
@@ -1034,6 +1053,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           if (out?.ok) await startPick(msg.tabId);
           sendResponse({ ok: !!out?.ok, reason: out?.reason || (out ? "" : "refresh"), remembered });
         }
+      } else if (msg.type === "undoPickSave") {
+        // Undo the automatic save of a clicked box.
+        const { [pickKey(msg.tabId)]: pick } = await chrome.storage.session.get(pickKey(msg.tabId));
+        if (pick?.autoSaved?.id) {
+          await taughtApi("DELETE", `/${encodeURIComponent(pick.autoSaved.id)}`);
+          const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+          if (held?.taught) {
+            held.taught = held.taught.filter((t) => t.id !== pick.autoSaved.id);
+            await chrome.storage.local.set({ je_autofill: held });
+          }
+          delete pick.autoSaved;
+          await chrome.storage.session.set({ [pickKey(msg.tabId)]: pick });
+          changed(msg.tabId);
+        }
+        sendResponse({ ok: true });
       } else if (msg.type === "listTaught") {
         sendResponse(await taughtApi("GET"));
       } else if (msg.type === "forgetTaught") {

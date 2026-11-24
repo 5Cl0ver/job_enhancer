@@ -47,7 +47,7 @@ describe("phone tab bar", () => {
     const pages = within(sheet)
       .getAllByRole("link")
       .map((el) => el.textContent);
-    expect(pages).toEqual(["Matches", "Analytics", "AI Apply", "Settings"]);
+    expect(pages).toEqual(["Matches", "Analytics", "AI Apply", "Autofill memory", "Settings"]);
     expect(within(sheet).getByRole("button", { name: "Sign out" })).toBeInTheDocument();
   });
 

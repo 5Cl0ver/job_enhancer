@@ -567,6 +567,15 @@ function EntryRow({ entry }: { entry: FillEntry }) {
           </Button>
         )}
       </div>
+      {editing && entry.source !== "ai" && (
+        <button
+          type="button"
+          className="mt-1 cursor-pointer text-[11px] text-primary underline underline-offset-2"
+          onClick={() => openMemory(entry.source === "learned" ? entry.label : undefined)}
+        >
+          Edit it for every application in the app
+        </button>
+      )}
       {editing && (
         <Editor
           label={`New value for ${entry.label}`}

@@ -99,12 +99,20 @@ function categorize(text: string): CategoryId {
  * searchable, with usage stats ("used 4× · last used 3d ago"). Fix a wrong one
  * or delete anything junk; changes sync to the extension instantly.
  */
-export function SavedAnswersCard() {
+/** What a saved answer's key says about where it's used (spec 018). */
+function scopeOf(key: string): { label: string; tone: string } | null {
+  if (key.startsWith("essay|")) return { label: "Essay: offered in Job Catcher, never filled by itself", tone: "text-violet-600" };
+  const bar = key.indexOf("|");
+  if (bar > 0) return { label: `Only for ${key.slice(0, bar)}`, tone: "text-sky-600" };
+  return null;
+}
+
+export function SavedAnswersCard({ initialQuery = "" }: { initialQuery?: string } = {}) {
   const { data: answers = [], isLoading } = useCustomAnswers();
   const save = useSaveCustomAnswer();
   const del = useDeleteCustomAnswer();
 
-  const [q, setQ] = useState("");
+  const [q, setQ] = useState(initialQuery);
   const [sort, setSort] = useState<"recent" | "used" | "az">("recent");
   const [activeCat, setActiveCat] = useState<CategoryId | "all">("all");
   const [edits, setEdits] = useState<Record<string, string>>({});
@@ -294,6 +302,11 @@ export function SavedAnswersCard() {
                             <p className="mb-1.5 text-sm font-medium leading-snug">
                               {a.question_text}
                             </p>
+                            {scopeOf(a.question_key) && (
+                              <p className={cn("mb-1.5 text-xs", scopeOf(a.question_key)!.tone)}>
+                                {scopeOf(a.question_key)!.label}
+                              </p>
+                            )}
                             <textarea
                               className="w-full min-h-[40px] resize-y rounded-md border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                               rows={1}
