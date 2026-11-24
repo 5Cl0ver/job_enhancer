@@ -10,7 +10,9 @@ See docs/job-data-architecture.md for the ingestion-vs-search design.
 
 import asyncio
 import logging
+import time
 import uuid
+from contextlib import suppress
 from datetime import UTC, datetime
 from typing import Any
 
@@ -19,8 +21,11 @@ from sqlalchemy import Select, func, select, update
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sqlalchemy.sql.elements import ColumnElement
 
+from app.config import settings
 from app.models.job_listing import JobListing
+from app.models.user import User
 from app.schemas.job import JobListingSchema, JobSearchResponse, PaginatedMeta
+from app.services import allowance
 from app.services.dedup import is_duplicate, job_content_hash, normalize
 from app.services.sources import get_sources
 
@@ -157,8 +162,17 @@ async def _ingest_live(
     page: int,
     page_size: int,
     sources: frozenset[str],
+    who: "User | allowance._System | None" = None,
 ) -> None:
-    """Fetch the selected sources in parallel and upsert them into the pool."""
+    """Fetch the selected sources in parallel and upsert them into the pool.
+    JSearch only for someone the shared month allows (spec 019); with no one
+    named, never."""
+    if "jsearch" in sources and (
+        who is None
+        or not settings.jsearch_api_key
+        or not await allowance.jsearch_take(db, who)
+    ):
+        sources = sources - {"jsearch"}
     active = get_sources(sources)
     if not active:
         return
@@ -220,6 +234,24 @@ async def _query_page(
     )
 
 
+# When each search last fetched live because nothing was here yet (per
+# process): a search with no results, refetched on every tab switch, doesn't
+# hit the job boards each time.
+_EMPTY_FETCHED: dict[tuple[str, str], float] = {}
+_EMPTY_EVERY_S = 600
+
+
+def _first_look(q: str, location: str | None) -> bool:
+    key = (q.strip().lower(), (location or "").strip().lower())
+    now = time.monotonic()
+    if now - _EMPTY_FETCHED.get(key, -_EMPTY_EVERY_S) < _EMPTY_EVERY_S:
+        return False
+    if len(_EMPTY_FETCHED) > 5000:
+        _EMPTY_FETCHED.clear()
+    _EMPTY_FETCHED[key] = now
+    return True
+
+
 async def aggregate_and_deduplicate(
     db: AsyncSession,
     q: str,
@@ -233,6 +265,7 @@ async def aggregate_and_deduplicate(
     page_size: int = 20,
     refresh: bool = False,
     sources: frozenset[str] = frozenset({"adzuna", "jsearch", "remotive", "jobicy"}),
+    user: User | None = None,
 ) -> JobSearchResponse:
     """Cache-first job search.
 
@@ -240,6 +273,12 @@ async def aggregate_and_deduplicate(
     when ``refresh`` is requested or the pool has nothing for this query — keeping
     the request path fast and reserving API budgets for scheduled ingestion.
     See docs/job-data-architecture.md.
+
+    With a ``user`` (an interactive search), Refresh spends one of their live
+    searches today and may use JSearch (spec 019). Over the allowance, the
+    results come from the pool only, with ``live`` false and a note; searching
+    never errors. A search with nothing here yet fetches the free sources
+    once, spending nothing.
     """
     result = await _query_page(
         db,
@@ -253,21 +292,51 @@ async def aggregate_and_deduplicate(
         page,
         page_size,
     )
-    if refresh or result.meta.total == 0:
-        await _ingest_live(db, q, location, page, page_size, sources)
-        result = await _query_page(
-            db,
-            q,
-            location,
-            remote_only,
-            salary_min,
-            salary_max,
-            experience,
-            job_type,
-            page,
-            page_size,
-        )
-    return result
+    if refresh and user is not None:
+        # Refresh live: one of this person's live searches today (spec 019).
+        try:
+            await allowance.spend(db, user, "live_search")
+        except allowance.AllowanceExceeded as over:
+            result.live = False
+            result.note = (
+                f"You've used today's {over.limit} live searches, so these are "
+                "jobs already in the app. Live searches come back at midnight "
+                "(Pacific)."
+            )
+            return result
+        try:
+            await _ingest_live(db, q, location, page, page_size, sources, user)
+        except BaseException:  # nothing fetched: give the live search back
+            user_id = user.id
+            with suppress(Exception):
+                await db.rollback()
+            await allowance.refund(
+                db, user_id, "live_search", allowance.period_for("live_search")
+            )
+            raise
+    elif refresh or (
+        result.meta.total == 0
+        and _first_look(q, location)
+        and (user is None or await allowance.take_auto_fetch(db, user))
+    ):
+        # A scheduled refresh, or nothing here yet for this search: the free
+        # sources only (never JSearch), no live search spent, at most every 10
+        # minutes for the same search and 30 a day for one person.
+        await _ingest_live(db, q, location, page, page_size, sources, None)
+    else:
+        return result
+    return await _query_page(
+        db,
+        q,
+        location,
+        remote_only,
+        salary_min,
+        salary_max,
+        experience,
+        job_type,
+        page,
+        page_size,
+    )
 
 
 # ---------------------------------------------------------------------------

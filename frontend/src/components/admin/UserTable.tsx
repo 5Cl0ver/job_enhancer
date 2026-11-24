@@ -32,7 +32,7 @@ import {
   useRemoveUser,
 } from "@/hooks/useAdmin";
 import { useProfile } from "@/hooks/useProfile";
-import type { UserProfile } from "@/types/api";
+import type { AdminUserRow, UserProfile } from "@/types/api";
 
 export function UserTable() {
   const [page, setPage] = useState(1);
@@ -54,13 +54,17 @@ export function UserTable() {
   return (
     <div className="space-y-3">
       <h2 className="text-base font-semibold">Users</h2>
-      <div className="rounded-lg border">
+      <div className="overflow-x-auto rounded-lg border">
         <Table>
           <TableHeader>
             <TableRow>
               <TableHead>Email</TableHead>
               <TableHead>Name</TableHead>
               <TableHead>Role</TableHead>
+              <TableHead>Setup</TableHead>
+              <TableHead>Job Catcher</TableHead>
+              <TableHead>Last active</TableHead>
+              <TableHead>Today</TableHead>
               <TableHead>Joined</TableHead>
               <TableHead className="text-right">Actions</TableHead>
             </TableRow>
@@ -68,13 +72,13 @@ export function UserTable() {
           <TableBody>
             {isLoading ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
                   Loading…
                 </TableCell>
               </TableRow>
             ) : users.length === 0 ? (
               <TableRow>
-                <TableCell colSpan={5} className="text-center text-sm text-muted-foreground">
+                <TableCell colSpan={9} className="text-center text-sm text-muted-foreground">
                   No users found.
                 </TableCell>
               </TableRow>
@@ -90,7 +94,32 @@ export function UserTable() {
                         {u.role}
                       </Badge>
                     </TableCell>
-                    <TableCell className="text-sm text-muted-foreground">
+                    <TableCell>
+                      <SetupTicks row={u} />
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {u.job_catcher ? (
+                        <span
+                          className={u.job_catcher.outdated ? "text-amber-700 dark:text-amber-300" : ""}
+                          title={`Last seen ${format(new Date(u.job_catcher.last_seen_at), "MMM d, yyyy")}`}
+                        >
+                          {u.job_catcher.version}
+                          {u.job_catcher.outdated ? " (old)" : ""}
+                        </span>
+                      ) : (
+                        <span className="text-muted-foreground">—</span>
+                      )}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
+                      {u.last_active_at ? format(new Date(u.last_active_at), "MMM d, yyyy") : "—"}
+                    </TableCell>
+                    <TableCell
+                      className="whitespace-nowrap text-sm text-muted-foreground"
+                      title={`This month: ${usageText(u.usage_month) || "nothing"}`}
+                    >
+                      {usageText(u.usage_today) || "—"}
+                    </TableCell>
+                    <TableCell className="whitespace-nowrap text-sm text-muted-foreground">
                       {format(new Date(u.created_at), "MMM d, yyyy")}
                     </TableCell>
                     <TableCell className="text-right">
@@ -187,4 +216,50 @@ export function UserTable() {
       </Dialog>
     </div>
   );
+}
+
+const STEPS: [keyof AdminUserRow["onboarding"], string][] = [
+  ["welcome_done", "Welcome"],
+  ["resume", "Résumé"],
+  ["profile", "Profile checked"],
+  ["job_catcher", "Job Catcher"],
+  ["first_job", "A saved job"],
+  ["email", "Email updates"],
+  ["claude", "Claude"],
+];
+
+/** One dot per setup step (spec 019): filled when done, named on hover. */
+function SetupTicks({ row }: { row: AdminUserRow }) {
+  const done = STEPS.filter(([key]) => row.onboarding[key]);
+  return (
+    <span
+      className="flex gap-1"
+      aria-label={`Setup: ${done.map(([, name]) => name).join(", ") || "nothing yet"}`}
+    >
+      {STEPS.map(([key, name]) => (
+        <span
+          key={key}
+          title={`${name}: ${row.onboarding[key] ? "done" : "not yet"}`}
+          className={`h-2.5 w-2.5 rounded-full ${row.onboarding[key] ? "bg-green-600" : "bg-muted"}`}
+        />
+      ))}
+    </span>
+  );
+}
+
+const SHORT: Record<string, string> = {
+  live_search: "searches",
+  ai_document: "AI docs",
+  ai_read: "reads",
+  ai_autofill: "AI fills",
+  auto_fetch: "auto fetches",
+  jsearch_person_month: "JSearch",
+};
+
+/** {live_search: 2, ai_document: 1} → "2 searches · 1 AI docs". */
+function usageText(counts: Record<string, number>): string {
+  return Object.entries(counts)
+    .filter(([, n]) => n > 0)
+    .map(([kind, n]) => `${n} ${SHORT[kind] ?? kind}`)
+    .join(" · ");
 }

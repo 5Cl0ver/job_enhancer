@@ -94,3 +94,11 @@ async def anon_client(db_session: AsyncSession):
     async with _make_client(db_session, None) as ac:
         yield ac
     app.dependency_overrides.clear()
+
+
+@pytest_asyncio.fixture
+async def ai_on(monkeypatch):
+    """AI is paused by default (spec 019 R13); tests of the AI routes turn it on."""
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "ai_writing_on", True)

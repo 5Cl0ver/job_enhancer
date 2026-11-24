@@ -44,6 +44,7 @@ from app.models.scout import (  # noqa: E402, F401
     ScoutTitle,
 )
 from app.models.taught_field import TaughtField  # noqa: E402, F401
+from app.models.usage import AppSetting, UsageCounter  # noqa: E402, F401
 from app.models.user import User  # noqa: E402, F401
 
 __all__ = [
@@ -55,6 +56,8 @@ __all__ = [
     "EmailAccount",
     "User",
     "UserOnboarding",
+    "UsageCounter",
+    "AppSetting",
     "JobListing",
     "Collection",
     "PipelineStage",

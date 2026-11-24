@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useJobSearch, useRefreshSearch } from "@/hooks/useJobs";
+import { AllowanceNote } from "@/components/common/AllowanceNote";
 import { JobCard } from "@/components/jobs/JobCard";
 import { Button } from "@/components/ui/button";
 import { useNavigate, useSearchParams } from "react-router-dom";
@@ -36,6 +38,10 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
   };
   const { data, isLoading, isError, isFetching } = useJobSearch(params, !!query);
   const refresh = useRefreshSearch();
+  // A "used up" note belongs to the search it came from, not the next one.
+  const searchKey = JSON.stringify(params);
+  const { reset } = refresh;
+  useEffect(() => reset(), [searchKey, reset]);
 
   if (!query) {
     return (
@@ -65,14 +71,36 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
     );
   }
 
+  // Today's live searches are used up: these are jobs already in the app.
+  const note = refresh.data?.live === false ? refresh.data.note : data.live === false ? data.note : null;
+  const noteBox = note && (
+    <p role="status" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
+      {note}
+    </p>
+  );
+
   if (data.results.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-3 py-16 text-center">
+        {noteBox}
         <SearchX className="h-12 w-12 text-muted-foreground/50" />
         <p className="text-lg font-medium">No results found</p>
         <p className="text-sm text-muted-foreground">
-          Try adjusting your query or removing filters.
+          Try adjusting your query or removing filters, or search the job sites live.
         </p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => refresh.mutate(params)}
+            disabled={refresh.isPending}
+          >
+            {refresh.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {refresh.isPending ? "Searching…" : "Search live"}
+          </Button>
+          <AllowanceNote kind="live_search" />
+        </div>
       </div>
     );
   }
@@ -85,12 +113,14 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
 
   return (
     <div className="space-y-4">
-      <div className="flex items-center justify-between text-sm text-muted-foreground">
+      {noteBox}
+      <div className="flex flex-wrap items-center justify-between gap-2 text-sm text-muted-foreground">
         <span>
           {data.meta.total} result{data.meta.total !== 1 ? "s" : ""} for &quot;{query}&quot;
           {isFetching && <Loader2 className="ml-2 inline h-3.5 w-3.5 animate-spin" />}
         </span>
-        <div className="flex items-center gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <AllowanceNote kind="live_search" />
           <Button
             variant="ghost"
             size="sm"

@@ -53,6 +53,7 @@ export function useGenerateDocument() {
       job_listing_id?: string;
     }) => api.post<GeneratedDocument>("/v1/ai/generate", data),
     onSuccess: () => qc.invalidateQueries({ queryKey: ["documents"] }),
+    onSettled: () => qc.invalidateQueries({ queryKey: ["usage"] }),
   });
 }
 

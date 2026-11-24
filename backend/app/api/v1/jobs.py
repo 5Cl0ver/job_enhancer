@@ -2,7 +2,8 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from slowapi import Limiter
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -15,12 +16,16 @@ from app.schemas.job import JobListingSchema, JobSearchResponse, MatchResponse
 from app.services import saved_jobs as sj_svc
 from app.services.job_search import aggregate_and_deduplicate
 from app.services.match import match_resume
+from app.utils.rate_limit import rate_limit_key
 
 router = APIRouter()
+_limiter = Limiter(key_func=rate_limit_key)
 
 
 @router.get("/", response_model=JobSearchResponse)
+@_limiter.limit("30/minute")
 async def search_jobs(
+    request: Request,
     q: str = Query(..., min_length=1, max_length=255, description="Search query"),
     location: str | None = Query(None, max_length=255),
     remote_only: bool = Query(False),
@@ -33,11 +38,12 @@ async def search_jobs(
     refresh: bool = Query(
         False, description="Fetch live from sources, not just the cached pool"
     ),
-    _user: User = Depends(get_current_user),
+    user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> JobSearchResponse:
     """Cache-first job search: reads the shared pool; fetches live on refresh or
-    when the pool has no matches. Deduplicated and paginated."""
+    when the pool has no matches (one of today's live searches, spec 019).
+    Deduplicated and paginated."""
     return await aggregate_and_deduplicate(
         db=db,
         q=q,
@@ -50,6 +56,7 @@ async def search_jobs(
         page=page,
         page_size=page_size,
         refresh=refresh,
+        user=user,
     )
 
 

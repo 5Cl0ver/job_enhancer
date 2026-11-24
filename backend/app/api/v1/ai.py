@@ -20,6 +20,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
+from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.application_profile import ApplicationProfile
@@ -41,7 +42,7 @@ from app.schemas.resume import (
     WorkExperienceEntry,
     WorkHistoryResponse,
 )
-from app.services import ai_service, resume_history, resume_parser
+from app.services import ai_service, allowance, resume_history, resume_parser
 from app.services import saved_jobs as sj_svc
 from app.services.match import skills_in_resume
 from app.utils.content_disposition import content_disposition, file_headers
@@ -316,6 +317,18 @@ def _user_data_text(
     return "\n".join(lines) or "(no saved data)"
 
 
+AI_PAUSED = (
+    "AI writing is paused for now. Use My Claude in Job Catcher, or write your own."
+)
+
+
+def _ai_on() -> None:
+    """AI is paused (owner, 2026-11-24; spec 019 R13): refuse before anything is
+    spent or sent to the model."""
+    if not settings.ai_writing_on:
+        raise HTTPException(status_code=503, detail=AI_PAUSED)
+
+
 @router.post("/autofill-map", response_model=AutofillMapResponse)
 @_limiter.limit("20/minute")
 async def autofill_map(
@@ -350,7 +363,11 @@ async def autofill_map(
     )
     user_data = _user_data_text(profile, answers, resume_text)
     fields = [f.model_dump() for f in data.fields]
-    mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
+    _ai_on()
+    # Every call counts, an empty answer too: the model ran either way, and an
+    # empty answer can't be told apart from one nobody could use (spec 019).
+    async with allowance.spending(db, user, "ai_autofill"):
+        mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
     return AutofillMapResponse(mappings=mappings, confidence=confidence)
 
 
@@ -430,16 +447,23 @@ async def generate_document(
     resume, job_description, job_title, company = await _load_resume_and_job(
         db, user, data.resume_id, data.job_listing_id
     )
+    _ai_on()
 
-    # Generate content
-    if data.document_type == "resume":
-        content, model_used, generation_ms = await ai_service.generate_tailored_resume(
-            resume.extracted_text, job_description, job_title, company
-        )
-    else:
-        content, model_used, generation_ms = await ai_service.generate_cover_letter(
-            resume.extracted_text, job_description, job_title, company
-        )
+    # Generate content: one of today's free AI documents (spec 019), given
+    # back if writing fails.
+    async with allowance.spending(db, user, "ai_document"):
+        if data.document_type == "resume":
+            (
+                content,
+                model_used,
+                generation_ms,
+            ) = await ai_service.generate_tailored_resume(
+                resume.extracted_text, job_description, job_title, company
+            )
+        else:
+            content, model_used, generation_ms = await ai_service.generate_cover_letter(
+                resume.extracted_text, job_description, job_title, company
+            )
 
     doc = GeneratedDocument(
         id=uuid.uuid4(),

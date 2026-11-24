@@ -92,6 +92,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `EmptyState.tsx` | Nothing here yet: what belongs on the screen + one button for the next step |
 | `ErrorState.tsx` | A load failed: plain words + Try again |
+| `AllowanceNote.tsx` | "4 of 5 live searches left today ⓘ" (spec 019 part C); nothing for the owner or a kind not in use |
 | `InfoBubble.tsx` | The ⓘ (spec 019): what it is, why it helps, what it needs (text in `lib/help.ts`); hover or click on a computer, tap on a phone, Esc closes (Base UI Popover) |
 
 ## `onboarding/` — the Welcome and Getting started (spec 019)
@@ -125,7 +126,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `StatCard.tsx` | icon + value + trend arrow · | `ActivityChart.tsx` | recharts bar chart |
 
 ## `admin/`
-| `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users · `SignupTrendChart.tsx` recharts line chart |
+| `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users with setup dots, Job Catcher version (old ones marked), last active and today's use · `AllowancesCard.tsx` the daily free allowances and the JSearch reserve · `SignupTrendChart.tsx` recharts line chart |
 
 **How this folder connects:** components are composed by `routes/*`; they get
 data via `hooks/*` → `lib/api.ts` → FastAPI.

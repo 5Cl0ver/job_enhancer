@@ -62,8 +62,10 @@ export function useRefreshSearch() {
   return useMutation({
     mutationFn: (params: JobSearchParams) =>
       api.get<JobSearchResponse>(buildSearchUrl({ ...params, refresh: true })),
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["jobs", "search"] }),
+    onSuccess: () => {
+      queryClient.invalidateQueries({ queryKey: ["jobs", "search"] });
+      queryClient.invalidateQueries({ queryKey: ["usage"] }); // one live search spent
+    },
   });
 }
 

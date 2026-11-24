@@ -5,6 +5,7 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { HealthPanel } from "@/components/admin/HealthPanel";
 import { StatsOverview } from "@/components/admin/StatsOverview";
 import { UserTable } from "@/components/admin/UserTable";
+import { AllowancesCard } from "@/components/admin/AllowancesCard";
 import { SignupTrendChart } from "@/components/admin/SignupTrendChart";
 import { useAdminStats } from "@/hooks/useAdmin";
 
@@ -61,6 +62,7 @@ function AdminDashboard() {
 
           <HealthPanel />
           <UserTable />
+          <AllowancesCard />
         </>
       )}
     </div>
