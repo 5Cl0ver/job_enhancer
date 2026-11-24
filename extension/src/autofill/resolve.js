@@ -1,6 +1,6 @@
 // Decide what goes in a field: the profile, then a remembered answer, or a
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
-import { answerKey, isCompanySpecific, matchAnswer } from "./classify/answers.js";
+import { answerKey, closestAnswer, isCompanySpecific } from "./classify/answers.js";
 import { OTHER_PERSON, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 
 /** The keys that make a page look like an application. */
@@ -37,21 +37,67 @@ export function isResumeUpload(field) {
   return kind === "resume" || (kind === "unclear" && (field.hints?.unclearUploads ?? 1) === 1);
 }
 
+/** Legal identity: learned only from an explicit point-and-save, never from typing. */
+export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "email", "email_confirm"]);
+
+// How close two wordings must be (spec 020, research R3): close enough fills,
+// near is only offered ("Use saved answer"), anything less is a new question.
+export const CLOSE = 0.85;
+export const NEAR = 0.6;
+
 /**
- * A remembered answer for this question (spec 018): this site's own answer
- * first ("site|question" keys); a company-specific question takes ONLY that;
- * anything else may use the plain, everywhere answers. Saved essays
- * ("essay|question") are never matched: they're offered, not filled.
+ * Where a correction to this box is remembered (spec 020): one key for the
+ * question, so EVERY site asking it gets the answer.
+ * - A box the profile answers: "@<profile key>" — "Preferred Name",
+ *   "Preferred First Name" and "Nickname" are all "@preferred_name".
+ * - A question about one company: that site only ("site|question").
+ * - An essay: kept to offer ("essay|question").
+ * - Anything else: the question itself, for every site.
+ * Null: never remembered (self-ID, agreements, private numbers, noise).
+ * @returns {{scope: "all"|"site"|"essay", key: string, profileKey?: string} | null}
  */
-export function learnedFor(field, copy) {
+export function learnKeyFor(field, site) {
+  const guard = guardReason(field.question, field.kind);
+  if (guard === "essay") return field.key ? { scope: "essay", key: answerKey("essay", site, field.key) } : null;
+  if (guard || field.kind === "file" || field.kind === "checkbox") return null;
+  const profileKey = profileKeyFor(field);
+  if (profileKey) return { scope: "all", key: `@${profileKey}`, profileKey };
+  if (!field.key || field.key.length < 3) return null;
+  if (isCompanySpecific(field.question)) return site ? { scope: "site", key: answerKey("site", site, field.key) } : null;
+  return { scope: "all", key: answerKey("all", site, field.key) };
+}
+
+/**
+ * A remembered answer for this question, with where it came from (spec 018,
+ * 020), in this order:
+ *   "site"  this site's own answer ("site|question");
+ *   "key"   the answer for this kind of box ("@preferred_name");
+ *   "exact" the same question, asked anywhere;
+ *   "close" a rewording (≥ CLOSE) — used after the profile;
+ *   "offer" a near rewording (≥ NEAR) — never filled, only offered.
+ * A company-specific question takes only this site's answer. Saved essays are
+ * never matched here: they're offered.
+ */
+export function learnedFor(field, copy, profileKey = profileKeyFor(field)) {
   const answers = copy.answers || [];
+  const find = (k) => answers.find((a) => a.question_key === k);
   const own = copy.site
-    ? answers.find((a) => a.question_key === answerKey("site", copy.site, field.key)) ||
-      (copy.host && copy.host !== copy.site ? answers.find((a) => a.question_key === answerKey("site", copy.host, field.key)) : null)
+    ? find(answerKey("site", copy.site, field.key)) ||
+      (copy.host && copy.host !== copy.site ? find(answerKey("site", copy.host, field.key)) : null)
     : null;
-  if (own) return own;
+  if (own) return { ...own, tier: "site" };
   if (isCompanySpecific(field.question)) return null;
-  return matchAnswer(field.key, answers.filter((a) => !String(a.question_key).includes("|")));
+  if (profileKey) {
+    const byKey = find(`@${profileKey}`);
+    if (byKey) return { ...byKey, tier: "key" };
+  }
+  const plain = answers.filter((a) => !String(a.question_key).includes("|") && !String(a.question_key).startsWith("@"));
+  const exact = field.key ? plain.find((a) => a.question_key === field.key) : null;
+  if (exact) return { ...exact, tier: "exact" };
+  const near = closestAnswer(field.key, plain);
+  if (near && near.score >= CLOSE) return { ...near.answer, tier: "close" };
+  if (near && near.score >= NEAR) return { ...near.answer, tier: "offer" };
+  return null;
 }
 
 /**
@@ -88,15 +134,21 @@ export function resolve(field, copy) {
   // A lone checkbox is almost always an agreement: never ticked for the user.
   if (field.kind === "checkbox") return { skip: "consent" };
   const key = profileKeyFor(field); // never the user's own details for someone else
+  // What the user taught beats the profile (spec 020): correct a box once and
+  // every site asking it gets the correction.
+  const learned = learnedFor(field, copy, key);
+  const use = (l) => ({ values: [l.answer], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) });
+  if (learned && learned.tier !== "close" && learned.tier !== "offer") return use(learned);
   if (key) {
     let values = copy.values[key] || [];
     if (key === "phone" && field.hints?.dialCode) values = values.map(nationalNumber);
-    return values.length ? { values, source: "profile", key } : { skip: "no_data", key };
+    if (values.length) return { values, source: "profile", key };
   }
-  const learned = learnedFor(field, copy);
-  if (learned) return { values: [learned.answer], source: "learned", learnKey: learned.question_key };
-  // A question about someone else: a remembered answer is fine, an AI guess
-  // (from the user's own data) is not.
+  if (learned?.tier === "close") return use(learned);
+  const offer = learned?.tier === "offer" ? { offer: learned.answer } : {};
+  if (key) return { skip: "no_data", key, ...offer };
+  // A question about someone else: a remembered answer is fine, a guess from
+  // the user's own data is not.
   if (OTHER_PERSON.test(field.question || "")) return { skip: "other_person" };
-  return { skip: "unknown" };
+  return { skip: "unknown", ...offer };
 }

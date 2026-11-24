@@ -158,7 +158,7 @@ Many applications make the user retype their whole résumé into boxes:
 Today this fails at the root: **the user's résumé details were never read into the app** (0 jobs, 0 schools stored), so Job Catcher had nothing to fill these pages with.
 
 What the user gets:
-- **Each résumé has its own details** (jobs, schools, skills, certifications, websites). They are read from the résumé file automatically when it's uploaded, or by pressing **Read my résumé**, even if the free AI is unavailable (a built-in reader takes over). The user can check and edit them in the app on phone and computer.
+- **Each résumé has its own details** (jobs, schools, skills, certifications, websites). They are read from the résumé file automatically when it's uploaded, or by pressing **Read my résumé**, by a built-in reader. No AI is used. The user can check and edit them in the app on phone and computer.
 - **The user chooses which résumé an application uses.** A saved job's own résumé (US5) is used for that job. The panel shows "Filling from: <résumé> · Change" and the user can switch before pressing Autofill. That one choice drives both the file uploaded and every jobs/schools/skills box.
 - **Skills boxes are filled** from the chosen résumé's skills: typed and picked one by one in type-and-pick lists, or written as a comma list in a text box.
 - Existing résumés are read once at release, so the user's current résumés have details without doing anything.
@@ -166,12 +166,12 @@ What the user gets:
 **Why this priority**: the user calls these pages "the most tedious, annoying parts of applying", and without stored details nothing in US2 can work.
 
 **Independent Test**:
-- Upload a sample résumé with the free AI switched off. The app shows its jobs, schools and skills, read by the built-in reader, and they can be edited.
+- Upload a sample résumé. The app shows its jobs, schools and skills, read by the built-in reader with no AI, and they can be edited.
 - On the Workday-shaped practice page, choose résumé B in the panel. Jobs, schools and skills fill from B, and B is uploaded.
 
 **Acceptance Scenarios**:
 
-1. **Given** a résumé uploaded while the free AI is down, **Then** its jobs, schools and skills are still read and shown for checking.
+1. **Given** a résumé uploaded, **Then** its jobs, schools and skills are read with no AI and shown for checking.
 2. **Given** two résumés with different details, **When** the user picks résumé B for an application, **Then** every section box and the upload use résumé B.
 3. **Given** a skills type-and-pick list, **Then** each skill from the chosen résumé is typed and picked, skipping skills the site doesn't offer, and no list is left open.
 4. **Given** the user edits a job in the app, **Then** the next Autofill uses the edited version.
@@ -220,7 +220,7 @@ What the user gets:
 - **FR-017**: Autofill MUST upload the linked job's own résumé when it has one, otherwise the usual one, and name the file in the panel before filling.
 
 **Résumé details (US6)**
-- **FR-020**: Each résumé MUST have its own details (jobs, schools, skills, certifications, websites). They MUST be read on upload and on request, with a built-in reader when the free AI is unavailable, and be viewable and editable in the app on phone and computer.
+- **FR-020**: Each résumé MUST have its own details (jobs, schools, skills, certifications, websites). They MUST be read on upload and on request by a built-in reader (no AI), and be viewable and editable in the app on phone and computer.
 - **FR-021**: The résumé used for an application (the job's own, else the one picked in the panel, else the usual one) MUST drive both the uploaded file and all section and skills boxes. The panel MUST show and allow changing it before filling.
 - **FR-022**: Skills boxes MUST be filled from the chosen résumé's skills (type-and-pick lists one at a time, or a comma list in text boxes).
 - **FR-023**: Existing résumés with no stored details MUST be read once at release.
@@ -254,6 +254,8 @@ What the user gets:
 - **SC-006**: No regression: every existing autofill practice page and test still passes.
 
 ## Assumptions
+
+- **No AI in 020** (the owner, 2026-11-24: "no AI at all; we do AI later; right now it's gotta be perfect without"). Résumés are read by a built-in reader; Autofill never asks an AI. Boxes Job Catcher doesn't know are left under "Needs you". The AI comes back in a later phase.
 
 - **Wording matching:** "the same question" is decided from the whole question's meaning (known profile questions and close wording), never from one shared word. When unsure, Job Catcher treats it as a new question, so it never guesses wrong.
 - **Most recent wins** when the same general question was taught different answers.

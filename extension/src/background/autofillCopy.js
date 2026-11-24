@@ -10,12 +10,15 @@
 const COPY = "je_autofill";
 const RESUME = "je_resume_bytes";
 const STAGED = "je_staged_bytes";
+// The résumé picked for one application (spec 020): its file and its details.
+const CHOSEN = "je_chosen_resume";
+const CHOSEN_MS = 10 * 60_000;
 const REFRESH_MS = 60_000;
 
 /**
- * @param {{api: string, token: () => Promise<string|null>, wakeFetch: Function, toB64: (buf: ArrayBuffer) => string}} deps
+ * @param {{api: string, token: () => Promise<string|null>, wakeFetch: Function, toB64: (buf: ArrayBuffer) => string, onFresh?: (copy: object) => Promise<void>}} deps
  */
-export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
+export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
   let inFlight = null;
   // Bumped by wipe(): a refresh that started before a sign-out (or another
   // account's sign-in) must never write the old account's data back.
@@ -74,6 +77,10 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
       });
       if (b.resume) await fetchResume(headers, b.resume, gen).catch(() => {});
       else await chrome.storage.local.remove(RESUME);
+      if (onFresh && gen === generation) {
+        const { [COPY]: fresh } = await chrome.storage.local.get(COPY);
+        if (fresh) await onFresh(fresh).catch(() => {});
+      }
       return true;
     })()
       .catch(() => false)
@@ -98,12 +105,38 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
     return out;
   }
 
+  /** A chosen résumé's file and details (cached by résumé for a few minutes). */
+  async function chosenResume(t, resumeId) {
+    const { [CHOSEN]: cached } = await chrome.storage.local.get(CHOSEN);
+    if (cached?.id === resumeId && Date.now() - (cached.at || 0) < CHOSEN_MS) return cached;
+    const headers = { Authorization: `Bearer ${t}` };
+    const id = encodeURIComponent(resumeId);
+    const [fileRes, detailsRes] = await Promise.all([
+      wakeFetch(`${api}/v1/autofill/resumes/${id}/file`, { headers }).catch(() => null),
+      wakeFetch(`${api}/v1/autofill/resumes/${id}/details`, { headers }).catch(() => null),
+    ]);
+    if (!fileRes?.ok) return null;
+    const details = detailsRes?.ok ? await detailsRes.json().catch(() => null) : null;
+    const out = {
+      id: resumeId,
+      at: Date.now(),
+      b64: toB64(await fileRes.arrayBuffer()),
+      filename: fileRes.headers.get("X-Resume-Filename") || "resume.pdf",
+      mime: fileRes.headers.get("Content-Type") || "application/pdf",
+      history: details?.read
+        ? { work: details.work || [], education: details.education || [], skills: details.skills || [], certifications: details.certifications || [], websites: details.websites || [] }
+        : null,
+    };
+    await chrome.storage.local.set({ [CHOSEN]: out });
+    return out;
+  }
+
   /**
    * What autofill fills from, right now. Never waits on the server when a copy
    * is held (it refreshes in the background); the very first time it must.
    * @returns {Promise<{signedIn: boolean, copy?: object, resume?: object|null, waited?: boolean}>}
    */
-  async function get() {
+  async function get({ resumeId = null } = {}) {
     const t = await token();
     if (!t) return { signedIn: false };
     let { [COPY]: held } = await chrome.storage.local.get(COPY);
@@ -116,13 +149,17 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
     } else if (Date.now() - (held.fetched_at || 0) > REFRESH_MS) {
       refresh(); // in the background: this press uses what's held
     }
-    const staged = await stagedResume(t).catch(() => null);
+    // The résumé picked for this application (spec 020) wins — for the file
+    // AND the jobs, schools and skills filled — then a staged tailored one,
+    // then the usual one.
+    const chosen = resumeId ? await chosenResume(t, resumeId).catch(() => null) : null;
+    const staged = chosen ? null : await stagedResume(t).catch(() => null);
     const { [RESUME]: usual } = await chrome.storage.local.get(RESUME);
-    const r = staged || usual || null;
+    const r = chosen || staged || usual || null;
     return {
       signedIn: true,
       waited,
-      copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history: held.history },
+      copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history: chosen?.history || held.history },
       resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime } : null,
     };
   }
@@ -131,7 +168,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64 }) {
   async function wipe() {
     generation++;
     inFlight = null; // the next refresh starts fresh, with the new account
-    await chrome.storage.local.remove([COPY, RESUME, STAGED]);
+    await chrome.storage.local.remove([COPY, RESUME, STAGED, CHOSEN]);
   }
 
   return { get, refresh, wipe };

@@ -12,8 +12,8 @@ The research found three root causes:
 The fixes, in delivery order:
 
 **PR 1, "Learns everywhere + résumé details"** (US1, US5, US6 data side):
-1. Free AI back: a new default model plus a fallback chain, and reasoning text stripped (R1).
-2. A built-in résumé reader as fallback, details editable per résumé, backfill of unread résumés, and a **Read my résumé** button (R2, R7).
+1. No AI (R1): résumés are read by the built-in reader only, and Autofill's AI pass is off behind one flag. The retired model is left for the later AI phase.
+2. A built-in résumé reader (the only reader), details editable per résumé, backfill of unread résumés, and a **Read my résumé** button (R2, R7).
 3. Learning everywhere: canonical `@key` answers, the new fill order, section-aware preferred-name classification, the identity guard, typing-over learning, the pointer default "Every site" plus **Only this site**, and promotion of existing taught answers (R3).
 4. Résumé per job: `saved_jobs.resume_id`, the job page picker in the app, "Filling from … · Change" in the panel, and the chosen résumé's file uploaded (R7).
 
@@ -56,7 +56,7 @@ The fixes, in delivery order:
 | Principle | Status |
 |---|---|
 | II. User-centric | ✅ "Answer once, never again"; résumé details visible and editable |
-| III. AI degrades gracefully | ✅ This fixes a live violation: the AI was dead. Now a model chain plus a built-in reader. |
+| III. AI degrades gracefully | ✅ No AI in this feature: everything works without it (built-in reader, Needs you), as the owner asked |
 | IV. Security | ✅ New routes are session-only unless needed; owner checks; guards for self-ID, consent and passwords kept; pass allowlist updated deliberately |
 | V. Tests | ✅ Each root cause gets a failing test first (410 model, Jaccard 0.67 wording, profile-before-learned order, site-only save) |
 | VII. Simplicity | ✅ Canonical keys reuse `custom_answers`; no embeddings; no debugger |

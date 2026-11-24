@@ -101,7 +101,7 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
     });
   }, []);
 
-  async function fill(choice: { profile_key?: string; answer?: string; updateProfile?: boolean }, keep: boolean, tag: string) {
+  async function fill(choice: { profile_key?: string; answer?: string; updateProfile?: boolean; scope?: "site" }, keep: boolean, tag: string) {
     if (tab.id == null) return;
     setBusy(tag);
     setFailed("");
@@ -134,6 +134,9 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
   const q = query.trim().toLowerCase();
   const choices = ANSWERS.filter(([key, name]) => values[key]?.length && (!q || name.toLowerCase().includes(q) || String(values[key][0]).toLowerCase().includes(q)));
   const answer = text.trim();
+  // Spec 020: a saved answer is used for this question on every site, unless
+  // it's about this company only (or a box inside a past job's block).
+  const everywhere = pick.learn?.scope === "all";
   return (
     <Card className="flex flex-col gap-3 border-primary/50" data-testid="what-goes-here">
       <div className="flex items-start justify-between gap-2">
@@ -163,7 +166,10 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
           {pick.autoSaved && (
             <Alert tone="success">
               <span className="flex flex-wrap items-center justify-between gap-2">
-                <span>Saved “{pick.autoSaved.answer.slice(0, 60)}” for this box on {pick.site}.</span>
+                <span>
+                  Saved “{pick.autoSaved.answer.slice(0, 60)}”{" "}
+                  {pick.autoSaved.scope === "all" ? "for this question on every site." : `for this box on ${pick.site}.`}
+                </span>
                 <Button variant="ghost" size="sm" onClick={() => tab.id != null && send({ type: "undoPickSave", tabId: tab.id })}>
                   Undo
                 </Button>
@@ -171,6 +177,15 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
             </Alert>
           )}
           {pick.alreadySaved && <Muted>Already saved: this box fills with it by itself.</Muted>}
+          {!pick.autoSaved && (
+            <Muted data-testid="where-saved">
+              {everywhere
+                ? "Saving here fills this question with your answer on every site."
+                : pick.learn?.scope === "site"
+                  ? `This question is about ${pick.site} only, so it's saved for this site.`
+                  : `Saved for this box on ${pick.site}.`}
+            </Muted>
+          )}
           <label className="flex flex-col gap-1 text-xs font-medium">
             The answer
             {options.length ? (
@@ -188,8 +203,13 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
           </label>
           <div className="flex flex-wrap gap-2">
             <Button size="sm" disabled={!answer || !!busy} busy={busy === "always"} onClick={() => fill({ answer }, true, "always")}>
-              Always use this here
+              {everywhere ? "Always use this" : "Always use this here"}
             </Button>
+            {everywhere && (
+              <Button size="sm" variant="outline" disabled={!answer || !!busy} busy={busy === "site"} onClick={() => fill({ answer, scope: "site" }, true, "site")}>
+                Only this site
+              </Button>
+            )}
             <Button size="sm" variant="outline" disabled={!answer || !!busy} busy={busy === "once"} onClick={() => fill({ answer }, false, "once")}>
               Fill once
             </Button>

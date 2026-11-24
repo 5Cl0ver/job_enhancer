@@ -71,7 +71,7 @@ const AUTOCOMPLETE = {
 // Ordered: FIRST match wins, so specific beats generic.
 const RULES = [
   { key: "email_confirm", re: /(confirm|re-?enter|re-?type|verify|repeat)\s*(your\s*)?e-?mail/i },
-  { key: "preferred_name", re: /preferred[\s_-]*(first[\s_-]*)?name|nick[\s_-]*name|goes by/i },
+  { key: "preferred_name", re: /preferred[\s_-]*(first[\s_-]*)?name|nick[\s_-]*name|\bgo(es)? by\b/i },
   { key: "middle_name", re: /middle[\s_-]*(name|initial)/i },
   { key: "first_name", re: /first[\s_-]*name|given[\s_-]*name|forename/i },
   { key: "last_name", re: /last[\s_-]*name|surname|family[\s_-]*name/i },
@@ -142,9 +142,19 @@ export function profileKeyFor(field) {
   for (const { key, re } of RULES) {
     if (!(re.test(q) || (!q && re.test(text)))) continue;
     if (SHORT_ONLY.has(key) && q.length > 45) continue;
-    return key;
+    return inPreferredBlock(field, key);
   }
   return null;
+}
+
+// Workday's "Preferred Name" block labels its boxes plainly "First Name" and
+// "Last Name" (spec 020): there they're the preferred name, never the legal one.
+const PREFERRED_BLOCK = /\bpreferred\b|\bnick ?name\b|\bgoes by\b/i;
+function inPreferredBlock(field, key) {
+  if (!PREFERRED_BLOCK.test(field.hints?.section || "")) return key;
+  if (key === "first_name" || key === "full_name") return "preferred_name";
+  if (key === "last_name") return "preferred_last_name";
+  return key;
 }
 
 // ---- Values ---------------------------------------------------------------

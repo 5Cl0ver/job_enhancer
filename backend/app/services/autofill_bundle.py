@@ -118,6 +118,9 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
                 "fingerprint": t.fingerprint,
                 "profile_key": t.profile_key,
                 "answer": t.answer,
+                # The most recent wins when site answers become everywhere
+                # answers (spec 020).
+                "updated_at": t.updated_at.isoformat() if t.updated_at else None,
             }
             for t in taught
         ],

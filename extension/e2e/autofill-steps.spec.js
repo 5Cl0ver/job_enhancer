@@ -107,12 +107,9 @@ test("what you type is saved as you move on — answers and the profile's missin
   await next(page);
   await ext.autofill(page); // each step fills when pressed
   await expect.poll(async () => (await form(page))["q-auth"], { timeout: 15000 }).toBe("Yes");
-  // A question the app didn't know, answered by hand (once autofill is done
-  // with this step: it asked the AI about it).
-  await expect
-    .poll(() => api.calls("/v1/ai/autofill-map").some((c) => JSON.stringify(c.body).includes("How did you hear")), { timeout: 15000 })
-    .toBe(true);
-  await page.waitForTimeout(500);
+  // A question the app didn't know, answered by hand (no AI is asked, spec 020).
+  await page.waitForTimeout(800);
+  expect(api.calls("/v1/ai/autofill-map").length).toBe(0);
   await page.locator("#q-heard").click();
   await page.getByRole("option", { name: "Employee Referral" }).click();
   await next(page);
@@ -166,22 +163,21 @@ test("Super autofill switched off: nothing fills without a press; switched on: t
   await Promise.all([page.close(), panel.close()]);
 });
 
-test("an unsure AI answer is a suggestion: shown, filled only on Use", async () => {
+test("no AI (spec 020): an unknown question waits under Needs you, with no AI suggestion", async () => {
   api.state.aiAnswers = { "How did you hear about this opportunity?": { value: "LinkedIn", confidence: 0.6 } };
   const page = await ext.context.newPage();
   await page.goto(URL);
   await ext.autofill(page);
-  // The step is done when its last field (after the country dropdown) is in.
   await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   await next(page);
   await next(page);
-  await ext.autofill(page); // each step fills when pressed
+  await ext.autofill(page);
   await expect.poll(async () => (await form(page))["q-auth"], { timeout: 15000 }).toBe("Yes");
   const panel = await panelFor(page);
   const row = panel.getByRole("listitem").filter({ hasText: "How did you hear about this opportunity?" });
-  await expect(row).toContainText("Suggested: LinkedIn", { timeout: 15000 });
+  await expect(row).toBeVisible({ timeout: 15000 });
+  await expect(row).not.toContainText("Suggested");
   expect((await form(page))["q-heard"]).toBeUndefined();
-  await row.getByRole("button", { name: /Use the suggestion/ }).click();
-  await expect.poll(async () => (await form(page))["q-heard"], { timeout: 10000 }).toBe("LinkedIn");
+  expect(api.calls("/v1/ai/autofill-map").length).toBe(0);
   await Promise.all([page.close(), panel.close()]);
 });

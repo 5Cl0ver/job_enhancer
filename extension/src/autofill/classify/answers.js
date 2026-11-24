@@ -73,6 +73,29 @@ export function matchAnswer(questionKey, answers) {
   return bestScore >= 0.72 ? best : null;
 }
 
+/**
+ * The closest remembered answer to a question by wording (spec 020), with
+ * how close it is (0–1). No pivot conflicts; `answers` are plain-question ones.
+ * @returns {{answer: object, score: number} | null}
+ */
+export function closestAnswer(questionKey, answers) {
+  if (!questionKey || !answers?.length) return null;
+  const qWords = questionKey.split(" ").filter(Boolean);
+  if (qWords.filter((t) => t.length > 2).length < 2) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const a of answers) {
+    const aWords = (a.question_key || "").split(" ").filter(Boolean);
+    if (pivotConflict(qWords, aWords)) continue;
+    const score = jaccard(qWords, aWords);
+    if (score > bestScore) {
+      bestScore = score;
+      best = a;
+    }
+  }
+  return best ? { answer: best, score: bestScore } : null;
+}
+
 const clean = (s) =>
   String(s ?? "")
     .toLowerCase()

@@ -8,6 +8,7 @@ import { NameCheck, RenameButton } from "@/components/jobs/RenameJob";
 import { SameJobButton } from "@/components/jobs/SameJob";
 import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { JobResumeType } from "@/components/scout/JobResumeType";
+import { JobResumePicker } from "@/components/jobs/JobResumePicker";
 import { StagePicker } from "@/components/jobs/StagePicker";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePipelineStages } from "@/hooks/useTracker";
@@ -88,6 +89,7 @@ export function JobDetailPage() {
                 {/* The same actions the board's pop-up has. */}
                 {savedJob && <JobActions page savedJob={savedJob} listing={job} />}
                 <JobResumeType jobListingId={id} />
+                <JobResumePicker jobListingId={id} />
               </>
             ) : null
           }

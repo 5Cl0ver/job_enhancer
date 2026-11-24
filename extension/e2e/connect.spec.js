@@ -1,3 +1,4 @@
+import { readFileSync } from "node:fs";
 // One-press "Connect to Job Enhancer" (spec 019) against the fake server:
 // the panel starts, the app's /connect page gets the proof from THIS Job
 // Catcher and approves, the panel is signed in with its own pass — and a page
@@ -74,7 +75,8 @@ test("connect with one press: approve in the app, the panel is signed in with it
 
   // It says which version it is.
   await expect.poll(() => api.state.hellos.length).toBeGreaterThan(0);
-  expect(api.state.hellos[0].version).toBe("0.35.0");
+  const { version } = JSON.parse(readFileSync(new URL("../manifest.json", import.meta.url), "utf8"));
+  expect(api.state.hellos[0].version).toBe(version);
 
   // Signing out revokes the pass on the server first.
   await panel.getByRole("navigation").getByRole("button", { name: "Settings" }).click();

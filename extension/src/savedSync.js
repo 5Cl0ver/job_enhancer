@@ -33,6 +33,8 @@ export function parseSummary(data) {
     location: j.location || "",
     url: j.url || "",
     applied: !!j.applied_at,
+    // The résumé chosen for this job (spec 020); null = the usual one.
+    resume_id: j.resume_id || null,
   }));
   return { changed: true, version: data.version, jobs };
 }

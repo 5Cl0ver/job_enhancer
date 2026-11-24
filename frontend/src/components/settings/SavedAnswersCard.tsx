@@ -101,6 +101,9 @@ function categorize(text: string): CategoryId {
  */
 /** What a saved answer's key says about where it's used (spec 018). */
 function scopeOf(key: string): { label: string; tone: string } | null {
+  // Spec 020: what you corrected for a kind of box, used on every site.
+  if (key.startsWith("@"))
+    return { label: `Every site: every ${key.slice(1).replace(/_/g, " ")} box`, tone: "text-emerald-600" };
   if (key.startsWith("essay|")) return { label: "Essay: offered in Job Catcher, never filled by itself", tone: "text-violet-600" };
   const bar = key.indexOf("|");
   if (bar > 0) return { label: `Only for ${key.slice(0, bar)}`, tone: "text-sky-600" };

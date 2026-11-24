@@ -8,7 +8,7 @@ import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
-import { IDENTITY, isResumeUpload, resolve } from "./resolve.js";
+import { IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
 import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
 
 const STYLE_ID = "jec-fill-style";
@@ -257,8 +257,9 @@ export function createSession(deps) {
           : resolve(field, copy);
       if (d.skip) {
         if (d.skip === "unknown" && AI_KINDS.has(field.kind)) leftovers.push(field);
-        // An essay answer saved before is offered ("Use saved answer"), never filled.
-        const saved = d.skip === "essay" ? (copy.answers || []).find((a) => a.question_key === answerKey("essay", "", field.key))?.answer : undefined;
+        // An essay answer saved before, or an answer to a near rewording, is
+        // offered ("Use saved answer"), never filled.
+        const saved = d.skip === "essay" ? (copy.answers || []).find((a) => a.question_key === answerKey("essay", "", field.key))?.answer : d.offer;
         leave(field, d.skip, saved);
         continue;
       }
@@ -487,9 +488,21 @@ export function createSession(deps) {
       // Something we filled counts only if the user has since changed it.
       const ours = filled.get(field.id);
       if (ours && readField(field).trim() === ours.entry.value.trim()) continue; // ours, untouched
-      if (profileKeyFor(field) || field.kind === "file" || !field.key || field.key.length < 3) continue;
+      if (field.kind === "file" || !field.key || field.key.length < 3) continue;
       const kind = sections.get(field.id);
       if (kind === "job" || kind === "reference") continue; // about one past job / one person: never a general answer
+      // A box the profile answers (spec 020): a correction of what Job Catcher
+      // put there is learned for that kind of box on every site — never the
+      // legal name or email (only an explicit point-and-save changes those).
+      // A box Job Catcher didn't fill is left to the profile save (typedProfile).
+      const profileKey = profileKeyFor(field);
+      if (profileKey) {
+        if (!ours || IDENTITY_KEYS.has(profileKey)) continue;
+        const answer = readField(field).trim();
+        if (!answer || answer.length > 300) continue;
+        out.push({ question_key: `@${profileKey}`, question_text: field.question.slice(0, 500), answer });
+        continue;
+      }
       const d = resolve(field, { values: {}, answers: [] });
       // Essays are kept as saved answers (offered, never filled); sensitive
       // questions and agreements are never kept.

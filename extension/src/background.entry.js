@@ -18,6 +18,7 @@ import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
 import { siteKey } from "./autofill/hosts.js";
 import { profileValue } from "./autofill/session.js";
+import { promotions } from "./autofill/promote.js";
 
 importScripts("/config.js");
 const cfg = self.JOB_ENHANCER_CONFIG;
@@ -379,7 +380,29 @@ const autofill = createAutofillCopy({
   token: () => getValidToken(),
   wakeFetch: (url, opts) => wakeFetch(url, opts),
   toB64: bytesToB64,
+  onFresh: (copy) => promoteOnce(copy),
 });
+
+// Spec 020: answers taught on one site before 0.36 become answers for every
+// site, once per account (src/autofill/promote.js). Retried until it saves.
+const PROMOTED = "je_promoted_020";
+async function promoteOnce(copy) {
+  if (!copy?.email) return;
+  const { [PROMOTED]: done = [] } = await chrome.storage.local.get(PROMOTED);
+  if (done.includes(copy.email)) return;
+  const items = promotions(copy.taught || [], copy.answers || []);
+  if (items.length) {
+    const out = await saveCustomAnswers(items);
+    if (out.error) return; // the next refresh tries again
+    const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+    if (held?.email === copy.email) {
+      const keys = new Set(items.map((x) => x.question_key));
+      held.answers = [...(held.answers || []).filter((a) => !keys.has(a.question_key)), ...items];
+      await chrome.storage.local.set({ je_autofill: held });
+    }
+  }
+  await chrome.storage.local.set({ [PROMOTED]: [...done, copy.email].slice(-10) });
+}
 
 // Per-tab fill sessions (what each frame filled), for the side panel's review.
 // Kept in storage.session: they survive the worker sleeping, and go with the
@@ -512,6 +535,48 @@ async function autoSaveProfile(tabId, fields) {
       p.profile = { ...p.profile, ...changed };
     });
   }
+}
+
+// The résumé picked for one tab's application (spec 020).
+const choiceKey = (tabId) => `je_resume_choice:${tabId}`;
+
+async function listResumes() {
+  const token = await getValidToken();
+  if (!token) return { ok: false, error: "NOT_SIGNED_IN" };
+  const res = await wakeFetch(`${cfg.API_BASE}/v1/ai/resumes`, { headers: { Authorization: `Bearer ${token}` } }).catch(() => null);
+  if (!res?.ok) return { ok: false, error: "Couldn't load your résumés" };
+  const rows = await res.json().catch(() => []);
+  return { ok: true, resumes: (Array.isArray(rows) ? rows : []).map((r) => ({ id: r.id, filename: r.filename, active: !!r.is_active })) };
+}
+
+async function setJobResume(jobId, resumeId) {
+  const token = await getValidToken();
+  if (!token) return { ok: false };
+  const res = await wakeFetch(`${cfg.API_BASE}/v1/saved-jobs/${encodeURIComponent(jobId)}/resume`, {
+    method: "PUT",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ resume_id: resumeId }),
+  }).catch(() => null);
+  return { ok: !!res?.ok };
+}
+
+/**
+ * Remember an answer for a question on every site (spec 020): saved under its
+ * learn key, and in the local copy at once so the next fill uses it.
+ * Returns the answer it replaced, for Undo.
+ */
+async function learnAnswer(learn, answer) {
+  const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+  const previous = (held?.answers || []).find((a) => a.question_key === learn.key)?.answer ?? null;
+  const item = { question_key: learn.key, question_text: String(learn.question_text || learn.key).slice(0, 500), answer: String(answer).slice(0, 2000) };
+  const out = await saveCustomAnswers([item]);
+  if (out.error) return { ok: false, error: out.error };
+  if (held) {
+    held.answers = [...(held.answers || []).filter((a) => a.question_key !== item.question_key), item];
+    await chrome.storage.local.set({ je_autofill: held });
+  }
+  autofill.refresh();
+  return { ok: true, previous };
 }
 
 async function forgetCustomAnswer(questionKey) {
@@ -1079,7 +1144,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
         sendResponse({ ok: true, taught: (held?.taught || []).filter((t) => t.site === msg.site || t.site === msg.host) });
       } else if (msg.type === "getAutofillCopy") {
-        sendResponse({ ok: true, ...(await autofill.get()) });
+        // The résumé picked for this tab's application, if any (spec 020).
+        const tabId = sender.tab?.id;
+        const { [choiceKey(tabId)]: choice } = tabId != null ? await chrome.storage.session.get(choiceKey(tabId)) : {};
+        sendResponse({ ok: true, ...(await autofill.get({ resumeId: choice?.resumeId || null })) });
+      } else if (msg.type === "listResumes") {
+        sendResponse(await listResumes());
+      } else if (msg.type === "chooseResume") {
+        // "Filling from … · Change" (spec 020): this tab's application uses
+        // this résumé; with a linked job, the job keeps it too.
+        if (msg.resumeId) await chrome.storage.session.set({ [choiceKey(msg.tabId)]: { resumeId: msg.resumeId, filename: msg.filename || "" } });
+        else await chrome.storage.session.remove(choiceKey(msg.tabId));
+        let saved = true;
+        if (msg.jobId && msg.remember !== false) saved = (await setJobResume(msg.jobId, msg.resumeId || null)).ok;
+        changed(msg.tabId);
+        sendResponse({ ok: true, saved });
+      } else if (msg.type === "getResumeChoice") {
+        const { [choiceKey(msg.tabId)]: choice } = await chrome.storage.session.get(choiceKey(msg.tabId));
+        sendResponse({ ok: true, choice: choice || null });
       } else if (msg.type === "refreshAutofillCopy") {
         sendResponse({ ok: await autofill.refresh() });
       } else if (msg.type === "sessionUpdate") {
@@ -1207,17 +1289,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // A frame's box was clicked: the other frames stop pointing.
         const tabId = sender.tab?.id;
         if (tabId != null) {
-          const { field, fingerprint, site, refused, value, known } = msg;
-          const pick = { state: "picked", frameId: sender.frameId ?? 0, field, fingerprint, site, refused: refused || "", value: value || "", known: known || null, at: Date.now() };
+          const { field, fingerprint, site, refused, value, known, learn } = msg;
+          const pick = { state: "picked", frameId: sender.frameId ?? 0, field, fingerprint, site, refused: refused || "", value: value || "", known: known || null, learn: learn || null, at: Date.now() };
           chrome.tabs.sendMessage(tabId, { type: "stopPick" }).catch(() => {});
-          // A box that already holds something is saved for this box on this
-          // site, straight away (Undo in the panel) — unless it's what Job
-          // Catcher would put there anyway. The profile never changes here.
+          // A box that already holds something is saved straight away (Undo
+          // in the panel) — unless it's what Job Catcher would put there
+          // anyway. Spec 020: saved for that question on EVERY site (its
+          // "learn" key); a box with no such key stays with this site.
           if (!pick.refused && pick.value && msg.saveable) {
             if (known?.value && known.value.trim().toLowerCase() === pick.value.trim().toLowerCase()) pick.alreadySaved = true;
-            else {
+            else if (pick.learn) {
+              const out = await learnAnswer(pick.learn, pick.value);
+              if (out.ok) pick.autoSaved = { key: pick.learn.key, previous: out.previous, answer: pick.value, scope: pick.learn.scope };
+            } else {
               const out = await saveTaught({ site, fingerprint, answer: pick.value });
-              if (out.ok) pick.autoSaved = { id: out.id, answer: pick.value };
+              if (out.ok) pick.autoSaved = { id: out.id, answer: pick.value, scope: "site" };
             }
           }
           await chrome.storage.session.set({ [pickKey(tabId)]: pick });
@@ -1247,7 +1333,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             .catch(() => null);
           let remembered = false;
           if (out?.ok && msg.remember) {
-            remembered = !(await saveTaught({ site: pick.site, fingerprint: pick.fingerprint, profile_key: msg.profile_key, answer: msg.answer })).error;
+            // Every site (spec 020), unless the user chose "Only this site",
+            // picked a profile answer for this box, or the box has no key.
+            if (msg.answer && !msg.profile_key && msg.scope !== "site" && pick.learn) {
+              remembered = (await learnAnswer(pick.learn, msg.answer)).ok;
+            } else {
+              remembered = !(await saveTaught({ site: pick.site, fingerprint: pick.fingerprint, profile_key: msg.profile_key, answer: msg.answer })).error;
+            }
           }
           if (out?.ok) await startPick(msg.tabId);
           sendResponse({ ok: !!out?.ok, reason: out?.reason || (out ? "" : "refresh"), remembered });
@@ -1255,7 +1347,15 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "undoPickSave") {
         // Undo the automatic save of a clicked box.
         const { [pickKey(msg.tabId)]: pick } = await chrome.storage.session.get(pickKey(msg.tabId));
-        if (pick?.autoSaved?.id) {
+        if (pick?.autoSaved?.key) {
+          // Back to the answer it had before (an older answer is never lost).
+          if (pick.autoSaved.previous) await learnAnswer({ ...pick.learn, key: pick.autoSaved.key }, pick.autoSaved.previous);
+          else await forgetCustomAnswer(pick.autoSaved.key);
+          autofill.refresh();
+          delete pick.autoSaved;
+          await chrome.storage.session.set({ [pickKey(msg.tabId)]: pick });
+          changed(msg.tabId);
+        } else if (pick?.autoSaved?.id) {
           await taughtApi("DELETE", `/${encodeURIComponent(pick.autoSaved.id)}`);
           const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
           if (held?.taught) {

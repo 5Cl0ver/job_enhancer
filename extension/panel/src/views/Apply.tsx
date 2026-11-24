@@ -117,11 +117,7 @@ export function Apply({
         </Button>
         <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} tabId={tab.id} />
         <ShortcutHint />
-        {staged && !entries.length && (
-          <Muted>
-            Uploads your tailored résumé <b className="break-all text-foreground">{staged}</b>.
-          </Muted>
-        )}
+        <ResumeChoice match={match} staged={staged} />
         {!filling && entries.length + needYou.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>
@@ -380,6 +376,91 @@ function ShortcutHint() {
         </button>
       )}
     </p>
+  );
+}
+
+interface ResumeRow {
+  id: string;
+  filename: string;
+  active: boolean;
+}
+
+/**
+ * "Filling from: <résumé> · Change" (spec 020): the résumé this application
+ * uploads AND fills jobs, schools and skills from. A linked job's own résumé
+ * is used by itself; a change is kept for this tab and saved to the job.
+ */
+export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged: string | null }) {
+  const { tab, reloadSaved } = usePanel();
+  const [resumes, setResumes] = React.useState<ResumeRow[] | null>(null);
+  const [choice, setChoice] = React.useState<{ resumeId: string; filename: string } | null>(null);
+  const [open, setOpen] = React.useState(false);
+  const [note, setNote] = React.useState("");
+
+  React.useEffect(() => {
+    let live = true;
+    if (tab.id == null) return;
+    send({ type: "getResumeChoice", tabId: tab.id }).then((r) => live && setChoice(r?.choice || null));
+    send({ type: "listResumes" }).then((r) => live && r?.ok && setResumes(r.resumes));
+    return () => {
+      live = false;
+    };
+  }, [tab.id]);
+
+  // The linked job has its own résumé: use it for this tab unless changed here.
+  const jobResume = match?.resume_id || null;
+  React.useEffect(() => {
+    if (tab.id == null || !jobResume || choice) return;
+    const filename = resumes?.find((r) => r.id === jobResume)?.filename || "";
+    send({ type: "chooseResume", tabId: tab.id, resumeId: jobResume, filename, remember: false }).then(() =>
+      setChoice({ resumeId: jobResume, filename }),
+    );
+  }, [tab.id, jobResume, choice, resumes]);
+
+  async function pick(id: string) {
+    if (tab.id == null) return;
+    const row = resumes?.find((r) => r.id === id);
+    const res = await send({ type: "chooseResume", tabId: tab.id, resumeId: id || null, filename: row?.filename || "", jobId: match?.id });
+    setChoice(id ? { resumeId: id, filename: row?.filename || "" } : null);
+    setOpen(false);
+    setNote(match && res?.saved === false ? "Using it here, but couldn't save it to the job. Try again later." : "");
+    if (match) reloadSaved();
+  }
+
+  const active = resumes?.find((r) => r.active) || null;
+  const name =
+    (choice && (resumes?.find((r) => r.id === choice.resumeId)?.filename || choice.filename)) ||
+    staged ||
+    active?.filename ||
+    "";
+  if (!name && !resumes?.length) return null;
+  return (
+    <div className="flex flex-col gap-1 text-xs" data-testid="resume-choice">
+      <p className="text-muted-foreground">
+        Filling from <b className="break-all text-foreground">{name || "your résumé"}</b>
+        {match && choice && choice.resumeId === jobResume ? " (this job's résumé)" : ""}
+        {!!resumes?.length && (
+          <>
+            {" · "}
+            <button type="button" className="cursor-pointer text-primary underline underline-offset-2" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+              Change
+            </button>
+          </>
+        )}
+      </p>
+      {open && resumes && (
+        <Select aria-label="Résumé for this application" value={choice?.resumeId || ""} onChange={(e) => pick(e.target.value)}>
+          <option value="">{staged ? `Tailored: ${staged}` : `Your usual résumé${active ? ` (${active.filename})` : ""}`}</option>
+          {resumes.map((r) => (
+            <option key={r.id} value={r.id}>
+              {r.filename}
+            </option>
+          ))}
+        </Select>
+      )}
+      {open && <Muted>Uploads this résumé and fills jobs, schools and skills from it{match ? ", for this job from now on" : ""}.</Muted>}
+      {note && <Alert tone="warning">{note}</Alert>}
+    </div>
   );
 }
 

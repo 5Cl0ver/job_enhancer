@@ -200,6 +200,7 @@ describe("parseSummary", () => {
           location: "Remote",
           url: "https://jobs.example/1",
           applied: true,
+          resume_id: null,
         },
       ],
     });

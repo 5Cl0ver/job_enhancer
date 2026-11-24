@@ -20,6 +20,7 @@ optimistic updates where useful.
 | `useJobsParams.ts` | `useJobsParams`: My Jobs' collection and "where from" kept in the address (`?folder=`, `?origin=`) so other pages can link to them | — |
 | `useShowMore.ts` | `useShowMore` (draw a long list 30 at a time; loads the next page as its button scrolls into view) | — |
 | `useJobCatcher.ts` | `useJobCatcherRelease`, `useJobCatcherConnections`, `useDisconnectJobCatcher`, `useConnectStatus`, `useApproveConnect`, `useCancelConnect` (spec 019) | `/v1/extension/*` |
+| `useResumeDetails.ts` | `useResumeDetails`, `useSaveResumeDetails`, `useReadResume`, `useSetJobResume` (spec 020: each résumé's jobs, schools, skills, read without AI; the résumé for one saved job) | `/v1/autofill/resumes/{id}/*`, `PUT /v1/saved-jobs/{id}/resume` |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every
 request flows through `lib/api.ts` (which attaches the Supabase Bearer token).

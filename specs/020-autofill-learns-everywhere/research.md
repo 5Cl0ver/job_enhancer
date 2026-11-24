@@ -30,9 +30,11 @@
    - It is skipped on automatic steps once Workday pre-filled the rows (`workExperienceTouched`), never corrects pre-filled values, and records nothing for Undo.
    - With an empty history there was nothing to fill anyway.
 
-## R1. Replacement free AI model
+## R1. No AI in 020 (replaces "Replacement free AI model")
 
-**Decision**:
+**Decision (2026-11-24, the owner):** no AI in this feature. The model and config are left as they are; the retired model is fixed in the later AI phase. Résumés are read only by the built-in reader (R2), and Autofill's AI pass is switched off with one flag (`extension/src/autofill/flags.js`, `AI_IN_AUTOFILL = false`); the server endpoints stay.
+
+**Earlier proposal, not done:**
 - Default `NVIDIA_MODEL = minimaxai/minimax-m3.1-flash`. It was tested live: clean JSON from a sample résumé in about 5 s.
 - Add an ordered **fallback list**: `nvidia/nemotron-3.5-super-vl-120b-a12b`, then `nvidia/nemotron-3.5-lightning-30b-a3b` (reasoning; needs a larger `max_tokens`).
 - The service tries the next model on 404 or 410, and logs once.
@@ -47,7 +49,7 @@
 ## R2. Built-in résumé reader (no AI)
 
 **Decision**:
-- A deterministic parser in the backend runs when the AI fails or is out of allowance.
+- A deterministic parser in the backend is the ONLY reader (no AI in 020).
 - It splits text by section headings (Experience/Work History/Employment, Education, Skills, Certifications, Languages, Links).
 - For jobs, it reads lines shaped like:
   - `Title | Company | Mon YYYY - Mon YYYY|Present`

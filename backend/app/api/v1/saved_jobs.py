@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -15,6 +15,7 @@ from app.schemas.saved_job import (
     ApplicationSyncRequest,
     ApplicationSyncResult,
     BackfillResult,
+    JobResumeIn,
     JobSavedCheck,
     JobSavedResult,
     JobSourceOut,
@@ -92,6 +93,7 @@ async def saved_jobs_summary(
                 location=r.location,
                 url=r.apply_url,
                 applied_at=r.applied_at,
+                resume_id=r.resume_id,
             )
             for r in rows
         ],
@@ -250,6 +252,20 @@ async def unlink_job(
     """Undo a link: the copy comes back with its emails."""
     await job_links.unlink_job(db, user.id, saved_job_id, data)
     await db.commit()
+
+
+@router.put("/{saved_job_id}/resume", status_code=204)
+async def choose_job_resume(
+    saved_job_id: uuid.UUID,
+    data: JobResumeIn,
+    user: User = Depends(get_user_or_pass),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The résumé Job Catcher uploads and fills from for this job (spec 020).
+    Job Catcher's "Filling from … · Change" and the app's job page both set it."""
+    await svc.set_job_resume(db, user.id, saved_job_id, data.resume_id)
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobListItem)

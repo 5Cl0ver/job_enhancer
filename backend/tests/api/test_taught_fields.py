@@ -132,8 +132,9 @@ class TestTaught:
         )
         v2 = (await client.get(f"/v1/autofill/bundle?version={v1['version']}")).json()
         assert v2["changed"] is True
-        assert v2["taught"][0] | {"id": None} == {
+        assert v2["taught"][0] | {"id": None, "updated_at": None} == {
             "id": None,
+            "updated_at": None,
             "site": SITE,
             "fingerprint": FP,
             "profile_key": "first_name",

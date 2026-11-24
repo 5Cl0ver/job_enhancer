@@ -16,6 +16,8 @@ export interface SavedJob {
   location: string;
   url: string;
   applied: boolean;
+  /** The résumé chosen for this job (spec 020); null = the usual one. */
+  resume_id?: string | null;
 }
 
 /** A friendly site name from a host: "www.amazon.jobs" → "Amazon". */
