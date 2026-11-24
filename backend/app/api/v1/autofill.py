@@ -4,7 +4,15 @@ import io
 import json
 import uuid
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
+from fastapi import (
+    APIRouter,
+    BackgroundTasks,
+    Depends,
+    HTTPException,
+    Query,
+    Request,
+    Response,
+)
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import delete, func, select
@@ -18,6 +26,7 @@ from app.models.taught_field import TaughtField
 from app.models.user import User
 from app.services import autofill_bundle as svc
 from app.services import resume_history
+from app.services.extension_connect import TOKEN_PREFIX
 from app.utils.content_disposition import file_headers
 
 router = APIRouter()
@@ -378,6 +387,7 @@ async def mark_promoted(
 @router.post("/resumes/{resume_id}/read", response_model=ResumeDetailsOut)
 async def reread_resume(
     resume_id: uuid.UUID,
+    request: Request,
     user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> ResumeDetailsOut:
@@ -385,6 +395,13 @@ async def reread_resume(
     the stored details. Job Catcher also calls it for a chosen résumé that was
     never read (spec 020), so its sections never come from another résumé."""
     resume = await _own_resume(db, user, resume_id)
+    # Job Catcher's pass may only read a résumé that was never read: it can
+    # never overwrite details the user edited in the app (spec 020 review).
+    via_pass = request.headers.get("authorization", "").startswith(
+        f"Bearer {TOKEN_PREFIX}"
+    )
+    if via_pass and resume.parsed_history_at is not None:
+        return _details(resume)
     if not (resume.extracted_text or "").strip():
         raise HTTPException(
             status_code=422,

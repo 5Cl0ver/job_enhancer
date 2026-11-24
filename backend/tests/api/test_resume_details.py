@@ -388,3 +388,20 @@ async def test_job_catcher_can_read_a_chosen_resume_that_was_never_read(
     auth = {"Authorization": f"Bearer {await _a_pass(db_session, test_user)}"}
     got = await anon_client.post(f"/v1/autofill/resumes/{r.id}/read", headers=auth)
     assert got.status_code == 200 and got.json()["read"] is True
+
+
+async def test_a_pass_never_overwrites_details_edited_in_the_app(
+    client: AsyncClient, anon_client: AsyncClient, db_session, test_user
+):
+    """A stolen pass can't wipe the user's edits: it may only read a résumé
+    that was never read. The app's Read my résumé still re-reads."""
+    r = await _resume(db_session, test_user)
+    edited = {"work": [{"title": "My own title", "company": "Kelso Labs"}]}
+    await client.put(f"/v1/autofill/resumes/{r.id}/details", json=edited)
+    auth = {"Authorization": f"Bearer {await _a_pass(db_session, test_user)}"}
+    got = (
+        await anon_client.post(f"/v1/autofill/resumes/{r.id}/read", headers=auth)
+    ).json()
+    assert got["work"][0]["title"] == "My own title"
+    again = (await client.post(f"/v1/autofill/resumes/{r.id}/read")).json()
+    assert again["work"][0]["company"] == "Tidewell Labs"  # re-read from the file

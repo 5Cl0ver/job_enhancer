@@ -206,7 +206,9 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
   async function wipe() {
     generation++;
     inFlight = null; // the next refresh starts fresh, with the new account
-    await chrome.storage.local.remove([COPY, RESUME, STAGED, CHOSEN]);
+    // The saved-jobs list the background matches pages against belonged to
+    // that account too (spec 020 review).
+    await chrome.storage.local.remove([COPY, RESUME, STAGED, CHOSEN, "je_saved_cache"]);
     // Every tab's résumé choice belonged to the account that signed out.
     const all = await chrome.storage.session.get(null).catch(() => ({}));
     const choices = Object.keys(all).filter((k) => k.startsWith("je_resume_choice:"));

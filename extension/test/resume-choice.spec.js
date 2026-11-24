@@ -14,3 +14,21 @@ describe("fileNameOf", () => {
     expect(fileNameOf(res(null), "wren.pdf")).toBe("wren.pdf");
   });
 });
+
+describe("signing out forgets the account's saved jobs and résumé choices", () => {
+  it("wipe() clears the copy, the chosen résumé, the saved-jobs cache and every choice", async () => {
+    const { createAutofillCopy } = await import("../src/background/autofillCopy.js");
+    const local = { je_autofill: {}, je_chosen_resume: {}, je_saved_cache: { jobs: [{ id: "j1" }] }, je_not_this: {} };
+    const session = { "je_resume_choice:job:j1": { resumeId: "r2" }, "je_resume_choice:page:x": {}, je_fill_1: {} };
+    const area = (store) => ({
+      get: async (k) => (k === null ? { ...store } : Object.fromEntries([].concat(k).filter((x) => x in store).map((x) => [x, store[x]]))),
+      remove: async (k) => [].concat(k).forEach((x) => delete store[x]),
+      set: async (o) => Object.assign(store, o),
+    });
+    globalThis.chrome = { storage: { local: area(local), session: area(session) } };
+    const copy = createAutofillCopy({ api: "", token: async () => null, wakeFetch: async () => ({}), toB64: () => "" });
+    await copy.wipe();
+    expect(Object.keys(local)).toEqual(["je_not_this"]);
+    expect(Object.keys(session)).toEqual(["je_fill_1"]);
+  });
+});
