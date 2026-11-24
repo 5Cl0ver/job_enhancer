@@ -30,7 +30,9 @@ def upgrade() -> None:
             sa.ForeignKey("users.id", ondelete="CASCADE"),
             primary_key=True,
         ),
-        sa.Column("welcome_step", sa.SmallInteger(), nullable=False, server_default="0"),
+        sa.Column(
+            "welcome_step", sa.SmallInteger(), nullable=False, server_default="0"
+        ),
         sa.Column("welcome_done_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column("profile_reviewed_at", sa.DateTime(timezone=True), nullable=True),
         sa.Column(
