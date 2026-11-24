@@ -103,6 +103,12 @@ export async function startFakeApi() {
       return { body: b?.answers || [] };
     },
     "POST /v1/users/me/custom-answers/used": () => ({ status: 204 }),
+    "DELETE /v1/users/me/custom-answers/:key": (_b, req) => {
+      const key = decodeURIComponent(req.url.split("/").pop());
+      state.answers = state.answers.filter((x) => x.question_key !== key);
+      state.bundleVersion++;
+      return { status: 204 };
+    },
     "GET /v1/ai/resumes/active/file": () => ({
       raw: state.resume.bytes,
       headers: { "content-type": "application/pdf", "X-Resume-Filename": state.resume.filename },
@@ -251,6 +257,7 @@ export async function startFakeApi() {
     let key = `${req.method} ${path}`;
     if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
     if (/^DELETE \/v1\/autofill\/taught\/[^/]+$/.test(key)) key = "DELETE /v1/autofill/taught/:id";
+    if (/^DELETE \/v1\/users\/me\/custom-answers\/[^/]+$/.test(key) && !key.endsWith("/used")) key = "DELETE /v1/users/me/custom-answers/:key";
     const o = overrides.get(path) ?? overrides.get(key);
     const wait = (typeof o === "object" && o?.delay) || delay;
     if (wait) await new Promise((r) => setTimeout(r, wait));

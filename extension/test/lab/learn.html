@@ -1,0 +1,22 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 018 US2: questions Job Catcher doesn't
+     know — an everyday one, one about THIS company, and an essay. The user
+     answers and presses Continue: each is saved (the company one for this
+     site only, the essay as a saved answer that's offered, never filled). -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Application questions - Brightfold</title></head>
+  <body>
+    <h1>Application questions</h1>
+    <form id="q" onsubmit="return false">
+      <p><label for="fn">First name</label><input id="fn"></p>
+      <p><label for="ln">Last name</label><input id="ln"></p>
+      <p><label for="em">Email</label><input id="em" type="email"></p>
+      <p><label for="shift">Which shift do you prefer?</label><input id="shift"></p>
+      <fieldset><legend>Have you ever worked for our company before?</legend>
+        <label><input type="radio" name="before" value="Yes"> Yes</label>
+        <label><input type="radio" name="before" value="No"> No</label></fieldset>
+      <p><label for="why">Why do you want to work here?</label><textarea id="why"></textarea></p>
+      <button type="button" id="continue">Continue</button>
+    </form>
+  </body>
+</html>

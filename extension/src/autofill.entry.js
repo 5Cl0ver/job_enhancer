@@ -87,9 +87,10 @@ const session = createSession({
 let state = "idle"; // idle | busy
 let lastReport = { filled: 0, need: 0 };
 // Keep filling (spec 015, Story 4): each later step of the same application
-// fills as it appears. OFF unless the user switches it on in the panel — by
-// default Job Catcher fills only when pressed (the user's choice). Remembered
-// per tab and site by the background, so it carries across page loads.
+// fills as it appears. It starts with a press when SUPER AUTOFILL is on (the
+// panel's checkbox, on by default, kept in chrome.storage.sync so every
+// computer has it — spec 018); off, nothing fills without a press.
+// Remembered per tab and site by the background, so it carries across loads.
 let keepOn = false;
 let keepUserOff = false; // switched off in the panel: a press doesn't turn it back on
 let usedHere = false; // autofill ran on this page (learning only notices then)
@@ -265,6 +266,12 @@ async function fill(auto) {
     if (work?.length) await fillAllWorkExperience(document, work);
   }
 
+  // Super autofill: a press starts filling every next step of this application.
+  if (!auto && !keepOn && (await superAutofill())) {
+    keepOn = true;
+    send({ type: "setKeepFilling", on: true });
+  }
+
   const { leftovers, seen } = await session.fillKnown(copy, {
     auto,
     onProgress: (done, total) => status({ phase: "filling", done, total, note: "Filling…" }),
@@ -291,6 +298,16 @@ async function fill(auto) {
   return { ok: true, ...lastReport, seen };
 }
 
+/** The panel's Super autofill checkbox (on unless switched off). */
+async function superAutofill() {
+  try {
+    const { je_super } = await chrome.storage.sync.get("je_super");
+    return je_super !== false;
+  } catch {
+    return true;
+  }
+}
+
 /** Has anything in Workday's Work Experience been filled (by anyone)? */
 function workExperienceTouched() {
   return [...document.querySelectorAll('[data-fkit-id^="workExperience-"] input:not([type=checkbox]), [data-fkit-id^="workExperience-"] textarea')].some(
@@ -314,7 +331,7 @@ function notice() {
   // checkout or any other form that merely looks similar.
   if (!usedHere || !presenceNow().app) return;
   const answers = session.typedAnswers();
-  if (answers.length) send({ type: "answersNoticed", answers });
+  if (answers.length) send({ type: "answersNoticed", answers, site: siteKey(location.href) });
   if (lastCopy) {
     const fields = session.typedProfile(lastCopy.values);
     if (Object.keys(fields).length) send({ type: "profileNoticed", fields });
@@ -380,6 +397,7 @@ try {
         if (msg.action === "show") return { ok: session.show(msg.id) };
         if (msg.action === "typed") return { answers: session.typedAnswers() };
         if (msg.action === "use") return { ok: (await session.useSuggestion(msg.id)).ok };
+        if (msg.action === "useText") return { ok: (await session.useText(msg.id, msg.value)).ok };
         if (msg.action === "keep") {
           keepOn = !!msg.value;
           keepUserOff = !msg.value;

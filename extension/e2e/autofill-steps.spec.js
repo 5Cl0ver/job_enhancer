@@ -44,6 +44,7 @@ test.beforeEach(async () => {
   api.state.bundleVersion++;
   // A fresh copy for each test (the extension refreshes at most once a minute).
   await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill"]));
+  await ext.worker.evaluate(() => chrome.storage.sync.remove("je_super")); // Super autofill back to its default (on)
 });
 
 const form = (page) => page.evaluate(() => window.__formData());
@@ -57,12 +58,10 @@ async function panelFor(page) {
   return panel;
 }
 
-test("Keep filling switched on: every later step fills as it appears, from the profile and the résumé", async () => {
+test("Super autofill (on by default): one press, then every later step fills as it appears", async () => {
   const page = await ext.context.newPage();
   await page.goto(URL);
   await ext.autofill(page);
-  // Off by default (fills only when pressed): the user switches it on.
-  await ext.bg({ type: "setKeepFilling", tabId: await ext.tabIdOf(page), on: true });
   // The step is done when its last field (after the country dropdown) is in.
   await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   const one = await form(page);
@@ -96,7 +95,7 @@ test("Keep filling switched on: every later step fills as it appears, from the p
   await page.close();
 });
 
-test("what you type is offered as you move on — answers and profile — and fills the next application", async () => {
+test("what you type is saved as you move on — answers and the profile's missing parts — and fills the next application", async () => {
   const page = await ext.context.newPage();
   await page.goto(URL);
   await ext.autofill(page);
@@ -118,19 +117,17 @@ test("what you type is offered as you move on — answers and profile — and fi
   await page.getByRole("option", { name: "Employee Referral" }).click();
   await next(page);
 
+  // Saved automatically as the user moved on — no press (spec 018): the new
+  // answer, and the street address the profile was missing.
+  await expect.poll(() => api.state.profile.address_line1, { timeout: 8000 }).toBe("12 Ferry Lane");
+  await expect
+    .poll(() => api.state.answers.map((x) => `${x.question_key}=${x.answer}`), { timeout: 8000 })
+    .toContain("how did you hear about this opportunity=Employee Referral");
   const panel = await panelFor(page);
-  await expect(panel.getByText("New answers to remember")).toBeVisible({ timeout: 8000 });
-  await expect(panel.getByLabel("Answer to How did you hear about this opportunity?")).toHaveValue("Employee Referral");
-  await expect(panel.getByText("Save to my profile?")).toBeVisible();
-  await expect(panel.getByText("12 Ferry Lane")).toBeVisible();
-  // Nothing saved yet.
-  expect(api.state.answers).toEqual([]);
-  expect(api.state.profile.address_line1).toBeNull();
-
-  await panel.getByRole("button", { name: "Remember these" }).click();
-  await panel.getByRole("button", { name: "Save to my profile" }).click();
-  await expect.poll(() => api.state.profile.address_line1).toBe("12 Ferry Lane");
-  expect(api.state.answers).toContainEqual(expect.objectContaining({ question_key: "how did you hear about this opportunity", answer: "Employee Referral" }));
+  const saved = panel.getByTestId("saved-now");
+  await expect(saved).toBeVisible({ timeout: 8000 });
+  await saved.getByRole("button", { name: "Review" }).click();
+  await expect(saved.getByLabel("Saved answer to How did you hear about this opportunity?")).toHaveValue("Employee Referral");
 
   // The next application: both fill by themselves.
   await ext.worker.evaluate(() => chrome.storage.local.remove(["je_autofill"]));
@@ -145,14 +142,16 @@ test("what you type is offered as you move on — answers and profile — and fi
   await Promise.all([page.close(), panel.close(), again.close()]);
 });
 
-test("by default it fills only when pressed; Keep filling can be switched on in the panel", async () => {
+test("Super autofill switched off: nothing fills without a press; switched on: the next step fills", async () => {
   const page = await ext.context.newPage();
   await page.goto(URL);
   await ext.autofill(page);
   // The step is done when its last field (after the country dropdown) is in.
   await expect.poll(async () => (await form(page)).addressSection_city, { timeout: 15000 }).toBe("Harborview");
   const panel = await panelFor(page);
-  const keep = panel.getByRole("switch", { name: "Keep filling this application" });
+  const keep = panel.getByRole("switch", { name: "Super autofill" });
+  await expect(keep).toHaveAttribute("aria-checked", "true"); // on by default
+  await keep.click();
   await expect(keep).toHaveAttribute("aria-checked", "false");
   await expect(panel.getByText("Off: Job Catcher fills only when you press Autofill.")).toBeVisible();
   // The next step: nothing fills until a press.

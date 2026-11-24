@@ -17,11 +17,11 @@ import {
 } from "lucide-react";
 import { Alert, Badge, Button, Card, Input, Muted, SectionTitle, Select, Switch } from "@/ui";
 import { cn } from "@/lib/utils";
-import { send } from "@/lib/chrome";
+import { appUrl, send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
 import { Trouble } from "@/views/Trouble";
 import { startPointing } from "@/views/Point";
-import { usePanel, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence } from "@/lib/store";
+import { usePanel, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence, type SavedAnswer } from "@/lib/store";
 
 const SOURCE: Record<string, { label: string; tone: string }> = {
   profile: { label: "Profile", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
@@ -32,6 +32,7 @@ const SOURCE: Record<string, { label: string; tone: string }> = {
 const WHY: Record<string, string> = {
   sensitive: "Only you answer this",
   consent: "A checkbox only you can tick",
+  job_history: "From your job history: yours to fill",
   essay: "Written answer: yours to write",
   no_data: "Not in your profile yet",
   no_option: "None of its choices matched",
@@ -125,23 +126,10 @@ export function Apply({
             <span className="text-muted-foreground"> · nothing was submitted</span>
           </p>
         )}
-        {entries.length > 0 && (
-          <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
-            <span>
-              <b className="font-medium">Keep filling this application</b>
-              <span className="block text-muted-foreground">
-                {fill.keep ? "On: each next step fills by itself." : "Off: Job Catcher fills only when you press Autofill."}
-              </span>
-            </span>
-            <Switch
-              checked={fill.keep}
-              label="Keep filling this application"
-              onCheckedChange={(on) => tab.id && send({ type: "setKeepFilling", tabId: tab.id, on })}
-            />
-          </label>
-        )}
+        <SuperAutofill tabId={tab.id} />
       </Card>
 
+      <SavedNow />
       <Learned />
 
       {needYou.length > 0 && (
@@ -222,6 +210,45 @@ export function Apply({
           : "Autofill never submits. After you submit, press Mark applied."}
       </Muted>
     </div>
+  );
+}
+
+/**
+ * Super autofill (spec 018): on, a press fills this page and then every next
+ * page of the application by itself; off, nothing fills without a press.
+ * One setting, kept in chrome.storage.sync (every computer), on by default.
+ */
+function SuperAutofill({ tabId }: { tabId: number | null }) {
+  const [on, setOn] = React.useState(true);
+  React.useEffect(() => {
+    const read = () =>
+      chrome.storage.sync
+        .get("je_super")
+        .then(({ je_super }) => setOn(je_super !== false))
+        .catch(() => {});
+    read();
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "sync" && "je_super" in changes) read();
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => chrome.storage.onChanged.removeListener(onChanged);
+  }, []);
+  async function change(next: boolean) {
+    setOn(next);
+    await chrome.storage.sync.set({ je_super: next }).catch(() => {});
+    // This application follows the switch straight away.
+    if (tabId != null) send({ type: "setKeepFilling", tabId, on: next });
+  }
+  return (
+    <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
+      <span>
+        <b className="font-medium">Super autofill</b>
+        <span className="block text-muted-foreground">
+          {on ? "On: after your first press, every next page fills by itself." : "Off: Job Catcher fills only when you press Autofill."}
+        </span>
+      </span>
+      <Switch checked={on} label="Super autofill" onCheckedChange={change} />
+    </label>
   );
 }
 
@@ -352,6 +379,98 @@ function ShortcutHint() {
   );
 }
 
+/** The "Autofill memory" page in the app (spec 018), optionally on one answer. */
+export function openMemory(q?: string) {
+  const base = appUrl();
+  if (!base) return;
+  chrome.tabs.create({ url: `${base}/autofill${q ? `?q=${encodeURIComponent(q)}` : ""}` }).catch(() => {});
+}
+
+const SCOPE: Record<string, string> = {
+  all: "Every application",
+  site: "Only for this company",
+  essay: "Saved answer: offered, never filled by itself",
+  profile: "Added to your profile",
+};
+
+/**
+ * Saved automatically (spec 018): what the user answered, the moment they
+ * moved on — each with Edit and Undo, and the app's Autofill memory a tap away.
+ */
+function SavedNow() {
+  const { tab, fill } = usePanel();
+  const [open, setOpen] = React.useState(false);
+  const list = fill.saved;
+  if (!tab.id || !list.length) return null;
+  return (
+    <Card className="flex flex-col gap-2" data-testid="saved-now">
+      <div className="flex items-center justify-between gap-2">
+        <span className="flex items-center gap-2 text-sm font-medium text-emerald-700 dark:text-emerald-300">
+          <CheckCircle2 className="size-4" aria-hidden /> Saved {list.length} answer{list.length === 1 ? "" : "s"}
+        </span>
+        <Button variant="ghost" size="sm" aria-expanded={open} onClick={() => setOpen((v) => !v)}>
+          {open ? "Hide" : "Review"}
+        </Button>
+      </div>
+      <Muted>Saved automatically for your next applications.</Muted>
+      {open && (
+        <ul className="flex flex-col divide-y">
+          {list.map((x) => (
+            <SavedRow key={x.question_key} tabId={tab.id!} saved={x} />
+          ))}
+        </ul>
+      )}
+      <Button variant="ghost" size="sm" className="self-start" onClick={() => openMemory()}>
+        Open Autofill memory
+      </Button>
+    </Card>
+  );
+}
+
+function SavedRow({ tabId, saved }: { tabId: number; saved: SavedAnswer }) {
+  const [value, setValue] = React.useState(saved.answer);
+  const [busy, setBusy] = React.useState("");
+  const [msg, setMsg] = React.useState("");
+  const profile = saved.scope === "profile";
+  async function save() {
+    setBusy("save");
+    const r = await send({ type: "editSavedAnswer", tabId, question_key: saved.question_key, question_text: saved.question_text, answer: value.trim() });
+    setBusy("");
+    setMsg(r?.ok ? "Changed." : "Couldn't change it. Try again.");
+  }
+  async function undo() {
+    setBusy("undo");
+    const r = await send({ type: "undoSavedAnswer", tabId, question_key: saved.question_key });
+    setBusy("");
+    if (!r?.ok) setMsg("Couldn't undo it. Try again.");
+  }
+  return (
+    <li className="flex flex-col gap-1.5 py-2">
+      <p className="text-xs font-medium">{saved.question_text}</p>
+      <p className="text-[11px] text-muted-foreground">{SCOPE[saved.scope] || SCOPE.all}</p>
+      {profile ? (
+        <div className="flex items-center justify-between gap-2">
+          <span className="truncate text-xs">{saved.answer}</span>
+          <Button variant="ghost" size="sm" onClick={() => openMemory()}>
+            Edit in app
+          </Button>
+        </div>
+      ) : (
+        <div className="flex flex-wrap items-center gap-2">
+          <Input aria-label={`Saved answer to ${saved.question_text}`} className="min-w-0 flex-1" value={value} maxLength={4000} onChange={(e) => setValue(e.target.value)} />
+          <Button variant="outline" size="sm" busy={busy === "save"} disabled={!value.trim() || value.trim() === saved.answer} onClick={save}>
+            Save
+          </Button>
+          <Button variant="ghost" size="sm" busy={busy === "undo"} onClick={undo}>
+            Undo
+          </Button>
+        </div>
+      )}
+      {msg && <Muted role="status">{msg}</Muted>}
+    </li>
+  );
+}
+
 function Section({ title, count, tone, children }: { title: string; count: number; tone: string; children: React.ReactNode }) {
   return (
     <Card className="p-0">
@@ -366,7 +485,7 @@ function Section({ title, count, tone, children }: { title: string; count: numbe
 function useAction() {
   const { tab } = usePanel();
   return React.useCallback(
-    (frameId: number, action: "fix" | "undo" | "show" | "use", id: string, value?: string) =>
+    (frameId: number, action: "fix" | "undo" | "show" | "use" | "useText", id: string, value?: string) =>
       tab.id ? send({ type: "fillAction", tabId: tab.id, frameId, action, id, value }) : Promise.resolve(null),
     [tab.id],
   );
@@ -479,6 +598,11 @@ function NeedRow({ need }: { need: FillNeed }) {
         <Button variant="ghost" size="icon-sm" aria-label={`Show ${need.label} on the page`} title="Show on the page" onClick={() => act(need.frameId, "show", need.id)}>
           <LocateFixed />
         </Button>
+        {need.saved && (
+          <Button variant="outline" size="sm" onClick={() => act(need.frameId, "useText", need.id, need.saved)}>
+            Use saved answer
+          </Button>
+        )}
         {canAnswer && (
           <Button variant="outline" size="sm" onClick={() => setEditing((v) => !v)}>
             Answer
@@ -712,7 +836,7 @@ function Learned() {
       )}
       {profileKeys.length > 0 && (
         <Card className="flex flex-col gap-2.5">
-          <SectionTitle className="text-sm">Save to my profile?</SectionTitle>
+          <SectionTitle className="text-sm">Update your profile?</SectionTitle>
           <Muted>You typed these; your profile doesn't have them yet (or has them differently).</Muted>
           <ul className="flex flex-col gap-1.5">
             {profileKeys.map((k) => (

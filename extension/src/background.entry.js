@@ -265,14 +265,109 @@ async function getFillSession(tabId) {
   const pk = pendingKey(tabId);
   const kk = keepKey(tabId);
   const ik = pickKey(tabId);
-  const { [key]: held, [pk]: pending, [kk]: keep, [ik]: pick } = await chrome.storage.session.get([key, pk, kk, ik]);
+  const sk = savedKey(tabId);
+  const { [key]: held, [pk]: pending, [kk]: keep, [ik]: pick, [sk]: saved } = await chrome.storage.session.get([key, pk, kk, ik, sk]);
   return {
     ...(held || { frames: {} }),
     pending: pending || { answers: [], profile: {} },
     keep: !!keep?.on,
     presence: await presence.get(tabId),
     pick: pick || null,
+    saved: saved || [],
   };
+}
+
+// What was saved automatically on this tab (spec 018), for the panel's
+// "Saved N answers" with Edit / Undo. Values are the user's own, shown only
+// in their panel; kept with the browser session.
+const savedKey = (tabId) => `je_saved:${tabId}`;
+let savedWrites = Promise.resolve();
+function updateSaved(tabId, change) {
+  savedWrites = savedWrites
+    .catch(() => {})
+    .then(async () => {
+      const key = savedKey(tabId);
+      const { [key]: list = [] } = await chrome.storage.session.get(key);
+      await chrome.storage.session.set({ [key]: change(list).slice(-30) });
+      chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
+    });
+  return savedWrites;
+}
+
+/**
+ * Save answers the user gave, now. A company-specific question's answer is
+ * kept for this site only ("site|question"); an essay as a saved answer
+ * offered with "Use saved answer" ("essay|question"), never filled by itself.
+ */
+async function autoSaveAnswers(tabId, answers, site) {
+  const items = [];
+  for (const a of answers) {
+    if (!a?.question_key || !a.answer) continue;
+    const base = String(a.question_key).slice(0, 200);
+    const scope = a.essay ? "essay" : a.company && site ? "site" : "all";
+    const key = scope === "essay" ? `essay|${base}` : scope === "site" ? `${site}|${base}` : base;
+    items.push({
+      question_key: key.slice(0, 255),
+      question_text: String(a.question_text || "").slice(0, 500),
+      answer: String(a.answer).slice(0, scope === "essay" ? 4000 : 2000),
+      scope,
+      site,
+    });
+  }
+  if (!items.length) return;
+  const out = await saveCustomAnswers(items.map(({ question_key, question_text, answer }) => ({ question_key, question_text, answer })));
+  if (out.error) {
+    // Not saved (signed out, the app asleep): kept for the panel's "Remember".
+    await updatePending(tabId, (held) => {
+      for (const x of items) {
+        held.answers = held.answers.filter((y) => y.question_key !== x.question_key);
+        held.answers.push({ question_key: x.question_key, question_text: x.question_text, answer: x.answer });
+      }
+      held.answers = held.answers.slice(-40);
+    });
+    return;
+  }
+  autofill.refresh();
+  await updateSaved(tabId, (list) => [...list.filter((y) => !items.some((x) => x.question_key === y.question_key)), ...items.map((x) => ({ ...x, at: Date.now() }))]);
+}
+
+/** Profile answers typed on a page: the profile's empty fields are filled; changes wait for a tap. */
+async function autoSaveProfile(tabId, fields) {
+  const { je_autofill: held } = await chrome.storage.local.get("je_autofill");
+  const profile = held?.profile || {};
+  const fresh = {};
+  let changed = {};
+  for (const [k, v] of Object.entries(fields)) {
+    if (profile[k] == null || profile[k] === "") fresh[k] = v;
+    else changed[k] = v;
+  }
+  if (Object.keys(fresh).length) {
+    const out = await saveProfileFields(fresh);
+    if (out.ok) {
+      autofill.refresh();
+      await updateSaved(tabId, (list) => [
+        ...list,
+        ...Object.entries(fresh).map(([k, v]) => ({ question_key: `profile:${k}`, question_text: k.replace(/_/g, " "), answer: String(v), scope: "profile", at: Date.now() })),
+      ]);
+    } else {
+      changed = { ...changed, ...fresh };
+    }
+  }
+  if (Object.keys(changed).length) {
+    await updatePending(tabId, (p) => {
+      p.profile = { ...p.profile, ...changed };
+    });
+  }
+}
+
+async function forgetCustomAnswer(questionKey) {
+  const token = await getValidToken();
+  if (!token) return { ok: false, error: "NOT_SIGNED_IN" };
+  const res = await fetch(`${cfg.API_BASE}/v1/users/me/custom-answers/${encodeURIComponent(questionKey)}`, {
+    method: "DELETE",
+    headers: { Authorization: `Bearer ${token}` },
+  }).catch(() => null);
+  return res?.ok ? { ok: true } : { ok: false, error: "Couldn't undo it" };
 }
 
 // The panel holds a port while pointing: closing the panel stops it.
@@ -407,7 +502,7 @@ try {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearFillSession(tabId);
     presence.clear(tabId);
-    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId)]).catch(() => {});
+    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId)]).catch(() => {});
   });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -814,23 +909,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
         sendResponse({ ok: true });
       } else if (msg.type === "answersNoticed") {
-        if (sender.tab?.id != null) {
-          await updatePending(sender.tab.id, (held) => {
-            for (const a of msg.answers || []) {
-              if (!a?.question_key || !a.answer) continue;
-              held.answers = held.answers.filter((x) => x.question_key !== a.question_key);
-              held.answers.push({ question_key: String(a.question_key).slice(0, 255), question_text: String(a.question_text || "").slice(0, 500), answer: String(a.answer).slice(0, 2000) });
-            }
-            held.answers = held.answers.slice(-40);
-          });
-        }
+        // Saved straight away (spec 018): what the user answered, when they
+        // moved on. Shown in the panel with Edit / Undo; kept for review if
+        // the app can't be reached.
+        if (sender.tab?.id != null) await autoSaveAnswers(sender.tab.id, msg.answers || [], msg.site || "");
         sendResponse({ ok: true });
       } else if (msg.type === "profileNoticed") {
-        if (sender.tab?.id != null) {
-          await updatePending(sender.tab.id, (held) => {
-            held.profile = { ...held.profile, ...(msg.fields || {}) };
-          });
+        // What the profile was missing is saved; a DIFFERENT value waits for
+        // the user's one tap ("Update your profile?"), so a typo never spreads.
+        if (sender.tab?.id != null) await autoSaveProfile(sender.tab.id, msg.fields || {});
+        sendResponse({ ok: true });
+      } else if (msg.type === "editSavedAnswer") {
+        const out = await saveCustomAnswers([{ question_key: msg.question_key, question_text: msg.question_text, answer: String(msg.answer || "").slice(0, 4000) }]);
+        if (!out.error) {
+          autofill.refresh();
+          await updateSaved(msg.tabId, (list) => list.map((x) => (x.question_key === msg.question_key ? { ...x, answer: msg.answer } : x)));
         }
+        sendResponse(out.error ? { ok: false, error: out.error } : { ok: true });
+      } else if (msg.type === "undoSavedAnswer") {
+        const out = await forgetCustomAnswer(msg.question_key);
+        if (out.ok) {
+          autofill.refresh();
+          await updateSaved(msg.tabId, (list) => list.filter((x) => x.question_key !== msg.question_key));
+        }
+        sendResponse(out);
+      } else if (msg.type === "dismissSaved") {
+        await updateSaved(msg.tabId, () => []);
         sendResponse({ ok: true });
       } else if (msg.type === "savePendingAnswers") {
         const out = await saveCustomAnswers(msg.answers || []);

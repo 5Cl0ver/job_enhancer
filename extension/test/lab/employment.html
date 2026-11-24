@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Lab page (invented company), spec 018 US5: the "retype your résumé" form.
+     Personal information first, then two employer blocks whose boxes are
+     labelled just like the personal ones ("Address", "City", "Phone") — only
+     the section heading says they're about a past job. The user's own
+     address and phone must never land in an employer block.
+     window.__formData() holds every box by id. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Application - Opal Ridge Labs</title>
+    <style>section { margin: 18px 0; } .row { margin: 6px 0; } label { display: inline-block; width: 140px; }</style>
+  </head>
+  <body>
+    <h1>Employment Application</h1>
+    <form id="app">
+      <section>
+        <h2>Personal Information</h2>
+        <div class="row"><label for="p-first">First Name</label><input id="p-first"></div>
+        <div class="row"><label for="p-last">Last Name</label><input id="p-last"></div>
+        <div class="row"><label for="p-email">Email</label><input id="p-email" type="email"></div>
+        <div class="row"><label for="p-addr">Address</label><input id="p-addr"></div>
+        <div class="row"><label for="p-city">City</label><input id="p-city"></div>
+        <div class="row"><label for="p-phone">Phone</label><input id="p-phone" type="tel"></div>
+      </section>
+      <section>
+        <h2>Employment History</h2>
+        <div class="employer">
+          <h3>Employer 1</h3>
+          <div class="row"><label for="e1-company">Company Name</label><input id="e1-company"></div>
+          <div class="row"><label for="e1-title">Job Title</label><input id="e1-title"></div>
+          <div class="row"><label for="e1-addr">Address</label><input id="e1-addr"></div>
+          <div class="row"><label for="e1-city">City</label><input id="e1-city"></div>
+          <div class="row"><label for="e1-state">State</label><input id="e1-state"></div>
+          <div class="row"><label for="e1-phone">Phone</label><input id="e1-phone" type="tel"></div>
+          <div class="row"><label for="e1-start">Start Date</label><input id="e1-start" placeholder="MM/YYYY"></div>
+          <div class="row"><label for="e1-super">Supervisor</label><input id="e1-super"></div>
+        </div>
+        <div class="employer">
+          <h3>Employer 2</h3>
+          <div class="row"><label for="e2-company">Company Name</label><input id="e2-company"></div>
+          <div class="row"><label for="e2-title">Job Title</label><input id="e2-title"></div>
+          <div class="row"><label for="e2-addr">Address</label><input id="e2-addr"></div>
+          <div class="row"><label for="e2-city">City</label><input id="e2-city"></div>
+          <div class="row"><label for="e2-phone">Phone</label><input id="e2-phone" type="tel"></div>
+        </div>
+      </section>
+    </form>
+    <script>
+      window.__formData = () => Object.fromEntries([...document.querySelectorAll("#app input")].map((i) => [i.id, i.value]));
+    </script>
+  </body>
+</html>

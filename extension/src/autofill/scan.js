@@ -242,6 +242,7 @@ export function collectFields(root, opts = {}) {
     placeholder: el.getAttribute?.("placeholder") || "",
     accept: el.getAttribute?.("accept") || "",
     maxLength: Number(el.getAttribute?.("maxlength")) || 0,
+    section: sectionHeading(el),
   });
 
   for (const el of els) {
@@ -372,6 +373,33 @@ export function dialCodeBeside(el) {
     }
   }
   return false;
+}
+
+const HEADING =
+  "h1, h2, h3, h4, h5, h6, legend, [role=heading], [class*=section-title], [class*=sectionTitle], [class*=section-header], [class*=SectionHeader]";
+
+/**
+ * The heading of the section a box sits in ("Employment History", "Employer
+ * 2", "Personal Information"): the nearest heading above it — a previous
+ * sibling, or the last heading inside one — or its group's legend. The box's
+ * own question legend (a radio group's) isn't a section.
+ */
+export function sectionHeading(el) {
+  const cut = (t) => (t.length <= 80 ? t : "");
+  // From the box itself upward: a heading right before it in its own group first.
+  for (let n = el, hop = 0; n && hop < 10; n = n.parentElement, hop++) {
+    for (let sib = n.previousElementSibling, k = 0; sib && k < 15; sib = sib.previousElementSibling, k++) {
+      const h = sib.matches?.(HEADING) ? sib : [...(sib.querySelectorAll?.(HEADING) || [])].pop();
+      const t = h && textOf(h);
+      if (t) return cut(t);
+    }
+    if (n.tagName === "FIELDSET" && !n.querySelector(":scope > legend")?.contains(el)) {
+      const legend = n.querySelector(":scope > legend");
+      const t = legend && textOf(legend);
+      if (t && n.querySelectorAll("input, select, textarea").length > 2) return cut(t);
+    }
+  }
+  return "";
 }
 
 /** The visible box of an input combobox: a known control wrapper, or its
