@@ -97,6 +97,8 @@ const RULES = [
   { key: "current_title", re: /^\W*(your )?(current|most recent) (job[\s_-]*)?(title|position|role)\W*$/i },
   { key: "current_company", re: /^\W*(your )?(current|most recent|present) (company|employer)( name)?\W*$/i },
   // Before the address rules: "Please state your salary…" is about salary.
+  // A box for the résumé's skills (comma list): never a yes/no question about one.
+  { key: "skills", re: /^(key |technical |relevant |professional |core |your )?skills( (and|&) (expertise|competencies|qualifications))?\s*(\(.*\))?\s*:?$|^list (of )?(your )?(key |relevant |technical )?skills[^?]*$/i },
   { key: "desired_salary", re: /desired[\s_-]*(salary|pay|compensation)|salary[\s_-]*(expectation|requirement)|expected[\s_-]*(salary|pay|compensation)|compensation[\s_-]*expect|^salary$/i },
   { key: "notice_period", re: /notice[\s_-]*period|(earliest|available)[\s_-]*start|start[\s_-]*date|when can you start|availability to start/i },
   { key: "today_date", re: /today['’]?s?[\s_-]*date|current[\s_-]*date|date[\s_-]*signed|signature[\s_-]*date|^date$/i },
@@ -260,6 +262,8 @@ export function profileValues(profile, email, today = new Date(), history = null
     desired_salary: list(p.desired_salary),
     notice_period: list(p.notice_period),
     today_date: list(today.toISOString().slice(0, 10)),
+    // The chosen résumé's skills, as a comma list (spec 020).
+    skills: list((history?.skills || []).slice(0, 30).join(", ")),
     school: list(edu.school),
     degree: degreeForms(edu.degree),
     field_of_study: list(edu.field_of_study),

@@ -7,6 +7,17 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 
+/** One language (spec 020): fluent/native, and levels 1 (beginner) to 5 (fluent). */
+export interface LanguageEntry {
+  language: string;
+  native: boolean;
+  overall: number | null;
+  comprehension: number | null;
+  reading: number | null;
+  speaking: number | null;
+  writing: number | null;
+}
+
 export interface ApplicationProfile {
   first_name: string | null;
   last_name: string | null;
@@ -25,6 +36,7 @@ export interface ApplicationProfile {
   willing_to_relocate: boolean | null;
   desired_salary: number | null;
   notice_period: string | null;
+  languages?: LanguageEntry[] | null;
 }
 
 export function useApplicationProfile() {

@@ -10,7 +10,7 @@ import {
   collectWorkExperienceBlocks,
   fillWorkExperience,
   fillAllWorkExperience,
-} from "../src/autofill/workday.js";
+} from "../src/autofill/sections/workday.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const NOW = { wait: () => Promise.resolve() }; // drive async filling synchronously

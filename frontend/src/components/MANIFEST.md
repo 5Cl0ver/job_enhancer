@@ -101,6 +101,14 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `DocumentControls.tsx` | Regenerate / copy / download-PDF |
 | `JobDocuments.tsx` | Per-job résumés/cover letters (incl. Claude connector drafts): read, copy, PDF |
 
+## `autofill/` — the Autofill memory page
+
+| File | Purpose |
+|------|---------|
+| `TaughtBoxesCard.tsx` | Boxes taught with Job Catcher's "Point at a box", by site; change or remove |
+| `ResumeDetailsCard.tsx` | Each résumé's details (jobs, schools, skills, certifications, websites) read with no AI; check and fix |
+| `LanguagesCard.tsx` | Languages for application language sections: fluent/native, levels 1–5 per ability (spec 020) |
+
 ## `settings/`
 | File | Purpose |
 |---|---|

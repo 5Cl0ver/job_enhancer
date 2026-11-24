@@ -56,6 +56,27 @@ class AdminUserUpdate(BaseModel):
     role: Literal["user", "admin"]
 
 
+class LanguageEntry(BaseModel):
+    """One language the user speaks (spec 020): fluent/native, and levels from
+    1 (beginner) to 5 (fluent) per ability. Unset levels stay unset."""
+
+    language: str = Field(min_length=1, max_length=60)
+    native: bool = False
+    comprehension: int | None = Field(None, ge=1, le=5)
+    reading: int | None = Field(None, ge=1, le=5)
+    speaking: int | None = Field(None, ge=1, le=5)
+    writing: int | None = Field(None, ge=1, le=5)
+    overall: int | None = Field(None, ge=1, le=5)
+
+    @field_validator("language")
+    @classmethod
+    def _named(cls, v: str) -> str:
+        v = " ".join(v.split())
+        if not v:
+            raise ValueError("Name the language")
+        return v
+
+
 class ApplicationProfileSchema(BaseModel):
     """The "profile vault": answers job applications always ask for. Everything
     optional — the user shares only what they want. Consumed by ATS autofill."""
@@ -77,6 +98,7 @@ class ApplicationProfileSchema(BaseModel):
     willing_to_relocate: bool | None = None
     desired_salary: int | None = Field(None, ge=0)
     notice_period: str | None = Field(None, max_length=100)
+    languages: list[LanguageEntry] | None = Field(None, max_length=10)
 
     @field_validator("linkedin_url", "github_url", "portfolio_url")
     @classmethod

@@ -12,6 +12,8 @@
 // with a name box plus a phone or email box. PURE: unit-tested in
 // test/autofill-memory.spec.js.
 
+import { degreeForms } from "./profileKeys.js";
+
 const JOB = /\b(employment|employer|work (history|experience)|experience|previous (jobs?|positions?|employers?)|job history|positions? held|prior employment)\b/i;
 const EDUCATION = /\b(education|schools?|universit(y|ies)|colleges?|academic)\b/i;
 const REFERENCE = /\breferences?\b/i;
@@ -36,11 +38,18 @@ function headingKind(section) {
   return "";
 }
 
-/** Which part of a past job a box asks for, or "". Dates first; an address, phone or description is never one. */
+/**
+ * Which part of a past job a box asks for, or "". The job's own description
+ * box, its location and "I currently work here" first (spec 020); then dates;
+ * an address, phone, supervisor or reason for leaving is never one.
+ */
 export function jobPart(field) {
   const q = `${field.question || ""} ${field.hints?.name || ""}`;
-  if (/supervisor|manager|reason|duties|responsibilit|describe|description|summary|salary|wage|pay\b|contact|address|street|phone|zip|postal|email|fax/i.test(q)) return "";
   const label = String(field.question || "").trim();
+  if (field.kind === "checkbox" && /currently (work|employed)|i (still )?work here|current(ly)? (job|position|employer|role)|present (job|position)/i.test(label)) return "current";
+  if ((field.kind === "textarea" || field.kind === "text") && /^(job |role |position )?(description|duties|responsibilities)\b|^(role|job|position) description|^describe your (role|duties|responsibilities|position)\b/i.test(label)) return "description";
+  if (/supervisor|manager|reason|duties|responsibilit|describe|description|summary|salary|wage|pay\b|contact|address|street|phone|zip|postal|email|fax/i.test(q)) return "";
+  if (/^(job |work )?location\b/i.test(label)) return "location";
   if (/\b(start(ing)?( date| month| year)?|date started|began|hire date|date of hire|from date)\b/i.test(q)) return "start";
   if (/^(dates? (employed |of employment )?)?from\W*$/i.test(label)) return "start";
   if (/\b(end( date| month| year)?|date ended|leaving date|to date|until|date left)\b/i.test(q)) return "end";
@@ -99,6 +108,9 @@ export function jobValues(part, job, field) {
   const [city, state] = String(job.location || "").split(",").map((s) => s.trim());
   if (part === "company") return job.company ? [job.company] : [];
   if (part === "title") return job.title ? [job.title] : [];
+  if (part === "description") return job.description ? [job.description] : [];
+  if (part === "location") return job.location ? [job.location] : [];
+  if (part === "current") return job.current ? ["Yes"] : [];
   if (part === "city") return city ? [city] : [];
   if (part === "state") return state ? [state] : [];
   const m = part === "start" ? job.start_month : job.end_month;
@@ -133,4 +145,35 @@ export function createJobBlocks() {
     seen.add(key);
     return index;
   };
+}
+
+/**
+ * Which part of a school a box in an education section asks for, or "".
+ * Dates first ("Year of graduation from college" is the end, not the school).
+ */
+export function eduPart(field) {
+  const q = `${field.question || ""} ${field.hints?.name || ""}`;
+  const label = String(field.question || "").trim();
+  if (/\bgpa\b|grade/i.test(q)) return "";
+  if (/\b(start(ing)?( date| year)?|from date|year started|began|first year( attended)?|attended from)\b/i.test(q)) return "start";
+  if (/^(dates? (attended )?)?from\W*$/i.test(label)) return "start";
+  if (/\b(end( date| year)?|until|graduat\w*|completion|completed|last year( attended)?|year (completed|ended)|finish\w*)\b/i.test(q)) return "end";
+  if (/^(dates? (attended )?)?to\W*$/i.test(label)) return "end";
+  if (/\b(field of study|major|discipline|area of study|concentration|program of study)\b/i.test(q)) return "field";
+  if (/\b(degree|qualification|diploma)\b/i.test(q)) return "degree";
+  if (/\b(school|universit\w*|college|institution)\b/i.test(q)) return "school";
+  return "";
+}
+
+/** What goes in one part of one school (from the résumé), in the forms the box may take. */
+export function eduValues(part, school, field) {
+  if (!school) return [];
+  if (part === "school") return school.school ? [school.school] : [];
+  if (part === "degree") return school.degree ? degreeForms(school.degree) : [];
+  if (part === "field") return school.field_of_study ? [school.field_of_study] : [];
+  const y = part === "start" ? school.start_year : school.end_year;
+  if (!y) return [];
+  if (field.kind === "date") return [`${y}-${part === "start" ? "09" : "06"}-01`];
+  if (field.kind === "month") return [`${y}-${part === "start" ? "09" : "06"}`];
+  return [String(y)];
 }

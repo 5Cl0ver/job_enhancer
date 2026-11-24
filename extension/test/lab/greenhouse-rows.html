@@ -1,0 +1,117 @@
+<!doctype html>
+<!-- Lab page (invented company and applicant): Greenhouse-style employment and
+     education rows (spec 020). "+ Add another" adds a row; month lists are
+     native selects; the degree is a type-to-search list that opens on
+     mousedown (react-select's way). window.__formData() holds what the page
+     took; window.__saved() counts presses of Save (must stay 0). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply - Software Engineer - Quillstone</title>
+    <style>
+      body { font: 14px system-ui; margin: 16px; }
+      .employment-form, .education--form { border: 1px solid #ccc; padding: 8px; margin: 8px 0; }
+      label { display: block; margin: 4px 0; }
+      .select__menu { border: 1px solid #888; position: absolute; background: #fff; }
+      .select__option { padding: 3px 6px; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <form onsubmit="return false">
+      <h2>Apply for this job</h2>
+      <label>First Name <input id="first_name" autocomplete="given-name"></label>
+      <label>Last Name <input id="last_name" autocomplete="family-name"></label>
+      <label>Email <input id="email" type="email"></label>
+
+      <h3>Employment</h3>
+      <div class="employment--container"><div id="jobs"></div>
+        <button type="button" class="add-another-button" id="add-job">+ Add another</button></div>
+
+      <h3>Education</h3>
+      <div class="education--container"><div id="schools"></div>
+        <button type="button" class="add-another-button" id="add-school">+ Add another</button></div>
+
+      <button type="button" id="save">Save and continue</button>
+    </form>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      let saved = 0;
+      window.__saved = () => saved;
+      document.getElementById("save").addEventListener("click", () => saved++);
+      const MONTHS = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+      let jobs = 0, schools = 0;
+      const months = (id) => `<select id="${id}"><option value="">Month</option>${MONTHS.map((m, i) => `<option value="${i + 1}">${m}</option>`).join("")}</select>`;
+      function addJob() {
+        jobs++;
+        const n = jobs;
+        document.getElementById("jobs").insertAdjacentHTML("beforeend", `<div class="employment-form">
+          <label>Company name <input id="co-${n}"></label>
+          <label>Title <input id="ti-${n}"></label>
+          <label>Start date month ${months(`sm-${n}`)}</label>
+          <label>Start date year <input id="sy-${n}"></label>
+          <label>End date month ${months(`em-${n}`)}</label>
+          <label>End date year <input id="ey-${n}"></label>
+          <label><input type="checkbox" id="cur-${n}"> I currently work here</label></div>`);
+        wire(document.getElementById("jobs").lastElementChild);
+      }
+      function addSchool() {
+        schools++;
+        const n = schools;
+        document.getElementById("schools").insertAdjacentHTML("beforeend", `<div class="education--form">
+          <label>School <input id="sc-${n}"></label>
+          <label for="dg-${n}">Degree</label>
+          <div class="select__control" data-n="${n}"><input id="dg-${n}" role="combobox" aria-autocomplete="list" aria-expanded="false"><span class="select__single-value"></span></div>
+          <label>Discipline <input id="di-${n}"></label></div>`);
+        wire(document.getElementById("schools").lastElementChild);
+      }
+      const DEGREES = ["High School", "Associate's Degree", "Bachelor's Degree", "Master's Degree"];
+      function wire(root) {
+        for (const el of root.querySelectorAll("input:not([role=combobox]), select")) {
+          const save = () => (data[el.id] = el.type === "checkbox" ? el.checked : el.value);
+          el.addEventListener("input", save);
+          el.addEventListener("change", save);
+        }
+        for (const ctl of root.querySelectorAll(".select__control")) {
+          const input = ctl.querySelector("input");
+          const shown = ctl.querySelector(".select__single-value");
+          let menu = null;
+          const close = () => {
+            menu?.remove();
+            menu = null;
+            input.setAttribute("aria-expanded", "false");
+          };
+          const openMenu = () => {
+            close();
+            menu = document.createElement("div");
+            menu.className = "select__menu";
+            const q = input.value.toLowerCase();
+            for (const d of DEGREES.filter((x) => x.toLowerCase().includes(q))) {
+              const o = document.createElement("div");
+              o.className = "select__option";
+              o.setAttribute("role", "option");
+              o.textContent = d;
+              o.addEventListener("mousedown", (e) => e.preventDefault());
+              o.addEventListener("click", () => {
+                shown.textContent = d;
+                input.value = "";
+                data[input.id] = d;
+                close();
+              });
+              menu.appendChild(o);
+            }
+            ctl.after(menu);
+            input.setAttribute("aria-expanded", "true");
+          };
+          ctl.addEventListener("mousedown", () => (menu ? close() : openMenu()));
+          input.addEventListener("input", openMenu);
+          input.addEventListener("keydown", (e) => e.key === "Escape" && close());
+        }
+      }
+      document.getElementById("add-job").addEventListener("click", addJob);
+      document.getElementById("add-school").addEventListener("click", addSchool);
+      addJob();
+      addSchool();
+    </script>
+  </body>
+</html>

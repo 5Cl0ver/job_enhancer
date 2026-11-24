@@ -25,7 +25,7 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
-import { fillAllWorkExperience, inWorkExperience, isWorkdayExperience } from "./autofill/workday.js";
+import { fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
 
 // This copy owns the page (see orphan.js): drop what older copies drew.
 const isCurrent = claimPage("autofill");
@@ -79,10 +79,24 @@ function openModal() {
   return shown.filter((el) => !shown.some((o) => o !== el && el.contains(o))).pop() || null;
 }
 
+// Boxes the user typed in or chose on this page (real input only — never our
+// own writes): a fill never changes them (spec 020).
+const userEdited = new WeakSet();
+const CONTROL = 'input, textarea, select, [role="combobox"], [contenteditable="true"], button[aria-haspopup]';
+function noteUser(e) {
+  if (!e.isTrusted) return;
+  const el = (e.composedPath?.()[0] || e.target)?.closest?.(CONTROL);
+  if (el) userEdited.add(el);
+}
+for (const type of ["input", "change"]) document.addEventListener(type, noteUser, true);
+// A list button the user opened themselves is theirs too.
+document.addEventListener("click", (e) => e.isTrusted && e.target?.closest?.('button[aria-haspopup="listbox"]') && noteUser(e), true);
+
 const session = createSession({
   send,
-  // Workday's Work Experience blocks are filled from the résumé below.
-  skipField: (f) => isWorkdayExperience(document) && inWorkExperience(f.el),
+  // Workday's résumé rows (jobs, schools, languages…) are filled by sections/.
+  skipField: (f) => inWorkdaySection(f.el),
+  userEdited: (el) => userEdited.has(el),
   scope: openModal,
 });
 
@@ -190,6 +204,7 @@ async function loadCopy() {
     answers: copy.answers || [],
     taught: copy.taught || [],
     history: copy.history || null,
+    languages: copy.profile?.languages || [],
     resumeFile,
     resumeId: res.resumeId || null,
   };
@@ -261,18 +276,20 @@ async function fill(auto) {
     await settle();
   }
 
-  // Workday's Work Experience: one block per job on the résumé (read once
-  // and held in the copy; asked for only if the copy doesn't have it yet).
-  // An automatic run (a new step) fills these only while they're all empty —
-  // never over the user's edits, never re-adding a block they removed.
-  if (isWorkdayExperience(document) && (!auto || !workExperienceTouched())) {
-    let work = copy.history?.work;
-    if (!work?.length) {
-      status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
-      work = (await send({ type: "getWorkHistory", resumeId: copy.resumeId || null }))?.entries;
-    }
-    if (work?.length) await fillAllWorkExperience(document, work);
+  // "Retype your résumé" sections (spec 020): jobs, schools, languages,
+  // websites, certifications and skills — one row per entry of the chosen
+  // résumé, added with the page's own Add button; a value the site put in
+  // from its own résumé reading that's wrong is corrected (with Undo); the
+  // user's own edits are never touched. A new step filled by itself never
+  // re-adds rows. (Work history is read from the chosen résumé if the copy
+  // doesn't have it yet.)
+  if (!copy.history?.work?.length && isWorkdaySections(document)) {
+    status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
+    const work = (await send({ type: "getWorkHistory", resumeId: copy.resumeId || null }))?.entries;
+    if (work?.length) copy.history = { ...(copy.history || {}), work };
   }
+  status({ phase: "filling", done: 0, total: 0, note: "Filling your résumé sections…" }, { now: true });
+  await fillSections(document, copy, { session, auto, userEdited: (el) => userEdited.has(el) });
 
   // Super autofill: a press starts filling every next step of this application.
   if (!auto && !keepOn && (await superAutofill())) {
@@ -315,13 +332,6 @@ async function superAutofill() {
   } catch {
     return true;
   }
-}
-
-/** Has anything in Workday's Work Experience been filled (by anyone)? */
-function workExperienceTouched() {
-  return [...document.querySelectorAll('[data-fkit-id^="workExperience-"] input:not([type=checkbox]), [data-fkit-id^="workExperience-"] textarea')].some(
-    (el) => (el.value || "").trim() !== "",
-  );
 }
 
 // ---- Learning (spec 015, Story 3) -------------------------------------------

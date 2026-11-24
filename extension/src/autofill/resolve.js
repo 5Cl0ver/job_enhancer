@@ -43,8 +43,8 @@ export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "e
 /** Pay differs per job: a salary answer is kept for that company only. */
 export const COMPANY_KEYS = new Set(["desired_salary"]);
 
-/** Worked out fresh each time (today's date): never learned, never a saved answer. */
-export const COMPUTED_KEYS = new Set(["today_date"]);
+/** Worked out fresh each time (today's date; the chosen résumé's skills): never learned, never a saved answer. */
+export const COMPUTED_KEYS = new Set(["today_date", "skills"]);
 
 /**
  * Boxes whose answer a site reformats (phone numbers, zip codes, start dates):

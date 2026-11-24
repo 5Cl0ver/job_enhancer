@@ -140,6 +140,45 @@ function writeDate(field, [value]) {
   return { ok: actual === v, actual };
 }
 
+/**
+ * Workday's month / year date parts (role=spinbutton): its own way to commit
+ * a value is one below, then ArrowUp (it counts up and keeps it). If the page
+ * didn't take that, set it like typing. Read back: the number must be there.
+ * (job_app_filler's commit trick, research R4.)
+ */
+function writeSpin(field, [value]) {
+  const el = field.el;
+  const want = String(value ?? "").trim();
+  const n = Number.parseInt(want, 10);
+  if (!Number.isFinite(n)) return { ok: false, reason: "no_data" };
+  const num = () => Number.parseInt(el.value || "", 10);
+  try {
+    el.focus?.({ preventScroll: true });
+  } catch {
+    /* not focusable */
+  }
+  const setter = nativeSetter(el);
+  if (setter) setter.call(el, String(n - 1));
+  else el.value = String(n - 1);
+  key(el, "ArrowUp");
+  el.click?.();
+  if (num() !== n) setNativeValue(el, want, { blur: false });
+  fire(el, "FocusEvent", "blur", { bubbles: false });
+  fire(el, "FocusEvent", "focusout");
+  return { ok: num() === n, actual: el.value || "" };
+}
+
+/** A search prompt's chips: add each item (skills) one at a time. */
+async function writeChips(field, items) {
+  let added = 0;
+  for (const item of items.slice(0, 30)) {
+    const res = await searchPick(field.el, item);
+    if (res.ok) added++;
+  }
+  const actual = chipsOf(field.el).join(", ");
+  return added ? { ok: true, actual } : { ok: false, reason: "no_option", actual };
+}
+
 // ---- Native dropdowns ----------------------------------------------------
 
 function writeSelect(field, candidates) {
@@ -209,10 +248,64 @@ function pressed(el) {
 }
 
 // ---- Search-style dropdowns (react-select, Workday, typeaheads) -----------
+// One list at a time (spec 020, US3): close any list left open, open this
+// one, choose, check the choice took, close it and make sure it closed —
+// only then the next. Never the "first option" as a guess. (Event orders and
+// Workday's popup markup from working open-source fillers: research R5.)
 
-/** The options a dropdown is showing right now (minus `before`: options
- *  that were already open elsewhere on the page before we opened this one). */
-export function visibleOptions(field, before = null) {
+/** Lists a page has open right now: Workday's active popups, expanded controls' lists. */
+const POPUPS = '[data-automation-activepopup="true"], [data-automation-id="activeListContainer"]';
+const EXPANDED = '[aria-expanded="true"]:is([aria-haspopup], [role="combobox"], input[aria-autocomplete])';
+
+const shown = (el) => !el.getClientRects || el.getClientRects().length > 0;
+
+function openPopups(doc) {
+  return [...doc.querySelectorAll(POPUPS)].filter(shown);
+}
+
+function expandedControls(doc) {
+  return [...doc.querySelectorAll(EXPANDED)].filter(shown);
+}
+
+/** How many dropdown lists are open on the page (tests and the lab check it's never 2). */
+export function openPopupCount(doc) {
+  return Math.max(openPopups(doc).length, expandedControls(doc).length);
+}
+
+// Every dropdown waits for the one before it: two are never open together.
+let comboChain = Promise.resolve();
+function oneAtATime(fn) {
+  const run = comboChain.then(fn, fn);
+  comboChain = run.catch(() => {});
+  return run;
+}
+
+/** Close whatever list is open (Escape, then a click on the page's empty part). */
+async function closeOpenLists(doc, quiet = 400) {
+  const open = () => openPopups(doc).length + expandedControls(doc).length > 0;
+  if (!open()) return true;
+  for (let round = 0; round < 3 && open(); round++) {
+    for (const c of expandedControls(doc)) key(c, "Escape");
+    const active = doc.activeElement;
+    if (active && active !== doc.body) key(active, "Escape");
+    if (await until(() => !open(), 150)) return true;
+    pointerClick(doc.querySelector('[data-automation-id="mainContent"]') || doc.body);
+    if (await until(() => !open(), 150)) return true;
+  }
+  return !open() || (await until(() => !open(), quiet));
+}
+
+async function until(test, ms) {
+  const end = Date.now() + ms;
+  for (;;) {
+    if (test()) return true;
+    if (Date.now() > end) return false;
+    await sleep(40);
+  }
+}
+
+/** Where this dropdown's options are: its own list, else the open popup, else the page. */
+function optionScopes(field) {
   const el = field.el;
   const root = el.getRootNode?.() || el.ownerDocument;
   const doc = el.ownerDocument;
@@ -221,18 +314,32 @@ export function visibleOptions(field, before = null) {
     .filter(Boolean)
     .map((id) => root.getElementById?.(id) || doc.getElementById(id))
     .filter(Boolean);
-  const scopes = owned.length ? owned : [root, ...(root !== doc ? [doc] : [])];
+  if (owned.length) return { scopes: owned, owned: true };
+  const pops = openPopups(doc);
+  if (pops.length) return { scopes: pops, owned: true };
+  return { scopes: [root, ...(root !== doc ? [doc] : [])], owned: false };
+}
+
+/** The options a dropdown is showing right now (minus `before`: options
+ *  that were already open elsewhere on the page before we opened this one).
+ *  Each: {el, label, click} — `click` is Workday's leaf node when there is one. */
+export function visibleOptions(field, before = null) {
+  const { scopes, owned } = optionScopes(field);
   const seen = new Set();
   const out = [];
   for (const scope of scopes) {
-    for (const o of scope.querySelectorAll('[role="option"], [data-automation-id="promptOption"]')) {
-      if (seen.has(o) || o.getAttribute("aria-disabled") === "true") continue;
-      if (before?.has(o) && !owned.length) continue;
-      const rects = o.getClientRects?.();
-      if (rects && rects.length === 0) continue; // a closed menu's options
-      seen.add(o);
-      const label = (o.getAttribute("data-automation-label") || textOf(o)).trim();
-      if (label && !isPlaceholderOption(label)) out.push({ el: o, label });
+    for (const o of scope.querySelectorAll('[role="option"], [data-automation-id="promptOption"], [data-automation-id="promptLeafNode"]')) {
+      // One option drawn as li > promptOption > promptLeafNode counts once.
+      const top = o.closest('[role="option"]') || o.closest('[data-automation-id="promptOption"]') || o;
+      if (seen.has(top) || top.getAttribute("aria-disabled") === "true") continue;
+      if (before?.has(top) && !owned) continue;
+      if (!shown(top)) continue; // a closed menu's options
+      seen.add(top);
+      // Click the innermost part that listens: Workday's leaf node, else its option body.
+      const leaf = top.matches('[data-automation-id="promptLeafNode"]') ? top : top.querySelector('[data-automation-id="promptLeafNode"]');
+      const body = leaf || top.querySelector('[data-automation-id="promptOption"]') || top;
+      const label = (top.getAttribute("data-automation-label") || textOf(body)).trim();
+      if (label && !isPlaceholderOption(label)) out.push({ el: top, label, click: body });
     }
   }
   return out;
@@ -264,22 +371,85 @@ function openCombo(field) {
   }
 }
 
-function closeCombo(field) {
-  key(field.el, "Escape");
-  if (field.el.tagName === "INPUT" && field.el.value) setNativeValue(field.el, "", { blur: false });
+/** Is THIS dropdown's list still open? */
+function stillOpen(field, before) {
+  const el = field.el;
+  const doc = el.ownerDocument;
+  if (el.getAttribute("aria-expanded") === "true") return true;
+  if (openPopups(doc).length) return true;
+  return visibleOptions(field, before).length > 0;
 }
 
-async function writeCombo(field, candidates, { wait = 2500 } = {}) {
+/** Close this dropdown and make sure it closed (true when it did). */
+async function closeCombo(field, before) {
   const el = field.el;
+  const doc = el.ownerDocument;
+  if (el.tagName === "INPUT" && el.value && !readField(field)) setNativeValue(el, "", { blur: false });
+  // Most close by themselves after a pick.
+  if (await until(() => !stillOpen(field, before), 250)) return true;
+  key(el, "Escape");
+  if (await until(() => !stillOpen(field, before), 200)) return true;
+  pointerClick(doc.querySelector('[data-automation-id="mainContent"]') || doc.body);
+  if (await until(() => !stillOpen(field, before), 200)) return true;
+  // A toggle button that ignores both: press it once more — only while open.
+  if (el.tagName !== "INPUT" && stillOpen(field, before)) pointerClick(el);
+  return until(() => !stillOpen(field, before), 300);
+}
+
+/** The scrolling box of a long list that draws only what's in view. */
+function scroller(opts) {
+  let n = opts[0]?.el.parentElement;
+  for (let i = 0; n && i < 5; i++, n = n.parentElement) {
+    if (n.matches('[role="listbox"], [data-automation-id="activeListContainer"], .ReactVirtualized__Grid') || n.scrollHeight > n.clientHeight + 4) return n;
+  }
+  return opts[0]?.el.parentElement || null;
+}
+
+/** Look further down a long (virtualised) list for a match: -1 if none. */
+async function scrollForMatch(field, pick, before) {
+  let opts = visibleOptions(field, before);
+  const box = scroller(opts);
+  if (!box) return { i: -1, opts };
+  const seen = new Set(opts.map((o) => o.label));
+  let stale = 0;
+  for (let step = 0; step < 80 && stale < 3; step++) {
+    const top = box.scrollTop;
+    box.scrollTop = top + Math.max(120, (box.clientHeight || 0) * 0.8);
+    fire(box, "Event", "scroll", { bubbles: false });
+    await sleep(80);
+    opts = visibleOptions(field, before);
+    const i = pick(opts);
+    if (i >= 0) return { i, opts };
+    const fresh = opts.filter((o) => !seen.has(o.label));
+    fresh.forEach((o) => seen.add(o.label));
+    stale = fresh.length ? 0 : stale + 1;
+    if (box.scrollTop === top) break; // the end of the list
+  }
+  return { i: -1, opts };
+}
+
+function writeCombo(field, candidates, opts = {}) {
+  return oneAtATime(() => writeComboNow(field, candidates, opts));
+}
+
+async function writeComboNow(field, candidates, { wait = 2500 } = {}) {
+  const el = field.el;
+  const doc = el.ownerDocument;
   const typed = el.tagName === "INPUT";
-  // Another dropdown's menu left open must never be mistaken for this one's.
+  const pick = field.pick || ((o) => firstMatch(candidates, o));
+  // Already showing the answer: leave it closed.
+  const current = readField(field);
+  if (current && (field.pick ? field.pick([{ label: current }]) === 0 : candidates.some((c) => matchOption(String(c), [{ label: current }], { strict: true }) === 0))) {
+    return { ok: true, actual: current, already: true };
+  }
+  // 1) Nothing else may be open (a list left open is never mistaken for this one's).
+  await closeOpenLists(doc);
   const before = new Set(visibleOptions(field).map((o) => o.el));
-  // 1) Open it and look at what it offers.
   openCombo(field);
   let opts = await waitForOptions(field, typed ? 600 : wait, before);
-  let i = firstMatch(candidates, opts);
+  let i = pick(opts);
   // 2) A typeahead: type each candidate until a matching option shows.
-  if (i < 0 && typed) {
+  if (i < 0 && typed && !field.pick) {
     for (const c of candidates.slice(0, 3)) {
       setNativeValue(el, String(c), { blur: false });
       opts = await waitForOptions(field, wait, before);
@@ -287,31 +457,106 @@ async function writeCombo(field, candidates, { wait = 2500 } = {}) {
       if (i >= 0) break;
     }
   }
+  // 3) A long list that draws only what's in view: scroll for it.
+  if (i < 0 && !typed && opts.length) ({ i, opts } = await scrollForMatch(field, pick, before));
   if (i < 0) {
-    closeCombo(field);
+    await closeCombo(field, before);
     return { ok: false, reason: "no_option" };
   }
   const label = opts[i].label;
-  opts[i].el.scrollIntoView?.({ block: "nearest" });
-  pointerClick(opts[i].el);
+  opts[i].click.scrollIntoView?.({ block: "nearest" });
+  pointerClick(opts[i].click);
   await sleep(80);
+  const closed = await closeCombo(field, before);
   const actual = readField(field);
   // The choices it offered: Fix in the panel shows them.
   field.options = opts.map((o) => ({ el: o.el, label: o.label }));
-  return { ok: same(actual, label), actual: actual || label };
+  return { ok: same(actual, label), actual: actual || label, ...(closed ? {} : { left_open: true }) };
 }
 
 /** Peek at a dropdown's options without choosing (for the AI's question). */
-export async function peekOptions(field) {
-  if (field.kind !== "combobox") return (field.options || []).map((o) => o.label);
-  const before = new Set(visibleOptions(field).map((o) => o.el));
-  openCombo(field);
-  const opts = await waitForOptions(field, 1500, before);
-  closeCombo(field);
-  await sleep(120);
-  // Still open (it ignores Escape)? Toggle it shut — only then.
-  if (field.el.tagName !== "INPUT" && visibleOptions(field, before).length) pointerClick(field.el);
-  return opts.map((o) => o.label).slice(0, 60);
+export function peekOptions(field) {
+  if (field.kind !== "combobox") return Promise.resolve((field.options || []).map((o) => o.label));
+  return oneAtATime(async () => {
+    await closeOpenLists(field.el.ownerDocument);
+    const before = new Set(visibleOptions(field).map((o) => o.el));
+    openCombo(field);
+    const opts = await waitForOptions(field, 1500, before);
+    await closeCombo(field, before);
+    return opts.map((o) => o.label).slice(0, 60);
+  });
+}
+
+// ---- Search prompts: Workday's multi-select (skills, schools, fields) -----
+
+const CHIP = '[data-automation-id="selectedItem"], ul[data-automation-id="selectedItemList"] > li';
+
+/** The box holding a search prompt's chosen items ("chips"). */
+export function promptBox(input) {
+  return input.closest('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id^="formField-"]') || input.parentElement;
+}
+
+/** The items chosen in a search prompt, as text. */
+export function chipsOf(input) {
+  return [...promptBox(input).querySelectorAll(CHIP)].map((c) => textOf(c).trim()).filter(Boolean);
+}
+
+/**
+ * Add one item to a search prompt: type it, Enter, choose the matching result
+ * (Workday also picks a single match by itself), check a chip appeared, close.
+ * Never the first result as a guess; a term with no match is cleared and left.
+ * @returns {Promise<{ok: boolean, already?: boolean, reason?: string, actual?: string}>}
+ */
+export function searchPick(input, term, { wait = 1500 } = {}) {
+  return oneAtATime(async () => {
+    const doc = input.ownerDocument;
+    const want = String(term || "").trim();
+    if (!want) return { ok: false, reason: "no_data" };
+    if (chipsOf(input).some((c) => norm(c) === norm(want))) return { ok: true, already: true, actual: want };
+    await closeOpenLists(doc);
+    const count = () => chipsOf(input).length;
+    const had = count();
+    const field = { el: input };
+    const before = new Set(visibleOptions(field).map((o) => o.el));
+    try {
+      input.focus?.({ preventScroll: true });
+    } catch {
+      /* fine */
+    }
+    pointerClick(input);
+    setNativeValue(input, want, { blur: false });
+    key(input, "Enter");
+    let picked = "";
+    const end = Date.now() + wait;
+    while (Date.now() < end && count() === had) {
+      const opts = visibleOptions(field, before);
+      const i = opts.length ? firstMatch([want], opts) : -1;
+      if (i >= 0) {
+        picked = opts[i].label;
+        pointerClick(opts[i].click);
+        await until(() => count() > had, 800);
+        break;
+      }
+      await sleep(60);
+    }
+    const ok = count() > had;
+    if (!ok && input.value) setNativeValue(input, "", { blur: false });
+    await closeOpenLists(doc, 300);
+    return ok ? { ok: true, actual: picked || want } : { ok: false, reason: "no_option" };
+  });
+}
+
+/** Remove chips that weren't there before (Undo for a search prompt). */
+export async function removeChips(input, keep) {
+  const keepSet = new Set((keep || []).map(norm));
+  for (const chip of [...promptBox(input).querySelectorAll(CHIP)]) {
+    if (keepSet.has(norm(textOf(chip)))) continue;
+    const x = chip.querySelector('[data-automation-id="DELETE_charm"], [aria-label*="remove" i], [aria-label*="delete" i]');
+    if (x) pointerClick(x);
+    else chip.remove();
+    await sleep(40);
+  }
+  return true;
 }
 
 // ---- Files ----------------------------------------------------------------
@@ -342,6 +587,10 @@ export function readField(field) {
     case "date":
     case "month":
       return el.value || "";
+    case "spin":
+      return el.value || "";
+    case "chips":
+      return chipsOf(el).join(", ");
     case "editable":
       return (el.textContent || "").trim();
     case "select": {
@@ -399,6 +648,8 @@ export function snapshot(field) {
       return { files: el.files ? [...el.files] : [] };
     case "combobox":
       return { shown: readField(field) };
+    case "chips":
+      return { chips: chipsOf(el) };
     default:
       return { value: field.kind === "editable" ? el.textContent : el.value };
   }
@@ -462,6 +713,8 @@ export async function restore(field, snap) {
       }
       return (await writeCombo(field, [snap.shown], { wait: 1500 })).ok;
     }
+    case "chips":
+      return removeChips(el, snap.chips);
     case "editable":
       el.textContent = snap.value || "";
       fire(el, "InputEvent", "input");
@@ -498,6 +751,10 @@ export async function writeField(field, candidates) {
         return writeChoice(field, candidates);
       case "combobox":
         return await writeCombo(field, candidates);
+      case "spin":
+        return writeSpin(field, candidates);
+      case "chips":
+        return await writeChips(field, candidates);
       case "file":
         return writeFile(field, candidates);
       default:
