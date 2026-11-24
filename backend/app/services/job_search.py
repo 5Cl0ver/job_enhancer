@@ -314,10 +314,14 @@ async def aggregate_and_deduplicate(
                 db, user_id, "live_search", allowance.period_for("live_search")
             )
             raise
-    elif refresh or (result.meta.total == 0 and _first_look(q, location)):
+    elif refresh or (
+        result.meta.total == 0
+        and _first_look(q, location)
+        and (user is None or await allowance.take_auto_fetch(db, user))
+    ):
         # A scheduled refresh, or nothing here yet for this search: the free
-        # sources only (never JSearch), nothing spent, at most every 10 minutes
-        # for the same search.
+        # sources only (never JSearch), no live search spent, at most every 10
+        # minutes for the same search and 30 a day for one person.
         await _ingest_live(db, q, location, page, page_size, sources, None)
     else:
         return result

@@ -8,6 +8,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm.attributes import set_committed_value
 
 from app.middleware.auth import touch_active
 from app.models.extension import ExtensionInstall
@@ -22,10 +23,13 @@ pytestmark = pytest.mark.asyncio
 def _fresh_rate_limits():
     """These tests call the AI routes more than their per-minute limits allow."""
     from app.api.v1 import ai as ai_api
+    from app.api.v1 import jobs as jobs_api
 
-    ai_api._limiter.reset()
+    for limiter in (ai_api._limiter, jobs_api._limiter):
+        limiter.reset()
     yield
-    ai_api._limiter.reset()
+    for limiter in (ai_api._limiter, jobs_api._limiter):
+        limiter.reset()
 
 
 async def _set(db: AsyncSession, **values):
@@ -204,7 +208,10 @@ async def test_last_active_is_noted_at_most_every_15_minutes(
     assert first is not None
     await touch_active(db_session, test_user)
     assert test_user.last_active_at == first  # within 15 minutes: no write
-    test_user.last_active_at = datetime.now(UTC) - timedelta(minutes=20)
+    # 20 minutes later (as stored, the way a later request would see it).
+    set_committed_value(
+        test_user, "last_active_at", datetime.now(UTC) - timedelta(minutes=20)
+    )
     await touch_active(db_session, test_user)
     assert test_user.last_active_at > first
 
@@ -257,7 +264,30 @@ async def test_paused_ai_is_refused_and_nothing_is_spent(client: AsyncClient):
     assert kinds["ai_document"]["used"] == 0 and kinds["ai_autofill"]["used"] == 0
 
 
-async def test_an_empty_ai_answer_is_given_back(ai_on, client: AsyncClient):
+async def test_one_person_gets_30_automatic_fetches_a_day(
+    client: AsyncClient, db_session: AsyncSession, test_user: User, monkeypatch
+):
+    fetched = []
+
+    async def fake_ingest(*_a, **_k):
+        fetched.append(1)
+
+    monkeypatch.setattr(job_search, "_ingest_live", fake_ingest)
+    job_search._EMPTY_FETCHED.clear()
+    db_session.add(
+        UsageCounter(
+            user_id=test_user.id,
+            kind="auto_fetch",
+            period=allowance.period_for("auto_fetch"),
+            count=30,
+        )
+    )
+    await db_session.commit()
+    r = await client.get("/v1/jobs/", params={"q": "zz-random-1"})
+    assert r.status_code == 200 and fetched == []  # the day's 30 are used
+
+
+async def test_an_empty_ai_answer_still_counts(ai_on, client: AsyncClient):
     with patch(
         "app.api.v1.ai.ai_service.map_fields_scored",
         new=AsyncMock(return_value=({}, {})),
@@ -268,7 +298,7 @@ async def test_an_empty_ai_answer_is_given_back(ai_on, client: AsyncClient):
         )
     assert r.status_code == 200 and r.json()["mappings"] == {}
     used = (await client.get("/v1/usage")).json()["kinds"]["ai_autofill"]["used"]
-    assert used == 0
+    assert used == 1  # the model ran: an empty answer can't be a free retry
 
 
 async def test_health_never_spends_a_jsearch_request(

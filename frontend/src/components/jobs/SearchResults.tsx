@@ -86,8 +86,21 @@ export function SearchResults({ searchParams }: SearchResultsProps) {
         <SearchX className="h-12 w-12 text-muted-foreground/50" />
         <p className="text-lg font-medium">No results found</p>
         <p className="text-sm text-muted-foreground">
-          Try adjusting your query or removing filters.
+          Try adjusting your query or removing filters, or search the job sites live.
         </p>
+        <div className="flex flex-wrap items-center justify-center gap-3">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1.5"
+            onClick={() => refresh.mutate(params)}
+            disabled={refresh.isPending}
+          >
+            {refresh.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" />}
+            {refresh.isPending ? "Searching…" : "Search live"}
+          </Button>
+          <AllowanceNote kind="live_search" />
+        </div>
       </div>
     );
   }

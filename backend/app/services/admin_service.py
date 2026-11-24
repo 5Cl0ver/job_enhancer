@@ -108,7 +108,8 @@ async def _check_endpoint(
         )
     except Exception as exc:
         logger.warning("Health check failed for %s: %s", name, exc)
-        return ServiceStatus(name=name, status="down", detail=str(exc))
+        # The error's type only: its text can carry the request URL and its key.
+        return ServiceStatus(name=name, status="down", detail=type(exc).__name__)
 
 
 _EXTERNAL_EVERY_S = 600
@@ -160,8 +161,15 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
                 f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id={settings.adzuna_app_id}&app_key={settings.adzuna_app_key}&results_per_page=1&what=python",
             ),
         )
-        _external = (time.monotonic(), list(checks))
-    statuses.extend(_external[1])
+        # Only a clean bill of health is kept: a problem is checked again next time.
+        _external = (
+            (time.monotonic(), list(checks))
+            if all(c.status == "healthy" for c in checks)
+            else None
+        )
+        statuses.extend(checks)
+    else:
+        statuses.extend(_external[1])
     statuses.append(await _jsearch_status(db))
     return statuses
 

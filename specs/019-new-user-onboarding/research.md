@@ -259,9 +259,11 @@ Changes made after the independent reviews of part C:
 - **Only Refresh live spends a live search.** A search with nothing in the app yet fetches the free sources once (no JSearch), spends nothing, and isn't repeated for the same search within 10 minutes. Tab switches and refetches never spend.
 - **One person's share of the JSearch month** (`jsearch_person_month`, 30 by default), on top of the owner's reserve, so two people can't use it all up for everyone else. Scheduled jobs pass `SYSTEM` explicitly; a call that names no one never uses JSearch.
 - **AI paused means refused**: `/ai/generate` and `/ai/autofill-map` answer 503 "AI writing is paused for now…" while `ai_writing_on` is off, before anything is spent or sent.
+- **Automatic fetches are capped:** a search with nothing here yet fetches the free sources automatically at most 30 times a day per person. Search itself is rate-limited to 30 a minute, so made-up searches can't use up the job boards' daily quotas.
 - **Refunds:**
-  - A failed live search and an empty Autofill AI answer are given back.
-  - A model timeout is not given back, because the provider may have done the work.
+  - A failed live search is given back.
+  - A model timeout is not, because the provider may have done the work.
+  - An empty Autofill AI answer counts too: the model ran, and an empty answer can't be told apart from one nobody could use.
 - **The admin Health panel never pings JSearch** (each ping costs one of the month's requests). It shows the month's count instead, and checks the other services at most every 10 minutes.
 - **`GET /v1/usage`** shows the shared month to the owner only.
 - **`last_active_at`** is written without touching `updated_at`. It's included in the export.

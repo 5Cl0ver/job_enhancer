@@ -284,6 +284,25 @@ async def jsearch_take(db: AsyncSession, who: "User | _System") -> bool:
     return ok
 
 
+AUTO_FETCH = "auto_fetch"
+AUTO_FETCH_PER_DAY = 30
+
+
+async def take_auto_fetch(db: AsyncSession, user: User) -> bool:
+    """One of today's automatic fetches for a search with nothing here yet:
+    free for the person, but each one spends the job boards' daily quotas, so
+    at most 30 a day each (the owner is counted, never stopped). Commits."""
+    ok = await _bump(
+        db,
+        user.id,
+        AUTO_FETCH,
+        period_for(AUTO_FETCH),
+        None if user.role == "admin" else AUTO_FETCH_PER_DAY,
+    )
+    await db.commit()
+    return ok
+
+
 async def usage_shared(db: AsyncSession, now: datetime | None = None) -> dict:
     """The shared JSearch month so far (owner only)."""
     cfg = await limits(db)
@@ -366,7 +385,8 @@ async def usage_by_user(
         select(UsageCounter.user_id, UsageCounter.kind, func.sum(UsageCounter.count))
         .where(
             UsageCounter.user_id.in_(user_ids),
-            UsageCounter.period.like(f"{month}-%"),
+            # the month's days, and the monthly rows (each person's JSearch)
+            UsageCounter.period.like(f"{month}-%") | (UsageCounter.period == month),
         )
         .group_by(UsageCounter.user_id, UsageCounter.kind)
     ):

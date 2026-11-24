@@ -364,18 +364,11 @@ async def autofill_map(
     user_data = _user_data_text(profile, answers, resume_text)
     fields = [f.model_dump() for f in data.fields]
     _ai_on()
-    try:
-        async with allowance.spending(db, user, "ai_autofill"):
-            mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
-            if not mappings:  # the mapper swallows model errors: give it back
-                raise _NothingMapped
-    except _NothingMapped:
-        return AutofillMapResponse(mappings={})
+    # Every call counts, an empty answer too: the model ran either way, and an
+    # empty answer can't be told apart from one nobody could use (spec 019).
+    async with allowance.spending(db, user, "ai_autofill"):
+        mappings, confidence = await ai_service.map_fields_scored(user_data, fields)
     return AutofillMapResponse(mappings=mappings, confidence=confidence)
-
-
-class _NothingMapped(Exception):
-    """Nothing came back from the model: the use is given back (spec 019)."""
 
 
 @router.post("/work-history", response_model=WorkHistoryResponse)

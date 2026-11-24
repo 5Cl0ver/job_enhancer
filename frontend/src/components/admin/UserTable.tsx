@@ -252,6 +252,8 @@ const SHORT: Record<string, string> = {
   ai_document: "AI docs",
   ai_read: "reads",
   ai_autofill: "AI fills",
+  auto_fetch: "auto fetches",
+  jsearch_person_month: "JSearch",
 };
 
 /** {live_search: 2, ai_document: 1} → "2 searches · 1 AI docs". */

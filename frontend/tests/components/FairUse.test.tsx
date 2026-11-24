@@ -96,6 +96,9 @@ describe("what's left today", () => {
     );
     wrap(<SearchResults searchParams={{ q: "analyst" }} />);
     expect(await screen.findByRole("status")).toHaveTextContent("jobs already in the app");
+    // Nothing here: the job sites can still be searched live from the empty screen.
+    expect(screen.getByRole("button", { name: "Search live" })).toBeInTheDocument();
+    expect(await screen.findByTestId("allowance-live_search")).toHaveTextContent("4 of 5");
   });
 });
 

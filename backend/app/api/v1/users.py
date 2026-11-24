@@ -339,7 +339,9 @@ async def export_data(
     usage_rows = (
         await db.scalars(
             select(UsageCounter).where(
-                UsageCounter.user_id == user.id, UsageCounter.period >= since
+                # from that month on: days ("2026-08-26") and months ("2026-08")
+                UsageCounter.user_id == user.id,
+                UsageCounter.period >= since[:7],
             )
         )
     ).all()
@@ -454,7 +456,7 @@ async def export_data(
             else None
         ),
         "usage": [
-            {"kind": u.kind, "day": u.period, "count": u.count} for u in usage_rows
+            {"kind": u.kind, "period": u.period, "count": u.count} for u in usage_rows
         ],
     }
 
