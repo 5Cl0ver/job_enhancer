@@ -93,6 +93,28 @@ describe("bestJobMatch never links a page to the wrong saved job", () => {
     expect(bestJobMatch(page, fromOther, ["p"], "p")).toBeNull(); // Not this job still wins
   });
 
+  it("a pin only holds where the address is one posting", () => {
+    const hub = "https://careers.kelso.example/#/job/42";
+    const jobs = [
+      { ...SAVED[0], id: "p42", title: "IT Analyst", company: "Kelso", url: hub },
+      { ...SAVED[0], id: "p43", title: "Data Analyst", company: "Kelso", url: "" },
+    ];
+    expect(bestJobMatch({ url: "https://careers.kelso.example/#/job/43", title: "Data Analyst - Kelso" }, jobs, [], "p42")?.id).toBe("p43");
+  });
+
+  it("one posting saved twice under other titles: still this page", () => {
+    const twice = [
+      { ...SAVED[1], id: "x1", title: "SWE II Ads" },
+      { ...SAVED[1], id: "x2", title: "Software Engineer 2" },
+    ];
+    expect(["x1", "x2"]).toContain(bestJobMatch(AFFIRM_LIKE, twice)?.id);
+  });
+
+  it("a job site that is also the employer still links on its own careers site", () => {
+    const wd = [{ ...SAVED[0], id: "w", title: "Software Engineer", company: "Workday", url: "https://www.linkedin.com/jobs/view/3900000009" }];
+    expect(bestJobMatch({ url: "https://workday.wd5.myworkdayjobs.com/Workday/job/USA-CA/Software-Engineer_JR-9", title: "Software Engineer at Workday" }, wd)?.id).toBe("w");
+  });
+
   it("a company that is a common word or a job site's name is never proof", () => {
     const odd = [
       { ...SAVED[0], id: "r", title: "Software Engineer", company: "Remote", url: "" },

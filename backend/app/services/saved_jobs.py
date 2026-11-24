@@ -645,7 +645,8 @@ async def mark_applied(
     matching saved job to Applied. Prefers a title+company match; falls back to
     company-only (Indeed's confirmation states just the company) picking the
     most recent not-yet-applied saved job there. No match → no-op: we never
-    invent tracker entries. With `saved_job_id` (the user's own job), that job."""
+    invent tracker entries. With `saved_job_id`, that job or nothing (gone
+    since the caller looked: never a guess at another job)."""
     title_norm = normalize(title)
     company_norm = normalize(company)
     sj = None
@@ -655,6 +656,8 @@ async def mark_applied(
                 SavedJob.id == saved_job_id, SavedJob.user_id == user_id
             )
         )
+        if sj is None:
+            return False
     if sj is None and not title_norm and not company_norm:
         return False
 

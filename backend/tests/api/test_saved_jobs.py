@@ -439,7 +439,8 @@ async def test_mark_applied_by_id_moves_that_exact_job(client: AsyncClient):
     assert saved[second["id"]]["applied_at"] is not None
     assert saved[first["id"]]["applied_at"] is None
 
-    # An id that isn't one of the user's jobs falls back to the names.
+    # An id that isn't one of the user's jobs (deleted since): nothing moves,
+    # not even a job whose name matches.
     r = await client.post(
         "/v1/saved-jobs/mark-applied",
         json={
@@ -448,9 +449,9 @@ async def test_mark_applied_by_id_moves_that_exact_job(client: AsyncClient):
             "saved_job_id": "00000000-0000-0000-0000-000000000000",
         },
     )
-    assert r.json()["matched"] is True
+    assert r.json()["matched"] is False
     saved = {s["id"]: s for s in (await client.get("/v1/saved-jobs/")).json()}
-    assert saved[first["id"]]["applied_at"] is not None
+    assert saved[first["id"]]["applied_at"] is None
 
 
 @pytest.mark.asyncio

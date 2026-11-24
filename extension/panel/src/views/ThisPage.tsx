@@ -49,7 +49,7 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
       {/* A fresh card per page: nothing carries over from the last one. Always
           there: a page linked to a saved job can still be saved as its own. */}
       <SaveJob key={tab.url} compact={applying || !!match || fill.entries.length > 0} site={ctx.site} match={match} onSaved={savedHere} />
-      {!match && hidden.length > 0 && <Unlinked jobs={hidden} onLink={linkAgain} />}
+      {hidden.length > 0 && <Unlinked jobs={hidden} onLink={linkAgain} />}
       {!applying && (apply || <NoForm known={!!p} />)}
     </div>
   );

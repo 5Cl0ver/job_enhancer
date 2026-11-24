@@ -62,7 +62,7 @@ export function usePageJob(): PageJob {
   const here = pageId(tab.url);
   const unlinked = notThis[here] || [];
   const match = bestJobMatch(tab, saved.jobs, unlinked, pinned[here]);
-  const hidden = saved.jobs.filter((j) => unlinked.includes(j.id));
+  const hidden = saved.jobs.filter((j) => unlinked.includes(j.id) && j.id !== match?.id);
 
   const setHidden = React.useCallback(
     async (change: (ids: string[]) => string[]) => {
@@ -91,12 +91,14 @@ export function usePageJob(): PageJob {
     [setHidden, setPin, pinned, here],
   );
   const linkAgain = React.useCallback(async (id: string) => setHidden((ids) => ids.filter((x) => x !== id)), [setHidden]);
+  const sure = !!postingKey(tab.url)?.sure;
   const savedHere = React.useCallback(
     async (id: string) => {
       await setHidden((ids) => ids.filter((x) => x !== id));
-      await setPin(id);
+      // A pin only means something where the address is one posting.
+      if (sure) await setPin(id);
     },
-    [setHidden, setPin],
+    [setHidden, setPin, sure],
   );
   return { match, hidden, notThisJob, linkAgain, savedHere };
 }
