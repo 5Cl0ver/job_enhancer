@@ -59,7 +59,7 @@ Never submits; never overwrites the user; never touches self-ID, agreements, ess
 | `src/autofill/widgets.js` | One writer per kind (text, dates, selects, radios, Yes/No buttons, checkbox lists, search dropdowns incl. typeaheads, files) that acts like a person and **reads back**; snapshot/restore for Undo |
 | `src/autofill/session.js` | A frame's fill: known answers, then one AI request; Fix (custom fixes are remembered), Undo, Show, typed answers |
 | `src/autofill/workday.js` | Workday's Work Experience blocks from the résumé (read once, held in the copy) |
-| Keep filling (`autofill.entry.js`) | After one press, each later step of the same application (same tab, same site) fills as it appears — the step's questions are its fingerprint; switchable in the panel |
+| Keep filling (`autofill.entry.js`) | **Off by default** (the user's choice: fill only when pressed). Switched on in the panel, each later step of the same application (same tab, same site) fills as it appears — the step's questions are its fingerprint |
 | Learning (`autofill.entry.js` → background `answersNoticed` / `profileNoticed`) | On Next / Continue / Submit / leaving the page: answers typed into unknown questions, and profile answers the profile lacks, are offered in the panel (**New answers to remember**, **Save to my profile**) — saved only on the user's press |
 | `src/autofill/track.js` | Submit → the saved job moves to Applied |
 | `src/background/autofillCopy.js` | The copy autofill fills from (`GET /v1/autofill/bundle` with a version check, résumé bytes, the staged tailored résumé); wiped on sign-out / another account |

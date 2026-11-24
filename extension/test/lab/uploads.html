@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Lab page (invented company), shaped like Paycom's application step with
+     two upload cards: a heading above each card says what it's for, the
+     upload boxes themselves have no label. Only the résumé card may get the
+     résumé — never the cover letter's. -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Personal Information - Northvale Fitness</title>
+    <style>.card { border: 1px solid #ccc; width: 420px; padding: 12px; margin: 6px 0 18px; } .drop { display: block; padding: 18px; border: 2px dashed #999; cursor: pointer; }</style>
+  </head>
+  <body>
+    <h1>Personal Information</h1>
+    <p><label for="fn">Legal First Name</label><input id="fn"></p>
+    <p><label for="ln">Legal Last Name</label><input id="ln"></p>
+    <p><label for="em">Email Address</label><input id="em" type="email"></p>
+    <div class="section">
+      <div class="section-title">Resume</div>
+      <div class="card"><div class="preview"></div>
+        <label class="drop">Drop a file or browse<input type="file" id="up1" accept=".pdf,.doc,.docx" hidden></label></div>
+    </div>
+    <div class="section">
+      <div class="section-title">Cover Letter</div>
+      <div class="card"><div class="preview"></div>
+        <label class="drop">Drop a file or browse<input type="file" id="up2" accept=".pdf,.doc,.docx" hidden></label></div>
+    </div>
+  </body>
+</html>

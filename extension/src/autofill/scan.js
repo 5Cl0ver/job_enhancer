@@ -8,6 +8,7 @@
 import { normalizeQuestion } from "./classify/answers.js";
 import { applicantHost, isApplyUrl } from "./hosts.js";
 import { isOnScreen } from "./visible.js";
+import { uploadKind } from "./resolve.js";
 
 /** A shadow root, including closed ones where the extension API allows. */
 export function shadowOf(el) {
@@ -262,7 +263,8 @@ export function collectFields(root, opts = {}) {
         // Often hidden behind a drop zone: count it when it or its zone shows.
         const zone = el.closest("label, [class*=drop], [class*=upload], [class*=Drop], [class*=Upload]");
         if (!visible(el) && !(zone && visible(zone))) continue;
-        add({ id: fieldId(el), kind: "file", el, mark: zone || el, question: questionFor(el), hints: hintsOf(el) });
+        // What the box is for is often only in a heading above its card.
+        add({ id: fieldId(el), kind: "file", el, mark: zone || el, question: questionFor(el), hints: { ...hintsOf(el), context: nearbyText(zone || el, 8) } });
         continue;
       }
       if (!visible(el) || el.readOnly) continue;
@@ -330,6 +332,12 @@ export function collectFields(root, opts = {}) {
     const options = buttons.map((el) => ({ el, label: textOf(el) }));
     add({ id: fieldId(buttons[0]), kind: "buttons", el: buttons[0], mark: set, options, question: groupQuestion(buttons, options.map((o) => o.label)), hints: {} });
   }
+
+  // An upload box that doesn't say what it's for is the résumé's only when
+  // it's the page's one such box (resolve.js isResumeUpload).
+  const files = fields.filter((f) => f.kind === "file");
+  const unclear = files.filter((f) => uploadKind(f) === "unclear").length;
+  for (const f of files) f.hints.unclearUploads = unclear;
 
   // Page order (groups were added last).
   const order = new Map(els.map((el, i) => [el, i]));

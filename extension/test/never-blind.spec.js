@@ -205,3 +205,19 @@ describe("taught boxes: the second review's cases", async () => {
     expect(siteKey("https://www.paycomonline.net/v4/ats/web.php/portal/X/career-page")).toBe("www.paycomonline.net");
   });
 });
+
+describe("which upload box is the résumé's", async () => {
+  const { isResumeUpload } = await import("../src/autofill/resolve.js");
+  const box = (question, context = "", unclearUploads = 1, accept = ".pdf,.docx") => ({ kind: "file", question, hints: { context, unclearUploads, accept } });
+  it("its own label decides first, then the heading above it", () => {
+    expect(isResumeUpload(box("Resume/CV"))).toBe(true);
+    expect(isResumeUpload(box("Cover letter"))).toBe(false);
+    expect(isResumeUpload(box("Drop a file or browse", "Resume", 2))).toBe(true);
+    expect(isResumeUpload(box("Drop a file or browse", "Cover Letter", 2))).toBe(false);
+  });
+  it("an unclear box is the résumé's only when it's the page's one upload box", () => {
+    expect(isResumeUpload(box("Upload", "", 1))).toBe(true);
+    expect(isResumeUpload(box("Upload", "", 2))).toBe(false);
+    expect(isResumeUpload(box("Upload", "", 1, "image/*"))).toBe(false);
+  });
+});
