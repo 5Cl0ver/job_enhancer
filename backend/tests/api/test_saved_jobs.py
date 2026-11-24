@@ -403,6 +403,58 @@ async def test_mark_applied_moves_job_to_applied(client: AsyncClient):
 
 
 @pytest.mark.asyncio
+async def test_mark_applied_by_id_moves_that_exact_job(client: AsyncClient):
+    """The side panel knows the linked job: its id wins over name matching, so
+    a look-alike job at the same company is never the one moved."""
+    first = (
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": "https://example.com/jobs/1",
+                "title": "Data Analyst",
+                "company": "Kelso Labs",
+            },
+        )
+    ).json()
+    second = (
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": "https://example.com/jobs/2",
+                "title": "Senior Data Analyst",
+                "company": "Kelso Labs",
+            },
+        )
+    ).json()
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={
+            "title": "Data Analyst",
+            "company": "Kelso Labs",
+            "saved_job_id": second["id"],
+        },
+    )
+    assert r.json()["matched"] is True
+    saved = {s["id"]: s for s in (await client.get("/v1/saved-jobs/")).json()}
+    assert saved[second["id"]]["applied_at"] is not None
+    assert saved[first["id"]]["applied_at"] is None
+
+    # An id that isn't one of the user's jobs (deleted since): nothing moves,
+    # not even a job whose name matches.
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={
+            "title": "Data Analyst",
+            "company": "Kelso Labs",
+            "saved_job_id": "00000000-0000-0000-0000-000000000000",
+        },
+    )
+    assert r.json()["matched"] is False
+    saved = {s["id"]: s for s in (await client.get("/v1/saved-jobs/")).json()}
+    assert saved[first["id"]]["applied_at"] is None
+
+
+@pytest.mark.asyncio
 async def test_applied_can_be_set_and_undone(client: AsyncClient):
     """The Applied toggle: an explicit null CLEARS applied_at (undo a mis-tap),
     while omitting the field leaves it untouched."""

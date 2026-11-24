@@ -5,7 +5,7 @@ import { BriefcaseBusiness, ExternalLink, PenLine, ScanSearch, Settings as Setti
 import { Button, Spinner } from "@/ui";
 import { cn } from "@/lib/utils";
 import { appUrl } from "@/lib/chrome";
-import { bestJobMatch } from "@/lib/context";
+import { usePageJob } from "@/lib/pageJob";
 import { usePanel } from "@/lib/store";
 import { SignIn } from "@/views/SignIn";
 import { ThisPage } from "@/views/ThisPage";
@@ -37,12 +37,13 @@ export function Logo({ className }: { className?: string }) {
 }
 
 export function App() {
-  const { auth, tab, saved } = usePanel();
+  const { auth, tab } = usePanel();
+  const { match } = usePageJob();
   const [view, setView] = React.useState<View>("page");
   // "Write for this job" from This page; otherwise the job the tab is about.
   const [writeFor, setWriteFor] = React.useState<string | null>(null);
   React.useEffect(() => setWriteFor(null), [tab.url]);
-  const preferJob = writeFor || bestJobMatch(tab.title, saved.jobs)?.job_listing_id || null;
+  const preferJob = writeFor || match?.job_listing_id || null;
 
   if (auth.state === "loading") return <Spinner label="Starting…" />;
   if (auth.state === "out") return <SignIn />;

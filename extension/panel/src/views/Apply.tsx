@@ -8,6 +8,7 @@ import {
   CheckCircle2,
   ChevronDown,
   ClipboardCheck,
+  ExternalLink,
   LocateFixed,
   PenLine,
   Pencil,
@@ -46,12 +47,14 @@ export function Apply({
   isApplication,
   autoTracked,
   match,
+  onNotThis,
   onWrite,
 }: {
   site: string;
   isApplication: boolean;
   autoTracked: boolean;
   match: SavedJob | null;
+  onNotThis: (id: string) => void;
   onWrite: (id: string) => void;
 }) {
   const { tab, reloadSaved, staged, fill } = usePanel();
@@ -92,7 +95,7 @@ export function Apply({
   async function markApplied() {
     if (!match) return;
     setMarking(true);
-    await send({ type: "markApplied", job: { title: match.title, company: match.company } });
+    await send({ type: "markApplied", job: { id: match.id, title: match.title, company: match.company } });
     await reloadSaved();
     setMarking(false);
   }
@@ -106,6 +109,7 @@ export function Apply({
           </span>
           <SectionTitle>{match ? match.title : isApplication ? "Application in progress" : "Fill it from your profile"}</SectionTitle>
           {isApplication && <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>}
+          {match && <JobLinks match={match} onNotThis={onNotThis} />}
         </div>
         <Button onClick={autofill} busy={filling} disabled={filling} className="w-full">
           {!filling && <Zap />}
@@ -376,6 +380,29 @@ function ShortcutHint() {
         </button>
       )}
     </p>
+  );
+}
+
+/** The saved job's page in the app, and a way out when it's the wrong job. */
+export function JobLinks({ match, onNotThis }: { match: SavedJob; onNotThis: (id: string) => void }) {
+  const base = appUrl();
+  return (
+    <div className="flex flex-wrap items-center gap-1">
+      {base && match.job_listing_id && (
+        <Button
+          variant="link"
+          size="sm"
+          className="px-0"
+          onClick={() => chrome.tabs.create({ url: `${base}/jobs/${encodeURIComponent(match.job_listing_id)}` }).catch(() => {})}
+        >
+          <ExternalLink />
+          Open in app
+        </Button>
+      )}
+      <Button variant="link" size="sm" className="ml-auto text-muted-foreground" onClick={() => onNotThis(match.id)}>
+        Not this job
+      </Button>
+    </div>
   );
 }
 

@@ -200,7 +200,9 @@ export async function startFakeApi() {
     },
     "POST /v1/saved-jobs/backfill": () => ({ body: { updated: false } }),
     "POST /v1/saved-jobs/mark-applied": (b) => {
-      const job = state.jobs.find((j) => j.title === b?.title && j.company === b?.company);
+      const job =
+        (b?.saved_job_id && state.jobs.find((j) => j.id === b.saved_job_id)) ||
+        state.jobs.find((j) => j.title === b?.title && j.company === b?.company);
       if (job) {
         job.applied_at = new Date().toISOString();
         state.jobsVersion++;

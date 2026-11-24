@@ -3,18 +3,19 @@
 import * as React from "react";
 import { ExternalLink, FileText, MousePointerClick, RefreshCw, Save } from "lucide-react";
 import { Alert, Badge, Button, Card, Field, Input, Muted, SectionTitle, Select, Switch, Textarea } from "@/ui";
-import { bestJobMatch, findDuplicate, type SavedJob } from "@/lib/context";
+import { findDuplicate, type SavedJob } from "@/lib/context";
 import { send } from "@/lib/chrome";
+import { usePageJob } from "@/lib/pageJob";
 import { usePanel } from "@/lib/store";
 import { extractJobFromPage } from "@/lib/extractPage.js";
-import { Apply } from "@/views/Apply";
+import { Apply, JobLinks } from "@/views/Apply";
 import { Trouble } from "@/views/Trouble";
 import { Point, startPointing } from "@/views/Point";
 
 export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void }) {
-  const { tab, saved, fill } = usePanel();
+  const { tab, fill } = usePanel();
   const ctx = tab.ctx;
-  const match = bestJobMatch(tab.title, saved.jobs);
+  const { match, hidden, notThisJob, linkAgain, savedHere } = usePageJob();
 
   if (ctx.kind === "none") return <Elsewhere />;
   if (ctx.kind === "indeed-myjobs") return <IndeedSync key={tab.url} />;
@@ -30,14 +31,25 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
     !!p?.status;
   const applying = ctx.kind === "application" || !!p?.app || working;
   const apply = (applying || p?.form) && (
-    <Apply site={ctx.site} isApplication={applying} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onWrite={onWrite} />
+    <Apply site={ctx.site} isApplication={applying} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onNotThis={notThisJob} onWrite={onWrite} />
   );
   return (
     <div className="flex flex-col gap-3">
       {fill.pick && <Point pick={fill.pick} />}
       {applying && apply}
-      {/* A fresh card per page: nothing carries over from the last one. */}
-      <SaveJob key={tab.url} compact={applying || fill.entries.length > 0} site={ctx.site} match={match} />
+      {/* Linked to a saved job and no form to fill: say which, with its links. */}
+      {!applying && !apply && match && (
+        <Card className="flex flex-col gap-1">
+          <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">In My Jobs</span>
+          <SectionTitle>{match.title}</SectionTitle>
+          <Muted>{match.company}</Muted>
+          <JobLinks match={match} onNotThis={notThisJob} />
+        </Card>
+      )}
+      {/* A fresh card per page: nothing carries over from the last one. Always
+          there: a page linked to a saved job can still be saved as its own. */}
+      <SaveJob key={tab.url} compact={applying || !!match || fill.entries.length > 0} site={ctx.site} match={match} onSaved={savedHere} />
+      {hidden.length > 0 && <Unlinked jobs={hidden} onLink={linkAgain} />}
       {!applying && (apply || <NoForm known={!!p} />)}
     </div>
   );
@@ -108,7 +120,30 @@ async function readPage(tabId: number): Promise<ReadJob | null> {
   }
 }
 
-function SaveJob({ compact, site, match }: { compact: boolean; site: string; match: SavedJob | null }) {
+/** Jobs the user said aren't this page: one tap links one back. */
+function Unlinked({ jobs, onLink }: { jobs: SavedJob[]; onLink: (id: string) => void }) {
+  return (
+    <div className="flex flex-col gap-0.5">
+      {jobs.map((j) => (
+        <Button key={j.id} variant="link" size="sm" className="self-start text-muted-foreground" onClick={() => onLink(j.id)}>
+          Unlinked {j.title}. Link it again
+        </Button>
+      ))}
+    </div>
+  );
+}
+
+function SaveJob({
+  compact,
+  site,
+  match,
+  onSaved,
+}: {
+  compact: boolean;
+  site: string;
+  match: SavedJob | null;
+  onSaved: (id: string) => Promise<void>;
+}) {
   const { tab, saved, reloadSaved, signedOut } = usePanel();
   const [draft, setDraft] = React.useState<Draft | null>(null);
   const [reading, setReading] = React.useState(false);
@@ -174,6 +209,9 @@ function SaveJob({ compact, site, match }: { compact: boolean; site: string; mat
         text: res?.ok ? `Saved: ${draft.title.trim()} at ${draft.company.trim()}` : "Already in My Jobs.",
       });
       setDraft(null);
+      // The job saved from this page belongs to it, even when the server
+      // handed back one saved before from another address.
+      if (res?.ok && res.saved?.id) await onSaved(String(res.saved.id));
       reloadSaved();
     } else if (res?.error === "NOT_SIGNED_IN") {
       signedOut();
@@ -185,9 +223,10 @@ function SaveJob({ compact, site, match }: { compact: boolean; site: string; mat
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => (d ? { ...d, [k]: v } : d));
 
   if (compact && !open && !draft) {
-    return match ? null : (
+    return (
       <Button variant="link" size="sm" className="self-start" onClick={() => setOpen(true)}>
-        Not saved yet? Save this job
+        <Save />
+        {match ? "Save this page as a new job" : "Not saved yet? Save this job"}
       </Button>
     );
   }

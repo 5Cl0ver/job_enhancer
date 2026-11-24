@@ -64,6 +64,76 @@ export function siteKey(url) {
   }
 }
 
+// Address parts that name ONE posting (or the company it belongs to) on job
+// sites whose path is the same for every job.
+const ID_PARAMS = ["gh_jid", "ashby_jid", "jk", "job", "jobid", "job_id", "jid", "id", "req", "reqid", "requisitionid", "postingid", "jobreqid", "clientkey", "cid", "ccid", "for", "token"];
+const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/i;
+
+/**
+ * Which job POSTING an address is, so a page is only ever linked to the saved
+ * job it really is — never to another job on the same applicant system.
+ * `scope` is the system (or the host) the key belongs to; two addresses in
+ * the same scope with different keys are different postings. The job board
+ * and its apply page give the same key (…/jobs/42 and …/jobs/42/apply).
+ * Null when the address can't tell one posting from another.
+ * @returns {{scope: string, key: string, sure: boolean} | null}
+ */
+export function postingKey(url) {
+  let u;
+  try {
+    u = new URL(url);
+  } catch {
+    return null;
+  }
+  if (!/^https?:$/.test(u.protocol)) return null;
+  const host = u.hostname.toLowerCase().replace(/^www\./, "");
+  const path = u.pathname;
+  const q = (name) => {
+    for (const [k, v] of u.searchParams) if (k.toLowerCase() === name && v) return v;
+    return "";
+  };
+  // A system's own posting id: two of these in one scope that differ are
+  // surely two postings (`sure`). A plain address is only a hint.
+  const own = (scope, id) => ({ scope, key: `${scope}:${String(id).toLowerCase()}`, sure: true });
+
+  // Greenhouse job ids are unique across every company: the board, its
+  // embed (?token=) and a company's own careers page (?gh_jid=) all agree.
+  const gh = q("gh_jid") || (/(^|\.)greenhouse\.io$/.test(host) && (/\/jobs\/(\d+)/.exec(path)?.[1] || (/\/embed\/job_app/.test(path) && q("token"))));
+  if (gh && /^\d+$/.test(gh)) return own("greenhouse", gh);
+  const ashby = q("ashby_jid") || (/(^|\.)ashbyhq\.com$/.test(host) && UUID.exec(path)?.[0]);
+  if (ashby) return own("ashby", ashby);
+  if (/(^|\.)lever\.co$/.test(host) && UUID.test(path)) return own("lever", UUID.exec(path)[0]);
+  if (/(^|\.)smartrecruiters\.com$/.test(host)) {
+    // A posting id is all digits; the start of a random id (12345678-abcd-…) isn't one.
+    const m = /\/(\d{6,})(?=[-/]|$)/.exec(path);
+    if (m && UUID.exec(path.slice(m.index + 1))?.index !== 0) return own("smartrecruiters", m[1]);
+  }
+  if (/(^|\.)workable\.com$/.test(host) && /\/j\/([0-9a-z]+)/i.test(path)) return own("workable", /\/j\/([0-9a-z]+)/i.exec(path)[1]);
+  if (/(^|\.)linkedin\.com$/.test(host)) {
+    const id = /\/jobs\/view\/(?:[^/]*?-)?(\d{6,})/.exec(path)?.[1] || q("currentjobid");
+    return id ? own("linkedin", id) : null;
+  }
+  // Workday: one tenant per host, the requisition id ends the job's path
+  // (…/job/Portland-OR/IT-Analyst_JR-1234/apply).
+  if (/\.(myworkdayjobs|myworkdaysite)\.com$/.test(host)) {
+    const job = /\/job\/(.+)$/i.exec(path.replace(/\/+$/, "").replace(/\/(apply|application)(\/.*)?$/i, ""))?.[1] || "";
+    const last = job.split("/").pop() || "";
+    const req = last.includes("_") ? last.slice(last.lastIndexOf("_") + 1) : "";
+    // myworkdaysite.com is shared: the company is the path's /recruiting/<tenant>.
+    const tenant = /myworkdaysite\.com$/.test(host) ? /\/recruiting\/([^/]+)/i.exec(path)?.[1]?.toLowerCase() : "";
+    return req ? own(`workday:${host}${tenant ? `/${tenant}` : ""}`, req) : null;
+  }
+  // Anywhere else: the address itself, without "/apply" on the end — but only
+  // when it names one posting (an id in the path or the query, or a job's
+  // slug like /careers/it-support-analyst), not a careers home page.
+  const clean = path.toLowerCase().replace(/\/+$/, "").replace(/\/(apply|application|applications)$/, "");
+  const ids = ID_PARAMS.filter((p) => q(p)).map((p) => `${p}=${q(p).toLowerCase()}`);
+  const parts = clean.split("/").filter(Boolean);
+  const named = /\d/.test(clean) || UUID.test(clean) || (parts.length >= 2 && /-/.test(parts[parts.length - 1]));
+  if (!ids.length && !named) return null;
+  return { scope: host, key: `${host}${clean}${ids.length ? `?${ids.join("&")}` : ""}`, sure: false };
+}
+
 /** Can one company be told from another here? Not on Indeed's or LinkedIn's apply pages. */
 export function companyKnown(url) {
   try {
