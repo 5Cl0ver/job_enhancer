@@ -4,7 +4,7 @@
 // account, so on every computer) and points again for the next box.
 import * as React from "react";
 import { Check, MousePointerClick, Search, X } from "lucide-react";
-import { Alert, Button, Card, Input, Muted, SectionTitle, Switch, Textarea } from "@/ui";
+import { Alert, Button, Card, Input, Muted, SectionTitle, Select, Switch, Textarea } from "@/ui";
 import { send } from "@/lib/chrome";
 import { usePanel, type Pick } from "@/lib/store";
 import { profileValues } from "../../../src/autofill/classify/profileKeys.js";
@@ -43,6 +43,13 @@ const REFUSED: Record<string, string> = {
   password: "That's a password box. Job Catcher never fills passwords.",
 };
 
+/** What the profile itself stores (so "Update my profile" really changes it). */
+const PROFILE_SAVES = new Set([
+  "first_name", "last_name", "phone", "address_line1", "address_line2", "city", "state",
+  "postal_code", "country", "linkedin_url", "github_url", "portfolio_url", "desired_salary", "notice_period",
+  "authorized_to_work", "requires_sponsorship", "willing_to_relocate",
+]);
+
 export function startPointing(tabId: number | null) {
   if (tabId != null) send({ type: "startPick", tabId });
 }
@@ -78,8 +85,10 @@ export function Point({ pick }: { pick: Pick }) {
 function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
   const { tab } = usePanel();
   const [values, setValues] = React.useState<Record<string, string[]>>({});
+  const known = pick.known || null;
+  const [text, setText] = React.useState(pick.value || known?.value || "");
+  const [showList, setShowList] = React.useState(false);
   const [query, setQuery] = React.useState("");
-  const [other, setOther] = React.useState("");
   const [remember, setRemember] = React.useState(true);
   const [busy, setBusy] = React.useState("");
   const [failed, setFailed] = React.useState("");
@@ -92,28 +101,39 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
     });
   }, []);
 
-  async function fill(choice: { profile_key?: string; answer?: string }) {
+  async function fill(choice: { profile_key?: string; answer?: string; updateProfile?: boolean }, keep: boolean, tag: string) {
     if (tab.id == null) return;
-    setBusy(choice.profile_key || "other");
+    setBusy(tag);
     setFailed("");
-    const res = await send({ type: "fillPicked", tabId: tab.id, ...choice, remember });
+    const res = await send({ type: "fillPicked", tabId: tab.id, ...choice, remember: keep });
     setBusy("");
-    // Filled, but not remembered (signed out, the app asleep): say so — never
-    // promise "next time" when it won't be.
-    if (res?.ok && remember && !res.remembered) setNotSaved(true);
+    if (res?.ok && keep && !res.remembered) setNotSaved(true);
     if (!res?.ok)
       setFailed(
         res?.reason === "no_data"
           ? "Your profile doesn't have that yet."
           : res?.reason === "rejected"
             ? "The page didn't take that answer. Try another."
-            : "Couldn't fill that box. Point at it again.",
+            : res?.reason === "profile" || res?.reason === "not_profile"
+              ? "Couldn't update your profile with that. Check it and try again."
+              : "Couldn't fill that box. Point at it again.",
       );
   }
 
   const label = pick.field?.label || "This box";
+  const keyName = (k: string) => ANSWERS.find(([key]) => key === k)?.[1] || k.replace(/_/g, " ");
+  const thinks =
+    known?.source === "profile" && known.key
+      ? `${keyName(known.key)} (from your profile)`
+      : known?.source === "learned"
+        ? "A remembered answer"
+        : known?.source === "taught"
+          ? "A box you taught"
+          : "Not known yet";
+  const options = pick.field?.options || [];
   const q = query.trim().toLowerCase();
   const choices = ANSWERS.filter(([key, name]) => values[key]?.length && (!q || name.toLowerCase().includes(q) || String(values[key][0]).toLowerCase().includes(q)));
+  const answer = text.trim();
   return (
     <Card className="flex flex-col gap-3 border-primary/50" data-testid="what-goes-here">
       <div className="flex items-start justify-between gap-2">
@@ -136,47 +156,94 @@ function WhatGoesHere({ pick, onDone }: { pick: Pick; onDone: () => void }) {
         </>
       ) : (
         <>
-          {pick.field?.options?.length ? (
-            <Muted>
-              Its choices: {pick.field.options.slice(0, 6).join(", ")}
-              {pick.field.options.length > 6 ? "…" : ""}
-            </Muted>
-          ) : null}
-          <label className="relative block">
-            <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden />
-            <Input className="pl-8" placeholder="Search your answers" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search your answers" />
+          <p className="text-xs" data-testid="thinks">
+            <span className="text-muted-foreground">Job Catcher thinks: </span>
+            <b className="font-medium">{thinks}</b>
+          </p>
+          {pick.autoSaved && (
+            <Alert tone="success">
+              <span className="flex flex-wrap items-center justify-between gap-2">
+                <span>Saved “{pick.autoSaved.answer.slice(0, 60)}” for this box on {pick.site}.</span>
+                <Button variant="ghost" size="sm" onClick={() => tab.id != null && send({ type: "undoPickSave", tabId: tab.id })}>
+                  Undo
+                </Button>
+              </span>
+            </Alert>
+          )}
+          {pick.alreadySaved && <Muted>Already saved: this box fills with it by itself.</Muted>}
+          <label className="flex flex-col gap-1 text-xs font-medium">
+            The answer
+            {options.length ? (
+              <Select aria-label="The answer" value={text} onChange={(e) => setText(e.target.value)}>
+                <option value="">Choose…</option>
+                {options.map((o) => (
+                  <option key={o} value={o}>
+                    {o}
+                  </option>
+                ))}
+              </Select>
+            ) : (
+              <Textarea rows={2} maxLength={2000} aria-label="The answer" value={text} onChange={(e) => setText(e.target.value)} />
+            )}
           </label>
-          <ul className="flex max-h-64 flex-col overflow-auto rounded-lg border" aria-label="Your answers">
-            {choices.map(([key, name]) => (
-              <li key={key} className="border-b last:border-b-0">
-                <button
-                  type="button"
-                  disabled={!!busy}
-                  onClick={() => fill({ profile_key: key })}
-                  className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
-                >
-                  <span className="font-medium">{name}</span>
-                  <span className="truncate text-xs text-muted-foreground">{busy === key ? "Filling…" : String(values[key][0])}</span>
-                </button>
-              </li>
-            ))}
-            {!choices.length && <li className="px-3 py-2 text-xs text-muted-foreground">No profile answer matches. Type it below.</li>}
-          </ul>
-          <div className="flex flex-col gap-2">
-            <Textarea rows={2} maxLength={2000} placeholder="Something else: type the answer" value={other} onChange={(e) => setOther(e.target.value)} aria-label="Something else" />
-            <Button size="sm" variant="outline" className="self-start" disabled={!other.trim() || !!busy} busy={busy === "other"} onClick={() => fill({ answer: other.trim() })}>
-              Fill this
+          <div className="flex flex-wrap gap-2">
+            <Button size="sm" disabled={!answer || !!busy} busy={busy === "always"} onClick={() => fill({ answer }, true, "always")}>
+              Always use this here
             </Button>
+            <Button size="sm" variant="outline" disabled={!answer || !!busy} busy={busy === "once"} onClick={() => fill({ answer }, false, "once")}>
+              Fill once
+            </Button>
+            {known?.source === "profile" && PROFILE_SAVES.has(known.key) && (
+              <Button size="sm" variant="outline" disabled={!answer || !!busy} busy={busy === "profile"} onClick={() => fill({ answer, updateProfile: true }, false, "profile")}>
+                Update my profile
+              </Button>
+            )}
           </div>
-          <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
-            <span>
-              <b className="font-medium">Remember for {pick.site}</b>
-              <span className="block text-muted-foreground">Next time this box fills by itself, on every computer.</span>
-            </span>
-            <Switch checked={remember} label={`Remember for ${pick.site}`} onCheckedChange={setRemember} />
-          </label>
+          <button
+            type="button"
+            className="cursor-pointer self-start text-xs text-primary underline underline-offset-2"
+            aria-expanded={showList}
+            onClick={() => setShowList((v) => !v)}
+          >
+            Or pick from your profile
+          </button>
+          {showList && (
+            <>
+              <label className="relative block">
+                <Search className="pointer-events-none absolute left-2.5 top-2.5 size-4 text-muted-foreground" aria-hidden />
+                <Input className="pl-8" placeholder="Search your answers" value={query} onChange={(e) => setQuery(e.target.value)} aria-label="Search your answers" />
+              </label>
+              <ul className="flex max-h-64 flex-col overflow-auto rounded-lg border" aria-label="Your answers">
+                {choices.map(([key, name]) => (
+                  <li key={key} className="border-b last:border-b-0">
+                    <button
+                      type="button"
+                      disabled={!!busy}
+                      onClick={() => fill({ profile_key: key }, remember, key)}
+                      className="flex w-full cursor-pointer items-center justify-between gap-3 px-3 py-2 text-left hover:bg-muted focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-60"
+                    >
+                      <span className="font-medium">{name}</span>
+                      <span className="truncate text-xs text-muted-foreground">{busy === key ? "Filling…" : String(values[key][0])}</span>
+                    </button>
+                  </li>
+                ))}
+                {!choices.length && <li className="px-3 py-2 text-xs text-muted-foreground">No profile answer matches.</li>}
+              </ul>
+              <label className="flex cursor-pointer items-center justify-between gap-3 text-xs">
+                <span>
+                  <b className="font-medium">Remember for {pick.site}</b>
+                  <span className="block text-muted-foreground">Next time this box fills by itself, on every computer.</span>
+                </span>
+                <Switch checked={remember} label={`Remember for ${pick.site}`} onCheckedChange={setRemember} />
+              </label>
+            </>
+          )}
           {failed && <Alert tone="warning">{failed}</Alert>}
           {notSaved && <Alert tone="warning">Filled, but Job Catcher couldn't remember it this time (check you're signed in). Point at it again later to teach it.</Alert>}
+          <Button variant="ghost" size="sm" className="self-start" onClick={() => startPointing(tab.id)}>
+            <MousePointerClick />
+            Point at another box
+          </Button>
         </>
       )}
     </Card>

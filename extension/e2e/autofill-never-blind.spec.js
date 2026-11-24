@@ -161,6 +161,7 @@ test("point at a box no reader can name, say what goes there: it fills, and next
   await clickBox(page, page.locator("#mystery"));
   const ask = panel.getByTestId("what-goes-here");
   await expect(ask).toBeVisible({ timeout: 5000 });
+  await ask.getByRole("button", { name: "Or pick from your profile" }).click();
   await ask.getByRole("button", { name: /^Email/ }).click();
   await expect(page.locator("#mystery")).toHaveValue(PERSON.email);
   await expect(panel.getByTestId("pointing")).toBeVisible(); // ready for the next box
@@ -168,14 +169,15 @@ test("point at a box no reader can name, say what goes there: it fills, and next
   // A box inside a closed page component → "Phone".
   await clickBox(page, page.locator("#shadow-host"));
   await expect(ask).toBeVisible({ timeout: 5000 });
+  await ask.getByRole("button", { name: "Or pick from your profile" }).click();
   await ask.getByRole("button", { name: /^Phone/ }).click();
   await expect.poll(() => page.evaluate(() => window.__deep())).toBe(PERSON.profile.phone);
 
   // A box inside a frame → typed text.
   await clickBox(page, page.frameLocator("#inner").locator("#framed"));
   await expect(ask).toBeVisible({ timeout: 5000 });
-  await ask.getByLabel("Something else").fill("Referred by a former colleague");
-  await ask.getByRole("button", { name: "Fill this" }).click();
+  await ask.getByLabel("The answer").fill("Referred by a former colleague");
+  await ask.getByRole("button", { name: "Always use this here" }).click();
   await expect(page.frameLocator("#inner").locator("#framed")).toHaveValue("Referred by a former colleague");
 
   // An agreement: refused, never learned.

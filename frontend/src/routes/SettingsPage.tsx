@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation } from "@tanstack/react-query";
 import { ChevronDown, Download, Trash2, Loader2, Check } from "lucide-react";
-import { useLocation } from "react-router-dom";
+import { Link, useLocation } from "react-router-dom";
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
@@ -20,8 +20,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api, getAccessToken, API_BASE } from "@/lib/api";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
-import { ApplicationProfileCard } from "@/components/settings/ApplicationProfileCard";
-import { SavedAnswersCard } from "@/components/settings/SavedAnswersCard";
 import { EmailConnectCard } from "@/components/settings/EmailConnectCard";
 
 export default function SettingsPage() {
@@ -38,17 +36,14 @@ export default function SettingsPage() {
       <Section id="appearance" title="Appearance">
         <AppearanceCard />
       </Section>
-      <Section id="profile" title="Application profile">
-        <ApplicationProfileCard />
+      <Section id="profile" title="Application profile & saved answers">
+        <AutofillMemoryLink />
       </Section>
       <Section id="claude" title="Claude project">
         <ClaudeProjectCard />
       </Section>
       <Section id="email" title="Email">
         <EmailConnectCard />
-      </Section>
-      <Section id="answers" title="Saved answers">
-        <SavedAnswersCard />
       </Section>
       <Section id="export" title="Export your data">
         <DataExportCard />
@@ -288,6 +283,23 @@ function DeleteAccountCard({ email }: { email: string }) {
             </DialogFooter>
           </DialogContent>
         </Dialog>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The profile and everything autofill learned live on their own page now (spec 018). */
+function AutofillMemoryLink() {
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <p className="text-sm text-muted-foreground">
+          Your application profile, the answers Job Catcher saved and the boxes you taught it
+          are in <b className="text-foreground">Autofill memory</b>.
+        </p>
+        <Link to="/autofill" className="text-sm font-medium text-primary underline underline-offset-2">
+          Open Autofill memory
+        </Link>
       </CardContent>
     </Card>
   );

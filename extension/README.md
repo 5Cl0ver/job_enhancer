@@ -55,7 +55,10 @@ select this `extension/` folder → pin the icon. Make sure the backend is runni
    page again**, **Point at a box** (click the box, choose what goes there: it fills, and fills by
    itself next time, on every computer), or **Copy what Job Catcher saw** (the page's questions,
    never your answers) and paste it to Claude.
-5. **My jobs**, **Write** (cover letters, tailored résumés) and **Settings** are in the panel's bottom bar.
+5. **It learns as you go:** what you answer is saved when you move on (Edit / Undo in the panel),
+   and everything lives in the app's **Autofill memory** page: your profile, saved answers, boxes
+   you taught. **Super autofill** (on by default) fills every next page after your first press.
+6. **My jobs**, **Write** (cover letters, tailored résumés) and **Settings** are in the panel's bottom bar.
 
 ## Testing
 

@@ -10,6 +10,7 @@ import MatchesPage from "@/routes/MatchesPage";
 import AnalyticsPage from "@/routes/AnalyticsPage";
 import AiApplyPage from "@/routes/AiApplyPage";
 import SettingsPage from "@/routes/SettingsPage";
+import AutofillMemoryPage from "@/routes/AutofillMemoryPage";
 import AdminPage from "@/routes/AdminPage";
 import EmailUpdatesPage from "@/routes/EmailUpdatesPage";
 import { useIsPhone } from "@/hooks/useIsPhone";
@@ -46,6 +47,7 @@ export const router = createBrowserRouter([
       { path: "email-updates", element: <EmailUpdatesPage /> },
       { path: "analytics", element: <AnalyticsPage /> },
       { path: "ai-apply", element: <AiApplyPage /> },
+      { path: "autofill", element: <AutofillMemoryPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
     ],

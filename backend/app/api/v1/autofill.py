@@ -155,9 +155,44 @@ async def list_taught(
             "label": str((r.fingerprint or {}).get("label") or "")[:120],
             "profile_key": r.profile_key,
             "answer_preview": (r.answer or "")[:40] if r.answer else None,
+            # The whole answer, for editing it in the app's Autofill memory.
+            "answer": r.answer,
+            "created_at": r.created_at.isoformat() if r.created_at else None,
         }
         for r in rows
     ]
+
+
+class TaughtEdit(BaseModel):
+    profile_key: str | None = Field(None, pattern=r"^[a-z][a-z0-9_]{1,39}$")
+    answer: str | None = Field(None, min_length=1, max_length=2000)
+
+    @model_validator(mode="after")
+    def _one_answer(self) -> "TaughtEdit":
+        if (self.profile_key is None) == (self.answer is None):
+            raise ValueError("give exactly one of profile_key or answer")
+        return self
+
+
+@router.patch("/taught/{taught_id}")
+async def edit_taught(
+    taught_id: uuid.UUID,
+    body: TaughtEdit,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Change what a taught box gets (the app's Autofill memory)."""
+    row = await db.scalar(
+        select(TaughtField).where(
+            TaughtField.id == taught_id, TaughtField.user_id == user.id
+        )
+    )
+    if row is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    row.profile_key = body.profile_key
+    row.answer = body.answer
+    await db.commit()
+    return {"id": str(row.id)}
 
 
 @router.delete("/taught/{taught_id}", status_code=204)

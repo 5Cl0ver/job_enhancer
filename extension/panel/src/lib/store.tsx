@@ -28,6 +28,17 @@ export interface FillNeed {
   kind: string;
   reason: string;
   options: string[];
+  /** An essay answer saved before, offered with "Use saved answer" (spec 018). */
+  saved?: string;
+}
+/** An answer saved automatically on this tab (spec 018), shown with Edit / Undo. */
+export interface SavedAnswer {
+  question_key: string;
+  question_text: string;
+  answer: string;
+  scope: "all" | "site" | "essay" | "profile";
+  site?: string;
+  at: number;
 }
 /** An unsure AI answer, offered with "Use". */
 export interface FillSuggestion {
@@ -69,6 +80,14 @@ export interface Pick {
   site?: string;
   refused?: string;
   field?: { id: string; label: string; kind: string; options: string[] };
+  /** What the box holds now (inspect, spec 018) — the user's own panel only. */
+  value?: string;
+  /** What Job Catcher would put there, and why. */
+  known?: { source: "profile" | "learned" | "taught" | "none"; key: string; value?: string } | null;
+  /** The box held something: saved for this box on this site (Undo). */
+  autoSaved?: { id: string; answer: string };
+  /** The box already holds what Job Catcher would put there. */
+  alreadySaved?: boolean;
 }
 export type Fill = {
   entries: FillEntry[];
@@ -79,8 +98,9 @@ export type Fill = {
   keep: boolean;
   presence: Presence | null;
   pick: Pick | null;
+  saved: SavedAnswer[];
 };
-const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null, pick: null };
+const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null, pick: null, saved: [] };
 type Saved = { jobs: SavedJob[]; loaded: boolean; error: string | null };
 type Tab = { id: number | null; url: string; title: string; ctx: PageContext };
 
@@ -148,6 +168,7 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
       keep: !!res?.keep,
       presence: (res?.presence as Presence) || { form: false, app: false, fields: 0, status: null },
       pick: (res?.pick as Pick) || null,
+      saved: (res?.saved as SavedAnswer[]) || [],
     });
   }, []);
 

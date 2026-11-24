@@ -157,3 +157,30 @@ export function matchOption(answer, options, { strict = false } = {}) {
 export function isPlaceholderOption(label) {
   return PLACEHOLDER.test(clean(label));
 }
+
+/**
+ * A question whose answer belongs to ONE company (spec 018): "Have you worked
+ * for us before?", "Desired salary for this role", "Why this position?". Its
+ * answer is saved for that company's site only, never reused elsewhere.
+ */
+const COMPANY_SPECIFIC =
+  /\b(our|this) (company|organi[sz]ation|firm|business)\b|\b(previously |ever |currently )?(worked|been employed|applied|interviewed) (for|at|with)\b|\bwith us\b|\b(desired|expected|requested|minimum) (salary|pay|compensation|wage|rate)\b|\bsalary (for|expectations?)\b|\b(know|relatives?|family|friends?) (anyone )?(who )?(works?|employed) (here|for|at)\b/i;
+// Everyday answers even when worded about this job ("How did you hear about this opportunity?").
+const EVERYDAY = /\bhow did you (hear|find|learn)\b|\bwhere did you (hear|find|see)\b/i;
+
+export function isCompanySpecific(question) {
+  const q = String(question || "");
+  return COMPANY_SPECIFIC.test(q) && !EVERYDAY.test(q);
+}
+
+/**
+ * The key a saved answer is stored under (spec 018): the question, or
+ * "site|question" for one company's answer, or "essay|question" for an essay
+ * offered with "Use saved answer". Saving and looking up use this one rule,
+ * so a long question finds its answer again.
+ */
+export function answerKey(scope, site, questionKey) {
+  const base = String(questionKey || "").slice(0, 200);
+  const key = scope === "essay" ? `essay|${base}` : scope === "site" ? `${site}|${base}` : base;
+  return key.slice(0, 255);
+}

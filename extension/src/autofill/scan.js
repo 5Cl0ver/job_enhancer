@@ -242,6 +242,7 @@ export function collectFields(root, opts = {}) {
     placeholder: el.getAttribute?.("placeholder") || "",
     accept: el.getAttribute?.("accept") || "",
     maxLength: Number(el.getAttribute?.("maxlength")) || 0,
+    section: sectionHeading(el),
   });
 
   for (const el of els) {
@@ -372,6 +373,46 @@ export function dialCodeBeside(el) {
     }
   }
   return false;
+}
+
+// Section titles only — never a question's own label (a legend, the hidden
+// "notched outline" legend MUI draws inside every box).
+const HEADING = "h1, h2, h3, h4, h5, h6, [role=heading], [class*=section-title], [class*=sectionTitle], [class*=section-header], [class*=SectionHeader]";
+const TYPED = "input:not([type=radio]):not([type=checkbox]):not([type=hidden]):not([type=submit]):not([type=button]), select, textarea";
+
+/** A section title that's really on the page (not inside something hidden from it). */
+function titleText(h) {
+  if (!h || h.closest?.("[aria-hidden=true]")) return "";
+  return textOf(h);
+}
+
+/**
+ * The heading of the section a box sits in ("Employment History", "Employer
+ * 2", "Personal Information"): the nearest section title above it — a
+ * previous sibling, or the last title inside one — within the box's own form,
+ * or the legend of a group of several boxes to type in. A question's legend
+ * (a radio group's, a box's own outline) is never a section.
+ * (jobHistory.js only trusts a heading when the boxes under it prove it.)
+ */
+export function sectionHeading(el) {
+  const cut = (t) => (t.length <= 80 ? t : "");
+  for (let n = el, hop = 0; n && hop < 12; n = n.parentElement, hop++) {
+    // The group the box is in, titled by its legend ("Employment History"),
+    // before anything above that group (a form-wide "Apply Now" title).
+    if (n !== el && n.tagName === "FIELDSET") {
+      const legend = [...n.children].find((c) => c.tagName === "LEGEND");
+      const t = legend && !legend.closest("[aria-hidden=true]") ? textOf(legend) : "";
+      if (t && n.querySelectorAll(TYPED).length >= 3) return cut(t);
+    }
+    // A heading may sit outside the form itself (Paycom's step title):
+    // jobHistory.js only trusts it when the boxes under it prove it.
+    for (let sib = n.previousElementSibling, k = 0; sib && k < 15; sib = sib.previousElementSibling, k++) {
+      const h = sib.matches?.(HEADING) ? sib : [...(sib.querySelectorAll?.(HEADING) || [])].pop();
+      const t = titleText(h);
+      if (t) return cut(t);
+    }
+  }
+  return "";
 }
 
 /** The visible box of an input combobox: a known control wrapper, or its

@@ -51,9 +51,25 @@ export function siteKey(url) {
   try {
     const u = new URL(url);
     if (SHARED_HOSTS.test(u.hostname)) return `${u.hostname}/${u.pathname.split("/")[1] || ""}`;
+    // Paycom and ADP serve every company from one host: the company is the
+    // portal key in the address (…/portal/<key>/… or ?clientkey=, ?cid=).
+    if (/(^|\.)paycomonline\.(net|com)$/i.test(u.hostname)) {
+      const key = u.searchParams.get("clientkey") || (/\/portal\/([^/]+)/i.exec(u.pathname) || [])[1];
+      return key ? `${u.hostname}/${key}` : u.hostname;
+    }
+    if (/^workforcenow\.adp\.com$/i.test(u.hostname) && u.searchParams.get("cid")) return `${u.hostname}/${u.searchParams.get("cid")}`;
     return u.hostname;
   } catch {
     return "";
+  }
+}
+
+/** Can one company be told from another here? Not on Indeed's or LinkedIn's apply pages. */
+export function companyKnown(url) {
+  try {
+    return !/(^|\.)(smartapply\.indeed\.com|apply\.indeed\.com|linkedin\.com)$/i.test(new URL(url).hostname);
+  } catch {
+    return false;
   }
 }
 

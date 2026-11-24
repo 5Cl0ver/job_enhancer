@@ -1,6 +1,7 @@
 import {
   BarChart3,
   Bot,
+  Brain,
   Briefcase,
   MailCheck,
   Search,
@@ -28,6 +29,7 @@ export const NAV: NavItem[] = [
   { to: "/email-updates", label: "Email Updates", short: "Email", icon: MailCheck },
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/ai-apply", label: "AI Apply", icon: Bot },
+  { to: "/autofill", label: "Autofill memory", short: "Memory", icon: Brain },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/admin", label: "Admin", icon: Shield, adminOnly: true },
 ];

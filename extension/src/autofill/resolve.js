@@ -1,6 +1,6 @@
 // Decide what goes in a field: the profile, then a remembered answer, or a
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
-import { matchAnswer } from "./classify/answers.js";
+import { answerKey, isCompanySpecific, matchAnswer } from "./classify/answers.js";
 import { OTHER_PERSON, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 
 /** The keys that make a page look like an application. */
@@ -35,6 +35,23 @@ export function uploadKind(field) {
 export function isResumeUpload(field) {
   const kind = uploadKind(field);
   return kind === "resume" || (kind === "unclear" && (field.hints?.unclearUploads ?? 1) === 1);
+}
+
+/**
+ * A remembered answer for this question (spec 018): this site's own answer
+ * first ("site|question" keys); a company-specific question takes ONLY that;
+ * anything else may use the plain, everywhere answers. Saved essays
+ * ("essay|question") are never matched: they're offered, not filled.
+ */
+export function learnedFor(field, copy) {
+  const answers = copy.answers || [];
+  const own = copy.site
+    ? answers.find((a) => a.question_key === answerKey("site", copy.site, field.key)) ||
+      (copy.host && copy.host !== copy.site ? answers.find((a) => a.question_key === answerKey("site", copy.host, field.key)) : null)
+    : null;
+  if (own) return own;
+  if (isCompanySpecific(field.question)) return null;
+  return matchAnswer(field.key, answers.filter((a) => !String(a.question_key).includes("|")));
 }
 
 /**
@@ -76,7 +93,7 @@ export function resolve(field, copy) {
     if (key === "phone" && field.hints?.dialCode) values = values.map(nationalNumber);
     return values.length ? { values, source: "profile", key } : { skip: "no_data", key };
   }
-  const learned = matchAnswer(field.key, copy.answers);
+  const learned = learnedFor(field, copy);
   if (learned) return { values: [learned.answer], source: "learned", learnKey: learned.question_key };
   // A question about someone else: a remembered answer is fine, an AI guess
   // (from the user's own data) is not.

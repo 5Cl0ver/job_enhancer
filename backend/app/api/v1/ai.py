@@ -337,9 +337,15 @@ async def autofill_map(
     profile = await db.scalar(
         select(ApplicationProfile).where(ApplicationProfile.user_id == user.id)
     )
-    answers = list(
-        await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
-    )
+    # Only everyday answers: one company's answers ("site|question") and saved
+    # essays ("essay|question") never ground the AI for another application.
+    answers = [
+        a
+        for a in await db.scalars(
+            select(CustomAnswer).where(CustomAnswer.user_id == user.id)
+        )
+        if "|" not in a.question_key
+    ]
     # The active résumé's text — lets the mapper fill work-experience sections
     # (job title / employer / location / dates) from the user's real history.
     resume_text = await db.scalar(
