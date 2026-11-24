@@ -47,6 +47,7 @@ const REFUSED: Record<string, string> = {
 const PROFILE_SAVES = new Set([
   "first_name", "last_name", "phone", "address_line1", "address_line2", "city", "state",
   "postal_code", "country", "linkedin_url", "github_url", "portfolio_url", "desired_salary", "notice_period",
+  "authorized_to_work", "requires_sponsorship", "willing_to_relocate",
 ]);
 
 export function startPointing(tabId: number | null) {

@@ -40,12 +40,16 @@ function headingKind(section) {
 export function jobPart(field) {
   const q = `${field.question || ""} ${field.hints?.name || ""}`;
   if (/supervisor|manager|reason|duties|responsibilit|describe|description|summary|salary|wage|pay\b|contact|address|street|phone|zip|postal|email|fax/i.test(q)) return "";
+  const label = String(field.question || "").trim();
   if (/\b(start(ing)?( date| month| year)?|date started|began|hire date|date of hire|from date)\b/i.test(q)) return "start";
+  if (/^(dates? (employed |of employment )?)?from\W*$/i.test(label)) return "start";
   if (/\b(end( date| month| year)?|date ended|leaving date|to date|until|date left)\b/i.test(q)) return "end";
-  if (/\b(company|employer|organi[sz]ation|business)( name)?\b/i.test(q)) return "company";
-  if (/\b(job title|title|position( title| held)?|role)\b/i.test(q)) return "title";
+  if (/^(dates? (employed |of employment )?)?to\W*$/i.test(label)) return "end";
+  // "Employer City" is the job's city, not the employer's name.
   if (/\bcity\b/i.test(q)) return "city";
   if (/\b(state|province)\b/i.test(q)) return "state";
+  if (/\b(company|employer|organi[sz]ation|business)( name)?\b/i.test(q)) return "company";
+  if (/\b(job title|title|position( title| held)?|role)\b/i.test(q)) return "title";
   return "";
 }
 

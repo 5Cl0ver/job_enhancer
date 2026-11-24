@@ -134,3 +134,35 @@ describe("where one company ends and another begins", async () => {
     expect(companyKnown("https://jobs.lever.co/quillstone/1")).toBe(true);
   });
 });
+
+describe("employment sections the second review built (titles from legends; a title outside the form)", () => {
+  const kindsOf = (html) => {
+    const fields = collectFields(parse(html), { visible: () => true });
+    const k = classifySections(fields);
+    return Object.fromEntries(fields.map((f) => [f.el.id, k.get(f.id) || ""]));
+  };
+
+  it("a section titled by its fieldset legend, under a form-wide title", () => {
+    const k = kindsOf(`<form><h1>Apply Now</h1>
+      <fieldset><legend>Personal Information</legend><label for="pa">Address</label><input id="pa"><label for="pc">City</label><input id="pc"><label for="pp">Phone</label><input id="pp"></fieldset>
+      <fieldset><legend>Employment History</legend><label for="en">Employer</label><input id="en"><label for="ea">Address</label><input id="ea"><label for="ec">City</label><input id="ec"><label for="ep">Phone</label><input id="ep"></fieldset></form>`);
+    expect([k.pa, k.pc, k.pp]).toEqual(["", "", ""]);
+    expect([k.en, k.ea, k.ec, k.ep]).toEqual(["job", "job", "job", "job"]);
+  });
+
+  it("Paycom-style: the step's title sits outside the form", () => {
+    const k = kindsOf(`<div><h1>Employment</h1></div><div class="wrap"><form>
+      <label for="n1">Name of Employer</label><input id="n1"><label for="c1">City</label><input id="c1"><label for="p1">Phone</label><input id="p1">
+      <label for="n2">Name of Employer</label><input id="n2"><label for="c2">City</label><input id="c2"><label for="p2">Phone</label><input id="p2"></form></div>`);
+    expect(Object.values(k).every((v) => v === "job")).toBe(true);
+  });
+
+  it("'Employer City' is the job's city; plain From / To are its dates", () => {
+    expect(jobPart({ question: "Employer City" })).toBe("city");
+    expect(jobPart({ question: "Company State" })).toBe("state");
+    expect(jobPart({ question: "From" })).toBe("start");
+    expect(jobPart({ question: "To:" })).toBe("end");
+    expect(jobPart({ question: "Dates Employed From" })).toBe("start");
+    expect(jobPart({ question: "Name of Employer" })).toBe("company");
+  });
+});

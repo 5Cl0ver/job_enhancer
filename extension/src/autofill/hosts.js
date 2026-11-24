@@ -67,7 +67,7 @@ export function siteKey(url) {
 /** Can one company be told from another here? Not on Indeed's or LinkedIn's apply pages. */
 export function companyKnown(url) {
   try {
-    return !/(^|\.)(smartapply\.indeed\.com|linkedin\.com)$/i.test(new URL(url).hostname);
+    return !/(^|\.)(smartapply\.indeed\.com|apply\.indeed\.com|linkedin\.com)$/i.test(new URL(url).hostname);
   } catch {
     return false;
   }

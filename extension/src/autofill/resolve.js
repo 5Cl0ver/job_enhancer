@@ -45,7 +45,10 @@ export function isResumeUpload(field) {
  */
 export function learnedFor(field, copy) {
   const answers = copy.answers || [];
-  const own = copy.site ? answers.find((a) => a.question_key === answerKey("site", copy.site, field.key)) : null;
+  const own = copy.site
+    ? answers.find((a) => a.question_key === answerKey("site", copy.site, field.key)) ||
+      (copy.host && copy.host !== copy.site ? answers.find((a) => a.question_key === answerKey("site", copy.host, field.key)) : null)
+    : null;
   if (own) return own;
   if (isCompanySpecific(field.question)) return null;
   return matchAnswer(field.key, answers.filter((a) => !String(a.question_key).includes("|")));

@@ -396,18 +396,20 @@ function titleText(h) {
  */
 export function sectionHeading(el) {
   const cut = (t) => (t.length <= 80 ? t : "");
-  const form = el.closest?.("form");
-  for (let n = el, hop = 0; n && hop < 10; n = n.parentElement, hop++) {
-    if (form && !n.closest?.("form")) break; // never a heading from outside the form (a job description)
+  for (let n = el, hop = 0; n && hop < 12; n = n.parentElement, hop++) {
+    // The group the box is in, titled by its legend ("Employment History"),
+    // before anything above that group (a form-wide "Apply Now" title).
+    if (n !== el && n.tagName === "FIELDSET") {
+      const legend = [...n.children].find((c) => c.tagName === "LEGEND");
+      const t = legend && !legend.closest("[aria-hidden=true]") ? textOf(legend) : "";
+      if (t && n.querySelectorAll(TYPED).length >= 3) return cut(t);
+    }
+    // A heading may sit outside the form itself (Paycom's step title):
+    // jobHistory.js only trusts it when the boxes under it prove it.
     for (let sib = n.previousElementSibling, k = 0; sib && k < 15; sib = sib.previousElementSibling, k++) {
       const h = sib.matches?.(HEADING) ? sib : [...(sib.querySelectorAll?.(HEADING) || [])].pop();
       const t = titleText(h);
       if (t) return cut(t);
-    }
-    if (n !== el && n.tagName === "FIELDSET") {
-      const legend = n.querySelector(":scope > legend");
-      const t = legend && !legend.closest("[aria-hidden=true]") ? textOf(legend) : "";
-      if (t && n.querySelectorAll(TYPED).length >= 3) return cut(t);
     }
   }
   return "";

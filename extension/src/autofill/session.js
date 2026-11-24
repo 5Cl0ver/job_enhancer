@@ -237,7 +237,7 @@ export function createSession(deps) {
     // (Boxes taught before 0.34 on Paycom/ADP are keyed by the host alone.)
     const host = doc.location?.hostname || "";
     const taught = matchTaught((copy.taught || []).filter((t) => t.site === site || t.site === host), list);
-    copy = { ...copy, site }; // this site's own answers first (spec 018)
+    copy = { ...copy, site, host }; // this site's own answers first (spec 018)
     // "Retype your résumé" sections: which past job each box belongs to (spec 018).
     const sections = classifySections(list);
     const blockOf = createJobBlocks();
