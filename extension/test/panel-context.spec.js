@@ -6,6 +6,7 @@ import {
   findDuplicate,
   siteLabel,
 } from "../panel/src/lib/context.ts";
+import { postingKey } from "../src/autofill/hosts.js";
 
 const JOBS = [
   { id: "1", job_listing_id: "l1", title: "Help Desk Analyst", company: "Vellacor Robotics", location: "", url: "", applied: false },
@@ -32,21 +33,113 @@ describe("detectContext: what the tab beside the panel is", () => {
   });
 });
 
+describe("bestJobMatch never links a page to the wrong saved job", () => {
+  const SAVED = [
+    { id: "t", job_listing_id: "lt", title: "Software Engineer I", company: "Brightfold", location: "", url: "https://job-boards.greenhouse.io/brightfold/jobs/4001", applied: false },
+    { id: "a", job_listing_id: "la", title: "Software Engineer II, Fullstack (Ads Platform)", company: "Opaline Pay", location: "", url: "https://job-boards.greenhouse.io/opalinepay/jobs/7002", applied: false },
+  ];
+  const AFFIRM_LIKE = {
+    url: "https://job-boards.greenhouse.io/opalinepay/jobs/7002",
+    title: "Job Application for Software Engineer II, Fullstack (Ads Platform) at Opaline Pay",
+  };
+
+  it("\"Software Engineer I\" at another company is not \"Software Engineer II\" (the reported bug)", () => {
+    expect(bestJobMatch(AFFIRM_LIKE, [SAVED[0]])).toBeNull();
+    expect(bestJobMatch({ ...AFFIRM_LIKE, url: "https://job-boards.greenhouse.io/opalinepay/jobs/7099" }, [SAVED[0]])).toBeNull();
+  });
+
+  it("the same posting wins, however it's reached", () => {
+    expect(bestJobMatch(AFFIRM_LIKE, SAVED)?.id).toBe("a");
+    expect(bestJobMatch({ url: "https://boards.greenhouse.io/embed/job_app?for=opalinepay&token=7002", title: "" }, SAVED)?.id).toBe("a");
+    expect(bestJobMatch({ url: "https://opalinepay.example/careers/open-roles?gh_jid=7002", title: "Careers" }, SAVED)?.id).toBe("a");
+  });
+
+  it("another posting on the same applicant system never counts, even with the same title", () => {
+    const other = { url: "https://job-boards.greenhouse.io/brightfold/jobs/4555", title: "Job Application for Software Engineer I at Brightfold" };
+    expect(bestJobMatch(other, SAVED)).toBeNull();
+  });
+
+  it("a job saved from elsewhere still links by whole title + company", () => {
+    const fromLinkedIn = [{ ...SAVED[1], url: "https://www.linkedin.com/jobs/view/3900000001" }];
+    expect(bestJobMatch(AFFIRM_LIKE, fromLinkedIn)?.id).toBe("a");
+  });
+
+  it("Not this job: the user's word wins", () => {
+    expect(bestJobMatch(AFFIRM_LIKE, SAVED, ["a"])).toBeNull();
+  });
+
+  it("one address saved for several jobs: the title and company decide", () => {
+    const hub = "https://opalinepay.example/careers/2026-openings";
+    const two = [
+      { ...SAVED[0], id: "x", company: "Opaline Pay", url: hub },
+      { ...SAVED[1], id: "y", url: hub },
+    ];
+    expect(bestJobMatch({ url: hub, title: "Software Engineer II, Fullstack (Ads Platform) | Opaline Pay" }, two)?.id).toBe("y");
+    expect(bestJobMatch({ url: hub, title: "Opaline Pay careers" }, two)).toBeNull();
+  });
+
+  it("the most specific title wins", () => {
+    const both = [
+      { ...SAVED[1], id: "short", title: "Software Engineer", url: "" },
+      { ...SAVED[1], id: "long", url: "" },
+    ];
+    expect(bestJobMatch({ ...AFFIRM_LIKE, url: "https://opalinepay.example/apply" }, both)?.id).toBe("long");
+  });
+});
+
+describe("postingKey: which posting an address is", () => {
+  it.each([
+    ["https://boards.greenhouse.io/vellacor/jobs/123", "greenhouse:123"],
+    ["https://job-boards.greenhouse.io/vellacor/jobs/123#app", "greenhouse:123"],
+    ["https://boards.greenhouse.io/embed/job_app?for=vellacor&token=123", "greenhouse:123"],
+    ["https://vellacor.example/careers?gh_jid=123", "greenhouse:123"],
+    ["https://jobs.lever.co/quillstone/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b/apply", "lever:0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"],
+    ["https://jobs.ashbyhq.com/quillstone/0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b/application", "ashby:0f1e2d3c-4b5a-6978-8a9b-0c1d2e3f4a5b"],
+    ["https://jobs.smartrecruiters.com/Tidewell/744000012345-it-analyst", "smartrecruiters:744000012345"],
+    ["https://apply.workable.com/tidewell/j/AB12CD34EF/apply/", "workable:ab12cd34ef"],
+    ["https://www.linkedin.com/jobs/view/it-analyst-at-tidewell-3900000001", "linkedin:3900000001"],
+    ["https://www.linkedin.com/jobs/search/?currentJobId=3900000001", "linkedin:3900000001"],
+    ["https://vellacor.wd5.myworkdayjobs.com/en-US/External/job/Portland_OR/IT-Analyst_JR-1234/apply/applyManually", "workday:vellacor.wd5.myworkdayjobs.com:jr-1234"],
+    ["https://www.paycomonline.net/v4/ats/web.php/portal/0000NVF/jobs/ViewJobDetails?job=61770", "paycomonline.net/v4/ats/web.php/portal/0000nvf/jobs/viewjobdetails?job=61770"],
+    ["https://careers.tidewell.example/jobs/42/apply", "careers.tidewell.example/jobs/42"],
+  ])("%s", (url, key) => {
+    expect(postingKey(url)?.key).toBe(key);
+  });
+
+  it("a careers home page names no posting", () => {
+    expect(postingKey("https://careers.tidewell.example/")).toBeNull();
+    expect(postingKey("https://tidewell.example/careers/apply")).toBeNull();
+    expect(postingKey("not a url")).toBeNull();
+  });
+
+  it("the systems' own ids are sure; a plain address is only a hint", () => {
+    expect(postingKey("https://boards.greenhouse.io/vellacor/jobs/123")?.sure).toBe(true);
+    expect(postingKey("https://careers.tidewell.example/jobs/42")?.sure).toBe(false);
+  });
+});
+
 describe("helpers", () => {
   it("names a site from its host", () => {
     expect(siteLabel("www.amazon.jobs")).toBe("Amazon");
     expect(siteLabel("boards.greenhouse.io")).toBe("Greenhouse");
   });
 
-  it("finds the saved job a tab is about by its title", () => {
-    expect(bestJobMatch("Apply: Help Desk Analyst at Vellacor Robotics", JOBS)?.id).toBe("1");
-    expect(bestJobMatch("Some other page", JOBS)).toBeNull();
+  it("finds the saved job a tab is about by its title and company", () => {
+    const page = (title, url = "https://careers.vellacor.example/apply/42") => ({ url, title });
+    expect(bestJobMatch(page("Apply: Help Desk Analyst at Vellacor Robotics"), JOBS)?.id).toBe("1");
+    expect(bestJobMatch(page("Some other page"), JOBS)).toBeNull();
+    // The title alone isn't enough: another company's Help Desk Analyst.
+    expect(bestJobMatch(page("Help Desk Analyst - Tidewell Labs", "https://tidewell.example/jobs/9"), JOBS)).toBeNull();
+    // The company can be in the address instead (Workday tabs show only the title).
+    expect(bestJobMatch(page("Help Desk Analyst", "https://vellacor.wd5.myworkdayjobs.com/en-US/External/job/X/Help-Desk-Analyst_R-9/apply"), JOBS)?.id).toBe("1");
   });
 
   it("spots a duplicate: same company, same or contained title", () => {
     expect(findDuplicate({ title: "Help Desk Analyst II", company: "Vellacor Robotics" }, JOBS)?.id).toBe("1");
     expect(findDuplicate({ title: "Help Desk Analyst", company: "Tidewell Labs" }, JOBS)).toBeNull();
     expect(findDuplicate({ title: "", company: "Quillstone" }, JOBS)).toBeNull();
+    // Whole words: "IT Support Specialist II" contains "IT Support Specialist", "…Specialists" doesn't.
+    expect(findDuplicate({ title: "IT Support Specialists", company: "Quillstone" }, JOBS)).toBeNull();
   });
 
   it("names documents after the user's own résumé file", () => {

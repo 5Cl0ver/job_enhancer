@@ -65,7 +65,7 @@ test.beforeEach(async () => {
   api.state.jobs = JOBS();
   api.state.jobsVersion++;
   api.state.claudeProjectUrl = "";
-  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_staged_resume", "je_claude_url"]));
+  await ext.worker.evaluate(() => chrome.storage.local.remove(["je_staged_resume", "je_claude_url", "je_not_this"]));
   await ext.seedSignedIn();
 });
 
@@ -184,6 +184,55 @@ test("applying: the panel knows the job, fills the page, and marks it applied", 
   await expect(panel.getByText("nothing was submitted", { exact: false })).toBeVisible();
   await panel.getByRole("button", { name: /mark applied/ }).click();
   await expect(panel.getByText("Tracked as applied")).toBeVisible();
+  expect(errors).toEqual([]);
+  await Promise.all([tab.close(), panel.close()]);
+});
+
+test("Greenhouse: another company's look-alike job is never linked; save this one, open it in the app", async () => {
+  const GH = "https://job-boards.greenhouse.io/opalinepay/jobs/7002";
+  const page = readFileSync(join(ROOT, "test", "lab", "classic.html"), "utf8").replace(
+    /<title>[^<]*<\/title>/,
+    "<title>Job Application for Software Engineer II, Fullstack (Ads Platform) at Opaline Pay</title>",
+  );
+  await ext.context.route(GH, (r) => r.fulfill({ status: 200, contentType: "text/html", body: page }));
+  // Two saved Greenhouse jobs at other companies — one a near look-alike title.
+  api.state.jobs = [
+    { id: "g1", job_listing_id: "gl1", title: "Software Engineer I", company: "Brightfold", location: "Remote", url: "https://job-boards.greenhouse.io/brightfold/jobs/4001", applied_at: null },
+    { id: "g2", job_listing_id: "gl2", title: "Software Engineer", company: "Kestrel Analytics", location: "Remote", url: "https://boards.greenhouse.io/kestrel/jobs/5003", applied_at: null },
+  ];
+  api.state.jobsVersion++;
+  const { tab, panel, errors } = await panelFor(GH);
+  await expect(panel.getByText("Applying on Greenhouse")).toBeVisible();
+  await expect(panel.getByRole("heading", { name: "Application in progress" })).toBeVisible();
+  await expect(shown(panel).getByText("Software Engineer I", { exact: true })).toHaveCount(0);
+  await expect(panel.getByRole("button", { name: /mark applied/ })).toHaveCount(0);
+
+  // Saving is always there.
+  await panel.getByRole("button", { name: "Not saved yet? Save this job" }).click();
+  await panel.getByRole("button", { name: "Save this job" }).click();
+  await panel.getByLabel("Job title").fill("Software Engineer II, Fullstack (Ads Platform)");
+  await panel.getByLabel("Company").fill("Opaline Pay");
+  await panel.getByRole("button", { name: "Save to My Jobs" }).click();
+  await expect(panel.getByText("Saved: Software Engineer II, Fullstack (Ads Platform) at Opaline Pay")).toBeVisible();
+  expect(api.calls("/v1/saved-jobs/manual")[0].body.url).toBe(GH);
+
+  // Now the page is that saved job: its title, Open in app, still a Save link.
+  await expect(panel.getByRole("heading", { name: "Software Engineer II, Fullstack (Ads Platform)" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Save this job" })).toBeVisible();
+  const opened = ext.context.waitForEvent("page");
+  await panel.getByRole("button", { name: "Open in app" }).click();
+  const appTab = await opened;
+  await expect.poll(() => appTab.url()).toBe(`${api.url}/jobs/listing-3`);
+  await appTab.close();
+
+  // Not this job: the link goes, and stays gone for this page.
+  await panel.getByRole("button", { name: "Not this job" }).click();
+  await expect(panel.getByRole("heading", { name: "Application in progress" })).toBeVisible();
+  await panel.reload();
+  await expect(panel.getByRole("heading", { name: "Application in progress" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Not saved yet? Save this job" })).toBeVisible();
+  const kept = await ext.worker.evaluate(() => chrome.storage.local.get("je_not_this"));
+  expect(kept.je_not_this["greenhouse:7002"]).toEqual(["saved-3"]);
   expect(errors).toEqual([]);
   await Promise.all([tab.close(), panel.close()]);
 });
