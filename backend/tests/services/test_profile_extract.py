@@ -114,3 +114,21 @@ def test_headings_are_not_names_and_cities_are_real():
     assert out["city"] == "San Francisco Bay Area"
     assert "city" not in extract_contact_heuristics("Wren Tester\nREMOTE, OR")
     assert "city" not in extract_contact_heuristics("Wren Tester\nRemote, OR")
+
+
+def test_re_review_cases():
+    out = extract_contact_heuristics(
+        "Jane Doe | Austin, TX | jane@x.com | (555) 010-0199"
+    )
+    assert _name("Jane Doe | Austin, TX") == ("Jane", "Doe")
+    assert (out["city"], out["state"]) == ("Austin", "TX")
+    out = extract_contact_heuristics("JANE DOE • AUSTIN, TX")
+    assert (out["city"], out["state"]) == ("Austin", "TX")
+    # A city line first (a right-hand contact column) is not a name.
+    assert _name("New York, NY\nJane Doe") == ("Jane", "Doe")
+    assert _name("Al Pacino\nActor") == ("Al", "Pacino")
+    assert _name("La Toya Jackson") == ("La", "Jackson")
+    assert _name("Dr. Jane Doe") == ("Jane", "Doe")
+    out = extract_contact_heuristics("Wren Tester\nSAN DIEGO, CA")
+    assert out["city"] == "San Diego"
+    assert "city" not in extract_contact_heuristics("Wren Tester\nIT Support, ME")

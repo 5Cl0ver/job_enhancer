@@ -95,7 +95,15 @@ _CITY_STATE = re.compile(
 )
 _SEPARATORS = re.compile(r"\s*[|•·–—]\s*")
 # "Jane Doe, MD" / "John Smith, CPA, PMP": credentials after the name.
-_CREDENTIALS = re.compile(r"(?:,\s*[A-Za-z.]{2,6}){1,3}$")
+_CREDENTIALS = re.compile(
+    r"(?:,\s*(?:MD|M\.D\.|DO|PhD|Ph\.D\.|MBA|MS|MSc|MA|BA|BS|BSc|CPA|CFA|PMP|RN|BSN|"
+    r"MSN|NP|PA|PA-C|PE|JD|Esq\.?|LCSW|CISSP|SHRM-CP|DDS|DVM|PharmD))+$",
+    re.I,
+)
+# "Dr. Jane Doe": a title before the name.
+_TITLES = frozenset(
+    ["dr", "dr.", "mr", "mr.", "ms", "ms.", "mrs", "mrs.", "prof", "prof."]
+)
 _NAME_MARKS = frozenset(".'-’")
 # Lowercase words that belong inside a name ("Maria de la Cruz").
 _PARTICLES = frozenset(
@@ -166,11 +174,13 @@ _NOT_NAME = frozenset(
     ]
 )
 _HEADER_LINES = 8
+# "Remote, OR" or "IT Support, ME" isn't a place.
+_NOT_CITY = _NOT_NAME | frozenset(["it", "support", "stack", "full", "web", "data"])
 
 
 def _name_word(word: str, first_or_last: bool) -> bool:
     """A word of a name, in any alphabet ("Łukasz", "Nguyễn", "O'Brien")."""
-    if word.lower() in _PARTICLES:
+    if word in _PARTICLES:  # lowercase "de", "la"; "Al" or "De" is a name
         return not first_or_last
     return (
         len(word) <= 30
@@ -190,6 +200,8 @@ def _name_from(lines: list[str]) -> tuple[int, str, str] | None:
         if any(c.isdigit() for c in head) or "@" in head or "/" in head:
             continue
         words = head.split()
+        while len(words) > 2 and words[0].lower() in _TITLES:
+            words.pop(0)  # "Dr. Jane Doe" → Jane
         while len(words) > 2 and words[-1].lower() in _SUFFIXES:
             words.pop()  # "John Smith Jr." → Smith
         if not 2 <= len(words) <= 5:
@@ -220,11 +232,15 @@ def extract_contact_heuristics(text: str) -> dict[str, str]:
     if name := _name_from(lines):
         name_line, out["first_name"], out["last_name"] = name
     for i, line in enumerate(lines[:_HEADER_LINES]):
-        if i == name_line:  # "Jane Doe, MD" is a name, not a city
-            continue
+        if i == name_line:  # "Jane Doe, MD | Austin, TX": after the name only
+            parts = _SEPARATORS.split(line, maxsplit=1)
+            line = parts[1] if len(parts) > 1 else ""
         for m in _CITY_STATE.finditer(line):
             city = m.group(1)
-            if m.group(2) in _US_STATES and not city.isupper() and city != "Remote":
+            if city.isupper():  # "SAN DIEGO" → "San Diego"
+                city = " ".join(_title(w) for w in city.split())
+            words = {w.lower().strip(".") for w in city.split()}
+            if m.group(2) in _US_STATES and not words & _NOT_CITY:
                 out["city"], out["state"] = city[:100], m.group(2)
                 break
         if "city" in out:
