@@ -237,12 +237,14 @@ class TestResumeReading:
         assert history["work"][0]["current"] is True
         assert history["skills"] == ["SQL", "Python"]
 
-    async def test_a_resume_without_text_is_tried_again(
+    async def test_a_resume_without_text_is_settled_as_empty(
         self, client: AsyncClient, db_session, test_user
     ):
+        """Nothing to read: settled once (empty details), never re-read hourly."""
         from app.services import resume_history
 
         r = await self._resume(db_session, test_user)
         r.extracted_text = ""
-        await resume_history.read_resume(r)
-        assert r.parsed_history_at is None
+        history = await resume_history.read_resume(r)
+        assert r.parsed_history_at is not None
+        assert history["work"] == [] and history["skills"] == []

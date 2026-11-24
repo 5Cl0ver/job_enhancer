@@ -220,3 +220,103 @@ async def test_the_backfill_reads_unread_resumes(db_session, test_user):
     await db_session.refresh(r)
     assert r.parsed_history_at is not None
     assert r.parsed_history["work"][0]["company"] == "Tidewell Labs"
+
+
+async def test_the_backfill_gives_up_on_a_resume_that_keeps_failing(
+    db_session, test_user
+):
+    """A reading that crashes is counted first, so after 3 tries the hourly job
+    stops picking that résumé; blank résumés are never picked."""
+    from contextlib import asynccontextmanager
+
+    from app.services import resume_history
+
+    bad = await _resume(db_session, test_user, name="bad.pdf")
+    blank = await _resume(db_session, test_user, name="blank.pdf", text="   ")
+
+    @asynccontextmanager
+    async def same_session():
+        yield db_session
+
+    def crash(_text):
+        raise RuntimeError("reader blew up")
+
+    with (
+        patch.object(resume_history, "session_factory", same_session),
+        patch("app.services.resume_reader.read", side_effect=crash),
+    ):
+        for _ in range(5):
+            await resume_history.read_unread_resumes(same_session)
+    await db_session.refresh(bad)
+    await db_session.refresh(blank)
+    assert bad.read_attempts == resume_history.MAX_ATTEMPTS
+    assert bad.parsed_history_at is None
+    assert blank.read_attempts == 0  # never picked: nothing to read
+
+
+async def test_any_file_name_downloads(client: AsyncClient, db_session, test_user):
+    """A name that isn't plain ASCII used to be a 500 (headers are latin-1)."""
+    from urllib.parse import unquote
+
+    r = await _resume(db_session, test_user, name="Résumé – Wren.pdf")
+    r.is_active = True
+    await db_session.commit()
+    for path in (f"/v1/autofill/resumes/{r.id}/file", "/v1/ai/resumes/active/file"):
+        got = await client.get(path)
+        assert got.status_code == 200, path
+        assert unquote(got.headers["x-resume-filename"]) == "Résumé – Wren.pdf"
+        assert "filename*=UTF-8''R%C3%A9sum%C3%A9" in got.headers["content-disposition"]
+        assert got.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_bad_stored_entries_are_left_out_not_a_500(
+    client: AsyncClient, db_session, test_user
+):
+    r = await _resume(db_session, test_user)
+    r.parsed_history = {
+        "work": [
+            {"title": "Analyst", "company": "Kelso Labs", "start_year": 1066},
+            {"title": "Engineer", "company": "Quillstone", "start_year": 2020},
+            "not a job",
+        ],
+        "education": [{"school": "x" * 500}],
+        "skills": ["SQL", 42, "y" * 999],
+        "certifications": None,
+        "websites": [
+            "https://github.com/wren",
+            "javascript:alert(1)",
+            "https://" + "a" * 400,
+        ],
+    }
+    from datetime import UTC, datetime
+
+    r.parsed_history_at = datetime.now(tz=UTC)
+    await db_session.commit()
+    got = await client.get(f"/v1/autofill/resumes/{r.id}/details")
+    assert got.status_code == 200
+    d = got.json()
+    assert [j["company"] for j in d["work"]] == ["Quillstone"]
+    assert d["education"] == [] and d["skills"] == ["SQL"] and d["certifications"] == []
+    assert d["websites"] == ["https://github.com/wren"]
+
+
+async def test_a_failed_reading_never_logs_the_resume(db_session, test_user, caplog):
+    from contextlib import asynccontextmanager
+
+    from app.services import resume_history
+
+    r = await _resume(db_session, test_user, text="SECRET-LINE-123\nEXPERIENCE\n")
+
+    @asynccontextmanager
+    async def same_session():
+        yield db_session
+
+    def crash(text):
+        raise ValueError(text)  # an error carrying the résumé's text
+
+    with (
+        patch.object(resume_history, "session_factory", same_session),
+        patch("app.services.resume_reader.read", side_effect=crash),
+    ):
+        await resume_history.read_in_background(r.id)
+    assert "SECRET-LINE-123" not in caplog.text

@@ -12,11 +12,12 @@ left every résumé unread; the owner wants autofill perfect without AI first.
 What the reader can't place, the user fixes in the app ("Check these").
 """
 
+import asyncio
 import logging
 import uuid
 from datetime import UTC, datetime
 
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
 
@@ -32,14 +33,19 @@ _reading: set[uuid.UUID] = set()
 session_factory = AsyncSessionLocal
 
 
+# A résumé whose reading crashed or hung this many times is left alone; the
+# user can still type its details in the app.
+MAX_ATTEMPTS = 3
+
+
 async def read_resume(resume: Resume) -> dict:
     """Read the résumé's text into its details and store them on the row (the
-    caller commits). A résumé with no text isn't stored, so it's tried again."""
+    caller commits). The reader runs in a worker thread so it never holds up
+    the server; a résumé with no text is settled as empty, never re-read."""
     text = resume.extracted_text or ""
-    history = resume_reader.read(text)
-    if text.strip():
-        resume.parsed_history = history
-        resume.parsed_history_at = datetime.now(tz=UTC)
+    history = await asyncio.to_thread(resume_reader.read, text)
+    resume.parsed_history = history
+    resume.parsed_history_at = datetime.now(tz=UTC)
     return history
 
 
@@ -67,6 +73,8 @@ async def read_unread_resumes(session_maker=None) -> int:
                 .where(
                     Resume.parsed_history_at.is_(None),
                     Resume.extracted_text.is_not(None),
+                    func.length(func.trim(Resume.extracted_text)) > 0,
+                    Resume.read_attempts < MAX_ATTEMPTS,
                 )
                 .order_by(Resume.created_at.desc())
                 .limit(BACKFILL_PER_RUN)
@@ -91,9 +99,15 @@ async def read_in_background(resume_id: uuid.UUID) -> None:
             )
             if resume is None or resume.parsed_history_at is not None:
                 return
+            if resume.read_attempts >= MAX_ATTEMPTS:
+                return
+            # Counted first: a reading that crashes or hangs still counts.
+            resume.read_attempts += 1
+            await db.commit()
             await read_resume(resume)
             await db.commit()
     except Exception as exc:  # a background task must never crash the app
-        logger.warning("reading résumé %s failed: %s", resume_id, exc)
+        # Only the kind of error: never the résumé's text.
+        logger.warning("reading résumé %s failed: %s", resume_id, type(exc).__name__)
     finally:
         _reading.discard(resume_id)

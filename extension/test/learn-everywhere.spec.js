@@ -105,3 +105,11 @@ describe("answers taught on one site before spec 020 become answers everywhere",
     expect(promotions(t, [])).toEqual([]);
   });
 });
+
+describe("worked-out answers are never learned", () => {
+  it("today's date is never saved and never taken from a saved answer", () => {
+    expect(learnKeyFor(field("Today's Date"), "x")).toBeNull();
+    const d = resolve(field("Today's Date"), copy([{ question_key: "@today_date", answer: "01/01/2020" }], { today_date: ["11/24/2026"] }));
+    expect(d.values[0]).toBe("11/24/2026");
+  });
+});

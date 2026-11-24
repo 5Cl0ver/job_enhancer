@@ -163,3 +163,17 @@ test("the résumé chosen for an application is uploaded, and its jobs fill the 
   expect(api.calls("/v1/autofill/resumes/resume-2/file").length).toBeGreaterThan(0);
   await Promise.all([page.close(), panel.close()]);
 });
+
+test("a chosen résumé that can't be loaded is never swapped silently: the panel says so", async () => {
+  api.state.resumes = { "resume-3": { filename: "wren-broken.pdf", bytes: Buffer.from("%PDF"), details: {} } };
+  api.override("/v1/autofill/resumes/resume-3/file", { status: 404, body: { detail: "Not found" } });
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/employment.html"));
+  const panel = await panelFor(page);
+  const choice = panel.getByTestId("resume-choice");
+  await expect(choice).toBeVisible({ timeout: 8000 });
+  await choice.getByRole("button", { name: "Change" }).click();
+  await choice.getByLabel("Résumé for this application").selectOption("resume-3");
+  await expect(panel.getByTestId("resume-choice-failed")).toContainText("Couldn't load wren-broken.pdf");
+  await Promise.all([page.close(), panel.close()]);
+});

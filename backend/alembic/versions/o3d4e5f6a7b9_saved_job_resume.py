@@ -1,11 +1,12 @@
-"""The résumé chosen for a saved job (spec 020)
+"""The résumé chosen for a saved job; résumé reading attempts (spec 020)
 
 Revision ID: o3d4e5f6a7b9
 Revises: n2c3d4e5f6a8
 Create Date: 2026-11-24
 
 Job Catcher uploads and fills from this résumé when applying to the job; null
-keeps the résumé type's, else the active one. Additive.
+keeps the résumé type's, else the active one. resumes.read_attempts counts
+background readings so one that keeps failing is given up on. Additive.
 """
 
 import sqlalchemy as sa
@@ -20,6 +21,12 @@ depends_on = None
 
 
 def upgrade() -> None:
+    with op.batch_alter_table("resumes") as batch:
+        batch.add_column(
+            sa.Column(
+                "read_attempts", sa.Integer(), nullable=False, server_default="0"
+            )
+        )
     with op.batch_alter_table("saved_jobs") as batch:
         batch.add_column(
             sa.Column("resume_id", postgresql.UUID(as_uuid=True), nullable=True)
@@ -37,3 +44,5 @@ def downgrade() -> None:
     with op.batch_alter_table("saved_jobs") as batch:
         batch.drop_constraint("fk_saved_jobs_resume_id", type_="foreignkey")
         batch.drop_column("resume_id")
+    with op.batch_alter_table("resumes") as batch:
+        batch.drop_column("read_attempts")

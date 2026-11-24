@@ -51,6 +51,12 @@ class Resume(Base):
     # (spec 015; services/resume_history.py). Null until read.
     parsed_history: Mapped[dict | None] = mapped_column(JSON)
     parsed_history_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Background readings started (spec 020): counted BEFORE each reading, so a
+    # résumé that crashes or hangs the reader is given up on after a few tries
+    # instead of being picked again every hour.
+    read_attempts: Mapped[int] = mapped_column(
+        Integer, nullable=False, default=0, server_default="0"
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )

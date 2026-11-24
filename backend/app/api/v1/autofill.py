@@ -6,7 +6,7 @@ import uuid
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response
 from fastapi.responses import StreamingResponse
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, ValidationError, field_validator, model_validator
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import defer
@@ -18,6 +18,7 @@ from app.models.taught_field import TaughtField
 from app.models.user import User
 from app.services import autofill_bundle as svc
 from app.services import resume_history
+from app.utils.content_disposition import file_headers
 
 router = APIRouter()
 
@@ -280,15 +281,42 @@ class ResumeDetailsOut(ResumeDetails):
     read: bool
 
 
+def _valid(model: type[BaseModel], items: object, limit: int) -> list:
+    """The entries that pass the model; anything else is left out (never a
+    500 for one bad entry)."""
+    out = []
+    for item in items if isinstance(items, list) else []:
+        try:
+            out.append(model.model_validate(item))
+        except ValidationError:
+            continue
+    return out[:limit]
+
+
+def _texts(items: object, longest: int, limit: int) -> list[str]:
+    return [
+        i.strip()
+        for i in (items if isinstance(items, list) else [])
+        if isinstance(i, str) and i.strip() and len(i.strip()) <= longest
+    ][:limit]
+
+
 def _details(resume: Resume) -> ResumeDetailsOut:
-    stored = resume.parsed_history or {}
+    stored = resume.parsed_history if isinstance(resume.parsed_history, dict) else {}
+    websites = [
+        w
+        for w in _texts(stored.get("websites"), 300, 50)
+        if w.lower().startswith(("http://", "https://")) and " " not in w
+    ][:10]
     return ResumeDetailsOut(
         resume_id=resume.id,
         filename=resume.filename,
         read=resume.parsed_history_at is not None,
-        **ResumeDetails.model_validate(
-            {k: stored.get(k) or [] for k in ResumeDetails.model_fields}
-        ).model_dump(),
+        work=_valid(WorkEntry, stored.get("work"), 15),
+        education=_valid(SchoolEntry, stored.get("education"), 8),
+        skills=_texts(stored.get("skills"), 160, 80),
+        certifications=_texts(stored.get("certifications"), 160, 30),
+        websites=websites,
     )
 
 
@@ -370,8 +398,5 @@ async def resume_file(
     return StreamingResponse(
         io.BytesIO(resume.file_data),
         media_type=resume.mime_type,
-        headers={
-            "Content-Disposition": f'attachment; filename="{resume.filename}"',
-            "X-Resume-Filename": resume.filename,
-        },
+        headers=file_headers(resume.filename),
     )

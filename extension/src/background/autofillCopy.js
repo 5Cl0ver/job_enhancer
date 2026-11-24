@@ -13,6 +13,17 @@ const STAGED = "je_staged_bytes";
 // The résumé picked for one application (spec 020): its file and its details.
 const CHOSEN = "je_chosen_resume";
 const CHOSEN_MS = 10 * 60_000;
+
+/** The server percent-encodes a file's name so any name travels (RFC 6266). */
+export function fileNameOf(res, fallback = "resume.pdf") {
+  const raw = res.headers.get("X-Resume-Filename");
+  if (!raw) return fallback;
+  try {
+    return decodeURIComponent(raw);
+  } catch {
+    return raw;
+  }
+}
 const REFRESH_MS = 60_000;
 
 /**
@@ -36,7 +47,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
       [RESUME]: {
         stamp,
         b64,
-        filename: res.headers.get("X-Resume-Filename") || meta.filename || "resume.pdf",
+        filename: fileNameOf(res, meta.filename || "resume.pdf"),
         mime: res.headers.get("Content-Type") || meta.mime || "application/pdf",
       },
     });
@@ -105,30 +116,46 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     return out;
   }
 
-  /** A chosen résumé's file and details (cached by résumé for a few minutes). */
-  async function chosenResume(t, resumeId) {
+  /**
+   * A chosen résumé's file and details (cached by résumé and account for a
+   * few minutes). Null when either can't be loaded — the caller says so.
+   */
+  async function chosenResume(t, resumeId, email) {
+    const gen = generation;
     const { [CHOSEN]: cached } = await chrome.storage.local.get(CHOSEN);
-    if (cached?.id === resumeId && Date.now() - (cached.at || 0) < CHOSEN_MS) return cached;
+    if (cached?.id === resumeId && cached.email === email && Date.now() - (cached.at || 0) < CHOSEN_MS) return cached;
     const headers = { Authorization: `Bearer ${t}` };
     const id = encodeURIComponent(resumeId);
     const [fileRes, detailsRes] = await Promise.all([
       wakeFetch(`${api}/v1/autofill/resumes/${id}/file`, { headers }).catch(() => null),
       wakeFetch(`${api}/v1/autofill/resumes/${id}/details`, { headers }).catch(() => null),
     ]);
-    if (!fileRes?.ok) return null;
-    const details = detailsRes?.ok ? await detailsRes.json().catch(() => null) : null;
+    if (!fileRes?.ok || !detailsRes?.ok) return null;
+    const details = await detailsRes.json().catch(() => null);
+    if (!details) return null;
     const out = {
       id: resumeId,
+      email,
       at: Date.now(),
       b64: toB64(await fileRes.arrayBuffer()),
-      filename: fileRes.headers.get("X-Resume-Filename") || "resume.pdf",
+      filename: fileNameOf(fileRes),
       mime: fileRes.headers.get("Content-Type") || "application/pdf",
       history: details?.read
         ? { work: details.work || [], education: details.education || [], skills: details.skills || [], certifications: details.certifications || [], websites: details.websites || [] }
         : null,
     };
+    // Signed out (or another account) meanwhile: never cache the old one's.
+    if (gen !== generation) return null;
     await chrome.storage.local.set({ [CHOSEN]: out });
     return out;
+  }
+
+  /** Can the chosen résumé be loaded? (The panel checks before using it.) */
+  async function canLoad(resumeId) {
+    const t = await token();
+    if (!t) return false;
+    const { [COPY]: held } = await chrome.storage.local.get(COPY);
+    return !!(await chosenResume(t, resumeId, held?.email || "").catch(() => null));
   }
 
   /**
@@ -152,7 +179,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     // The résumé picked for this application (spec 020) wins — for the file
     // AND the jobs, schools and skills filled — then a staged tailored one,
     // then the usual one.
-    const chosen = resumeId ? await chosenResume(t, resumeId).catch(() => null) : null;
+    const chosen = resumeId ? await chosenResume(t, resumeId, held.email || "").catch(() => null) : null;
     const staged = chosen ? null : await stagedResume(t).catch(() => null);
     const { [RESUME]: usual } = await chrome.storage.local.get(RESUME);
     const r = chosen || staged || usual || null;
@@ -161,6 +188,8 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
       waited,
       copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history: chosen?.history || held.history },
       resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime } : null,
+      // The chosen résumé couldn't be loaded: this fill used the usual one.
+      ...(resumeId && !chosen ? { chosenFailed: true } : {}),
     };
   }
 
@@ -169,7 +198,11 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     generation++;
     inFlight = null; // the next refresh starts fresh, with the new account
     await chrome.storage.local.remove([COPY, RESUME, STAGED, CHOSEN]);
+    // Every tab's résumé choice belonged to the account that signed out.
+    const all = await chrome.storage.session.get(null).catch(() => ({}));
+    const choices = Object.keys(all).filter((k) => k.startsWith("je_resume_choice:"));
+    if (choices.length) await chrome.storage.session.remove(choices);
   }
 
-  return { get, refresh, wipe };
+  return { get, refresh, wipe, canLoad };
 }

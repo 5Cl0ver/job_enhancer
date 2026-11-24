@@ -89,11 +89,26 @@ _INLINE = re.compile(
 )
 
 _BULLET = re.compile(r"^\s*(?:[-•*▪◦●·‣–]|\d+\.)\s+")
+# Bounded on purpose (spec 020 security review): no unbounded runs, so a long
+# line of "a-a-a-…" can't make the search slow.
 _URL = re.compile(
-    r"\b(?:https?://)?(?:www\.)?(?:linkedin\.com/in/[\w\-]+|github\.com/[\w\-]+|"
-    r"[\w\-]+\.(?:dev|io|me|com|net|org)/[\w\-/]*)",
+    r"(?<![\w-])(?:https?://)?(?:www\.)?(?:linkedin\.com/in/[\w-]{1,100}|"
+    r"github\.com/[\w-]{1,100}|[\w-]{1,100}\.(?:dev|io|me|com|net|org)/[\w/-]{0,100})",
     re.IGNORECASE,
 )
+
+# The reader only ever looks at this much (spec 020 security review): a résumé
+# is a page or two, and every pattern runs on one short line at a time.
+MAX_TEXT = 50_000
+MAX_LINE = 400
+YEARS = range(1900, 2101)
+
+
+def _year(value: str) -> int | None:
+    n = int(value)
+    return n if n in YEARS else None
+
+
 _SCHOOLISH = re.compile(
     r"\b(university|college|school|institute|academy|polytechnic|community college|"
     r"bootcamp)\b",
@@ -115,14 +130,14 @@ def _point(text: str) -> tuple[int | None, int | None, bool]:
         return None, None, True
     m = re.match(rf"({_MONTH})\s+(\d{{4}})", t, re.IGNORECASE)
     if m:
-        return _MONTHS.get(m.group(1).lower().rstrip(".")), int(m.group(2)), False
+        return _MONTHS.get(m.group(1).lower().rstrip(".")), _year(m.group(2)), False
     m = re.match(r"(\d{1,2})/(\d{4})", t)
     if m:
         month = int(m.group(1))
-        return (month if 1 <= month <= 12 else None), int(m.group(2)), False
+        return (month if 1 <= month <= 12 else None), _year(m.group(2)), False
     m = re.match(r"(\d{4})", t)
     if m:
-        return None, int(m.group(1)), False
+        return None, _year(m.group(1)), False
     return None, None, False
 
 
@@ -145,8 +160,8 @@ def _dates(line: str) -> dict | None:
 def _sections(text: str) -> dict[str, list[str]]:
     out: dict[str, list[str]] = {}
     kind = "top"
-    for raw in text.splitlines():
-        line = raw.strip()
+    for raw in text[:MAX_TEXT].splitlines():
+        line = raw.strip()[:MAX_LINE]
         if not line:
             continue
         inline = _INLINE.match(line)
@@ -319,6 +334,13 @@ def _work(lines: list[str]) -> list[dict]:
     return jobs[:12]
 
 
+_BRACKET = re.compile(r"\([^()]{0,80}\)")
+
+
+def _drop_dated(m: re.Match) -> str:
+    return "" if _YEAR_ONLY.search(m.group(0)) else m.group(0)
+
+
 def _education(lines: list[str]) -> list[dict]:
     schools: list[dict] = []
     for line in lines:
@@ -330,7 +352,8 @@ def _education(lines: list[str]) -> list[dict]:
         parts = [
             t.strip() for p in _split_head(text) for t in p.split(", ") if t.strip()
         ]
-        parts = [re.sub(r"\(\s*[^)]*\d{4}[^)]*\)", "", p).strip(" ,.-") for p in parts]
+        # "(2016)", "(Aug 2014 - May 2016)": a short bracket holding a year.
+        parts = [_BRACKET.sub(_drop_dated, p).strip(" ,.-") for p in parts]
         school = next((p for p in parts if _SCHOOLISH.search(p)), parts[0])
         rest = [p for p in parts if p is not school]
         degree, field = "", ""
@@ -343,7 +366,7 @@ def _education(lines: list[str]) -> list[dict]:
                 field = _YEAR_ONLY.sub("", tail).strip(" ,.-") or field
             elif not field and not _YEAR_ONLY.fullmatch(p.strip()):
                 field = _YEAR_ONLY.sub("", p).strip(" ,.-")
-        years = [int(y.group(0)) for y in _YEAR_ONLY.finditer(text)]
+        years = [y for y in (_year(m.group(0)) for m in _YEAR_ONLY.finditer(text)) if y]
         schools.append(
             {
                 "school": school[:200],
@@ -389,6 +412,7 @@ def read(text: str) -> dict:
             "certifications": [],
             "websites": [],
         }
+    text = text[:MAX_TEXT]
     parts = _sections(text)
     mixed = parts.get("education_certs", [])
 
@@ -405,12 +429,13 @@ def read(text: str) -> dict:
         and not re.search(r"\bno degree\b", line, re.IGNORECASE)
     ]
     websites: list[str] = []
-    for m in _URL.finditer(text):
-        url = re.sub(
-            r"^(https?://)?(www\.)?", "https://", m.group(0), flags=re.IGNORECASE
-        ).rstrip("/.")
-        if url.lower() not in (w.lower() for w in websites):
-            websites.append(url)
+    for line in text.splitlines():
+        for m in _URL.finditer(line[:MAX_LINE]):
+            url = re.sub(
+                r"^(https?://)?(www\.)?", "https://", m.group(0), flags=re.IGNORECASE
+            ).rstrip("/.")
+            if len(url) <= 300 and url.lower() not in (w.lower() for w in websites):
+                websites.append(url)
     return {
         "work": _work(parts.get("work", [])),
         "education": _education(education_lines),

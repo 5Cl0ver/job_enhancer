@@ -40,6 +40,9 @@ export function isResumeUpload(field) {
 /** Legal identity: learned only from an explicit point-and-save, never from typing. */
 export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "email", "email_confirm"]);
 
+/** Worked out fresh each time (today's date): never learned, never a saved answer. */
+export const COMPUTED_KEYS = new Set(["today_date"]);
+
 // How close two wordings must be (spec 020, research R3): close enough fills,
 // near is only offered ("Use saved answer"), anything less is a new question.
 export const CLOSE = 0.85;
@@ -61,6 +64,7 @@ export function learnKeyFor(field, site) {
   if (guard === "essay") return field.key ? { scope: "essay", key: answerKey("essay", site, field.key) } : null;
   if (guard || field.kind === "file" || field.kind === "checkbox") return null;
   const profileKey = profileKeyFor(field);
+  if (profileKey && COMPUTED_KEYS.has(profileKey)) return null;
   if (profileKey) return { scope: "all", key: `@${profileKey}`, profileKey };
   if (!field.key || field.key.length < 3) return null;
   if (isCompanySpecific(field.question)) return site ? { scope: "site", key: answerKey("site", site, field.key) } : null;
@@ -136,7 +140,7 @@ export function resolve(field, copy) {
   const key = profileKeyFor(field); // never the user's own details for someone else
   // What the user taught beats the profile (spec 020): correct a box once and
   // every site asking it gets the correction.
-  const learned = learnedFor(field, copy, key);
+  const learned = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
   const use = (l) => ({ values: [l.answer], source: "learned", learnKey: l.question_key, ...(key ? { key } : {}) });
   if (learned && learned.tier !== "close" && learned.tier !== "offer") return use(learned);
   if (key) {

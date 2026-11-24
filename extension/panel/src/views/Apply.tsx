@@ -393,7 +393,7 @@ interface ResumeRow {
 export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged: string | null }) {
   const { tab, reloadSaved } = usePanel();
   const [resumes, setResumes] = React.useState<ResumeRow[] | null>(null);
-  const [choice, setChoice] = React.useState<{ resumeId: string; filename: string } | null>(null);
+  const [choice, setChoice] = React.useState<{ resumeId: string; filename: string; failed?: boolean } | null>(null);
   const [open, setOpen] = React.useState(false);
   const [note, setNote] = React.useState("");
 
@@ -412,8 +412,8 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
   React.useEffect(() => {
     if (tab.id == null || !jobResume || choice) return;
     const filename = resumes?.find((r) => r.id === jobResume)?.filename || "";
-    send({ type: "chooseResume", tabId: tab.id, resumeId: jobResume, filename, remember: false }).then(() =>
-      setChoice({ resumeId: jobResume, filename }),
+    send({ type: "chooseResume", tabId: tab.id, resumeId: jobResume, filename, remember: false }).then((r) =>
+      setChoice({ resumeId: jobResume, filename, failed: r?.loads === false }),
     );
   }, [tab.id, jobResume, choice, resumes]);
 
@@ -421,7 +421,7 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
     if (tab.id == null) return;
     const row = resumes?.find((r) => r.id === id);
     const res = await send({ type: "chooseResume", tabId: tab.id, resumeId: id || null, filename: row?.filename || "", jobId: match?.id });
-    setChoice(id ? { resumeId: id, filename: row?.filename || "" } : null);
+    setChoice(id ? { resumeId: id, filename: row?.filename || "", failed: res?.loads === false } : null);
     setOpen(false);
     setNote(match && res?.saved === false ? "Using it here, but couldn't save it to the job. Try again later." : "");
     if (match) reloadSaved();
@@ -459,6 +459,13 @@ export function ResumeChoice({ match, staged }: { match: SavedJob | null; staged
         </Select>
       )}
       {open && <Muted>Uploads this résumé and fills jobs, schools and skills from it{match ? ", for this job from now on" : ""}.</Muted>}
+      {choice?.failed && (
+        <div data-testid="resume-choice-failed">
+          <Alert tone="warning">
+            Couldn't load {choice.filename || "that résumé"}, so this application uses {staged || active?.filename || "your usual résumé"}. Press Change to try again or pick another.
+          </Alert>
+        </div>
+      )}
       {note && <Alert tone="warning">{note}</Alert>}
     </div>
   );

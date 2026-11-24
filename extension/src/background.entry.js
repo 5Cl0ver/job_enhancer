@@ -1147,18 +1147,26 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The résumé picked for this tab's application, if any (spec 020).
         const tabId = sender.tab?.id;
         const { [choiceKey(tabId)]: choice } = tabId != null ? await chrome.storage.session.get(choiceKey(tabId)) : {};
-        sendResponse({ ok: true, ...(await autofill.get({ resumeId: choice?.resumeId || null })) });
+        const got = await autofill.get({ resumeId: choice?.resumeId || null });
+        // Never a silent switch: the panel says the chosen résumé failed.
+        if (choice && !!got.chosenFailed !== !!choice.failed) {
+          await chrome.storage.session.set({ [choiceKey(tabId)]: { ...choice, failed: !!got.chosenFailed } });
+          changed(tabId);
+        }
+        sendResponse({ ok: true, ...got });
       } else if (msg.type === "listResumes") {
         sendResponse(await listResumes());
       } else if (msg.type === "chooseResume") {
         // "Filling from … · Change" (spec 020): this tab's application uses
         // this résumé; with a linked job, the job keeps it too.
-        if (msg.resumeId) await chrome.storage.session.set({ [choiceKey(msg.tabId)]: { resumeId: msg.resumeId, filename: msg.filename || "" } });
+        // Checked first: a résumé that can't be loaded is never used silently.
+        const loads = msg.resumeId ? await autofill.canLoad(msg.resumeId) : true;
+        if (msg.resumeId) await chrome.storage.session.set({ [choiceKey(msg.tabId)]: { resumeId: msg.resumeId, filename: msg.filename || "", failed: !loads } });
         else await chrome.storage.session.remove(choiceKey(msg.tabId));
         let saved = true;
         if (msg.jobId && msg.remember !== false) saved = (await setJobResume(msg.jobId, msg.resumeId || null)).ok;
         changed(msg.tabId);
-        sendResponse({ ok: true, saved });
+        sendResponse({ ok: true, saved, loads });
       } else if (msg.type === "getResumeChoice") {
         const { [choiceKey(msg.tabId)]: choice } = await chrome.storage.session.get(choiceKey(msg.tabId));
         sendResponse({ ok: true, choice: choice || null });
