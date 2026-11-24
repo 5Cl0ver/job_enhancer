@@ -26,7 +26,13 @@ Each decision lists what was chosen, why, and what else was considered. Facts ab
 **Decision**:
 - The workflow writes `config.js` from repository **variables**: `JC_API_BASE`, `JC_APP_URL`, `JC_SUPABASE_URL`, `JC_SUPABASE_ANON_KEY`. These are public values; the anon/publishable key is public by design.
 - The workflow then **fails** if any of them is empty, isn't `https://`, or contains `localhost`, `127.0.0.1` or `0.0.0.0`.
-- A smoke step unzips the result and checks that every manifest-referenced file exists.
+- A smoke step unzips the result and checks that every manifest-referenced file exists, and that nothing like `.env`, `.pem` or source maps ships.
+- **Hardening:**
+  - `permissions: {}` at the top; `contents: write` only on the release job.
+  - Third-party actions are pinned to full commit SHAs.
+  - Only `GITHUB_TOKEN` is used, and `set -euo pipefail` everywhere.
+  - The commit subject reaches the notes through an environment variable, never interpolated into the script.
+  - The zip's **SHA-256** goes into `latest.json` and the release notes; `/job-catcher` shows it under "Check the download".
 
 **Rationale**: this is a past failure mode (memory: "extension config.js must ALWAYS point at live Render/Vercel"). A hard gate in the release workflow makes it impossible to repeat.
 
@@ -50,38 +56,49 @@ Each decision lists what was chosen, why, and what else was considered. Facts ab
 
 ## R4. One-press "Connect to Job Enhancer" (works for GitHub sign-ups)
 
-**Decision**: a backend-brokered device-style flow, with Supabase minting a **separate** session for the panel. Confirmed in Supabase Auth docs (Context7, `/supabase/auth`): `POST /admin/generate_link` with `type: "magiclink"` returns `hashed_token`, and `POST /verify` with `{type, token_hash}` returns `access_token` + `refresh_token`.
+**Decision (revised 2026-11-23, built in PR A)**: Job Catcher gets **its own pass** from our backend, a `jcx_` token, instead of a Supabase session. **No Supabase secret is needed**, so the owner has no setup to do.
 
-1. The panel calls `POST /v1/extension/connect/start` and gets back `{code, poll_token, expires_in: 300}`.
-   - `code`: 8 characters, shown in the app and the panel so the person can confirm they match.
-   - `poll_token`: 32 random bytes. It is kept only by the panel; the server stores just its hash.
-2. The panel opens `APP_URL/connect?code=…`.
-   - Signed out: Login, which now honours `?redirect=` (R7), and back.
-   - The page names the account and "Job Catcher on this computer", with **Connect** and **Cancel**.
-3. **Connect** calls `POST /v1/extension/connect/approve {code}` with the user's JWT.
-4. The panel polls `POST /v1/extension/connect/poll {poll_token}` every 2 seconds.
-   - Once approved, the server calls Supabase `generate_link` (magiclink) for the user's email with the **service-role key**, and returns the `hashed_token` exactly once.
-   - The request is then marked used.
-5. The panel calls Supabase `POST /auth/v1/verify {type:"magiclink", token_hash}` itself and stores the session. This is the same storage and refresh path as password sign-in today.
+1. **Start.** The panel makes a random **proof** (32 bytes) and sends only its sha256 to `POST /v1/extension/connect/start`. It gets back an 8-character `code` and a secret `poll_token` (32 bytes). The server stores only the hashes.
+2. **Open the app.** The panel opens `APP_URL/connect?code=…`.
+   - Signed out: Login, which now honours a safe `?redirect=`, then back here.
+   - The page asks **the Job Catcher in the same Chrome** for the proof, via `chrome.runtime.sendMessage(PINNED_ID, {type:"connectProof", code})`.
+   - Job Catcher's manifest `externally_connectable` lists **only the app's address**. The background also checks `sender.origin === APP_URL origin` and answers **only** for the code it is waiting on.
+3. **Approve.** **Connect** calls `POST /v1/extension/connect/approve {code, proof}` with the person's app session (a JWT, never a `jcx_` pass). The server checks `sha256(proof) == proof_hash` with `hmac.compare_digest`.
+4. **Collect the pass.** The panel polls `POST /v1/extension/connect/poll {poll_token}` every 2 s (plus on each panel check and a 30-second alarm). Once approved, it receives `jcx_` + 43 random characters **exactly once**: an atomic `approved → used` update. The server stores only its sha256.
+5. **Use it.** `get_current_user` accepts `Bearer jcx_…` (looked up by hash), alongside Supabase JWTs.
 
 **Rationale**:
-- It gives the panel its **own** session, so no refresh token is shared with the web app. Shared refresh tokens would trip Supabase's refresh-token reuse detection and sign both out.
-- It works for any identity (GitHub, email).
-- It needs no extension ID or `externally_connectable`.
-- No email is sent, because `generate_link` doesn't send one.
-- `token_hash` is single-use and short-lived on the Supabase side too.
+- It works for every account, GitHub included.
+- There's no shared refresh token (Supabase's reuse detection would sign both out).
+- No service-role key exists anywhere.
+- Passes are revocable per computer.
 
-**Security**:
-- The code alone can't sign anything in.
-- Only the holder of `poll_token` (the panel that started the request) receives the token hash.
-- Approve requires the user's JWT.
-- A request is single-use, expires after 5 minutes, and is rate-limited (start: 10/hour per IP; approve: 10/hour per user).
-- The service-role key lives only in Render env (`SUPABASE_SERVICE_ROLE_KEY`) and is never logged or sent to clients.
+**Security notes** (owner: "make sure everything is very secure"):
+- **Device-code phishing is blocked.**
+  - The attack: someone starts a Connect and sends you their `/connect` link; you approve, and their Job Catcher gets your account.
+  - Approval needs the proof, which only the Job Catcher that started the request holds, and it only hands it to the app's own page in **the same browser**, for **its own** code.
+  - If the page can't reach that Job Catcher, it refuses in plain words: "Open this link in the same Chrome where Job Catcher is installed, by pressing Connect in Job Catcher." It can never be approved from another browser.
+- **Secrets stay out of URLs, logs and disk.**
+  - Codes, poll tokens, proofs and passes travel only in request **bodies**, never in URLs (so never in access logs), and are never logged.
+  - Only sha256 hashes are stored server-side.
+  - The panel keeps the proof and poll token in `chrome.storage.session` (trusted extension contexts only, never on disk). The connect state is removed once connected.
+- **No oracle.**
+  - Codes come from a 31-character alphabet with no 0/O/1/I/L.
+  - Every bad case (unknown, expired, used, cancelled, wrong proof) returns the same 404.
+  - Rate limits: start 10/hour per IP, approve 10/hour per user, status and cancel 30/minute, poll 60/minute.
+- **Requests** last 5 minutes and are single-use.
+- **Passes:**
+  - They stop after **90 days unused**, and after **one year** regardless.
+  - At most **10** per account; the oldest is disconnected.
+  - **Sign out** in Job Catcher revokes its pass on the server first (`DELETE /v1/extension/tokens/current`).
+  - **Disconnect** on the app's Job Catcher page revokes one at once; the next call gets 401 and the panel shows signed out.
+  - A pass can't approve a Connect or list or revoke connections (403: "Do this in the Job Enhancer app"). Revoking only ever touches the owner's own passes.
+  - Rate limiting keys a pass as `ext:` + 12 hex characters of its hash, never the pass itself.
 
 **Alternatives considered**:
-- **The app posts its own session to the extension** (`externally_connectable` + a pinned extension ID): this shares one refresh token, which leads to reuse detection and surprise sign-outs.
-- **Backend-issued API tokens for the extension:** the auth middleware, MCP and the panel's Supabase calls would all need a second token type.
-- **OAuth PKCE inside the extension** (`chrome.identity.launchWebAuthFlow` with GitHub via Supabase): needs per-install redirect URLs registered in Supabase. Unpacked IDs differ per path unless pinned, and it doesn't cover email users without passwords.
+- **Supabase admin `generate_link` + `verify`.** It gives a separate Supabase session, confirmed in the Supabase Auth docs. But it needs the service-role key on Render, which the owner wanted no setup for, and that key is far more powerful than needed.
+- **The app posts its own session to the extension:** shares one refresh token, leading to reuse detection and surprise sign-outs.
+- **OAuth PKCE in the extension:** needs per-install redirect URLs in Supabase, and doesn't cover password-less email users.
 
 ## R5. Keep Job Catcher's identity stable across updates
 
@@ -122,7 +139,8 @@ Each decision lists what was chosen, why, and what else was considered. Facts ab
 **Decision**:
 - **Redirect:** `Login` reads `?redirect=` or `location.state.from` and navigates there after sign-in, **only** if it's a same-origin path starting with `/` and not `//`.
 - **Forgot password:** `supabase.auth.resetPasswordForEmail(email, {redirectTo: APP_URL + "/reset-password"})`, then a new `/reset-password` page calls `updateUser({password})`. The message is always "If that email has an account, a reset link is on its way."
-- **Ops:** add `/reset-password` and `/connect` to Supabase Auth → URL Configuration → Redirect URLs.
+- **No dashboard change needed:** if `/reset-password` isn't on Supabase's Redirect URL list, Supabase falls back to the Site URL. `lib/recovery.ts` then sees `type=recovery` or the `PASSWORD_RECOVERY` event and opens `/reset-password` wherever the link lands. New passwords need at least 8 characters, and the forgot page always shows the same message.
+- **Redirect safety:** `safeRedirect` refuses absolute URLs, `//host`, backslashes, encoded slashes or backslashes (decoded twice), `javascript:` and other schemes, and control characters. GitHub sign-in keeps the target in sessionStorage across the round trip.
 
 **Rationale**: these are standard Supabase flows, and both fix real gaps (connector consent and Connect both depend on redirect working).
 

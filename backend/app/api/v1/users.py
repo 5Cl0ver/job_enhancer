@@ -15,6 +15,7 @@ from app.middleware.auth import get_current_user
 from app.models.application_profile import ApplicationProfile
 from app.models.collection import Collection
 from app.models.custom_answer import CustomAnswer
+from app.models.extension import ExtensionInstall, ExtensionToken
 from app.models.generated_document import GeneratedDocument
 from app.models.job_listing import JobListing
 from app.models.pipeline_stage import PipelineStage
@@ -290,6 +291,25 @@ async def export_data(
         .all()
     )
 
+    ext_tokens = (
+        (
+            await db.execute(
+                select(ExtensionToken).where(ExtensionToken.user_id == user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+    ext_installs = (
+        (
+            await db.execute(
+                select(ExtensionInstall).where(ExtensionInstall.user_id == user.id)
+            )
+        )
+        .scalars()
+        .all()
+    )
+
     def _dt(v: datetime | None) -> str | None:
         return v.isoformat() if v else None
 
@@ -367,6 +387,25 @@ async def export_data(
                 "created_at": _dt(t.created_at),
             }
             for t in taught_fields
+        ],
+        # Connected Job Catchers: never the passes themselves (or their hashes).
+        "job_catcher_connections": [
+            {
+                "browser": t.browser,
+                "created_at": _dt(t.created_at),
+                "last_used_at": _dt(t.last_used_at),
+                "revoked_at": _dt(t.revoked_at),
+            }
+            for t in ext_tokens
+        ],
+        "job_catcher_installs": [
+            {
+                "version": i.version,
+                "browser": i.browser,
+                "first_seen_at": _dt(i.first_seen_at),
+                "last_seen_at": _dt(i.last_seen_at),
+            }
+            for i in ext_installs
         ],
     }
 

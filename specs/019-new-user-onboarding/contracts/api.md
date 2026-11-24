@@ -70,61 +70,63 @@ The AI endpoints (`/ai/generate`, `/ai/autofill-map`, `/ai/work-history`, `/user
 
 ## Job Catcher
 
+Codes, poll tokens, proofs and passes travel only in request **bodies**. Every way a code can be wrong answers the **same 404**: `{"detail": "That Connect link has expired. Press Connect in Job Catcher again."}`.
+
 ### `GET /extension/latest` (public, cached 10 minutes)
 
 ```json
-{ "version": "0.35.0", "notes": "Connect with one press; update notes", "published_at": "2026-11-24T…",
+{ "version": "0.35.0", "notes": "…", "published_at": "…", "sha256": "<64 hex>",
   "download_url": "https://github.com/5Cl0ver/job_enhancer/releases/latest/download/job-catcher.zip" }
 ```
 
-If GitHub can't be reached, it returns the last known value, or `{version: null}`.
-
 ### `POST /extension/hello`
 
-Request:
+- Request: `{ "install_id": "[A-Za-z0-9_-]{8,64}", "version": "0.35.0", "browser": "Chrome 142" }`
+- Response: `{ "latest": "0.35.0", "update_available": false }`
 
-```json
-{ "install_id": "c3f…(≤64)", "version": "0.35.0", "browser": "Chrome 142" }
-```
+### `POST /extension/connect/start` (public, 10/hour per IP)
 
-Response: `{ "latest": "0.35.0", "update_available": false }`
+- Request: `{ "proof_hash": "<sha256 hex of the panel's proof>" }`
+- Response: `{ "code": "K7QM-3XPD", "poll_token": "<43 chars>", "expires_in": 300 }`
 
-Upserts `extension_installs`. The panel sends it on sign-in and at most hourly.
+### `POST /extension/connect/status` (app session, 30/minute)
 
-### `POST /extension/connect/start` (public)
+- Request: `{ "code" }`
+- Response: `{ "status": "pending", "expires_in": 241 }`, or the 404.
 
-- Rate limit: 10/hour per IP.
-- Response: `{ "code": "K7QM-3XPD", "poll_token": "<43-char base64url>", "expires_in": 300, "connect_url": "https://<app>/connect?code=K7QM-3XPD" }`
+### `POST /extension/connect/approve` (app session only, never a pass; 10/hour)
 
-### `GET /extension/connect/{code}`
+- Request: `{ "code", "proof" }`
+- Response: `200 {"status":"approved"}`, or the 404 (including a wrong proof).
 
-Used by the app's approval page. Response: `{ "status": "pending", "expires_in": 241 }`. Returns 404 if the code is unknown or expired.
+### `POST /extension/connect/cancel` (30/minute)
 
-### `POST /extension/connect/approve`
+- Request: `{ "poll_token" }` (from Job Catcher) or `{ "code" }` (from the approval page).
 
-- Request: `{ "code": "K7QM-3XPD" }`
-- Rate limit: 10/hour per user.
+### `POST /extension/connect/poll` (public, 60/minute)
+
+- Request: `{ "poll_token" }`
 - Responses:
-  - `200 {"status":"approved"}`
-  - `409` if the request is not pending
-  - `404` if the code is unknown or expired
+  - `{"status":"pending"|"expired"|"cancelled"|"used"}`
+  - `{"status":"approved","token":"jcx_…","email":"…"}`, returned **once**
+  - The 404 for an unknown token
 
-### `POST /extension/connect/cancel`
+### `GET /extension/tokens` (app session only)
 
-- Request: `{ "code": "…" }`
-- Response: `200 {"status":"cancelled"}`
+Lists live connections: `[{id, browser, version, created_at, last_used_at}]`.
 
-### `POST /extension/connect/poll` (public)
+### `DELETE /extension/tokens/{id}` (app session only)
 
-- Request: `{ "poll_token": "…" }`
-- Rate limit: 60/minute per IP.
-- Responses:
-  - `200 {"status":"pending"}`
-  - `200 {"status":"approved", "email":"…", "token_hash":"…", "type":"magiclink"}`. Returned once; the request becomes `used`.
-  - `200 {"status":"cancelled"|"expired"|"used"}`
-  - `404` if the token is unknown
-- The panel then calls Supabase `POST {SUPABASE_URL}/auth/v1/verify` with `{type:"magiclink", token_hash}` and the anon key, and stores the returned session.
-- If minting fails (service key missing or Supabase down), the response is `503 {"detail":"Connect isn't available right now. Sign in with your password instead."}`.
+Disconnects one of the person's own computers. Returns 404 for anyone else's.
+
+### `DELETE /extension/tokens/current` (the pass itself)
+
+Job Catcher's sign-out. Returns 204.
+
+### Auth
+
+- Every endpoint that takes a user also accepts `Bearer jcx_…`, except approve, tokens list and delete-by-id, which return 403 "Do this in the Job Enhancer app."
+- Revoked, idle (90 days), old (365 days) or unknown passes get 401.
 
 ## Admin
 

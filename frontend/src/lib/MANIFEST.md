@@ -16,6 +16,9 @@ Shared utilities and external-service clients.
 | `openFile.ts` | `openOwnFile(path)`: open one of the user's own files (a resume) in a new tab; fetched with the sign-in token, since a plain link can't send it. |
 | `prefs.ts` | Layout choices remembered on this device (`localStorage`): `readPref` / `writePref`. |
 | `utils.ts` | `cn()` — classname merge (clsx + tailwind-merge), used by shadcn/ui components. |
+| `safeRedirect.ts` | `safeRedirect()`: where to go after sign-in, only ever a page inside the app; keeps the target across a GitHub sign-in. |
+| `recovery.ts` | `watchPasswordRecovery()`: a reset link opens /reset-password wherever it lands. |
+| `jobCatcher.ts` | Job Catcher's pinned id, the download URL, `askProof()` for Connect, `isOlder()`. |
 
 **How this folder connects:** `api.ts` is called by every hook in `hooks/`;
 `supabase/client.ts` is used by `api.ts` and the auth routes

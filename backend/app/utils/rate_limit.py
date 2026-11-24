@@ -7,6 +7,8 @@ that's fine for bucketing; real verification happens in the auth
 dependency.
 """
 
+import hashlib
+
 from fastapi import Request
 from jose import jwt
 from slowapi.util import get_remote_address
@@ -14,6 +16,9 @@ from slowapi.util import get_remote_address
 
 def rate_limit_key(request: Request) -> str:
     auth = request.headers.get("Authorization", "")
+    if auth.startswith("Bearer jcx_"):
+        # A Job Catcher pass: bucket by a short hash, never the pass itself.
+        return "ext:" + hashlib.sha256(auth[7:].encode()).hexdigest()[:12]
     if auth.startswith("Bearer "):
         try:
             sub = jwt.get_unverified_claims(auth[7:]).get("sub")

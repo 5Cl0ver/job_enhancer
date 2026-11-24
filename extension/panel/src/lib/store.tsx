@@ -6,7 +6,8 @@ import { detectContext, type PageContext, type SavedJob } from "./context";
 import { send, targetTab } from "./chrome";
 import { useClaudeUrlState } from "./claudeUrl";
 
-type Auth = { state: "loading" | "in" | "out"; email: string };
+// `latest`: the newest Job Catcher release, when this one is older (spec 019).
+type Auth = { state: "loading" | "in" | "out"; email: string; latest?: string | null };
 
 /** One field autofill filled, in one frame of the tab (session.js report). */
 export interface FillEntry {
@@ -227,7 +228,7 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   const refreshAuth = React.useCallback(async () => {
     const res = await send({ type: "authStatus" });
     if (res?.signedIn) {
-      setAuth({ state: "in", email: res.email || "" });
+      setAuth({ state: "in", email: res.email || "", latest: res.updateAvailable ? res.latest : null });
       sync.reset();
       sync.check({ force: true });
     } else {
@@ -271,6 +272,8 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
     // A Save button on a page saved a job: show it.
     const onMessage = (msg: { type?: string }) => {
       if (msg?.type === "jobSaved") sync.check({ force: true });
+      // Connected (or signed out) elsewhere: catch up.
+      if (msg?.type === "authChanged") refreshAuth();
     };
     chrome.runtime.onMessage.addListener(onMessage);
     return () => {

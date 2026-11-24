@@ -42,13 +42,28 @@ One Alembic migration adds the tables and the column below. Every new user-owned
 
 Unique `(user_id, install_id)`. Upserted by `POST /v1/extension/hello`. The admin view and the "update available" note use the newest `last_seen_at`.
 
+## extension_tokens (new): Job Catcher passes
+
+| Field | Type | Notes |
+|---|---|---|
+| id | uuid PK | |
+| user_id | uuid FK users.id, cascade | |
+| token_hash | varchar(64), unique | sha256 of the `jcx_…` pass. The pass itself is never stored. |
+| install_id / browser | varchar(64) null | Filled by the first hello |
+| created_at / last_used_at / revoked_at | timestamptz | `last_used_at` is touched at most every 15 minutes |
+
+**Rules**:
+- A pass is refused when revoked, unused for 90 days, older than 365 days, or when its account is deleted.
+- At most 10 live passes per account; the oldest are revoked.
+
 ## extension_connect_requests (new, short-lived)
 
 | Field | Type | Notes |
 |---|---|---|
 | id | uuid PK | |
 | code | varchar(8), unique | Shown to the person. Unambiguous letters and digits (no 0/O/1/I). |
-| poll_token_hash | varchar(64) | sha256 of the panel's poll token. The raw token is never stored. |
+| poll_token_hash | varchar(64), unique | sha256 of the panel's poll token. The raw token is never stored. |
+| proof_hash | varchar(64) | sha256 of the starting Job Catcher's proof. Approval must present the proof. |
 | user_id | uuid null FK users.id | Set on approve |
 | status | varchar(16) | `pending` → `approved` → `used`; or `cancelled`; or `expired` (by time) |
 | expires_at | timestamptz | created + 5 minutes |

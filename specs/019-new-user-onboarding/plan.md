@@ -17,7 +17,7 @@ Make the app ready for friends who aren't the owner: no Yahoo, no Claude, no ide
    - A `/job-catcher` page with a six-step illustrated guide (R11).
    - Version check and "update available" (R3).
    - A pinned extension key so updates keep settings (R5).
-   - **Connect with one press**: a backend-brokered device flow that mints a separate Supabase session through admin `generate_link` + `verify` (R4). GitHub sign-ups can use Job Catcher for the first time.
+   - **Connect with one press**: a backend-brokered device flow that gives Job Catcher **its own revocable pass** (`jcx_`), with a proof that only the Job Catcher in the same Chrome can supply (R4). GitHub sign-ups can use Job Catcher for the first time, and no Supabase secret is needed.
    - Login honours `redirect`; forgot/reset password is added (R7).
 3. **Explain everything (US5):**
    - An `InfoBubble` on Base UI Popover (already installed) for hover, click and tap (R8).
@@ -89,7 +89,7 @@ Ships as **3 PRs**, each independently useful:
 | VI. Clean architecture | ✅ New logic sits in services (`onboarding`, `allowance`, `extension_connect`, `releases`). Routers stay thin. Help text is in one module. |
 | VII. Simplicity | ✅ No new frontend dependency (Base UI already there), no Redis (Postgres counters), GitHub Releases rather than new hosting. One justified addition below. |
 
-**Complexity justified**: a new secret, `SUPABASE_SERVICE_ROLE_KEY`, on Render. It is the only way to give a password-less (GitHub) account a separate extension session without sharing refresh tokens (R4). Its scope is limited to one server function, and it is never logged.
+**Complexity justified**: the auth layer accepts a second credential type, the Job Catcher pass. It is hashed, revocable, idle- and age-limited, capped per account, and refused for account-management actions. This avoids putting the far more powerful Supabase service-role key on the server (R4).
 
 *Re-checked after Phase 1 design: no new violations.*
 
@@ -118,7 +118,7 @@ backend/
 ├── app/models/{onboarding,extension_install,extension_connect,usage_counter,app_setting}.py
 ├── app/services/onboarding.py        # derive checklist, patch, backfill helpers
 ├── app/services/allowance.py         # spend / refund / remaining / exempt, Pacific periods
-├── app/services/extension_connect.py # start / approve / cancel / poll + Supabase generate_link
+├── app/services/extension_connect.py # start / approve (proof) / cancel / poll, jcx passes
 ├── app/services/releases.py          # GitHub latest release, 10-minute cache
 ├── app/api/v1/onboarding.py          # GET/PATCH /onboarding, GET /usage
 ├── app/api/v1/extension.py           # latest, hello, connect/*
@@ -162,6 +162,6 @@ Each PR goes through: branch → tests → build → independent review → gree
 
 ## Risks
 
-- **Supabase `generate_link` on GitHub-only users.** It works by email for any user, but **R4 needs a live smoke test** with a GitHub account before PR A merges. Fallback: password sign-in, plus the reset-password flow lets a GitHub user add one.
+- **A pass in chrome.storage.local** is as sensitive as a refresh token was. It is limited by idle and age caps, revocable from the app, and sign-out revokes it server-side.
 - **The pinned key changes the extension ID once.** The owner and laptop must re-add Job Catcher one time; it is announced in the PR and on `/job-catcher`. Existing chrome.storage settings on the old ID are lost once: Super autofill defaults on, and taught boxes and answers live server-side, so little is lost.
 - **GitHub API unreachable.** The page still links the `latest/download` URL; only the version text and update note are missing.

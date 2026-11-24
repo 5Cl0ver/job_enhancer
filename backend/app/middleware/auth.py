@@ -6,6 +6,8 @@ signature against the project's public keys, published as a JWKS at
 `https://<project-ref>.supabase.co/auth/v1/.well-known/jwks.json`.
 
 The frontend sends the session access token as `Authorization: Bearer <token>`.
+A connected Job Catcher may instead send its own pass, `Bearer jcx_…` (spec
+019): looked up by hash, revocable, never a Supabase token.
 """
 
 from typing import Annotated, Any
@@ -20,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.config import settings
 from app.database import get_db
 from app.models.user import User
+from app.services.extension_connect import TOKEN_PREFIX, user_for_token
 
 _bearer = HTTPBearer(auto_error=False)
 
@@ -97,6 +100,12 @@ async def get_current_user(
             headers={"WWW-Authenticate": "Bearer"},
         )
 
+    if credentials.credentials.startswith(TOKEN_PREFIX):
+        user = await user_for_token(db, credentials.credentials)
+        if user is None:
+            raise _unauthorized("Job Catcher is disconnected. Connect it again.")
+        return user
+
     claims = await _decode_token(credentials.credentials)
     email: str | None = claims.get("email")
     if not email:
@@ -123,6 +132,20 @@ async def get_current_user(
             admin_email=settings.admin_email,
         )
 
+    return user
+
+
+async def get_session_user(
+    credentials: Annotated[HTTPAuthorizationCredentials | None, Depends(_bearer)],
+    user: Annotated[User, Depends(get_current_user)],
+) -> User:
+    """The user, signed in to the app itself, never through a Job Catcher pass:
+    for approving a Job Catcher and managing connected computers."""
+    if credentials is not None and credentials.credentials.startswith(TOKEN_PREFIX):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Do this in the Job Enhancer app.",
+        )
     return user
 
 

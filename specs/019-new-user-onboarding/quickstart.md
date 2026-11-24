@@ -2,20 +2,25 @@
 
 All test data is invented: accounts like `wren@example.com` and the sample résumé `backend/tests/fixtures/` style files. Never use real personal data.
 
-## Prerequisites (one-time, owner)
+## Prerequisites (one-time)
 
-1. **Render env**: add `SUPABASE_SERVICE_ROLE_KEY` (Supabase → Project Settings → API → service_role). It is only used for Connect.
-2. **Supabase Auth → URL Configuration → Redirect URLs**: add `https://<app>/reset-password` and `https://<app>/connect`.
-3. **GitHub repo → Settings → Variables (Actions)**: add `JC_API_BASE`, `JC_APP_URL`, `JC_SUPABASE_URL`, `JC_SUPABASE_ANON_KEY`. These are live, public values.
-4. **Pinned extension key**: after the update, people re-add Job Catcher once from the new zip. The pinned ID means later updates keep their settings.
+**Nothing for the owner to configure.**
+- The release reads four public repository variables (`JC_API_BASE`, `JC_APP_URL`, `JC_SUPABASE_URL`, `JC_SUPABASE_ANON_KEY`). They were set from the live values when PR A was built.
+- Connect needs no Supabase secret (research R4), and forgot-password needs no dashboard change (R7).
+
+**After PR A merges**, re-add Job Catcher once on each computer. The new pinned key gives it a fixed id, `jihebibpgbfpmponcpphjbgnppodffed`, so later updates keep their settings:
+1. Download from `/job-catcher`.
+2. Remove the old Job Catcher.
+3. Load the new folder.
+4. Press Connect.
 
 ## Automated checks
 
 | Area | Command | Proves |
 |---|---|---|
-| Backend | `cd backend; .venv/Scripts/python -m pytest -q` | onboarding derive/patch; connect start/approve/poll (single use, expiry, wrong token, cancel, 503 without key); allowances (spend, refund, block, admin exempt, jsearch reserve, period rollover); hello/latest (cache, GitHub down); export/delete include new rows; admin columns |
+| Backend | `cd backend; .venv/Scripts/python -m pytest -q` | onboarding derive/patch; connect start/approve/poll (single use, expiry, wrong token, wrong proof, cancel, pass revoke/idle/age/cap, pass can't approve); allowances (spend, refund, block, admin exempt, jsearch reserve, period rollover); hello/latest (cache, GitHub down); export/delete include new rows; admin columns |
 | Frontend | `cd frontend; npm test; npm run build` | Welcome steps and skip; checklist ticks and hide; InfoBubble hover/tap/Esc; Login redirect safety (`//evil`, `https://evil` rejected); forgot/reset; Job Catcher page states (not installed / connected / outdated / phone) |
-| Extension | `cd extension; npm run check; npx playwright test` | Connect flow against the fake API (start → approve → poll → verify → signed in); expiry and cancel; update banner when `/extension/latest` is newer; hello sent once per hour |
+| Extension | `cd extension; npm run check; npx playwright test` | Connect flow against the fake API (start → the app page gets the proof → approve → poll → signed in with a pass; other codes and other sites get no proof; sign-out revokes); expiry and cancel; update banner when `/extension/latest` is newer; hello sent once per hour |
 | Release | push a manifest version bump to a test branch and run the workflow with `workflow_dispatch` | the zip contains manifest/config/icons/dist; config has only https live URLs; the workflow fails when a variable is localhost or empty |
 
 ## Manual end-to-end (one pass, about 15 minutes)

@@ -4,6 +4,7 @@ import {
   Brain,
   Briefcase,
   MailCheck,
+  Puzzle,
   Search,
   Settings,
   Shield,
@@ -30,6 +31,7 @@ export const NAV: NavItem[] = [
   { to: "/analytics", label: "Analytics", icon: BarChart3 },
   { to: "/ai-apply", label: "AI Apply", icon: Bot },
   { to: "/autofill", label: "Autofill memory", short: "Memory", icon: Brain },
+  { to: "/job-catcher", label: "Job Catcher", icon: Puzzle },
   { to: "/settings", label: "Settings", icon: Settings },
   { to: "/admin", label: "Admin", icon: Shield, adminOnly: true },
 ];

@@ -19,6 +19,11 @@ from app.models.custom_answer import CustomAnswer  # noqa: E402, F401
 from app.models.detected_event import DetectedEvent  # noqa: E402, F401
 from app.models.email_account import EmailAccount  # noqa: E402, F401
 from app.models.email_folder_state import EmailFolderState  # noqa: E402, F401
+from app.models.extension import (  # noqa: E402, F401
+    ExtensionConnectRequest,
+    ExtensionInstall,
+    ExtensionToken,
+)
 from app.models.generated_document import GeneratedDocument  # noqa: E402, F401
 from app.models.job_listing import JobListing  # noqa: E402, F401
 from app.models.pipeline_stage import PipelineStage  # noqa: E402, F401

@@ -19,6 +19,10 @@ React Router **page components** (the app's screens), wired up in
 | `SettingsPage.tsx` | `/settings` | Data export + account delete | `hooks/useProfile`, `lib/api` |
 | `AdminPage.tsx` | `/admin` | Owner-only dashboard (role-guarded) | `hooks/useAdmin`, `components/admin` |
 | `Placeholder.tsx` | — | Dev stub for un-ported pages (none currently) | — |
+| `JobCatcherPage.tsx` | `/job-catcher` | Get Job Catcher: download, 6-step guide, version and update note, connected computers (spec 019) | `hooks/useJobCatcher`, `components/jobcatcher` |
+| `ConnectPage.tsx` | `/connect?code=` | Approve a Job Catcher with one press; needs the proof from the Job Catcher in this Chrome (spec 019) | `lib/jobCatcher`, `hooks/useJobCatcher` |
+| `ForgotPasswordPage.tsx` | `/forgot-password` | Email a reset link; always the same neutral message | `lib/supabase/client` |
+| `ResetPasswordPage.tsx` | `/reset-password` | Choose a new password (8+ characters, twice) | `lib/supabase/client`, `lib/recovery` |
 
 **How this folder connects:** pages compose `components/*` for UI, call
 `hooks/*` (TanStack Query) for data → which hit `lib/api.ts` → FastAPI `/v1`.

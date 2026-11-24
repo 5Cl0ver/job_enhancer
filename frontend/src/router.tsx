@@ -13,6 +13,10 @@ import SettingsPage from "@/routes/SettingsPage";
 import AutofillMemoryPage from "@/routes/AutofillMemoryPage";
 import AdminPage from "@/routes/AdminPage";
 import EmailUpdatesPage from "@/routes/EmailUpdatesPage";
+import JobCatcherPage from "@/routes/JobCatcherPage";
+import ConnectPage from "@/routes/ConnectPage";
+import ForgotPasswordPage from "@/routes/ForgotPasswordPage";
+import ResetPasswordPage from "@/routes/ResetPasswordPage";
 import { useIsPhone } from "@/hooks/useIsPhone";
 
 /** Where the app opens: on a phone you check on your jobs; at a desk you search. */
@@ -30,6 +34,10 @@ export const router = createBrowserRouter([
   { path: "/auth/callback", element: <AuthCallback /> },
   // Claude connector consent screen (Supabase OAuth server redirects here).
   { path: "/oauth/consent", element: <OAuthConsent /> },
+  // Approve a Job Catcher (checks sign-in itself, like the consent screen).
+  { path: "/connect", element: <ConnectPage /> },
+  { path: "/forgot-password", element: <ForgotPasswordPage /> },
+  { path: "/reset-password", element: <ResetPasswordPage /> },
 
   // Protected app — DashboardLayout renders the sidebar + <Outlet/> for children
   {
@@ -48,6 +56,7 @@ export const router = createBrowserRouter([
       { path: "analytics", element: <AnalyticsPage /> },
       { path: "ai-apply", element: <AiApplyPage /> },
       { path: "autofill", element: <AutofillMemoryPage /> },
+      { path: "job-catcher", element: <JobCatcherPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
     ],

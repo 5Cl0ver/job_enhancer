@@ -92,6 +92,7 @@ test("sign in, then sign out from Settings", async () => {
   await ext.worker.evaluate(() => chrome.storage.local.clear());
   const { tab, panel, errors } = await panelFor(lab.url("/lab/posting.html"));
   await expect(panel.getByRole("heading", { name: "Sign in to Job Catcher" })).toBeVisible();
+  await panel.getByRole("button", { name: "or sign in with a password" }).click();
   await panel.getByLabel("Email").fill("wren@example.com");
   await panel.getByLabel("Password").fill("not-a-real-password");
   await panel.getByRole("button", { name: "Sign in" }).click();

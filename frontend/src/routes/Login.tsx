@@ -1,7 +1,8 @@
 import { useState } from "react";
-import { useNavigate } from "react-router-dom";
+import { Link, useLocation, useNavigate, useSearchParams } from "react-router-dom";
 import { Loader2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
+import { rememberRedirect, safeRedirect } from "@/lib/safeRedirect";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -10,6 +11,13 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 export function Login() {
   const navigate = useNavigate();
   const supabase = createClient();
+  const [params] = useSearchParams();
+  const location = useLocation();
+  // Back to where the person was going (only ever a page in this app).
+  const from = (location.state as { from?: { pathname?: string; search?: string } } | null)?.from;
+  const next = safeRedirect(
+    params.get("redirect") ?? (from?.pathname ? `${from.pathname}${from.search ?? ""}` : null),
+  );
 
   const [mode, setMode] = useState<"signin" | "signup">("signin");
   const [email, setEmail] = useState("");
@@ -27,12 +35,12 @@ export function Login() {
       if (mode === "signin") {
         const { error } = await supabase.auth.signInWithPassword({ email, password });
         if (error) throw error;
-        navigate("/", { replace: true });
+        navigate(next, { replace: true });
       } else {
         const { data, error } = await supabase.auth.signUp({ email, password });
         if (error) throw error;
         if (data.session) {
-          navigate("/", { replace: true });
+          navigate(next, { replace: true });
         } else {
           setInfo("Account created! Check your email to confirm, then sign in.");
           setMode("signin");
@@ -47,6 +55,7 @@ export function Login() {
 
   const handleGitHub = async () => {
     setError(null);
+    rememberRedirect(next);
     const { error } = await supabase.auth.signInWithOAuth({
       provider: "github",
       options: { redirectTo: `${window.location.origin}/auth/callback` },
@@ -96,6 +105,14 @@ export function Login() {
                 autoComplete={mode === "signin" ? "current-password" : "new-password"}
               />
             </div>
+
+            {mode === "signin" && (
+              <p className="text-right text-sm">
+                <Link to="/forgot-password" className="text-muted-foreground underline">
+                  Forgot password?
+                </Link>
+              </p>
+            )}
 
             {error && <p className="text-sm text-destructive">{error}</p>}
             {info && <p className="text-sm text-green-600">{info}</p>}
