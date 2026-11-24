@@ -1,0 +1,45 @@
+<!doctype html>
+<!-- Lab page (invented company and applicant): SuccessFactors-style
+     "Previous Employment" rows (spec 020): sections are div.rcmFormSection with
+     a .sectionTitle, rows div.rcmSectionComponent, and the Add control a
+     div.addRowButton (not a button). window.__formData() holds what the page took. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Candidate Profile - Tidewell Careers</title>
+    <style>
+      body { font: 14px system-ui; margin: 16px; }
+      .rcmSectionComponent { border: 1px solid #ccc; padding: 8px; margin: 8px 0; }
+      .addRowButton { display: inline-block; border: 1px solid #555; padding: 2px 8px; cursor: pointer; }
+      label { display: block; margin: 4px 0; }
+    </style>
+  </head>
+  <body>
+    <h2>Candidate Profile</h2>
+    <div class="rcmFormSection"><div class="sectionTitle"><h3>Personal Information</h3></div>
+      <label class="rcmFormFieldLabel">First Name <input id="fn"></label>
+      <label class="rcmFormFieldLabel">Last Name <input id="ln"></label></div>
+    <div class="rcmFormSection"><div class="sectionTitle"><h3>Previous Employment</h3></div>
+      <div id="rows"></div>
+      <div class="addRowButton" role="button" tabindex="0" id="add">Add</div></div>
+    <button type="button" id="submit">Submit</button>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      let n = 0;
+      function addRow() {
+        n++;
+        document.getElementById("rows").insertAdjacentHTML("beforeend", `<div class="rcmSectionComponent">
+          <label class="rcmFormFieldLabel">Employer <input id="emp-${n}"></label>
+          <label class="rcmFormFieldLabel">Job Title <input id="jt-${n}"></label>
+          <label class="rcmFormFieldLabel">Start Date <input id="sd-${n}" placeholder="MM/YYYY"></label>
+          <label class="rcmFormFieldLabel">End Date <input id="ed-${n}" placeholder="MM/YYYY"></label></div>`);
+        for (const el of document.getElementById("rows").lastElementChild.querySelectorAll("input")) {
+          el.addEventListener("input", () => (data[el.id] = el.value));
+        }
+      }
+      document.getElementById("add").addEventListener("click", addRow);
+      addRow();
+    </script>
+  </body>
+</html>

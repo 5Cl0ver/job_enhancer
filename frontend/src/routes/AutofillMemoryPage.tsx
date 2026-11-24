@@ -3,6 +3,7 @@ import { ApplicationProfileCard } from "@/components/settings/ApplicationProfile
 import { SavedAnswersCard } from "@/components/settings/SavedAnswersCard";
 import { TaughtBoxesCard } from "@/components/autofill/TaughtBoxesCard";
 import { ResumeDetailsCard } from "@/components/autofill/ResumeDetailsCard";
+import { LanguagesCard } from "@/components/autofill/LanguagesCard";
 
 /**
  * Autofill memory (spec 018): everything Job Catcher fills from and learns,
@@ -25,6 +26,7 @@ export default function AutofillMemoryPage() {
       </div>
       <ApplicationProfileCard />
       <ResumeDetailsCard />
+      <LanguagesCard />
       <SavedAnswersCard initialQuery={q} />
       <TaughtBoxesCard />
     </div>

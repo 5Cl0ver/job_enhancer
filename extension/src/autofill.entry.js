@@ -13,7 +13,7 @@
 // → widgets.js (write + read back) → session.js (the fill, Fix, Undo).
 import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
-import { hasValue, readField } from "./autofill/widgets.js";
+import { hasValue, readField, shownValue, writingNow, writtenValue } from "./autofill/widgets.js";
 import { isPlaceholderOption } from "./autofill/classify/answers.js";
 import { guardReason, profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
 import { fingerprintOf, matchTaught } from "./autofill/fingerprint.js";
@@ -25,7 +25,7 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
-import { fillAllWorkExperience, inWorkExperience, isWorkdayExperience } from "./autofill/workday.js";
+import { editKey, fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
 
 // This copy owns the page (see orphan.js): drop what older copies drew.
 const isCurrent = claimPage("autofill");
@@ -79,10 +79,84 @@ function openModal() {
   return shown.filter((el) => !shown.some((o) => o !== el && el.contains(o))).pop() || null;
 }
 
+// Boxes the user typed in or chose on this page (spec 020): a fill never
+// changes them. Only a REAL change counts — a trusted input/change (or a
+// choice made with a click) while Job Catcher isn't writing, leaving the box
+// different from what Job Catcher last put there and from what it held
+// before the user touched it. Focus and blur alone never count (Job
+// Catcher's own focus moves fire trusted blurs). Remembered per tab by where
+// the box is, so a page that redraws its rows (Workday's Back, a resumed
+// draft) still knows: a box showing what the user left in it is theirs.
+const userEdited = new WeakSet();
+const beforeUser = new WeakMap(); // box → what it held when the user started on it
+let savedEdits = {}; // where → what the user left there (this tab, this site)
+const CONTROL = 'input, textarea, select, [role="combobox"], [contenteditable="true"], button[aria-haspopup]';
+const controlOf = (e) => (e.composedPath?.()[0] || e.target)?.closest?.(CONTROL) || null;
+
+function rememberEdit(el) {
+  try {
+    const key = editKey(el);
+    if (!key) return;
+    const value = shownValue(el);
+    savedEdits[key] = value;
+    send({ type: "userEdit", key, value });
+  } catch {
+    /* a box gone mid-way */
+  }
+}
+
+/** Did the user really change this box (not Job Catcher, not just a visit)? */
+function reallyChanged(el) {
+  const now = shownValue(el);
+  if (now === writtenValue(el)) return false;
+  return !beforeUser.has(el) || now !== beforeUser.get(el);
+}
+
+function startTouch(e) {
+  if (!e.isTrusted || writingNow()) return;
+  const el = controlOf(e);
+  if (el && !beforeUser.has(el)) beforeUser.set(el, shownValue(el));
+}
+for (const type of ["keydown", "pointerdown", "paste", "drop"]) document.addEventListener(type, startTouch, true);
+
+function noteUser(e) {
+  if (!e.isTrusted || writingNow()) return;
+  const el = controlOf(e);
+  if (!el || !reallyChanged(el)) return;
+  userEdited.add(el);
+  if (e.type === "change") rememberEdit(el);
+}
+for (const type of ["input", "change"]) document.addEventListener(type, noteUser, true);
+// A list drawn as a button: its choice shows in the button once made.
+document.addEventListener(
+  "click",
+  (e) => {
+    if (!e.isTrusted || writingNow()) return;
+    const btn = e.target?.closest?.('button[aria-haspopup="listbox"]');
+    if (!btn) return;
+    setTimeout(() => {
+      if (writingNow() || !btn.isConnected || !reallyChanged(btn)) return;
+      userEdited.add(btn);
+      rememberEdit(btn);
+    }, 1500);
+  },
+  true,
+);
+function isUsers(el) {
+  if (userEdited.has(el)) return true;
+  try {
+    const key = editKey(el);
+    return !!key && key in savedEdits && savedEdits[key] === shownValue(el);
+  } catch {
+    return false;
+  }
+}
+
 const session = createSession({
   send,
-  // Workday's Work Experience blocks are filled from the résumé below.
-  skipField: (f) => isWorkdayExperience(document) && inWorkExperience(f.el),
+  // Workday's résumé rows (jobs, schools, languages…) are filled by sections/.
+  skipField: (f) => inWorkdaySection(f.el),
+  userEdited: isUsers,
   scope: openModal,
 });
 
@@ -190,6 +264,7 @@ async function loadCopy() {
     answers: copy.answers || [],
     taught: copy.taught || [],
     history: copy.history || null,
+    languages: copy.profile?.languages || [],
     resumeFile,
     resumeId: res.resumeId || null,
   };
@@ -261,18 +336,21 @@ async function fill(auto) {
     await settle();
   }
 
-  // Workday's Work Experience: one block per job on the résumé (read once
-  // and held in the copy; asked for only if the copy doesn't have it yet).
-  // An automatic run (a new step) fills these only while they're all empty —
-  // never over the user's edits, never re-adding a block they removed.
-  if (isWorkdayExperience(document) && (!auto || !workExperienceTouched())) {
-    let work = copy.history?.work;
-    if (!work?.length) {
-      status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
-      work = (await send({ type: "getWorkHistory", resumeId: copy.resumeId || null }))?.entries;
-    }
-    if (work?.length) await fillAllWorkExperience(document, work);
+  // "Retype your résumé" sections (spec 020): jobs, schools, languages,
+  // websites, certifications and skills — one row per entry of the chosen
+  // résumé, added with the page's own Add button; a value the site put in
+  // from its own résumé reading that's wrong is corrected (with Undo); the
+  // user's own edits are never touched. A new step filled by itself never
+  // re-adds rows. (Work history is read from the chosen résumé if the copy
+  // doesn't have it yet.)
+  if (!copy.history?.work?.length && isWorkdaySections(document)) {
+    status({ phase: "filling", done: 0, total: 0, note: "Reading your résumé…" }, { now: true });
+    const work = (await send({ type: "getWorkHistory", resumeId: copy.resumeId || null }))?.entries;
+    if (work?.length) copy.history = { ...(copy.history || {}), work };
   }
+  status({ phase: "filling", done: 0, total: 0, note: "Filling your résumé sections…" }, { now: true });
+  savedEdits = { ...((await send({ type: "getUserEdits" }))?.edits || {}), ...savedEdits };
+  await fillSections(document, copy, { session, auto, userEdited: isUsers });
 
   // Super autofill: a press starts filling every next step of this application.
   if (!auto && !keepOn && (await superAutofill())) {
@@ -315,13 +393,6 @@ async function superAutofill() {
   } catch {
     return true;
   }
-}
-
-/** Has anything in Workday's Work Experience been filled (by anyone)? */
-function workExperienceTouched() {
-  return [...document.querySelectorAll('[data-fkit-id^="workExperience-"] input:not([type=checkbox]), [data-fkit-id^="workExperience-"] textarea')].some(
-    (el) => (el.value || "").trim() !== "",
-  );
 }
 
 // ---- Learning (spec 015, Story 3) -------------------------------------------

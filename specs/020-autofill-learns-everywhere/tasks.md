@@ -45,27 +45,27 @@ Two PRs. Within each, tests are written first, then the code. File paths are rel
 
 ## PR 2: Sections, dropdowns, skills, languages (US2, US3, US4, US6 fill)
 
-- [ ] T020 Lab pages:
+- [X] T020 Lab pages (`test/lab/workday-sections.html`, `greenhouse-rows.html`, `successfactors-rows.html`; the Workday skills prompt is on the sections page):
   - Workday Work Experience: 1 row with wrong pre-filled title and description, Add button, month/year dates;
   - Workday Languages: listbox buttons and the native checkbox;
   - Workday skills multiselect (virtualised);
   - Greenhouse rows;
   - SuccessFactors-like rows.
-- [ ] T021 Tests (`extension/test/dropdown-driver.spec.js`): one open at a time, verify, close, never "first option".
-- [ ] T022 Dropdown driver (`extension/src/autofill/widgets.js`): close-before-open, scoped visible options, `promptLeafNode`, virtual scroll, verify, close-and-confirm.
-- [ ] T023 Section filler (`extension/src/autofill/sections/{index,workday,generic}.js`), replacing `workday.js`:
+- [X] T021 Tests (`extension/test/dropdown-driver.spec.js`): one open at a time, verify, close, never "first option".
+- [X] T022 Dropdown driver (`extension/src/autofill/widgets.js`): close-before-open, scoped visible options, `promptLeafNode`, virtual scroll, verify, close-and-confirm.
+- [X] T023 Section filler (`extension/src/autofill/sections/{index,workday,generic}.js`), replacing `workday.js`:
   - rows from structure;
   - Add up to the entry count (max 10);
   - correct pre-filled values with Undo entries;
   - never touch user-edited boxes;
   - runs on automatic steps;
   - dates via the ArrowUp commit, then the keystroke fallback.
-- [ ] T024 Skills: search prompts get one skill at a time with the chip verified; text boxes get a comma list.
-- [ ] T025 Languages:
+- [X] T024 Skills: search prompts get one skill at a time with the chip verified; text boxes get a comma list.
+- [X] T025 Languages:
   - migration `application_profile.languages`;
   - schema, export;
   - app `LanguagesCard`;
   - level ladder (`extension/src/autofill/classify/languages.js`);
   - fill language rows (language, native, each ability).
-- [ ] T026 e2e on every lab page: after one press, no popup is open, rows match the profile, Undo restores the pre-filled values.
-- [ ] T027 Version 0.37.0; all suites; PR; reviews; CI; merge.
+- [X] T026 e2e on every lab page: after one press, no popup is open, rows match the profile, Undo restores the pre-filled values.
+- [X] T027 Version 0.37.0; all suites; PR; CI. (Independent reviews and the merge: the orchestrator.)

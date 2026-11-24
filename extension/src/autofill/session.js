@@ -5,13 +5,29 @@
 import { answerKey, isCompanySpecific, normalizeQuestion, yesNo } from "./classify/answers.js";
 import { PRIVATE, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 import { matchTaught } from "./fingerprint.js";
-import { PERSONAL, classifySections, createJobBlocks, jobPart, jobValues } from "./classify/jobHistory.js";
+import { PERSONAL, classifySections, createJobBlocks, eduPart, eduValues, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
 import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
 
 /** Case, spaces and punctuation don't count when deciding the user changed a box. */
 const loose = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
+
+/**
+ * Does what a box shows agree with an answer? Typed boxes exactly (case and
+ * punctuation aside: "Platform Engineer" is NOT "Platform Engineer (Cloud)");
+ * a list's shown choice as the list words it ("Washington (WA)"); a level
+ * box by its own chooser.
+ */
+function agrees(field, now, value) {
+  if (field.pick) return field.pick([{ label: String(now) }]) === 0;
+  if (field.kind === "text" || field.kind === "textarea" || field.kind === "editable" || field.kind === "spin") {
+    const d = (x) => String(x ?? "").replace(/\D/g, "");
+    if (field.kind === "spin") return Number.parseInt(now, 10) === Number.parseInt(value, 10);
+    return loose(now) === loose(value) || (d(now).length >= 7 && d(now) === d(value));
+  }
+  return same(now, value);
+}
 import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
 
 const STYLE_ID = "jec-fill-style";
@@ -99,13 +115,24 @@ export function pointRefusal(field) {
 
 /**
  * A box in an employment / education / references section (spec 018, US5):
- * a past job's part comes from the résumé's work history (that block's job);
- * the user's own details never go there.
+ * a past job's part comes from the résumé's work history (that block's job),
+ * a school's from its education (that block's school — spec 020); the user's
+ * own details never go there.
  */
-function sectionDecision(field, section, part, job, copy) {
+function sectionDecision(field, section, part, entry, copy) {
   if (part) {
-    const values = jobValues(part, job, field);
-    return values.length ? { values, source: "profile", key: `job_${part}` } : { skip: "job_history" };
+    // The same guards as everywhere: a declaration, agreement or self-ID box
+    // inside a job block is never ticked or typed in (a job's description
+    // box may read as an essay question: that one is fine).
+    const guard = guardReason(field.question || "", field.kind);
+    if (guard && !(guard === "essay" && part === "description")) return { skip: guard };
+    // "I currently work here" ticked by the page for a job that ended: untick
+    // it (a correction: a press only); left unticked otherwise, quietly.
+    if (part === "current" && entry && !entry.current) return field.el.checked ? { values: ["No"], source: "profile", key: "job_current" } : { skip: "fine" };
+    const values = section === "education" ? eduValues(part, entry, field) : jobValues(part, entry, field);
+    if (values.length) return { values, source: "profile", key: `${section === "education" ? "edu" : "job"}_${part}` };
+    // A past job that isn't current: its "I work here" box stays unticked, quietly.
+    return { skip: part === "current" ? "fine" : "job_history" };
   }
   const d = resolve(field, copy);
   if (d.key && PERSONAL.has(d.key)) return { skip: section === "reference" ? "other_person" : "job_history", key: d.key };
@@ -158,13 +185,22 @@ export function createSession(deps) {
   /** Fields already put to the AI: never asked twice (each step, each run). */
   const aiAsked = new Set();
 
+  /** Boxes the user typed or chose in on this page: never changed by a fill (spec 020). */
+  const userEdited = deps.userEdited || (() => false);
+
+  /** Every box from the latest scan, the section fillers' own included (for "is there a form"). */
+  let everything = [];
   const scan = () => {
-    const all = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible }).filter((f) => !skipField(f));
+    everything = collectFields(doc, { getShadow: deps.getShadow, visible: deps.visible });
+    const all = everything.filter((f) => !skipField(f));
     // An open pop-up with a form of its own is filled alone; one whose fields
     // aren't really showing (a hidden drawer, a date picker) doesn't count.
     const inside = deps.scope?.() || null;
     const scoped = inside ? all.filter((f) => within(inside, f.el)) : all;
     const list = scoped.length ? scoped : all;
+    // The same pop-up rule for "is there a form" (section fillers' boxes included).
+    const near = inside ? everything.filter((f) => within(inside, f.el)) : [];
+    if (near.length) everything = near;
     fields = new Map(list.map((f) => [f.id, f]));
     return list;
   };
@@ -181,7 +217,8 @@ export function createSession(deps) {
   /** One scan: is there a form, is it an application, how many fields. */
   /** @param {object[]} [taught] boxes taught on this site: a frame holding one has a form. */
   function presence(taught = []) {
-    const list = scan();
+    scan();
+    const list = everything; // a page that's all résumé sections is still a form
     const app = looksLikeApplication(list, appCheck);
     const form = app || hasFormHere(list, { isApplication: () => app }) || (taught.length > 0 && matchTaught(taught, list).size > 0);
     return { form, app, fields: list.length };
@@ -215,6 +252,31 @@ export function createSession(deps) {
     return res;
   }
 
+  /**
+   * One box of a "retype your résumé" section, filled by a section filler
+   * (sections/): the page's wrong value is corrected (Undo puts it back), the
+   * user's own edits are never touched, a box already right is left as it is.
+   * @param {object} field {id, el, kind, question, pick?}
+   * @param {string[]} values
+   */
+  async function putSection(field, values, { correct = true } = {}) {
+    if (!values?.length) return { skipped: "no_data" };
+    if (declined.has(field.id) || userEdited(field.el)) return { skipped: "user" };
+    const ours = filled.get(field.id);
+    const now = readField(field);
+    if (field.kind === "chips" && now.trim() && !correct) return { skipped: "has_value" };
+    if (field.kind !== "chips") {
+      if (ours && !agrees(field, now, ours.entry.value)) return { skipped: "user" }; // changed since: theirs
+      if (now.trim() && values.some((v) => agrees(field, now, v))) return { ok: true, already: true };
+      if (now.trim() && !ours && !correct) return { skipped: "has_value" };
+    }
+    const prior = !ours && now.trim() !== "";
+    const res = await fillOne(field, values, "profile");
+    if (res.ok && prior) filled.get(field.id).entry.corrected = true;
+    if (!res.ok) leave(field, res.reason || "rejected");
+    return res;
+  }
+
   function leave(field, reason, saved) {
     if (!LEFT_FOR_YOU.has(reason)) return;
     needYou.set(field.id, { field, item: { id: field.id, label: shortLabel(field.question), reason, kind: field.kind, options: optionLabels(field), ...(saved ? { saved } : {}) } });
@@ -241,23 +303,44 @@ export function createSession(deps) {
     const host = doc.location?.hostname || "";
     const taught = matchTaught((copy.taught || []).filter((t) => t.site === site || t.site === host), list);
     copy = { ...copy, site, host }; // this site's own answers first (spec 018)
-    // "Retype your résumé" sections: which past job each box belongs to (spec 018).
+    // "Retype your résumé" sections: which past job or school each box belongs
+    // to (spec 018, 020).
     const sections = classifySections(list);
     const blockOf = createJobBlocks();
+    const schoolOf = createJobBlocks();
     let i = 0;
     for (const field of list) {
       onProgress?.(++i, list.length);
       const section = sections.get(field.id) || "";
-      const part = section === "job" ? jobPart(field) : "";
-      const block = part ? blockOf(part, field) : 0;
-      if (filled.has(field.id) || declined.has(field.id)) continue;
-      if (field.kind !== "file" && hasValue(field)) continue;
+      const part = section === "job" ? jobPart(field) : section === "education" ? eduPart(field) : "";
+      const block = part ? (section === "job" ? blockOf : schoolOf)(part, field) : 0;
+      if (declined.has(field.id)) continue;
+      // Filled by Job Catcher before: left — except a past job's or school's
+      // part on a press, still as we left it, which follows the résumé now
+      // chosen (another résumé picked since the last press).
+      const mine = filled.get(field.id);
+      if (mine && (auto || !part || !agrees(field, readField(field), mine.entry.value))) continue;
+      // A box the page filled itself: left alone — except a past job's or a
+      // school's part, which is corrected from the résumé when it's wrong
+      // (an applicant system's own résumé reading cuts titles; spec 020).
+      const prefilled = field.kind !== "file" && hasValue(field);
+      // (Only on a press: on a step filled by itself, a filled box stays as it is.)
+      if (prefilled && (auto || !part || taught.has(field.id) || userEdited(field.el))) continue;
       if (field.kind === "file" && (field.el.files?.length || skipFiles)) continue;
+      const entry = section === "education" ? copy.history?.education?.[block] : copy.history?.work?.[block];
       const d = taught.has(field.id)
         ? taughtDecision(field, taught.get(field.id), copy)
         : section
-          ? sectionDecision(field, section, part, copy.history?.work?.[block], copy)
+          ? sectionDecision(field, section, part, entry, copy)
           : resolve(field, copy);
+      if (prefilled) {
+        if (d.skip) continue; // nothing better to put there: the page's stays
+        const now = readField(field);
+        if (d.values.some((v) => agrees(field, now, v))) continue;
+        const res = await fillOne(field, d.values, d.source);
+        if (res.ok) filled.get(field.id).entry.corrected = true;
+        continue;
+      }
       if (d.skip) {
         if (d.skip === "unknown" && AI_KINDS.has(field.kind)) leftovers.push(field);
         // An essay answer saved before, or an answer to a near rewording, is
@@ -445,7 +528,12 @@ export function createSession(deps) {
       // (Exactly, or the same digits: "Rich" is not "Richmond".)
       const now = readField(x.field).trim();
       const ours = String(x.entry.value).trim();
-      const unchanged = now === ours || (now.replace(/\D/g, "").length >= 7 && now.replace(/\D/g, "") === ours.replace(/\D/g, "")) || (x.field.kind !== "text" && x.field.kind !== "textarea" && same(now, ours));
+      const unchanged =
+        now === ours ||
+        (now.replace(/\D/g, "").length >= 7 && now.replace(/\D/g, "") === ours.replace(/\D/g, "")) ||
+        // A box we ticked or unticked reads "Yes" / "": still as we left it?
+        (x.field.kind === "checkbox" && (now === "Yes") === (ours === "Yes")) ||
+        (x.field.kind !== "text" && x.field.kind !== "textarea" && same(now, ours));
       if (x.field.kind !== "file" && !unchanged) {
         filled.delete(k);
         unmark(x.field);
@@ -535,6 +623,8 @@ export function createSession(deps) {
 
   return {
     scan,
+    putSection,
+    leaveField: leave,
     isApplication,
     hasForm,
     presence,

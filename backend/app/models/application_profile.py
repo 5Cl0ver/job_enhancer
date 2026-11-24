@@ -12,7 +12,7 @@ cascade), same self-managed model as the rest of their data.
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, ForeignKey, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, ForeignKey, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -52,6 +52,10 @@ class ApplicationProfile(Base):
     # Preferences
     desired_salary: Mapped[int | None] = mapped_column(Integer)  # yearly USD
     notice_period: Mapped[str | None] = mapped_column(String(100))  # "2 weeks"
+
+    # Languages (spec 020): [{language, native, comprehension, reading,
+    # speaking, writing, overall}], levels 1-5; Workday asks for them.
+    languages: Mapped[list | None] = mapped_column(JSON)
 
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
