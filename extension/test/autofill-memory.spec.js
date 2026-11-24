@@ -166,3 +166,12 @@ describe("employment sections the second review built (titles from legends; a ti
     expect(jobPart({ question: "Name of Employer" })).toBe("company");
   });
 });
+
+describe("your own details with a 'Current Employer' box", () => {
+  it("never turn into a past-job section", () => {
+    const fields = collectFields(parse(`<div><h1>Employment</h1></div><form>
+      <label for="fn">First Name</label><input id="fn"><label for="ce">Current Employer</label><input id="ce">
+      <label for="ct">City</label><input id="ct"><label for="ph">Phone</label><input id="ph"></form>`), { visible: () => true });
+    expect(classifySections(fields).size).toBe(0);
+  });
+});

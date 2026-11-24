@@ -77,7 +77,8 @@ export function classifySections(fields) {
     if (!kind) continue;
     const proven =
       kind === "job"
-        ? members.some((f) => jobPart(f) === "company")
+        ? // A "Current employer" box among your own details proves nothing.
+          members.some((f) => jobPart(f) === "company" && !/\b(current|present)\b/i.test(f.question || ""))
         : kind === "education"
           ? members.some((f) => SCHOOLISH.test(f.question || ""))
           : members.some((f) => NAMEISH.test(f.question || "")) && members.some((f) => REACHISH.test(f.question || ""));
