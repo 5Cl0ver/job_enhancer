@@ -91,10 +91,34 @@ _US_STATES = frozenset(
 )
 # "Los Angeles, CA" (a ZIP may follow). Bounded repeats only.
 _CITY_STATE = re.compile(
-    r"\b([A-Z][A-Za-z.'\-]{1,20}(?: [A-Z][A-Za-z.'\-]{1,20}){0,2}), ([A-Z]{2})\b"
+    r"\b([A-Z][A-Za-z.'\-]{1,20}(?: [A-Z][A-Za-z.'\-]{1,20}){0,3}), ([A-Z]{2})\b"
 )
-_NAME_WORD = re.compile(r"[A-Za-zÀ-ÖØ-öø-ÿ][A-Za-zÀ-ÖØ-öø-ÿ.'\-]{0,30}")
 _SEPARATORS = re.compile(r"\s*[|•·–—]\s*")
+# "Jane Doe, MD" / "John Smith, CPA, PMP": credentials after the name.
+_CREDENTIALS = re.compile(r"(?:,\s*[A-Za-z.]{2,6}){1,3}$")
+_NAME_MARKS = frozenset(".'-’")
+# Lowercase words that belong inside a name ("Maria de la Cruz").
+_PARTICLES = frozenset(
+    [
+        "de",
+        "la",
+        "del",
+        "della",
+        "der",
+        "den",
+        "van",
+        "von",
+        "da",
+        "di",
+        "du",
+        "dos",
+        "das",
+        "le",
+        "bin",
+        "al",
+    ]
+)
+_SUFFIXES = frozenset(["jr", "jr.", "sr", "sr.", "ii", "iii", "iv"])
 # Words on a résumé's first lines that are never part of someone's name.
 _NOT_NAME = frozenset(
     [
@@ -127,29 +151,63 @@ _NOT_NAME = frozenset(
         "administrator",
         "coordinator",
         "representative",
+        "work",
+        "history",
+        "achievements",
+        "scientist",
+        "leader",
+        "owner",
+        "accountant",
+        "certified",
+        "professional",
+        "results",
+        "driven",
+        "remote",
     ]
 )
 _HEADER_LINES = 8
 
 
-def _name_from(lines: list[str]) -> tuple[str, str] | None:
-    """The person's name: the first header line that is just 2-4 name-like
-    words ("Fabian Example", "MARIA DE LA CRUZ"), before any separator."""
-    for line in lines[:_HEADER_LINES]:
+def _name_word(word: str, first_or_last: bool) -> bool:
+    """A word of a name, in any alphabet ("Łukasz", "Nguyễn", "O'Brien")."""
+    if word.lower() in _PARTICLES:
+        return not first_or_last
+    return (
+        len(word) <= 30
+        and word[0].isalpha()
+        and word[0].isupper()
+        and all(c.isalpha() or c in _NAME_MARKS for c in word)
+    )
+
+
+def _name_from(lines: list[str]) -> tuple[int, str, str] | None:
+    """The person's name: the first header line that is just 2-5 name-like
+    words ("Fabian Example", "MARIA DE LA CRUZ", "Jane Doe, MD"), before any
+    separator. Returns (line index, first name, last name)."""
+    for i, line in enumerate(lines[:_HEADER_LINES]):
         head = _SEPARATORS.split(line, maxsplit=1)[0].strip()
+        head = _CREDENTIALS.sub("", head).strip()
         if any(c.isdigit() for c in head) or "@" in head or "/" in head:
             continue
         words = head.split()
-        if not 2 <= len(words) <= 4:
+        while len(words) > 2 and words[-1].lower() in _SUFFIXES:
+            words.pop()  # "John Smith Jr." → Smith
+        if not 2 <= len(words) <= 5:
             continue
-        if not all(_NAME_WORD.fullmatch(w) and w[0].isupper() for w in words):
+        last = len(words) - 1
+        if not all(_name_word(w, j in (0, last)) for j, w in enumerate(words)):
             continue
         if any(w.lower().strip(".") in _NOT_NAME for w in words):
             continue
-        if head.isupper():  # "FABIAN EXAMPLE" → "Fabian Example"
-            words = [w.capitalize() for w in words]
-        return words[0][:100], words[-1][:100]
+        if head.isupper():  # "FABIAN O'BRIEN" → "Fabian O'Brien"
+            words = [w if w.lower() in _PARTICLES else _title(w) for w in words]
+        return i, words[0][:100], words[-1][:100]
     return None
+
+
+def _title(word: str) -> str:
+    """Capitalise each part: O'BRIEN → O'Brien, JEAN-LUC → Jean-Luc."""
+    return re.sub(r"[^\W\d_]+", lambda m: m.group(0).capitalize(), word)
 
 
 def extract_contact_heuristics(text: str) -> dict[str, str]:
@@ -158,12 +216,16 @@ def extract_contact_heuristics(text: str) -> dict[str, str]:
     text = text[:50_000]
     out: dict[str, str] = {}
     lines = [ln.strip()[:200] for ln in text.splitlines() if ln.strip()]
+    name_line = -1
     if name := _name_from(lines):
-        out["first_name"], out["last_name"] = name
-    for line in lines[:_HEADER_LINES]:
+        name_line, out["first_name"], out["last_name"] = name
+    for i, line in enumerate(lines[:_HEADER_LINES]):
+        if i == name_line:  # "Jane Doe, MD" is a name, not a city
+            continue
         for m in _CITY_STATE.finditer(line):
-            if m.group(2) in _US_STATES:
-                out["city"], out["state"] = m.group(1)[:100], m.group(2)
+            city = m.group(1)
+            if m.group(2) in _US_STATES and not city.isupper() and city != "Remote":
+                out["city"], out["state"] = city[:100], m.group(2)
                 break
         if "city" in out:
             break
@@ -195,6 +257,8 @@ _AI_KEYS = (
     "portfolio_url",
 )
 
+_GUESSES = frozenset({"first_name", "last_name", "city", "state"})
+
 _SYSTEM_PROMPT = """You extract contact details from a resume.
 Reply with ONLY a JSON object — no prose, no code fences — using exactly these
 keys (value null when the resume does not state it):
@@ -217,7 +281,10 @@ async def extract_profile(resume_text: str) -> dict[str, str]:
         data = json.loads(raw[start : end + 1]) if start != -1 and end > start else {}
         for key in _AI_KEYS:
             value = data.get(key)
-            if key in found or not isinstance(value, str) or not value.strip():
+            # The name and city guesses give way to the model; patterns win.
+            if key in found and key not in _GUESSES:
+                continue
+            if not isinstance(value, str) or not value.strip():
                 continue
             value = value.strip()[:100]
             # URLs from the LLM must still look like URLs.

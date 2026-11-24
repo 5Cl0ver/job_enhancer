@@ -78,3 +78,39 @@ def test_a_job_title_or_sentence_is_not_a_name():
         "Senior Software Engineer\nBuilt things.\nWren Tester"
     )
     assert (out["first_name"], out["last_name"]) == ("Wren", "Tester")
+
+
+# Review cases: real résumé headers (invented people).
+def _name(text):
+    out = extract_contact_heuristics(text)
+    return out.get("first_name"), out.get("last_name")
+
+
+def test_credentials_after_the_name_are_not_a_city_or_a_reason_to_skip():
+    out = extract_contact_heuristics("Jane Doe, MD\nBaltimore, MD")
+    assert _name("Jane Doe, MD\nBaltimore, MD") == ("Jane", "Doe")
+    assert (out["city"], out["state"]) == ("Baltimore", "MD")
+    assert _name("Jane Doe, PhD\nData Scientist") == ("Jane", "Doe")
+    assert _name("John Smith, CPA, PMP\nCertified Public Accountant") == (
+        "John",
+        "Smith",
+    )
+
+
+def test_particles_suffixes_and_any_alphabet():
+    assert _name("Maria de la Cruz\nData Scientist") == ("Maria", "Cruz")
+    assert _name("John Smith Jr.\nAnalyst") == ("John", "Smith")
+    assert _name("Łukasz Kowalski\nProduct Owner") == ("Łukasz", "Kowalski")
+    assert _name("Nguyễn Văn An\nProduct Owner") == ("Nguyễn", "An")
+    assert _name("JOHN O'BRIEN") == ("John", "O'Brien")
+
+
+def test_headings_are_not_names_and_cities_are_real():
+    assert _name("Work History\nResults Driven Leader\nWren Tester") == (
+        "Wren",
+        "Tester",
+    )
+    out = extract_contact_heuristics("Wren Tester\nSan Francisco Bay Area, CA")
+    assert out["city"] == "San Francisco Bay Area"
+    assert "city" not in extract_contact_heuristics("Wren Tester\nREMOTE, OR")
+    assert "city" not in extract_contact_heuristics("Wren Tester\nRemote, OR")

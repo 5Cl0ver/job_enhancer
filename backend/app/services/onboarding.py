@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 
 from sqlalchemy import exists, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.email_account import EmailAccount
 from app.models.extension import ExtensionInstall
@@ -106,26 +106,40 @@ async def patch(
     return await state(db, user)
 
 
-async def touch_claude(db: AsyncSession, user_id: uuid.UUID) -> None:
+# Per process: when each account's Claude tick was last written, so a busy
+# Claude Scout run (hundreds of tool calls) costs one write an hour, not one
+# query per call.
+_claude_ticked: dict[uuid.UUID, datetime] = {}
+
+
+async def touch_claude(
+    session_factory: async_sessionmaker[AsyncSession], user_id: uuid.UUID
+) -> None:
     """Note that this account's Claude used the connector: the Getting started
-    "Claude" tick. At most one write an hour; never raises. Give it a session
-    of its own: on failure it rolls back."""
+    "Claude" tick. At most one write an hour per account, in a session of its
+    own; never raises."""
+    now = datetime.now(UTC)
+    last = _claude_ticked.get(user_id)
+    if last is not None and now - last < _CLAUDE_THROTTLE:
+        return
+    if len(_claude_ticked) > 10_000:  # bounded: it's only a shortcut
+        _claude_ticked.clear()
+    _claude_ticked[user_id] = now
     try:
-        now = datetime.now(UTC)
-        result = await db.execute(
-            update(UserOnboarding)
-            .where(
-                UserOnboarding.user_id == user_id,
-                (UserOnboarding.claude_seen_at.is_(None))
-                | (UserOnboarding.claude_seen_at < now - _CLAUDE_THROTTLE),
+        async with session_factory() as db:
+            result = await db.execute(
+                update(UserOnboarding)
+                .where(UserOnboarding.user_id == user_id)
+                .values(claude_seen_at=now)
+                .execution_options(synchronize_session=False)
             )
-            .values(claude_seen_at=now)
-            .execution_options(synchronize_session=False)
+            if not result.rowcount:
+                # Claude came before the app's first load: start the row here.
+                db.add(
+                    UserOnboarding(user_id=user_id, welcome_step=0, claude_seen_at=now)
+                )
+            await db.commit()
+    except Exception as exc:  # a tick must never break a Claude tool call
+        logger.warning(
+            "Could not record the Claude connector use (%s)", type(exc).__name__
         )
-        if not result.rowcount and await db.get(UserOnboarding, user_id) is None:
-            # Claude came before the app's first load: start the row here.
-            db.add(UserOnboarding(user_id=user_id, welcome_step=0, claude_seen_at=now))
-        await db.commit()
-    except Exception:  # a tick must never break a Claude tool call
-        logger.warning("Could not record the Claude connector use", exc_info=True)
-        await db.rollback()

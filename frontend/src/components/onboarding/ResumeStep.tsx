@@ -78,25 +78,30 @@ function Review({ resumeId, fresh, onDone }: { resumeId: string; fresh: boolean;
   const fill = useFillProfileFromResume();
   const read = useReadResume(resumeId);
   const details = useResumeDetails(resumeId);
-  const { data: saved } = useApplicationProfile();
+  const { data: saved, isError: savedFailed } = useApplicationProfile();
   const save = useUpdateApplicationProfile();
   const step = useUpdateOnboarding();
   const [form, setForm] = useState<Partial<ApplicationProfile> | null>(null);
   const started = useRef(false);
 
-  // Read the résumé once: its contact details into the profile (empty fields
-  // only), and its jobs and schools into its details.
+  // Once the saved profile is known: a résumé just uploaded (or a profile
+  // with none of these filled yet) is read into it, empty fields only; else
+  // the saved profile is shown as it is. Reading fails → the saved one,
+  // never a blank form that would wipe it.
   useEffect(() => {
-    if (started.current) return;
+    if (started.current || (!saved && !savedFailed)) return;
     started.current = true;
-    fill.mutate(undefined, { onSuccess: (r) => setForm(r.profile), onError: () => setForm((f) => f ?? {}) });
+    const blank = !saved || FIELDS.every((f) => !saved[f.key]);
     if (fresh) read.mutate();
-  }, [fill, read, fresh]);
-
-  // A profile that already existed shows even if reading failed.
-  useEffect(() => {
-    if (!form && fill.isError && saved) setForm(saved);
-  }, [form, fill.isError, saved]);
+    if (fresh || blank) {
+      fill.mutate(undefined, {
+        onSuccess: (r) => setForm(r.profile),
+        onError: () => setForm(saved ?? {}),
+      });
+    } else {
+      setForm(saved);
+    }
+  }, [saved, savedFailed, fresh, fill, read]);
 
   if (!form) {
     return (
@@ -112,11 +117,18 @@ function Review({ resumeId, fresh, onDone }: { resumeId: string; fresh: boolean;
     setForm((f) => ({ ...f, [key]: value || null }));
 
   const confirm = () => {
-    const changes = Object.fromEntries(FIELDS.map((f) => [f.key, form[f.key] ?? null]));
-    save.mutate(changes, {
-      onSuccess: () =>
-        step.mutate({ profile_reviewed: true, welcome_step: 2 }, { onSuccess: onDone }),
-    });
+    const reviewed = () =>
+      step.mutate({ profile_reviewed: true, welcome_step: 2 }, { onSuccess: onDone });
+    // Only what the person changed here: nothing else in the profile is touched.
+    const before = (fill.data?.profile ?? saved ?? {}) as Partial<ApplicationProfile>;
+    const changes = Object.fromEntries(
+      FIELDS.filter((f) => (form[f.key] ?? null) !== (before[f.key] ?? null)).map((f) => [
+        f.key,
+        form[f.key] ?? null,
+      ]),
+    );
+    if (Object.keys(changes).length) save.mutate(changes, { onSuccess: reviewed });
+    else reviewed();
   };
 
   return (

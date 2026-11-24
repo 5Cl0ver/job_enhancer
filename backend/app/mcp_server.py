@@ -90,11 +90,11 @@ async def _session_user():
             raise ValueError(
                 f"No Job Enhancer account found for {email}. Sign in to the app first."
             )
-        # The Getting started "Claude" tick (spec 019); hourly, never raises.
-        # Its own session, so nothing it does can touch the tool's.
-        async with AsyncSessionLocal() as tick_db:
-            await onboarding.touch_claude(tick_db, user.id)
+        user_id = user.id
         yield db, user
+    # The Getting started "Claude" tick (spec 019), once the tool's own session
+    # is closed: hourly per account, its own session, never raises.
+    await onboarding.touch_claude(AsyncSessionLocal, user_id)
 
 
 # --------------------------------------------------------------------------- #

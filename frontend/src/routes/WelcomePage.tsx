@@ -19,7 +19,7 @@ const LAST = 4;
  * step directly (the checklist's "Add your résumé").
  */
 export default function WelcomePage() {
-  const { data, isLoading } = useOnboarding();
+  const { data, isLoading, isError, refetch } = useOnboarding();
   const update = useUpdateOnboarding();
   const navigate = useNavigate();
   const [params] = useSearchParams();
@@ -40,10 +40,26 @@ export default function WelcomePage() {
     window.scrollTo?.(0, 0);
   };
 
-  const skip = () => {
-    update.mutate({ welcome_done: true });
-    navigate("/");
-  };
+  // Into the app only once it's saved, so the front door doesn't send them back.
+  const skip = () =>
+    update.mutate(
+      { welcome_done: true },
+      { onSuccess: () => navigate("/"), onError: () => navigate("/search") },
+    );
+
+  if (isError && step === null) {
+    return (
+      <div className="flex min-h-screen flex-col items-center justify-center gap-3 px-4 text-center">
+        <p className="text-sm text-muted-foreground">Couldn't load your setup. Check your connection.</p>
+        <div className="flex gap-2">
+          <Button onClick={() => refetch()}>Try again</Button>
+          <Button variant="ghost" onClick={() => navigate("/search")}>
+            Skip, do it later
+          </Button>
+        </div>
+      </div>
+    );
+  }
 
   if (isLoading || step === null) {
     return (
@@ -58,7 +74,7 @@ export default function WelcomePage() {
       <header className="flex items-center justify-between gap-2 px-4 py-3">
         <span className="font-semibold">Job Enhancer</span>
         {step < LAST && (
-          <Button variant="ghost" size="sm" onClick={skip}>
+          <Button variant="ghost" size="sm" onClick={skip} disabled={update.isPending}>
             Skip, do it later
           </Button>
         )}

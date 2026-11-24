@@ -357,7 +357,7 @@ function GettingStartedCard() {
 
 /** Where Claude connects (spec 019): the address and the four steps, in plain words. */
 function ConnectClaudeCard() {
-  const address = `${API_BASE}/mcp`;
+  const address = `${API_BASE.replace(/\/+$/, "")}/mcp`;
   const [copied, setCopied] = useState(false);
   return (
     <Card>

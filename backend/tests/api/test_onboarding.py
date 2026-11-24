@@ -6,7 +6,7 @@ import uuid
 
 import pytest
 from httpx import AsyncClient
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.extension import ExtensionInstall
 from app.models.job_listing import JobListing
@@ -44,8 +44,10 @@ async def test_a_new_account_starts_at_the_welcome(client: AsyncClient):
 async def test_patch_moves_finishes_and_reopens_the_welcome(client: AsyncClient):
     r = await client.patch("/v1/onboarding", json={"welcome_step": 2})
     assert r.json()["welcome"] == {"step": 2, "done": False}
-    r = await client.patch("/v1/onboarding", json={"welcome_step": 99})
-    assert r.json()["welcome"]["step"] == 4  # clamped
+    for bad in ({"welcome_step": 99}, {"welcome_done": "yes"}, {"role": "admin"}):
+        assert (await client.patch("/v1/onboarding", json=bad)).status_code == 422
+    r = await client.patch("/v1/onboarding", json={"welcome_step": 4})
+    assert r.json()["welcome"]["step"] == 4
     r = await client.patch("/v1/onboarding", json={"welcome_done": True})
     assert r.json()["welcome"]["done"] is True
     # Settings → Show the welcome again: back to the start.
@@ -123,16 +125,35 @@ async def test_a_claude_project_link_counts_as_claude(
 
 
 async def test_the_claude_connector_ticks_claude_and_is_throttled(
-    client: AsyncClient, db_session: AsyncSession, test_user: User
+    client: AsyncClient, engine, db_session: AsyncSession, test_user: User
 ):
-    await svc.touch_claude(db_session, test_user.id)  # before the app's first load
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    svc._claude_ticked.clear()
+    await svc.touch_claude(maker, test_user.id)  # before the app's first load
     row = await db_session.get(UserOnboarding, test_user.id)
     first = row.claude_seen_at
     assert first is not None and row.welcome_done_at is None
-    await svc.touch_claude(db_session, test_user.id)  # within the hour: no write
+
+    calls = []
+
+    def counting():
+        calls.append(1)
+        return maker()
+
+    await svc.touch_claude(counting, test_user.id)  # within the hour: no DB at all
+    assert calls == []
     await db_session.refresh(row)
     assert row.claude_seen_at == first
     assert _done((await client.get("/v1/onboarding")).json())["claude"] is True
+
+
+async def test_a_failing_claude_tick_never_raises(test_user: User):
+    svc._claude_ticked.clear()
+
+    def broken():
+        raise RuntimeError("database down")
+
+    await svc.touch_claude(broken, test_user.id)
 
 
 async def test_a_second_first_load_never_fails(

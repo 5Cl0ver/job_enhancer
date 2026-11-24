@@ -1,6 +1,6 @@
 """Onboarding (spec 019 part B, contracts/api.md)."""
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict, Field, StrictBool
 
 
 class WelcomeState(BaseModel):
@@ -23,7 +23,9 @@ class OnboardingOut(BaseModel):
 
 
 class OnboardingPatch(BaseModel):
-    welcome_step: int | None = None
-    welcome_done: bool | None = None
-    profile_reviewed: bool | None = None
-    checklist_hidden: bool | None = None
+    model_config = ConfigDict(extra="forbid", strict=True)
+
+    welcome_step: int | None = Field(None, ge=0, le=4)
+    welcome_done: StrictBool | None = None
+    profile_reviewed: StrictBool | None = None
+    checklist_hidden: StrictBool | None = None

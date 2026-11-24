@@ -51,11 +51,12 @@ function state(over: Partial<Onboarding> = {}, done: string[] = []): Onboarding 
 
 let onboarding: Onboarding;
 let resumes: { id: string; filename: string; is_active: boolean }[];
+let profile: Record<string, string | null>;
 
 function routes(path: string) {
   if (path === "/v1/onboarding") return Promise.resolve(onboarding);
   if (path === "/v1/ai/resumes") return Promise.resolve(resumes);
-  if (path === "/v1/users/me/application-profile") return Promise.resolve({ first_name: null });
+  if (path === "/v1/users/me/application-profile") return Promise.resolve(profile);
   if (path.endsWith("/details"))
     return Promise.resolve({ resume_id: "r1", filename: "wren.pdf", read: true, work: [{}, {}, {}], education: [{}], skills: [], certifications: [], websites: [] });
   return Promise.reject(new Error(`unexpected GET ${path}`));
@@ -80,6 +81,7 @@ beforeEach(() => {
   phone = false;
   onboarding = state();
   resumes = [];
+  profile = { first_name: null };
   get.mockReset().mockImplementation(routes);
   post.mockReset();
   put.mockReset().mockImplementation((_p: string, body: object) => Promise.resolve(body));
@@ -121,11 +123,9 @@ describe("Welcome", () => {
     await userEvent.clear(screen.getByLabelText("City"));
     await userEvent.type(screen.getByLabelText("City"), "Denver");
     await userEvent.click(screen.getByRole("button", { name: "Looks right" }));
+    // Only what was changed here is sent: nothing else is overwritten.
     await waitFor(() =>
-      expect(put).toHaveBeenCalledWith(
-        "/v1/users/me/application-profile",
-        expect.objectContaining({ first_name: "Wren", city: "Denver" }),
-      ),
+      expect(put).toHaveBeenCalledWith("/v1/users/me/application-profile", { city: "Denver" }),
     );
     await waitFor(() =>
       expect(patch).toHaveBeenCalledWith("/v1/onboarding", { profile_reviewed: true, welcome_step: 2 }),
@@ -139,6 +139,30 @@ describe("Welcome", () => {
     wrap(<WelcomePage />, "/welcome?step=1");
     expect(await screen.findByText(READ_FAILED)).toBeInTheDocument();
     expect(screen.getByLabelText("First name")).toHaveValue("");
+  });
+
+  it("a saved profile survives a résumé that can't be read", async () => {
+    resumes = [{ id: "r1", filename: "wren.pdf", is_active: true }];
+    profile = { first_name: "Wren", last_name: "Tester", phone: "555-010-0199", city: "Austin", state: "TX", linkedin_url: null };
+    post.mockRejectedValue(new Error("down"));
+    wrap(<WelcomePage />, "/welcome?step=1");
+    // A profile already filled in isn't read again: it's shown as it is.
+    expect(await screen.findByLabelText("First name")).toHaveValue("Wren");
+    expect(post).not.toHaveBeenCalledWith("/v1/users/me/application-profile/from-resume", expect.anything());
+    await userEvent.click(screen.getByRole("button", { name: "Looks right" }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/onboarding", { profile_reviewed: true, welcome_step: 2 }),
+    );
+    expect(put).not.toHaveBeenCalled();
+  });
+
+  it("when setup can't load, offers Try again and Skip", async () => {
+    get.mockImplementation((path: string) =>
+      path === "/v1/onboarding" ? Promise.reject(new Error("down")) : routes(path),
+    );
+    wrap(<WelcomePage />);
+    expect(await screen.findByRole("button", { name: "Try again" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /skip, do it later/i })).toBeInTheDocument();
   });
 
   it("on a phone the Job Catcher step offers to send the link", async () => {
@@ -215,5 +239,31 @@ describe("ⓘ bubbles", () => {
       const text = Object.values(help).join(" ");
       expect(text).not.toMatch(/\b(IMAP|MCP|OAuth|API|LLM)\b/);
     }
+  });
+});
+
+describe("the front door", () => {
+  it("opens the Welcome for a new account, and the app once it's done", async () => {
+    const { Home } = await import("@/router");
+    const at = (done: boolean) => {
+      onboarding = state({ welcome: { step: 1, done } });
+      const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+      return render(
+        <QueryClientProvider client={qc}>
+          <MemoryRouter initialEntries={["/"]}>
+            <Routes>
+              <Route path="/" element={<Home />} />
+              <Route path="/welcome" element={<p>Welcome page</p>} />
+              <Route path="/search" element={<p>Find jobs</p>} />
+            </Routes>
+          </MemoryRouter>
+        </QueryClientProvider>,
+      );
+    };
+    const first = at(false);
+    expect(await screen.findByText("Welcome page")).toBeInTheDocument();
+    first.unmount();
+    at(true);
+    expect(await screen.findByText("Find jobs")).toBeInTheDocument();
   });
 });

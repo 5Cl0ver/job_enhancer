@@ -1,12 +1,10 @@
-import { useEffect } from "react";
-import { NavLink, Outlet, useNavigate } from "react-router-dom";
+import { NavLink, Outlet } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { RequireAuth } from "@/routes/RequireAuth";
 import { OfflineBanner } from "@/components/layout/OfflineBanner";
 import { CountBadge, TabBar, TopBar } from "@/components/layout/PhoneNav";
 import { NAV, allowed, signOut } from "@/components/layout/nav";
 import { useAttention } from "@/hooks/useAttention";
-import { useOnboarding } from "@/hooks/useOnboarding";
 import { useProfile } from "@/hooks/useProfile";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
 
@@ -26,7 +24,6 @@ export function DashboardLayout() {
 function Frame() {
   // Live-sync saved jobs across the app, the extension, and other tabs.
   useRealtimeSync();
-  useOpenWelcome();
   const { data: profile } = useProfile();
   const { data: attention } = useAttention();
   const isAdmin = profile?.role === "admin";
@@ -92,25 +89,3 @@ function Frame() {
   );
 }
 
-const WELCOME_SHOWN = "welcome.shown";
-
-/**
- * A brand-new account lands on the Welcome (spec 019), once per visit: after
- * "Skip" or going off to Settings from it, the app stays put, and the Getting
- * started card takes over. Accounts from before the Welcome were marked done.
- */
-function useOpenWelcome() {
-  const { data } = useOnboarding();
-  const navigate = useNavigate();
-  const due = data !== undefined && !data.welcome.done;
-  useEffect(() => {
-    if (!due) return;
-    try {
-      if (sessionStorage.getItem(WELCOME_SHOWN)) return;
-      sessionStorage.setItem(WELCOME_SHOWN, "1");
-    } catch {
-      // storage blocked: still show it, just this once per page load
-    }
-    navigate("/welcome", { replace: true });
-  }, [due, navigate]);
-}
