@@ -1,10 +1,13 @@
 import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import { Check, Loader2, MessageCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
+import { PdfViewer } from "@/components/common/PdfViewer";
 import { usePostMessage, useResumeDecision } from "@/hooks/useApply";
 import { useProfile, useUpdateProfile } from "@/hooks/useProfile";
+import { api } from "@/lib/api";
 import type { ApplyRun } from "@/lib/apply";
 
 const ASK = "What should I change on this résumé for this job?";
@@ -24,6 +27,15 @@ export function ResumeReview({ run }: { run: ApplyRun }) {
   const [note, setNote] = useState("");
   const decided = !!run.resume_check?.decision;
   const round = run.resume_check?.round ?? 1;
+  // The résumé right here (spec 025): each round is Claude's newest version.
+  const pdf = useQuery({
+    queryKey: ["resume-look", run.resume_id, round],
+    queryFn: () => api.getBlob(`/v1/ai/resumes/${run.resume_id}/file`),
+    enabled: !!run.resume_id,
+    staleTime: Infinity,
+    refetchOnWindowFocus: false,
+    retry: false,
+  });
 
   return (
     <div className="space-y-4">
@@ -31,6 +43,15 @@ export function ResumeReview({ run }: { run: ApplyRun }) {
         {round > 1 ? "Claude changed it. " : "Claude wrote this résumé for the job. "}
         Look it over: nothing is filled until you say Use it.
       </p>
+      {pdf.data ? (
+        <PdfViewer blob={pdf.data} filename="Résumé for this job.pdf" className="h-[65dvh] rounded-md border" />
+      ) : pdf.isError ? (
+        <p className="text-sm text-muted-foreground">Couldn't show it here. Use View below.</p>
+      ) : (
+        <p className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> Opening your résumé…
+        </p>
+      )}
       <ResumeForJob run={run} />
 
       {!decided && !changing && (
