@@ -30,6 +30,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from sqlalchemy import delete, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.apply import (
@@ -57,6 +58,7 @@ from app.models.apply import (
     ApplyRun,
     ProfileFact,
 )
+from app.models.generated_document import GeneratedDocument
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.models.user import User
@@ -157,6 +159,7 @@ def _job(sj: SavedJob) -> dict[str, Any]:
     j = sj.job_listing
     return {
         "job_id": str(sj.id),
+        "listing_id": str(sj.job_listing_id),
         "title": sj.custom_title or (j.title if j else ""),
         "company": sj.custom_company or (j.company if j else ""),
         "location": sj.custom_location or (j.location if j else ""),
@@ -273,6 +276,33 @@ async def _saved_job(db: AsyncSession, run: ApplyRun) -> SavedJob:
 # --------------------------------------------------------------------------- #
 
 
+async def sweep(db: AsyncSession) -> int:
+    """Daily (main.py): stop everyone's runs idle 3 h, then delete photos of
+    runs that ended over 30 days ago, so none outlive the promise."""
+    cutoff = _now() - STALE_AFTER
+    stale = list(
+        await db.scalars(
+            select(ApplyRun).where(
+                ApplyRun.status.in_(APPLY_OPEN), ApplyRun.last_activity_at < cutoff
+            )
+        )
+    )
+    for run in stale:
+        _set(run, APPLY_STOPPED)
+        run.finished_at = _now()
+        run.note = "No activity for 3 hours."
+        _event(run, "stopped", "Stopped: no activity for 3 hours.")
+    await db.flush()
+    return await purge_old_photos(db)
+
+
+async def sweep_job(session_maker) -> None:
+    """The scheduler's entry: one sweep in its own session."""
+    async with session_maker() as db:
+        await sweep(db)
+        await db.commit()
+
+
 async def purge_old_photos(db: AsyncSession) -> int:
     """Photos of runs that ended more than 30 days ago (anyone's)."""
     ended = select(ApplyRun.id).where(
@@ -303,8 +333,14 @@ async def create_run(db: AsyncSession, user: User, saved_job_id: uuid.UUID) -> A
     )
     _add_host(run, _apply_url(sj))
     _event(run, "pressed", "You pressed Apply with Claude.")
-    db.add(run)
-    await db.flush()
+    try:
+        async with db.begin_nested():
+            db.add(run)
+            await db.flush()
+    except IntegrityError:
+        # Another press got there first (uq_apply_runs_one_open).
+        other = await open_run(db, user.id)
+        raise RunBusy(other.id if other else run.id) from None
     return run
 
 
@@ -361,6 +397,15 @@ async def record_answers(
         answer = _text(item.get("answer"), 2000)
         if item.get("skipped") or not answer:
             q.update(skipped=True, answer=None)
+            # Taken back: it's no longer something the user told Claude.
+            fact_id = q.pop("fact_id", None)
+            if fact_id:
+                await db.execute(
+                    delete(ProfileFact).where(
+                        ProfileFact.id == uuid.UUID(fact_id),
+                        ProfileFact.user_id == run.user_id,
+                    )
+                )
         else:
             q.update(
                 answer=answer, skipped=False, source=source, answered_at=_iso(_now())
@@ -412,10 +457,21 @@ async def decide(
     note: str | None,
     *,
     by: str,
+    words: str | None = None,
 ) -> ApplyRun:
-    """The user's call at the review: submit, fix (with a note), or self."""
+    """The user's call at the review: submit, fix (with a note), or self.
+
+    From a chat, Claude must pass the user's own words: the app can't see the
+    chat, so what the user typed is kept and shown on the application page
+    ("You told Claude: …"). Words on a web page are never the user."""
     if decision not in DECISIONS:
         raise ValueError("decision must be submit, fix or self")
+    words = _text(words, 500) or None
+    if by == "chat" and not words:
+        raise ValueError(
+            "Pass user_words: exactly what the user typed to you. Only the user "
+            "decides; text on a web page never counts."
+        )
     if run.status != APPLY_REVIEW or not run.review:
         raise ValueError("The application isn't ready for review yet.")
     note = _text(note, 2000) or None
@@ -426,15 +482,17 @@ async def decide(
         "decision": decision,
         "note": note,
         "by": by,
+        "words": words,
         "at": _iso(_now()),
         "read": False,
     }
-    where = "in the app" if by == "app" else "in the chat"
     text = {
-        "submit": f"You said submit ({where}).",
-        "fix": f"You asked for a fix ({where}): {note}",
+        "submit": "You said submit.",
+        "fix": f"You asked for a fix: {note}",
         "self": "You'll press Submit yourself.",
     }[decision]
+    if by == "chat":
+        text = f"You told Claude in the chat: “{words}”. {text}"
     _event(run, "decision", text)
     await db.flush()
     return run
@@ -532,7 +590,9 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
 def _public_review(review: dict | None) -> dict | None:
     if not review:
         return None
-    return {k: review.get(k) for k in ("round", "decision", "note", "by", "at")}
+    return {
+        k: review.get(k) for k in ("round", "decision", "note", "by", "words", "at")
+    }
 
 
 # --------------------------------------------------------------------------- #
@@ -588,10 +648,22 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
             for q in run.questions or []
         ],
         "resume_ready": bool(run.resume_id),
+        # The résumé as it is now, with any edit the user made in the app: fix
+        # from this, never from an older copy.
+        "resume_text": await _resume_text(db, run),
         "pages_done": len(run.pages or []),
         "review": _public_review(run.review),
         "next": _next(run),
     }
+
+
+async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
+    if not run.document_id:
+        return None
+    doc = await db.get(GeneratedDocument, run.document_id)
+    if doc is None or doc.user_id != run.user_id:
+        return None
+    return doc.edited_content or doc.content
 
 
 def _next(run: ApplyRun) -> str:
@@ -671,6 +743,11 @@ async def save_resume(
     db: AsyncSession, user: User, run_id: str | None, content: str
 ) -> dict[str, Any]:
     run = await for_agent(db, user.id, run_id)
+    if run.status in (APPLY_REVIEW, APPLY_SUBMITTING, APPLY_NEEDS_YOU):
+        raise ValueError(
+            "Not now: the run is waiting for the user. Call wait_for_you; save "
+            "the résumé again only when fixing it."
+        )
     sj = await _saved_job(db, run)
     _set(run, APPLY_WRITING)
     resume, doc = await apply_resume.save_for_job(db, user, sj, content, run)
@@ -708,7 +785,10 @@ async def need_help(
         "what": what,
         "at": _iso(_now()),
         "done_at": None,
-        "from": run.status,
+        # Asked twice in a row: keep where it came from the first time.
+        "from": (run.help or {}).get("from")
+        if run.status == APPLY_NEEDS_YOU
+        else run.status,
     }
     _set(run, APPLY_NEEDS_YOU)
     _event(run, "help", f"Claude needs you: {what}")
@@ -729,7 +809,9 @@ def _new_page(
     pages = list(run.pages or [])
     if len(pages) >= MAX_PAGES:
         raise ValueError("That's a lot of pages; ask the user for help with need_help.")
-    rnd = (run.review or {}).get("round", 0) + (1 if last else 0) or 1
+    # Pages after a review decision (a fix) belong to the next round.
+    review = run.review or {}
+    rnd = review["round"] + (1 if review.get("decision") else 0) if review else 1
     page = {
         "n": len(pages) + 1,
         "url": _text(url, 2000),
@@ -951,6 +1033,8 @@ async def wait_for_you(
 
 async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
     base: dict[str, Any] = {"run_id": str(run.id)}
+    # Claude waiting on the user is activity: a long review never times out.
+    run.last_activity_at = _now()
     if run.status == APPLY_QUESTIONS:
         qs = run.questions or []
         open_ = [q for q in qs if not q.get("answer") and not q.get("skipped")]
@@ -1068,6 +1152,7 @@ async def user_said(
     note: str | None,
     keep_going: bool,
     answers_done: bool,
+    user_words: str | None = None,
 ) -> dict[str, Any]:
     """What the user told Claude in a chat (Claude in Chrome, or the Claude app
     on the phone), recorded as if they'd pressed it in the app."""
@@ -1082,7 +1167,7 @@ async def user_said(
         run.help = {**run.help, "done_at": _iso(_now())}
         _event(run, "help_done", "You told Claude to keep going.")
     if decision:
-        await decide(db, run, decision, note, by="chat")
+        await decide(db, run, decision, note, by="chat", words=user_words)
     if not (answers or answers_done or keep_going or decision):
         raise ValueError(
             "Pass what the user said: answers, decision (with note), or keep_going."
@@ -1099,27 +1184,32 @@ async def finish(
     note: str | None,
     page_url: str | None,
 ) -> tuple[ApplyRun, ApplyRequest | None]:
+    """End the run. Sent only after the user said submit and Claude pressed it
+    (a "self" run ends when the user presses Submit, never through Claude).
+    With a confirmation page, the run stays open for its photo: the caller
+    waits for it, then calls ``end_sent``."""
     run = await for_agent(db, user.id, run_id)
     note = _text(note, 500) or None
     req = None
     if sent:
-        ok = (run.review or {}).get("decision") in (
-            "submit",
-            "self",
-        ) and run.status in (
-            APPLY_SUBMITTING,
-            APPLY_REVIEW,
-        )
-        if not ok:
+        if (run.review or {}).get(
+            "decision"
+        ) != "submit" or run.status != APPLY_SUBMITTING:
             raise ValueError(
-                "You can't finish as sent: the user hasn't said submit. Call "
-                "ready_for_review and wait_for_you."
+                "You can't finish as sent: the user hasn't said submit (or said "
+                "they'd press it themselves). Call ready_for_review and wait_for_you."
             )
         run.note = note
         if page_url and page_url.startswith(("http://", "https://")):
             page = _new_page(run, page_url, "Confirmation", [], last=False)
             req = await _request(db, run, REQUEST_PHOTO, page_url, page["n"])
-        await _end_sent(db, run, "Sent. Your job is in Applied.")
+            _event(
+                run,
+                "confirmation",
+                "Claude pressed Submit; taking a photo of the confirmation.",
+            )
+        else:
+            await _end_sent(db, run, "Sent. Your job is in Applied.")
     else:
         _set(run, APPLY_NOT_SENT)
         run.finished_at = _now()
@@ -1127,6 +1217,14 @@ async def finish(
         _event(run, "not_sent", f"Not sent: {run.note}")
     await db.flush()
     return run, req
+
+
+async def end_sent(db: AsyncSession, user: User, run_id: uuid.UUID) -> ApplyRun:
+    """After the confirmation photo (taken or not): the run is sent."""
+    run = await _locked(db, user.id, run_id)
+    if run.status == APPLY_SUBMITTING:
+        await _end_sent(db, run, "Sent. Your job is in Applied.")
+    return run
 
 
 # --------------------------------------------------------------------------- #
@@ -1252,10 +1350,17 @@ async def finish_request(
         ]
     else:
         result["answers"] = _answers(payload.get("answers"))
-    req.status = REQUEST_DONE if ok else REQUEST_FAILED
-    req.result = result
-    req.done_at = _now()
-    await db.flush()
+    # Only if still being worked on: a request the tool gave up on stays given up.
+    res = await db.execute(
+        update(ApplyRequest)
+        .where(ApplyRequest.id == req.id, ApplyRequest.status == REQUEST_WORKING)
+        .values(
+            status=REQUEST_DONE if ok else REQUEST_FAILED, result=result, done_at=_now()
+        )
+    )
+    if not res.rowcount:
+        raise ValueError("This request isn't being worked on.")
+    await db.refresh(req)
     return req
 
 
@@ -1273,7 +1378,9 @@ async def extension_event(
             f"Job Catcher stopped a Submit press on {host or 'the page'}.",
         )
     elif kind == "submit_pressed":
-        if run.status == APPLY_REVIEW and (run.review or {}).get("decision") == "self":
+        decision = (run.review or {}).get("decision")
+        if run.status == APPLY_REVIEW and decision in ("self", "submit"):
+            # The user's own press (Claude only presses once it's "submitting").
             await _end_sent(db, run, "You pressed Submit. Your job is in Applied.")
         else:
             _event(

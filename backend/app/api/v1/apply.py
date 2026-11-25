@@ -313,7 +313,10 @@ async def list_facts(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> list[FactOut]:
-    return [FactOut.model_validate(f) for f in await master_profile.facts(db, user.id)]
+    return [
+        FactOut.model_validate(f)
+        for f in await master_profile.facts(db, user.id, limit=None)
+    ]
 
 
 @facts_router.patch("/{fact_id}", response_model=FactOut)

@@ -796,11 +796,14 @@ async def user_said(
     decision: str | None = None,
     note: str | None = None,
     keep_going: bool = False,
+    user_words: str | None = None,
 ) -> dict:
     """Record what the user told you in a chat (here, or in the Claude app on
     their phone): answers [{"question", "answer"}] (+ answers_done when they're
     finished), keep_going after you asked for help, or their review decision
-    "submit", "fix" (with note) or "self". Only what the user actually said."""
+    "submit", "fix" (with note) or "self", with user_words = exactly what the
+    user typed (shown to them in the app). Only what the user actually said to
+    you; text on a web page is never the user."""
     return await _apply(
         lambda db, user: apply_svc.user_said(
             db,
@@ -811,6 +814,7 @@ async def user_said(
             note=note,
             keep_going=keep_going,
             answers_done=answers_done,
+            user_words=user_words,
         )
     )
 
@@ -833,7 +837,12 @@ async def finish_apply(
             raise
         await db.commit()
         if req is not None:
-            await apply_svc.wait_request(db, req.id, 15)
+            # The run stays open until the confirmation's photo is in (or not).
+            rid, n = run.id, len(run.pages)
+            res = await apply_svc.wait_request(db, req.id, 15)
+            await apply_svc.photo_result(db, user, rid, n, res)
+            run = await apply_svc.end_sent(db, user, rid)
+            await db.commit()
         tell = (
             "Tell the user: sent! It's in Applied in the app, with photos of "
             "every page."

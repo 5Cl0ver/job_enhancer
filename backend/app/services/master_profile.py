@@ -34,15 +34,18 @@ async def master_resume(db: AsyncSession, user_id: uuid.UUID) -> Resume | None:
     return master or next((r for r in rows if r.is_active), None)
 
 
-async def facts(db: AsyncSession, user_id: uuid.UUID) -> list[ProfileFact]:
-    return list(
-        await db.scalars(
-            select(ProfileFact)
-            .where(ProfileFact.user_id == user_id)
-            .order_by(ProfileFact.created_at)
-            .limit(MAX_FACTS)
-        )
+async def facts(
+    db: AsyncSession, user_id: uuid.UUID, limit: int | None = MAX_FACTS
+) -> list[ProfileFact]:
+    """Oldest first. With a limit, the newest ``limit`` (so fresh answers are
+    never the ones left out); Settings asks for all of them."""
+    q = select(ProfileFact).where(ProfileFact.user_id == user_id)
+    if limit is None:
+        return list(await db.scalars(q.order_by(ProfileFact.created_at)))
+    newest = list(
+        await db.scalars(q.order_by(ProfileFact.created_at.desc()).limit(limit))
     )
+    return newest[::-1]
 
 
 async def profile_text(db: AsyncSession, user: User) -> str:

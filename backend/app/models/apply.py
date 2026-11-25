@@ -26,11 +26,13 @@ from sqlalchemy import (
     Boolean,
     DateTime,
     ForeignKey,
+    Index,
     Integer,
     LargeBinary,
     String,
     Text,
     func,
+    text,
 )
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column
@@ -60,6 +62,8 @@ APPLY_OPEN = (
     APPLY_SUBMITTING,
 )
 APPLY_ENDED = (APPLY_SENT, APPLY_NOT_SENT, APPLY_STOPPED)
+# One open run per user, held by the database too (two quick presses).
+OPEN_SQL = "status IN (" + ", ".join(f"'{s}'" for s in APPLY_OPEN) + ")"
 
 REQUEST_PHOTO = "photo"
 REQUEST_FILL = "fill"
@@ -86,6 +90,15 @@ def _user_col() -> Mapped[uuid.UUID]:
 
 class ApplyRun(Base):
     __tablename__ = "apply_runs"
+    __table_args__ = (
+        Index(
+            "uq_apply_runs_one_open",
+            "user_id",
+            unique=True,
+            postgresql_where=text(OPEN_SQL),
+            sqlite_where=text(OPEN_SQL),
+        ),
+    )
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4

@@ -201,19 +201,19 @@ async def test_the_whole_application(engine, monkeypatch):
     go = await mcp_mod.wait_for_you(rid)
     assert go["decision"] == "submit"
 
-    monkeypatch.setattr(svc, "wait_request", lambda *a, **k: _done())
+    # The confirmation's photo is taken while the run is still open.
     done = await mcp_mod.finish_apply(
         rid, sent=True, page_url="https://acme.wd1/thanks"
     )
     assert done["status"] == "sent"
+    run = await _run(maker, run_id)
+    assert run.pages[-1]["title"] == "Confirmation"
+    assert run.pages[-1]["photo"] == "taken" and len(run.pages[-1]["photo_ids"]) == 2
+    assert seen[-1] == "photo"
     async with maker() as db:
         sj = await db.get(SavedJob, job_id)
         stage = await db.get(PipelineStage, sj.pipeline_stage_id)
         assert stage.name == "Applied" and sj.applied_at is not None
-
-
-async def _done():
-    return {"status": "done"}
 
 
 @pytest.mark.asyncio
@@ -223,14 +223,30 @@ async def test_a_fix_goes_round_again(engine, monkeypatch):
     await mcp_mod.get_apply_brief(rid)
     _job_catcher(monkeypatch, maker, user.id, photos=1)
     await mcp_mod.ready_for_review(rid, "https://acme.example/apply/9", "Review", [])
-    said = await mcp_mod.user_said(rid, decision="fix", note="Start date is January")
+    with pytest.raises(ValueError, match="user_words"):
+        await mcp_mod.user_said(rid, decision="fix", note="Start date is January")
+    said = await mcp_mod.user_said(
+        rid,
+        decision="fix",
+        note="Start date is January",
+        user_words="fix the start date, it is January",
+    )
     assert said["decision"] == "fix" and said["note"] == "Start date is January"
     run = await _run(maker, run_id)
     assert run.status == "filling"
-    assert run.events[-1]["text"].startswith("You asked for a fix (in the chat)")
+    assert run.events[-1]["text"] == (
+        "You told Claude in the chat: “fix the start date, it is January”. "
+        "You asked for a fix: Start date is January"
+    )
+    await mcp_mod.page_done(rid, "https://acme.example/apply/3", "Fixed page", [])
     await mcp_mod.ready_for_review(rid, "https://acme.example/apply/9", "Review", [])
     run = await _run(maker, run_id)
     assert run.review["round"] == 2 and run.review["decision"] is None
+    assert [(p["title"], p["round"]) for p in run.pages] == [
+        ("Review", 1),
+        ("Fixed page", 2),
+        ("Review", 2),
+    ]
 
 
 @pytest.mark.asyncio

@@ -8,7 +8,7 @@ changes, so a run's log shows which text Claude had.
 
 from pathlib import Path
 
-APPLY_PLAYBOOK_VERSION = "2026.11.24"
+APPLY_PLAYBOOK_VERSION = "2026.11.25"
 
 _DIR = Path(__file__).resolve().parent.parent / "apply"
 

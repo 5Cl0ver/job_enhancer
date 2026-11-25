@@ -24,6 +24,11 @@ branch_labels = None
 depends_on = None
 
 _UUID = postgresql.UUID(as_uuid=True)
+# Frozen here (not imported from the model) so the migration never changes.
+_OPEN = (
+    "status IN ('waiting', 'reading', 'questions', 'writing', 'filling', "
+    "'needs_you', 'review', 'submitting')"
+)
 
 
 def _ts(name: str, nullable: bool = False) -> sa.Column:
@@ -91,6 +96,15 @@ def upgrade() -> None:
     )
     op.create_index("ix_apply_runs_user_id", "apply_runs", ["user_id"])
     op.create_index("ix_apply_runs_saved_job_id", "apply_runs", ["saved_job_id"])
+    # One open run per user, held by the database (two quick presses).
+    op.create_index(
+        "uq_apply_runs_one_open",
+        "apply_runs",
+        ["user_id"],
+        unique=True,
+        postgresql_where=sa.text(_OPEN),
+        sqlite_where=sa.text(_OPEN),
+    )
 
     op.create_table(
         "apply_requests",
@@ -169,6 +183,7 @@ def downgrade() -> None:
     op.drop_table("apply_photos")
     op.drop_index("ix_apply_requests_run_id", table_name="apply_requests")
     op.drop_table("apply_requests")
+    op.drop_index("uq_apply_runs_one_open", table_name="apply_runs")
     op.drop_index("ix_apply_runs_saved_job_id", table_name="apply_runs")
     op.drop_index("ix_apply_runs_user_id", table_name="apply_runs")
     op.drop_table("apply_runs")

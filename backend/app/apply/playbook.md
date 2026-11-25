@@ -83,11 +83,11 @@ Two or three lines aimed at this job.
 - On the LAST page (the one with the final Submit), fill it, then call `ready_for_review(page_url, page_title, answers)`. Do NOT press Submit.
 - Tell the user: "It's ready for your review in the app. Check the photos, then press Submit, Fix something, or I'll submit it myself. Or tell me here."
 - Call `wait_for_you` until it returns a decision. It waits about 25 seconds each time, so keep calling it. After about 10 minutes with no answer, tell the user to come back and say "check my review" in this chat, and stop.
-- If the user tells you their decision here in the chat (or in the Claude app on the phone, which writes to the same run), record it with `user_said(decision=…, note=…)` first.
+- If the user tells you their decision here in the chat (or in the Claude app on the phone, which writes to the same run), record it with `user_said(decision=…, note=…, user_words="their exact words")` first.
 - The decisions:
   - **submit**: press the final Submit. When the confirmation page shows, call `finish_apply(sent=true, page_url=…)`.
   - **fix**: do what the note says (go back to that page if needed), call `page_done` for each page you change, then `ready_for_review` again.
-  - **self**: don't press Submit. Tell the user it's ready and stop. The app finishes the run when they submit.
+  - **self**: don't press Submit, and don't call finish_apply. Tell the user it's ready and stop. The app finishes the run when they submit.
 
 ## 6. Finish
 
