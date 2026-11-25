@@ -125,15 +125,12 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     if (data.run_id && !looping) loop();
     if (!data.run_id || tab?.id == null) return { active: false, guard: false, watch: false };
     const onSite = onRunHost(hostOf(tab.url || ""), data.hosts);
-    // Look for the confirmation: Claude is pressing Submit, or one was just
-    // pressed in this tab (the confirmation may be the next page).
-    const watch =
-      onSite && (await isRunTab(data, tab)) && (data.status === "submitting" || (watchUntil.get(tab.id) || 0) > Date.now());
+    // Look for the thank-you page: the app says so for a few minutes after a
+    // Submit press (it survives this worker sleeping or restarting), only in
+    // the application's own tab.
+    const watch = onSite && !!data.watch && (await isRunTab(data, tab));
     return { active: onSite, guard: onSite && !!data.guard, watch };
   }
-
-  const watchUntil = new Map(); // tab id → until when it looks for the confirmation
-  const WATCH_AFTER_PRESS_MS = 30_000;
 
   async function event(kind, tab, url, words) {
     const data = await active();
@@ -142,10 +139,12 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // that ends the run as sent must come from the application's own tab.
     const ok = kind === "blocked_submit" ? onRunHost(hostOf(tab.url || ""), data.hosts) : await isRunTab(data, tab);
     if (!ok) return;
-    if (kind === "submit_pressed") watchUntil.set(tab.id, Date.now() + WATCH_AFTER_PRESS_MS);
+    if (kind === "submit_pressed") state.at = 0; // hear the app's "watch" at once
     await api(`/v1/apply/runs/${data.run_id}/event`, {
       method: "POST",
-      body: JSON.stringify({ kind, url: url || tab.url, ...(words ? { words } : {}) }),
+      // A confirmation is the tab's (a form embedded from another site says
+      // it inside a frame of the application's page).
+      body: JSON.stringify({ kind, url: kind === "confirmation_seen" ? tab.url : url || tab.url, ...(words ? { words } : {}) }),
     }).catch(() => null);
     state.at = 0; // a press can end the run: ask again next time
   }
@@ -175,7 +174,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
 
   async function handle(req, data) {
     // Only the computer with the application's tab takes it.
-    const tab = await findTab(req.url, data.run_id);
+    const tab = await findTab(req.url, data.run_id, { ownFirst: req.kind === "peek" });
     if (!tab) return;
     const claimed = await api(`/v1/apply/requests/${req.id}/claim`, { method: "POST", body: "{}" }).catch(() => null);
     if (!claimed) return; // network: try again next turn
@@ -192,9 +191,16 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   }
 
   /** The application's tab: the same page, else the run's own tab, else the
-   * focused window's showing tab on that exact host. */
-  async function findTab(url, runId) {
+   * focused window's showing tab on that exact host. A screen-now photo asks
+   * for the run's own tab first (two tabs can share a page's address). */
+  async function findTab(url, runId, { ownFirst = false } = {}) {
     const tabs = await c.tabs.query({});
+    if (ownFirst) {
+      const mine = await runTabs(runId);
+      const host = hostOf(url);
+      const own = tabs.find((t) => mine.has(t.id) && t.url && hostOf(t.url) === host);
+      if (own) return own;
+    }
     const key = pageKey(url);
     const same = tabs.filter((t) => t.url && pageKey(t.url) === key);
     const pick = same.find((t) => t.active) || same[0];

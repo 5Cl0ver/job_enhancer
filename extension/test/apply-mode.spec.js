@@ -392,29 +392,48 @@ describe("spec 023: the screen now, the confirmation, the small fixes", () => {
     expect(c.tabs.sendMessage).not.toHaveBeenCalled(); // no scrolling
   });
 
-  it("after a Submit in the application's tab, that tab looks for the confirmation", async () => {
+  it("the app says when to look for the confirmation, and only the application's tab looks", async () => {
     const c = chromeWith({ "je_apply_tabs:r1": [7] });
     const sent = [];
+    let watch = false;
     const api = vi.fn(async (path, init = {}) => {
       if (init.body) sent.push(JSON.parse(init.body));
-      return { ok: true, json: async () => ({ run_id: "r1", status: "review", guard: false, hosts: ["acme.example"], requests: [] }) };
+      return { ok: true, json: async () => ({ run_id: "r1", status: "submitting", guard: false, watch, hosts: ["acme.example"], requests: [] }) };
     });
     const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     run.loop = vi.fn();
-    expect((await run.tick({ id: 7, url: URL1 })).watch).toBe(false);
+    expect((await run.tick({ id: 7, url: URL1 })).watch).toBe(false); // nothing pressed yet
     await run.event("submit_pressed", { id: 7, url: URL1 });
+    watch = true; // the app heard the press
     expect((await run.tick({ id: 7, url: "https://acme.example/thanks" })).watch).toBe(true);
-    await run.event("confirmation_seen", { id: 7, url: "https://acme.example/thanks" }, null, "Thank you for applying");
+    expect((await run.tick({ id: 9, url: "https://acme.example/other-job" })).watch).toBe(false);
+    // A confirmation inside an embedded form's frame is the tab's page.
+    await run.event("confirmation_seen", { id: 7, url: "https://acme.example/thanks" }, "https://boards.greenhouse.io/embed/x", "Thank you for applying");
     expect(sent.at(-1)).toEqual({ kind: "confirmation_seen", url: "https://acme.example/thanks", words: "Thank you for applying" });
   });
 
-  it("while Claude is pressing Submit, its tab looks too", async () => {
+  it("a screen-now photo is of the application's own tab, even when another shares its address", async () => {
     const c = chromeWith({ "je_apply_tabs:r1": [7] });
-    const api = vi.fn(async () => ({ ok: true, json: async () => ({ run_id: "r1", status: "submitting", guard: false, hosts: ["acme.example"], requests: [] }) }));
+    c.tabs.query.mockResolvedValue([
+      { id: 8, windowId: 1, active: true, url: URL1 },
+      { id: 7, windowId: 2, active: true, url: URL1 + "?step=3" },
+    ]);
+    c.tabs.get.mockImplementation(async (id) => ({ id, windowId: id === 7 ? 2 : 1, active: true, url: id === 7 ? URL1 + "?step=3" : URL1 }));
+    let served = 0;
+    const api = vi.fn(async (path) => {
+      if (path === "/v1/apply/active") {
+        served++;
+        return { ok: true, json: async () => (served === 1 ? { run_id: "r1", hosts: ["acme.example"], requests: [{ id: "k1", kind: "peek", url: URL1, page_n: 0 }] } : { run_id: null }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
     const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
-    run.loop = vi.fn();
-    expect((await run.tick({ id: 7, url: URL1 })).watch).toBe(true);
-    expect((await run.tick({ id: 9, url: URL1 + "?other" })).watch).toBe(false);
+    const done = run.loop();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    expect(c.tabs.captureVisibleTab).toHaveBeenCalledWith(2, expect.anything());
   });
 
   it("the page tells the background once it shows the confirmation", async () => {
@@ -422,6 +441,7 @@ describe("spec 023: the screen now, the confirmation, the small fixes", () => {
     const sent = [];
     const send = vi.fn(async (m) => {
       sent.push(m);
+      if (m.type === "applyConfirmed") return { ok: true };
       return m.type === "applyTick" ? { active: true, guard: false, watch: false } : null;
     });
     win.document.querySelector("form").addEventListener("submit", (e) => e.preventDefault());
@@ -448,14 +468,20 @@ describe("spec 023: the screen now, the confirmation, the small fixes", () => {
     expect(confirmationIn("Thank you for your interest in Acme")).toBe("");
     expect(confirmationIn("Submit application Sent: 1")).toBe("");
     expect(confirmationIn("Application submitted!")).toBe("Application submitted");
+    expect(confirmationIn("We’ve received your application")).toBe("We’ve received your application");
+    expect(confirmationIn("You’ve applied to Acme")).toBe("You’ve applied");
   });
 
-  it("reads the page's words, never its buttons or labels", () => {
-    const d = page(`<main><h1>Thanks for applying</h1><button>Submit application</button><label>Application sent</label></main>`).document;
+  it("reads the page's words, never its buttons, labels or hidden templates", () => {
+    const d = page(`<header><nav>Home</nav></header>
+      <main><header><h1>Thanks for applying</h1></header><button>Submit application</button>
+      <label>Application sent</label><div hidden>Your application has been submitted</div></main>`).document;
     const text = readableText(d.body);
-    expect(text).toContain("Thanks for applying");
+    expect(text).toContain("Thanks for applying"); // a header inside the content counts
+    expect(text).not.toContain("Home");
     expect(text).not.toContain("Submit application");
     expect(text).not.toContain("Application sent");
+    expect(text).not.toContain("has been submitted");
   });
 
   it("words already on the page before Submit never count", async () => {

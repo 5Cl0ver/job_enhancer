@@ -45,26 +45,32 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     guard = !!r?.guard;
     active = !!r?.active;
     // A Submit was just pressed in this tab (maybe on the page before this
-    // one), or Claude is pressing it: look for the confirmation.
-    if (r?.watch) lookForConfirmation();
+    // one): look for the confirmation. A page that was already showing when
+    // the watch began counts only what appears after.
+    if (r?.watch) {
+      if (before === undefined) before = shownNow();
+      lookForConfirmation();
+    }
   };
 
   // "Thank you for applying": tell the background once, with its words. Words
   // already on the page before the Submit press never count.
   let confirmed = false;
   let watching = null;
-  let before = null;
-  const lookForConfirmation = () => {
+  // What the page said before (undefined = a new page: nothing to compare).
+  let before;
+  const shownNow = () => confirmationIn(readableText(doc.body)) || null;
+  const lookForConfirmation = async () => {
     if (confirmed) return;
-    const words = confirmationIn(readableText(doc.body));
+    const words = shownNow();
     if (words && words !== before) {
       confirmed = true;
-      send({ type: "applyConfirmed", url: win.location.href, words });
+      const r = await send({ type: "applyConfirmed", url: win.location.href, words });
+      if (!r?.ok) confirmed = false; // try again next time
     }
   };
   const watchAfterSubmit = () => {
     if (watching) return;
-    before = confirmationIn(readableText(doc.body)) || null;
     const until = Date.now() + WATCH_MS;
     watching = setInterval(() => {
       if (!live() || confirmed || Date.now() > until) {
@@ -99,6 +105,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (!live() || !active) return;
     const button = finalSubmitButton(event.composedPath?.()[0] || event.target);
     if (!button) return;
+    if (!guard && before === undefined) before = shownNow();
     if (guard) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -111,6 +118,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (!live() || !active) return;
     const button = finalSubmitOfForm(event);
     if (!button) return;
+    if (!guard && before === undefined) before = shownNow();
     if (guard) {
       event.preventDefault();
       event.stopImmediatePropagation();

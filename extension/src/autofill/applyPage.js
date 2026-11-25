@@ -117,7 +117,7 @@ export function scrollerOf(doc, win) {
 // anything is sent), never a bare "application … sent" (a "Submit application"
 // button next to other words).
 const CONFIRM =
-  /thank(?:s| you)(?: so much)? for (?:applying|your (?:application|submission))|(?:your )?application (?:has been|was) (?:successfully )?(?:submitted|received|sent|completed?)|\bapplication (?:successfully )?(?:submitted|received)\b|we(?:'ve| have) received your application|successfully (?:submitted|applied)|you(?:'ve| have) (?:successfully )?applied/i;
+  /thank(?:s| you)(?: so much)? for (?:applying|your (?:application|submission))|(?:your )?application (?:has been|was) (?:successfully )?(?:submitted|received|sent|completed?)|\bapplication (?:successfully )?(?:submitted|received)\b|we(?:['’]ve| have) received your application|successfully (?:submitted|applied)|you(?:['’]ve| have) (?:successfully )?applied/i;
 
 /** The confirmation's own words in a text, or "". */
 export function confirmationIn(text) {
@@ -125,22 +125,44 @@ export function confirmationIn(text) {
   return m ? m[0].slice(0, 200) : "";
 }
 
-const NOT_READ = "button, [role='button'], input, select, option, textarea, label, nav, header, footer, script, style, noscript";
+const NOT_READ = "button, [role='button'], input, select, option, textarea, label, script, style, noscript, template";
+// The page's own chrome, unless it's inside the content (a "thank you" in a
+// dialog's or an article's header counts).
+const CHROME = "nav, header, footer";
+const CONTENT = "main, article, [role='main'], [role='dialog'], dialog";
+// Where a confirmation usually appears: read first, so a long page's limit
+// never leaves it out.
+const FIRST = "[role='dialog'], dialog[open], [aria-live], [role='alert'], [role='status'], main, [role='main']";
+const MAX_PARTS = 4000;
 
-/** The page's own words, without its buttons, boxes and labels: what a
- * confirmation message is written in. */
+function hidden(el) {
+  if (el.hidden || el.getAttribute?.("aria-hidden") === "true") return true;
+  // Chrome knows (display:none, visibility, content-visibility); tests may not.
+  return typeof el.checkVisibility === "function" ? !el.checkVisibility() : false;
+}
+
+/** The page's own words as a person sees them: never its buttons, boxes or
+ * labels, never hidden templates. What a confirmation is written in. */
 export function readableText(root) {
   if (!root) return "";
   const parts = [];
+  const seen = new Set();
   const walk = (node) => {
-    if (parts.length > 5000) return;
+    if (parts.length > MAX_PARTS) return;
     if (node.nodeType === 3) {
-      parts.push(node.nodeValue);
+      if (/\S/.test(node.nodeValue)) parts.push(node.nodeValue);
       return;
     }
-    if (node.nodeType !== 1 || node.matches?.(NOT_READ)) return;
+    if (node.nodeType !== 1 && node.nodeType !== 11) return;
+    if (node.nodeType === 1) {
+      if (seen.has(node) || node.matches?.(NOT_READ) || hidden(node)) return;
+      if (node.matches?.(CHROME) && !node.parentElement?.closest?.(CONTENT)) return;
+      seen.add(node);
+      if (node.shadowRoot) walk(node.shadowRoot);
+    }
     for (const child of node.childNodes) walk(child);
   };
+  for (const el of root.querySelectorAll?.(FIRST) || []) walk(el);
   walk(root);
   return parts.join(" ");
 }
