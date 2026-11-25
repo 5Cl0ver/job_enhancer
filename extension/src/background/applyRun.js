@@ -20,11 +20,12 @@
 //             and what still needs an answer.
 // Extension API calls on each turn keep the service worker awake while a run
 // is open (Chrome resets its idle timer on every extension call).
-import { shotPlan } from "../autofill/applyPage.js";
+import { onRunHost, shotPlan } from "../autofill/applyPage.js";
 
 const OPEN_TTL = 2_000;
 const IDLE_TTL = 60_000;
 const RETRY_MS = 3_000;
+const TRUST_MS = 90_000; // how long a last answer stands while the app can't be reached
 const LOOP_MS = 2_000;
 const CAPTURE_GAP_MS = 550; // Chrome allows 2 captures a second
 const MAX_WIDTH = 1200;
@@ -58,7 +59,7 @@ function hostOf(url) {
  * }} deps
  */
 export function createApplyRun({ api, press, fillSession, chrome: c = globalThis.chrome }) {
-  let state = { at: 0, ttl: IDLE_TTL, data: { run_id: null } };
+  let state = { at: 0, ttl: IDLE_TTL, data: { run_id: null }, okAt: 0 };
   let asking = null;
   let looping = false;
   const done = new Set(); // request ids answered here (claimed, or taken elsewhere)
@@ -68,12 +69,19 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     asking ??= (async () => {
       try {
         const res = await api("/v1/apply/active");
-        if (!res?.ok) throw new Error("no answer");
-        const data = (await res.json()) || { run_id: null };
-        state = { at: Date.now(), ttl: data.run_id ? OPEN_TTL : IDLE_TTL, data };
+        if (res === null) {
+          // Signed out: no application here.
+          state = { at: Date.now(), ttl: IDLE_TTL, data: { run_id: null }, okAt: Date.now() };
+        } else {
+          if (!res?.ok) throw new Error("no answer");
+          const data = (await res.json()) || { run_id: null };
+          state = { at: Date.now(), ttl: data.run_id ? OPEN_TTL : IDLE_TTL, data, okAt: Date.now() };
+        }
       } catch {
-        // Keep what we knew; ask again soon.
-        state = { ...state, at: Date.now(), ttl: RETRY_MS };
+        // Keep what we knew for a while (a restart never lifts the lock), and
+        // ask again soon; after 90 s without an answer, stop trusting it.
+        const stale = Date.now() - state.okAt > TRUST_MS;
+        state = { ...state, at: Date.now(), ttl: RETRY_MS, data: stale ? { run_id: null } : state.data };
       } finally {
         asking = null;
       }
@@ -96,18 +104,31 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     await c.storage.session.set({ [tabsKey(runId)]: [...tabs].slice(-5) }).catch(() => {});
   }
 
-  /** A page asks: is this tab the open application, and is Submit locked? */
+  /** Is this the application's own tab (and still on its site)? */
+  async function isRunTab(data, tab) {
+    if (!onRunHost(hostOf(tab.url || ""), data.hosts)) return false;
+    if ((await runTabs(data.run_id)).has(tab.id)) return true;
+    return (data.requests || []).some((r) => pageKey(r.url) === pageKey(tab.url));
+  }
+
+  /** A page asks: is Submit locked here? Every tab on the application's site
+   * is locked until the user's OK (the safety net, even before Claude's first
+   * request); only the application's own tab reports a Submit as sent. */
   async function tick(tab) {
     const data = await active();
     if (data.run_id && !looping) loop();
     if (!data.run_id || tab?.id == null) return { active: false, guard: false };
-    const mine = (await runTabs(data.run_id)).has(tab.id) || (data.requests || []).some((r) => pageKey(r.url) === pageKey(tab.url));
-    return { active: mine, guard: mine && !!data.guard };
+    const onSite = onRunHost(hostOf(tab.url || ""), data.hosts);
+    return { active: onSite, guard: onSite && !!data.guard };
   }
 
   async function event(kind, tab, url) {
     const data = await active();
-    if (!data.run_id || tab?.id == null || !(await runTabs(data.run_id)).has(tab.id)) return;
+    if (!data.run_id || tab?.id == null) return;
+    // A blocked press anywhere on the site is worth telling Claude; a press
+    // that ends the run as sent must come from the application's own tab.
+    const ok = kind === "blocked_submit" ? onRunHost(hostOf(tab.url || ""), data.hosts) : await isRunTab(data, tab);
+    if (!ok) return;
     await api(`/v1/apply/runs/${data.run_id}/event`, {
       method: "POST",
       body: JSON.stringify({ kind, url: url || tab.url }),
@@ -163,10 +184,11 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     const same = tabs.filter((t) => t.url && pageKey(t.url) === key);
     const pick = same.find((t) => t.active) || same[0];
     if (pick) return pick;
-    const mine = await runTabs(runId);
-    const own = tabs.find((t) => mine.has(t.id));
-    if (own) return own;
     const host = hostOf(url);
+    const mine = await runTabs(runId);
+    // The run's own tab, only while it's still on this page's site.
+    const own = tabs.find((t) => mine.has(t.id) && t.url && hostOf(t.url) === host);
+    if (own) return own;
     const [focused] = (await c.windows.getAll({ windowTypes: ["normal"] })).filter((w) => w.focused);
     return tabs.find((t) => t.active && t.windowId === focused?.id && t.url && hostOf(t.url) === host) || null;
   }
@@ -226,7 +248,8 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
       if (size && !changed) await ask({ op: "scroll", y: size.y, settle: 0 });
       else if (size) ask({ op: "scroll", y: size.y, settle: 0 });
     }
-    const answers = await readAnswers(tab.id);
+    // The page changed under us: never read the new page's answers.
+    const answers = changed ? [] : await readAnswers(tab.id);
     return part ? { ok: true, answers } : { ok: false, reason: "not_visible", answers };
   }
 

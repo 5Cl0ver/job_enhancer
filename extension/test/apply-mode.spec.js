@@ -268,14 +268,42 @@ describe("the background loop", () => {
     expect(JSON.parse(result[2])).toEqual({ ok: true, reason: null, filled: ["First name", "Email"], need: ["Why Acme?"] });
   });
 
-  it("the lock is the application's tab, never every page on the same site", async () => {
+  it("every tab on the site is locked, but only the application's own tab ends the run", async () => {
     const c = fakeChrome();
     c._session["je_apply_tabs:r1"] = [7];
-    const api = vi.fn(async () => ({ ok: true, json: async () => ({ run_id: "r1", guard: true, hosts: ["acme.example"], requests: [] }) }));
+    const calls = [];
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push([path, init.body]);
+      return { ok: true, json: async () => ({ run_id: "r1", guard: true, hosts: ["acme.example"], requests: [] }) };
+    });
     const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     run.loop = vi.fn();
     expect(await run.tick({ id: 7, url: `${URL1}?x` })).toEqual({ active: true, guard: true });
-    expect(await run.tick({ id: 9, url: "https://acme.example/apply/other-job" })).toEqual({ active: false, guard: false });
+    // Before Claude's first request, any tab on the site is already locked.
+    expect(await run.tick({ id: 9, url: "https://acme.example/apply/other-job" })).toEqual({ active: true, guard: true });
+    expect(await run.tick({ id: 9, url: "https://news.example/" })).toEqual({ active: false, guard: false });
+    await run.event("submit_pressed", { id: 9, url: "https://acme.example/apply/other-job" });
+    await run.event("blocked_submit", { id: 9, url: "https://acme.example/apply/other-job" });
+    await run.event("submit_pressed", { id: 7, url: "https://news.example/" }); // run tab, gone elsewhere
+    await run.event("submit_pressed", { id: 7, url: URL1 });
+    const sentEvents = calls.filter(([p]) => p.endsWith("/event")).map(([, b]) => JSON.parse(b).kind);
+    expect(sentEvents).toEqual(["blocked_submit", "submit_pressed"]);
+  });
+
+  it("the run's tab, once on another site, is never photographed", async () => {
+    const c = fakeChrome({ tabs: [{ id: 7, windowId: 1, active: true, url: "https://mail.example/inbox" }] });
+    c._session["je_apply_tabs:r1"] = [7];
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(calls.some(([, p]) => p.endsWith("/claim"))).toBe(false);
+    expect(c.tabs.captureVisibleTab).not.toHaveBeenCalled();
+  });
+
+  it("signed out means no application here", async () => {
+    const api = vi.fn(async () => null);
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
+    run.loop = vi.fn();
+    expect(await run.tick({ id: 7, url: URL1 })).toEqual({ active: false, guard: false });
   });
 
   it("a server that doesn't answer never lifts the lock", async () => {
@@ -293,5 +321,10 @@ describe("the background loop", () => {
     up = false;
     await run.active(true);
     expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(true);
+    // …but not forever: after 90 s with no answer, it lets go.
+    vi.useFakeTimers({ now: Date.now() + 120_000, toFake: ["Date"] });
+    await run.active(true);
+    vi.useRealTimers();
+    expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(false);
   });
 });

@@ -34,7 +34,10 @@
   - "Submit", "Submit application", "Submit my application", "Submit your application", "Send application".
   - Never "Next", "Continue", "Save" or "Review", and never "Apply"/"Apply now" (the button that opens an application). Never in a sign-in or one-time-code form.
 - **Why:** Claude in Chrome's clicks are trusted events, so the block can't tell Claude from the user. That's why the user's own "I'll submit it myself" first lifts the block in the app.
-- **Scope:** only the run's tab: the one Claude's requests pointed at, with every frame in it (a form embedded from another site too). Never the whole site: a board like LinkedIn holds the user's other applications.
+- **Scope:**
+  - **The lock:** every tab on the run's sites, with every frame in them (a form embedded from another site too), from the start of the run. The safety net never waits for Claude's first request.
+  - **"Submit pressed":** this ends a "submit it myself" run as sent, so it only counts from the run's own tab (the one Claude's requests pointed at, still on the run's site). The user's other application on the same board never marks this one sent.
+- **Stale state:** a last answer stands for 90 s while the app can't be reached. Signed out means no run.
 - **False block:** a mid-form "Submit" just means an early review. Claude is told and asks for review.
 
 ## R5: Where photos and résumés live

@@ -19,7 +19,12 @@ function words(el) {
 }
 
 // A sign-in or verification form's own "Submit" (a password or one-time code
-// box in it) is never the application's.
+// box showing in it) is never the application's. A hidden one doesn't count.
+function shown(el) {
+  if (el.type === "hidden" || el.hidden || el.closest?.("[hidden], [aria-hidden='true']")) return false;
+  const style = el.ownerDocument?.defaultView?.getComputedStyle?.(el);
+  return !style || (style.display !== "none" && style.visibility !== "hidden");
+}
 const SECRET_BOX = "input[type='password'], input[autocomplete='one-time-code']";
 
 /** The clicked element's button, if it is an application's final Submit. */
@@ -30,7 +35,8 @@ export function finalSubmitButton(target) {
   if (!label || label.length > 40 || STEP.test(label) || !FINAL.test(label)) return null;
   // A search or sign-in box's own button is never the application's.
   if (el.closest?.("[role='search'], form[role='search'], form[action*='search' i]")) return null;
-  if ((el.form || el.closest?.("form"))?.querySelector?.(SECRET_BOX)) return null;
+  const form = el.form || el.closest?.("form");
+  if (form && [...form.querySelectorAll(SECRET_BOX)].some(shown)) return null;
   return el;
 }
 

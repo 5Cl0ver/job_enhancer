@@ -63,8 +63,8 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
       event.preventDefault();
       event.stopImmediatePropagation();
       report("applyBlocked");
-    } else if (!button.form) {
-      reportWhenGone(button); // a form's own submit event reports the rest
+    } else if (!(button.form && (button.type || "").toLowerCase() === "submit")) {
+      reportWhenGone(button); // a real submit button's form reports via its submit event
     }
   };
   const onSubmit = (event) => {
@@ -123,7 +123,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
       return { y: win.scrollY, height: el.scrollHeight, view: win.innerHeight };
     }
     if (msg.op === "scroll") {
-      if (scroller) scroller.scrollTop = msg.y;
+      if (scroller) scroller.scrollTo({ top: msg.y, left: 0, behavior: "instant" });
       else win.scrollTo({ top: msg.y, left: 0, behavior: "instant" });
       return new Promise((r) => setTimeout(() => r({ y: msg.y }), msg.settle ?? 350));
     }

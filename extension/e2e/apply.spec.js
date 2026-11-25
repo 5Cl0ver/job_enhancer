@@ -1,7 +1,8 @@
 // Apply with Claude (spec 022) in a real Chromium: once Claude has marked a
 // page of the application done, Job Catcher takes photos of the long page
-// screen by screen, locks that tab's final Submit until the user's OK, and
-// reports a Submit once allowed. Another tab on the same site is never locked.
+// screen by screen, locks final Submits on the application's site until the
+// user's OK, and reports a Submit once allowed, but only from the
+// application's own tab (another application on the same site never ends it).
 // Against the fake server (support/fake-api.js) and the lab's invented page.
 import { test, expect } from "@playwright/test";
 import { startFakeApi } from "./support/fake-api.js";
@@ -38,7 +39,7 @@ test("an open application: photos cover the page, Submit waits for the OK, then 
   const host = new URL(url).hostname;
   api.state.applyRun = { run_id: "r1", status: "filling", guard: true, hosts: [host], requests: [] };
 
-  // The user's other tab on the same site: never locked.
+  // The user's other application on the same site.
   const other = await ext.context.newPage();
   await other.goto(`${url}?another-job`);
 
@@ -76,15 +77,17 @@ test("an open application: photos cover the page, Submit waits for the OK, then 
   }, { timeout: 15000 }).toBeGreaterThan(0);
   expect(await page.textContent("#sent")).toBe("0");
 
-  // The other tab on the same site goes through, and reports nothing.
+  // The user's OK. Their other application on the site goes through and
+  // ends nothing; the application's own press is reported, once.
+  api.state.applyRun = { ...api.state.applyRun, guard: false };
   await other.bringToFront();
   await other.waitForTimeout(3500);
   await other.click("#go");
   await expect.poll(() => other.textContent("#sent")).toBe("1");
+  await other.waitForTimeout(500);
+  expect(events("submit_pressed")).toHaveLength(0);
 
-  // The user's OK: the press goes through and is reported once.
   await page.bringToFront();
-  api.state.applyRun = { ...api.state.applyRun, guard: false };
   await page.waitForTimeout(3500); // the page's next tick hears it
   await page.click("#go");
   await expect.poll(() => page.textContent("#sent")).toBe("1");
