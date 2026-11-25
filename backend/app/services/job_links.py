@@ -414,7 +414,13 @@ def _fits(ev: dict, job: dict) -> bool:
     if ev["title"] and not _title_close(ev["title"], job.get("title") or ""):
         return False  # another role at the company
     saved, when = job.get("saved_at"), ev["date"]
-    return not (saved and when and when < saved - _DATE_SLACK)
+    # By company alone, an email from well before the job was saved is about
+    # an earlier application there, not this one (spec 028).
+    slack = _DATE_SLACK if ev["title"] else _COMPANY_ONLY_SLACK
+    return not (saved and when and when < saved - slack)
+
+
+_COMPANY_ONLY_SLACK = timedelta(days=14)
 
 
 def place(events: list[dict], jobs: list[dict], excluded: dict) -> dict:

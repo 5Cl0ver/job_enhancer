@@ -67,10 +67,15 @@ class _Cue:
     pattern: re.Pattern
     weight: float
     negatable: bool = True  # False when the negation is part of the pattern
+    # A wording receipts use too ("candidates whose experience matches will be
+    # contacted"): counts little in a sentence about whom they WILL contact.
+    soft: bool = False
 
 
-def _cue(event: str, weight: float, pattern: str, negatable: bool = True) -> _Cue:
-    return _Cue(event, re.compile(pattern, re.I), weight, negatable)
+def _cue(
+    event: str, weight: float, pattern: str, negatable: bool = True, soft: bool = False
+) -> _Cue:
+    return _Cue(event, re.compile(pattern, re.I), weight, negatable, soft)
 
 
 _ROLE = r"(?:role|position|job|opening|opportunity|vacancy|requisition)"
@@ -163,7 +168,9 @@ _CUES: list[_Cue] = [
     _cue(
         REJECTED,
         3,
-        r"\b(?:will|shall|won't|will not) (?:not )?be (?:moving|proceeding|"
+        # The negation is required: "we will be scheduling interviews" is next
+        # steps, not a rejection.
+        r"\b(?:(?:will|shall) not|won't) be (?:moving|proceeding|"
         r"advancing|continuing|pursuing|extending|offering|scheduling|inviting)\b"
         r"(?! (?:you )?to the next)",
         False,
@@ -172,20 +179,32 @@ _CUES: list[_Cue] = [
         REJECTED,
         2.5,
         rf"\b{_CAND} whose (?:experience|qualifications|background|skills|profiles?)"
-        r"|\bmore closely (?:match|matches|aligns?|aligned)\b",
+        r"|\bmore closely (?:match|matches|aligns?|aligned)\b"
+        rf"|\b{_CAND} (?:who |that )?(?:better|more closely) (?:meet|match|fit|align|"
+        r"suit)\w*",
+        False,
+        soft=True,
+    ),
+    _cue(
+        REJECTED,
+        3,
+        r"\bnot (?:among|one of) (?:those|the (?:candidates|applicants))\b",
         False,
     ),
     _cue(
         REJECTED,
         1.5,
         r"\bkeep (?:your |you )(?:resume|cv|application|details|information|profile)"
-        r" on file|\bencourage you to (?:apply|keep an eye)",
+        r" (?:on file|on hand|in mind)|\bencourage you to (?:apply|keep an eye)"
+        r"|\b(?:future|other) (?:opportunities|roles|positions) (?:that )?(?:might|may|"
+        r"would|could) be a better (?:fit|match)",
         False,
     ),
     _cue(
         REJECTED,
         1.5,
-        r"\b(?:best of luck|wish you (?:the best|every success|luck|well)) "
+        r"\b(?:best of luck|wish you (?:all |the )?(?:very )?(?:best|every success|"
+        r"luck|well)) "
         r"(?:in|with) (?:your|the) (?:job )?(?:search|future|career|endeavou?rs)",
         False,
     ),
@@ -256,7 +275,8 @@ _CUES: list[_Cue] = [
         INTERVIEW,
         3,
         r"\binvitation to (?:a |an |your |the )?(?:[\w-]+ )?interview\b|"
-        r"\b(?:in-person|in person|onsite|on-site|virtual) interview\b",
+        r"\b(?:in-person|in person|onsite|on-site|virtual|online|recorded) "
+        r"interview\b",
     ),
     # -------------------------------------------------------------- assessment
     _cue(
@@ -328,7 +348,7 @@ _CUES: list[_Cue] = [
     _cue(
         APPLIED,
         3,
-        r"\b(?:your |the )?application\b[^.!?]{0,80}?\b(?:has been|was|is) "
+        r"\b(?:your |the )?application\b[^.!?]{0,120}?\b(?:has been|was|is) "
         r"(?:successfully )?(?:received|submitted)\b|\bsubmitted successfully\b",
     ),
     _cue(
@@ -347,7 +367,10 @@ _CUES: list[_Cue] = [
         APPLIED,
         2,
         r"\b(?:will|'ll) (?:review|be reviewing|carefully review) your (?:application|"
-        r"resume|cv|profile|background|qualifications)\b",
+        r"resume|cv|profile|background|qualifications)\b"
+        r"|\bwe(?:'re| are) (?:currently )?reviewing your (?:application|skills|resume|"
+        r"background|qualifications|experience)\b"
+        r"|\b(?:application|it) is (?:currently )?(?:under review|being reviewed)\b",
     ),
     # --------------------------------------------------------------- recruiter
     _cue(
@@ -368,6 +391,13 @@ _CUES: list[_Cue] = [
         r"\bi(?:'m| am) (?:a |the |your )?(?:recruiter|talent partner|sourcer|"
         r"technical recruiter)\b|\bpoint of contact\b|\bintroduce myself\b",
     ),
+    # An agency sending the reader's resume on to its client.
+    _cue(
+        RECRUITER,
+        2,
+        r"\b(?:you (?:have|'ve) been|i(?:'ve| have)?) submitted (?:you |your (?:resume|"
+        r"profile|candidacy) )?(?:to|for)\b",
+    ),
 ]
 
 # A cue is dropped when one of these comes shortly before it in the sentence.
@@ -384,7 +414,11 @@ _CONDITIONAL = re.compile(
     r"\bin the event\b|\bwhether\b|\b(?:may|might|could) (?:be )?(?:contact|reach|"
     r"invite|ask|schedule|be in touch)|\bif (?:we|there)|\bif (?:they|needed|"
     r"necessary|required|appropriate|selected)\b|\b(?:contact|reach out to|be in "
-    r"touch with) you (?:if|should|when|once)\b",
+    r"touch with) you (?:if|should|when|once)\b"
+    # "The selection process may include a written test, an interview…" is a
+    # description of possible steps, not a request.
+    r"|\bmay include\b|\b(?:process|steps?) (?:may|might|could|can) (?:include|"
+    r"involve|consist)",
     re.I,
 )
 _CONDITIONAL_WEIGHT = 0.25
@@ -393,6 +427,12 @@ _CONDITIONAL_REJECTION = re.compile(
     r"\bif (?:you are|you're|you were|your application is) not\b|\bshould you not\b|"
     r"\bif you (?:do not|don't) hear\b|\bif we (?:are unable|decide not|do not)\b|"
     r"\bif (?:your|you) (?:are )?(?:not selected|unsuccessful)\b",
+    re.I,
+)
+# Whom they will contact later: a receipt's wording, not a decision made.
+_FUTURE_CONTACT = re.compile(
+    r"\b(?:will|'ll|shall) (?:be )?(?:contact\w*|reach\w*|in touch|notif\w*|invit\w*|"
+    r"follow\w* up)|\bonly\b",
     re.I,
 )
 # A sentence looking back at an interview that already happened ("thank you
@@ -419,7 +459,9 @@ _JOB_CONCEPT = re.compile(
 # "Your profile" / "your background" are left out on purpose: they are how
 # recommendation digests address the reader ("based on your profile").
 _OWN_APPLICATION = re.compile(
-    r"\byour (?:application|candidacy|interview|assessment|offer|resume|cv)\b|"
+    # "Your offer" alone is a store coupon; a job offer names its letter.
+    r"\byour (?:application|candidacy|interview|assessment|resume|cv)\b|"
+    r"\byour (?:job )?offer (?:letter|of employment)\b|"
     r"\byou applied\b|\bapplying (?:to|for|with)\b|"
     r"\bapplication (?:for|to)\b|\binterviewing with\b|\binvite you\b|"
     r"\b(?:thank you|thanks) for (?:applying|your interest)\b",
@@ -430,7 +472,7 @@ _BULK_TEXT = re.compile(
     r"\bview (?:this email )?in (?:your )?browser|\bin this (?:issue|edition)\b|"
     r"\bnewsletter\b|\bwebinar\b|\d+ ?% off\b|\bshop now\b|\bsale (?:ends|starts)\b|"
     r"\blimited time\b|\bpromo code\b|\bfree trial\b|\bupgrade (?:now|your plan)\b|"
-    r"\bthis week's\b",
+    r"\bthis week's\b|\bto stop (?:getting|receiving) these\b",
     re.I,
 )
 # Job alerts, recommendation digests and "X is hiring" promos: never an
@@ -467,6 +509,7 @@ _JOB_SENDER = re.compile(
     re.I,
 )
 _SENTENCE = re.compile(r"(?<=[.!?])\s+|\n+")
+_WRAPPED = re.compile(r"(?<=[\w,;])[ \t]*\n[ \t]*(?=[a-z(])")
 # Sellers of interview practice talk like interviewers ("schedule your mock
 # interview"). In marketing-looking mail that is an ad, never an interview.
 _INTERVIEW_PREP = re.compile(
@@ -502,14 +545,81 @@ _NOT_HIRING = re.compile(
     r"\b(?:verification|security|sign[- ]?in|login|one[- ]time|access) (?:code|link)\b"
     r"|\bpass(?:word|code) reset\b|\breset your password\b"
     r"|\b(?:statement|bill|invoice|receipt|payment|order|shipment|delivery|refund)\b"
-    r"|\breturn (?:label|request)\b|\bprinting information\b",
+    r"|\breturn (?:label|request)\b|\bprinting information\b"
+    r"|\b(?:verify|authenticate|confirm) your (?:email|e-mail|account|identity|device)"
+    r"|\bverification code\b|\b(?:account|profile) (?:created|activated)\b"
+    r"|\bthanks? (?:you )?for creating\b|\bnew (?:device|sign-in|login)\b",
+    re.I,
+)
+# Account housekeeping named in the subject: never a hiring update unless the
+# text itself states an outcome.
+_ACCOUNT_SUBJECT = re.compile(
+    r"\b(?:verify|authenticate|confirm) your (?:email|e-mail|account|identity|device)"
+    r"|\b(?:verification|security|sign[- ]?in|login|one[- ]time|access) (?:code|link)\b"
+    r"|\bpass(?:word|code) reset\b|\breset your password\b"
+    r"|\bthanks? (?:you )?for creating\b",
+    re.I,
+)
+# Card, loan and shop offers: their "apply now" and "your application" are
+# about credit, not a job.
+_CONSUMER = re.compile(
+    r"\bcredit (?:card|limit|score|line|builder)|\bcard ?members?\b|\bcardholders?\b"
+    # "APR" in capitals or after a rate: "Apr 12" is a date in a receipt.
+    r"|\byour (?:new )?card\b|(?-i:\bAPR\b)|%\s*apr\b|\bannual percentage"
+    r"|\b(?:auto|car|home|personal|student|equity) loans?\b|\bmortgage|\bheloc\b"
+    r"|\bpre-?(?:approved|qualified)\b|\bcash ?back\b|\brewards? (?:points|members?|"
+    r"program)\b|\bcoupon\b|\bin store\b|\bfree shipping\b"
+    # A shopper's purchase, not a "Purchase Order Specialist" job.
+    r"|\b(?:your|any|every|qualifying|minimum|first|next) purchase\b"
+    r"|\$\d+\+? purchase\b|\bwith purchase\b",
+    re.I,
+)
+# Candidate-experience surveys and "did you hear back?" prompts.
+_SURVEY = re.compile(
+    r"\btell us about your (?:application|candidate|interview|hiring) experience"
+    r"|\bdid you hear back\b|\b(?:take|complete) (?:a|our|this|the) (?:short |quick |"
+    r"brief |\d+[- ]minute )?survey\b|\bcandidate (?:experience )?survey\b"
+    r"|\bfeedback (?:on|about) your (?:application|candidate|interview) experience",
+    re.I,
+)
+# A subject that confirms an application arrived ("Application received",
+# "Thank you for applying"), with no outcome word of its own.
+_RECEIPT_SUBJECT = re.compile(
+    r"\bapplication (?:has been |was )?(?:received|submitted|complete|confirmed)\b"
+    r"|\b(?:received|got) your application\b|\bthank(?:s| you) for (?:applying|your "
+    r"application)\b|\bapplication confirmation\b",
+    re.I,
+)
+_OUTCOME_SUBJECT = re.compile(
+    r"\b(?:interview|assessment|test|offer|invit\w*|schedul\w*|next round)\b", re.I
+)
+# "RE: Thank you for applying": a person answering on the receipt's thread
+# (often with an invite), not the receipt itself.
+_REPLY_SUBJECT = re.compile(r"^\s*(?:re|fwd?|aw|sv)\s*:", re.I)
+# A receipt that lists what each application status means ("Not Selected: we
+# will not be moving forward"), as opposed to a rejection that restates the
+# receipt.
+_STATUS_LEGEND = re.compile(
+    r"\bstatuses\b|\bwhat (?:does|do) (?:that|this|these|each(?: one)?|it) mean\b"
+    r"|\beach status\b",
+    re.I,
+)
+# Next-step wording in a receipt counts for little unless it is this strong.
+_RECEIPT_STEP_MAX = 5.0
+# A person's signature naming a recruiting job: their mail is about jobs.
+_RECRUITER_SIGNATURE = re.compile(
+    r"\b(?:recruiter|sourcer|talent (?:acquisition|partner|connector|sourcer)|"
+    r"recruiting (?:manager|coordinator|lead|partner))\b",
     re.I,
 )
 
 
 def _sentences(subject: str, text: str) -> list[tuple[str, float]]:
     out = [(subject.strip(), _SUBJECT_WEIGHT)] if subject and subject.strip() else []
-    for s in _SENTENCE.split(text or ""):
+    # Plain-text mail is hard-wrapped: a line that goes on in lower case is
+    # the same sentence ("other candidates\nbetter meet the needs").
+    text = _WRAPPED.sub(" ", text or "")
+    for s in _SENTENCE.split(text):
         s = s.strip(" \t>-*•")
         if s:
             out.append((s, 1.0))
@@ -531,6 +641,7 @@ def _evidence(subject: str, text: str):
         conditional = bool(_CONDITIONAL.search(sentence))
         maybe_rejected = bool(_CONDITIONAL_REJECTION.search(sentence))
         looking_back = bool(_PAST_REFERENCE.search(sentence))
+        future_contact = bool(_FUTURE_CONTACT.search(sentence))
         for i, cue in enumerate(_CUES):
             for m in cue.pattern.finditer(sentence):
                 if cue.negatable and _negated(sentence, m.start()):
@@ -539,6 +650,8 @@ def _evidence(subject: str, text: str):
                 if conditional and cue.event != REJECTED:
                     w *= _CONDITIONAL_WEIGHT
                 if maybe_rejected and cue.event == REJECTED:
+                    w *= _CONDITIONAL_WEIGHT
+                if cue.soft and future_contact:
                     w *= _CONDITIONAL_WEIGHT
                 if looking_back and cue.event == INTERVIEW:
                     w *= _PAST_WEIGHT
@@ -599,6 +712,53 @@ def classify(
         return Classification(UNKNOWN, reason="promo")
 
     outcome = max((scores.get(e, 0.0) for e in _OUTCOMES), default=0.0)
+    not_hiring = None
+    if _ACCOUNT_SUBJECT.search(subject):
+        not_hiring = "account"  # sign-in codes, "verify your email"
+    elif _SURVEY.search(subject) or (
+        # A receipt may end with "take a short survey": still a receipt.
+        _SURVEY.search(text) and scores.get(APPLIED, 0.0) < DECIDE_AT
+    ):
+        not_hiring = "survey"  # "tell us about your application experience"
+    elif looks_bulk and _CONSUMER.search(joined):
+        not_hiring = "consumer"  # card, loan and shop offers
+    if not_hiring and outcome < DECIDE_AT:
+        return Classification(
+            UNKNOWN, scores, evidence, relevant=True, reason=not_hiring
+        )
+    step = max(scores.get(INTERVIEW, 0.0), scores.get(ASSESSMENT, 0.0))
+    if (
+        _RECEIPT_SUBJECT.search(subject)
+        and not _OUTCOME_SUBJECT.search(subject)
+        and not _REPLY_SUBJECT.search(subject)
+        and scores.get(REJECTED, 0.0) < DECIDE_AT
+        and scores.get(OFFER, 0.0) < DECIDE_AT
+        and step < _RECEIPT_STEP_MAX
+    ):
+        # "Application received … next we'd like to schedule a short chat":
+        # a receipt describing next steps, not an invitation (spec 028).
+        for e in (INTERVIEW, ASSESSMENT):
+            if e in scores:
+                scores[e] *= 0.3
+        outcome = max((scores.get(e, 0.0) for e in _OUTCOMES), default=0.0)
+    if outcome >= DECIDE_AT:
+        # An employer's outcome email often says "we reviewed your resume" or
+        # "we hope you're open to future roles": not a recruiter reaching out.
+        scores.pop(RECRUITER, None)
+    # A receipt ("We've received your application!") that explains what each
+    # status means ("Not selected: we will not be moving forward") must not
+    # read as a rejection: with both, never guess (spec 028). A rejection that
+    # just restates the receipt ("Your application was received and reviewed.
+    # Unfortunately…") has no such list of statuses and stays a rejection.
+    receipt_with_no = (
+        bool(_RECEIPT_SUBJECT.search(subject))
+        and bool(_STATUS_LEGEND.search(text))
+        and scores.get(REJECTED, 0.0) >= DECIDE_AT
+        and any(
+            ev == APPLIED and w >= 2.4 and re.search(r"received|submitted", hit, re.I)
+            for ev, hit, w in evidence
+        )
+    )
     if outcome >= DECIDE_AT and APPLIED in scores:
         # Outcome emails restate the application; that isn't a new receipt.
         scores[APPLIED] *= 0.3
@@ -608,7 +768,12 @@ def classify(
     result = Classification(UNKNOWN, scores, evidence, relevant=True, reminder=reminder)
 
     human = bool(from_addr) and not _AUTOMATED_SENDER.search(from_addr)
-    hiring_sender = job_sender or bool(_JOB_SENDER.search(from_addr or ""))
+    hiring_sender = (
+        job_sender
+        or bool(_JOB_SENDER.search(from_addr or ""))
+        # A person who signs as a recruiter ("Technical Recruiter, Acme").
+        or (human and bool(_RECRUITER_SIGNATURE.search(text[-600:])))
+    )
     if top < NOTICE_AT:
         if _NOT_HIRING.search(subject):
             # Sign-in codes, bills, orders: from a "job" domain, not a contact.
@@ -625,7 +790,7 @@ def classify(
         result.event, result.reason = RECRUITER, "contact"
     elif top < DECIDE_AT:
         result.event, result.reason = UNSURE, "weak"
-    elif second >= DECIDE_AT and second >= CONFLICT_RATIO * top:
+    elif receipt_with_no or (second >= DECIDE_AT and second >= CONFLICT_RATIO * top):
         result.event, result.reason = UNSURE, "conflict"
     elif scores.get(REJECTED, 0.0) >= DECIDE_AT and any(
         scores.get(e, 0.0) >= DECIDE_AT for e in (INTERVIEW, ASSESSMENT, OFFER)

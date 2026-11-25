@@ -92,6 +92,10 @@ export function effect(ev: DetectedEvent): string | null {
 const REASONS: Record<string, string> = {
   job_url: "The email links to this job.",
   template: "The hiring site's email names this company and job.",
+  template_company:
+    "The hiring site's email names only the company, and this is your only job there.",
+  template_title:
+    "The hiring site's email names only the job title, and this is your only job with that title.",
   job_id: "The email mentions this job's ID.",
   known_sender: "This person wrote to you about this job before.",
   company_title: "The email names the company and the job title.",

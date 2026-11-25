@@ -90,7 +90,11 @@ def predict_message(msg: EmailMessage, jobs: list[dict]) -> Prediction:
             return Prediction(UNKNOWN, None, False)
         if tmpl is not None and tmpl.event:
             event = tmpl.event
-        tm = match_template(jobs, tmpl, msg.date) if tmpl is not None else None
+        tm = (
+            match_template(jobs, tmpl, msg.date, subject=msg.subject, text=msg.body)
+            if tmpl is not None
+            else None
+        )
         match: JobMatch = tm or match_job(
             jobs,
             subject=msg.subject,
