@@ -44,6 +44,8 @@ APPLY_WAITING = "waiting"  # pressed, Claude hasn't asked for the brief yet
 APPLY_READING = "reading"
 APPLY_QUESTIONS = "questions"
 APPLY_WRITING = "writing"
+# Claude wrote the job's résumé; the user looks it over first (spec 025).
+APPLY_RESUME_REVIEW = "resume_review"
 APPLY_FILLING = "filling"
 APPLY_NEEDS_YOU = "needs_you"
 APPLY_REVIEW = "review"
@@ -56,6 +58,7 @@ APPLY_OPEN = (
     APPLY_READING,
     APPLY_QUESTIONS,
     APPLY_WRITING,
+    APPLY_RESUME_REVIEW,
     APPLY_FILLING,
     APPLY_NEEDS_YOU,
     APPLY_REVIEW,
@@ -138,6 +141,14 @@ class ApplyRun(Base):
     document_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="SET NULL")
     )
+    # The user picked an existing résumé at the start (spec 025): no questions,
+    # no writing, no résumé review.
+    resume_picked: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # The résumé review (spec 025): {round, decision: None|"use"|"change",
+    # note, by, words, at, read}.
+    resume_check: Mapped[dict | None] = mapped_column(JSON)
     note: Mapped[str | None] = mapped_column(Text)
     playbook_version: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = _now_col()

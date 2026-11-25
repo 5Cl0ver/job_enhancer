@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import DateTime, Integer, String, func
+from sqlalchemy import Boolean, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,11 @@ class User(Base):
     # When Job Catcher turned this account's one-site answers into answers for
     # every site (spec 020): once per account, so a deleted one stays deleted.
     learn_promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Apply with Claude pauses at "Review your résumé" after Claude writes it
+    # (spec 025). On unless the user turns it off.
+    review_resumes: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=True, server_default="true"
+    )
     # Real use of the app or Job Catcher (spec 019 R10), touched at most every
     # 15 minutes by auth. The admin's "active" counts and user list read it.
     last_active_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

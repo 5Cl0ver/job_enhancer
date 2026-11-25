@@ -10,6 +10,8 @@ export interface UserProfile {
   follow_up_days: number;
   /** Shared Claude Project link — synced with the browser extension. */
   claude_project_url: string | null;
+  /** Look over Claude's résumé before it's used (spec 025). */
+  review_resumes?: boolean;
   created_at: string;
 }
 
@@ -26,7 +28,9 @@ export function useProfile() {
 export function useUpdateProfile() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: (data: Partial<Pick<UserProfile, "name" | "follow_up_days" | "claude_project_url">>) =>
+    mutationFn: (
+      data: Partial<Pick<UserProfile, "name" | "follow_up_days" | "claude_project_url" | "review_resumes">>,
+    ) =>
       api.patch<UserProfile>("/v1/users/me", data),
     onSuccess: (updated) => qc.setQueryData(["profile"], updated),
   });

@@ -30,6 +30,7 @@ from app.schemas.apply import (
     HelpDoneIn,
     MessageIn,
     RequestResult,
+    ResumeDecisionIn,
 )
 from app.services import apply_runs as svc
 from app.services import master_profile
@@ -61,7 +62,9 @@ async def start_run(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        run = await svc.create_run(db, user, data.saved_job_id)
+        run = await svc.create_run(db, user, data.saved_job_id, data.resume_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except svc.RunBusy as busy:
         await db.commit()  # keep any runs just expired
         return JSONResponse(
@@ -152,6 +155,23 @@ async def decision(
     run = await _run(db, user, run_id, lock=True)
     try:
         await svc.decide(db, run, data.decision, data.note, by="app")
+    except ValueError as exc:
+        raise _bad(exc) from exc
+    await db.commit()
+    return await svc.view(db, run)
+
+
+@router.post("/runs/{run_id}/resume-decision")
+async def resume_decision(
+    run_id: uuid.UUID,
+    data: ResumeDecisionIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Use the résumé Claude wrote, or ask for a change (spec 025)."""
+    run = await _run(db, user, run_id, lock=True)
+    try:
+        await svc.resume_decide(db, run, data.decision, data.note, by="app")
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()

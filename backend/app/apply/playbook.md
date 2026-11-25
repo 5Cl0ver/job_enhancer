@@ -19,6 +19,8 @@ Always pass `run_id` from the brief. Talk to the user in short, plain sentences.
 
 ## 2. Ask about the gaps
 
+Skip this step when the brief says `resume_picked: true`.
+
 - Compare what the listing asks for with the master profile. `listing_skills_not_shown` is a word-list hint: skills the listing names that the profile doesn't show.
 - For each real gap, ask ONE short question with `ask_questions`. For example: "The listing asks for Intune. Have you used it? Where, and what did you do with it?" Give `why` as the listing's own words.
   - Ask about tools, duties and certifications that matter for this job, at most 8 questions.
@@ -29,42 +31,51 @@ Always pass `run_id` from the brief. Talk to the user in short, plain sentences.
   - If the user answers here in the chat, record them with `user_said(answers=[{question, answer}], answers_done=true)`.
 - No gaps? Skip straight to step 3.
 
-## 3. Write the full résumé
+## 3. Write the résumé for this job
 
-Write a FULL résumé for this job, and call `save_resume`.
-- **Full, not short.** Keep EVERY real job, school, certification and skill from the master profile. Nothing is dropped to fit a page.
-- **Tailor the content, never the facts.** Rewrite the summary and the bullets so what this job asks for stands out. Put the most relevant skills and bullets first. Use the listing's own words where they are true. Add what the user confirmed in their answers, in the job where they did it.
-- **Never invent anything.** No employers, titles, dates, degrees, numbers or tools the master profile and the answers don't give. If a number isn't known, don't make one up.
-- **No bloat.** No "References available", no objective statement, no first-person pronouns, no repeated bullets, no filler adjectives.
-- Use exactly this layout (the app turns it into a clean PDF):
+Skip this step when the brief says `resume_picked: true`: the user chose their résumé, so go straight to step 4.
+
+Write a résumé built from the master profile and aimed at this job, then call `save_resume`.
+- **2 pages at most.**
+  - Keep EVERY real job, school and certification, with its real title and dates. Never drop an employer.
+  - Cut what doesn't matter for this job: skills it doesn't use, bullets about unrelated work, long lists. Two to five strong bullets per job, the most relevant first.
+- **Tailor the content, never the facts.** Rewrite the title line, the summary and the bullets so what this job asks for stands out. Use the listing's own words where they are true. Add what the user confirmed in their answers, in the job where they did it.
+- **Never invent anything.** No employers, titles, dates, degrees, numbers or tools that the master profile and the answers don't give. If a number isn't known, don't make one up.
+- **No bloat.** No "References available", no objective statement, no first-person pronouns, no repeated bullets, no filler adjectives. No "Core areas" boxes on a job's résumé (they confuse applicant tracking systems).
+- Use exactly this layout. The app draws it in the user's own style (a blue name banner, section bars, a skills table, dates on the right):
 
 ```
 # Full Name
+> Job-aimed title line · Second focus · Third focus
 City, ST · phone · email · LinkedIn · GitHub/portfolio (only what the profile has)
 
 ## SUMMARY
 Two or three lines aimed at this job.
 
-## SKILLS
+## TECHNICAL SKILLS
 **Category:** skill, skill, skill
 **Category:** skill, skill
 
-## WORK EXPERIENCE
-**Company** | *Job Title* | Mon YYYY – Mon YYYY (or Present)
+## EXPERIENCE
+**Job Title** · Company | Mon YYYY – Present
+### Group of related work (optional, for a long job)
 - Bullet: what they did and the result, in their own real terms.
 
 ## PROJECTS
-(only if the profile has them, same style)
-
-## EDUCATION
-**School** | *Degree, Field* | YYYY – YYYY
+(only if they help for this job, same style)
 
 ## CERTIFICATIONS
-(only if the profile has them)
+**Certification** · Issuer | YYYY
+
+## EDUCATION
+**Degree, Field** · School | YYYY – YYYY
 ```
 
-- After `save_resume`, the résumé is this job's résumé. Job Catcher uploads it on the application.
-- Tell the user it's saved on the job and that they can change it any time. Don't wait for them; go on.
+- After `save_resume`, it is this job's résumé, and Job Catcher uploads it on the application.
+- **The user usually looks it over first.** When `save_resume` says so, tell them it's ready in the app, then call `wait_for_you` until they decide:
+  - **use**: go on to step 4.
+  - **change** (with what to change): change it, call `save_resume` again, and wait again. They may also ask you things in the app while they look (`from_user`): answer with `message_user`, suggesting concrete changes, but change the résumé only when they say so.
+- When `save_resume` doesn't ask for a look, tell them it's saved on the job and go on.
 
 ## 4. Fill the application
 

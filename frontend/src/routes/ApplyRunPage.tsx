@@ -7,6 +7,7 @@ import { ApplySteps } from "@/components/apply/ApplySteps";
 import { Pages } from "@/components/apply/Pages";
 import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
+import { ResumeReview } from "@/components/apply/ResumeReview";
 import { Review } from "@/components/apply/Review";
 import {
   Conversation,
@@ -68,7 +69,11 @@ function StartCard({ run }: { run: ApplyRun }) {
       <CopyLine line={APPLY_LINE} />
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>Keep Job Catcher on and signed in: it takes a photo of every page and fills what it knows.</li>
-        <li>Claude asks you a few questions, writes a full résumé for this job, and fills the application.</li>
+        <li>
+          {run.resume_picked
+            ? "Claude uses the résumé you picked and fills the application."
+            : "Claude asks you a few questions, writes a résumé for this job (you look it over), and fills the application."}
+        </li>
         <li>Then follow along here, on your phone if you like: answer Claude, message it, see the screen.</li>
         <li>Nothing is sent until you check the photos and say Submit.</li>
       </ul>
@@ -136,6 +141,7 @@ export function ApplyRunPage() {
   const job = [run.job.title, run.job.company].filter(Boolean).join(" at ");
   const reviewing = run.status === "review";
   const asking = run.status === "questions" && !run.answers_done;
+  const checking = run.status === "resume_review";
 
   return (
     <div className="container mx-auto max-w-3xl space-y-4 md:px-4 md:py-6">
@@ -193,6 +199,12 @@ export function ApplyRunPage() {
         </Card>
       )}
 
+      {checking && (
+        <Card title="Look over your résumé" tone={run.resume_check?.decision ? undefined : "you"}>
+          <ResumeReview run={run} />
+        </Card>
+      )}
+
       {reviewing && (
         <Card title="Your review" tone={run.review?.decision ? undefined : "you"}>
           <Review run={run} />
@@ -209,7 +221,7 @@ export function ApplyRunPage() {
         </Card>
       )}
 
-      {run.resume_id && (
+      {run.resume_id && !checking && (
         <Card title="Résumé for this job">
           <ResumeForJob run={run} />
         </Card>

@@ -223,8 +223,41 @@ describe("Apply with Claude button", () => {
     post.mockResolvedValue(RUN);
     renderButton();
     await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    // No résumé on the job: Claude makes one.
+    expect(await screen.findByRole("radio", { name: /Make one for this job/ })).toHaveAttribute("aria-checked", "true");
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
     expect(await screen.findByText("application page")).toBeInTheDocument();
-    expect(post).toHaveBeenCalledWith("/v1/apply/runs", { saved_job_id: "s1" });
+    expect(post).toHaveBeenCalledWith("/v1/apply/runs", { saved_job_id: "s1", resume_id: null });
+  });
+
+  it("uses the job's résumé, or another one, so Claude doesn't write one", async () => {
+    const resumes = [
+      { id: "made", filename: "Sam_Acme.pdf", document_id: "d1", is_active: false },
+      { id: "mine", filename: "Sam.pdf", document_id: null, is_active: true },
+      { id: "old", filename: "Sam_old.pdf", document_id: null, is_active: false },
+    ];
+    get.mockImplementation((path: string) => {
+      if (path.startsWith("/v1/ai/resumes")) return Promise.resolve(resumes);
+      if (path.startsWith("/v1/saved-jobs")) return Promise.resolve([{ id: "s1", job_listing_id: "l1", resume_id: "made", job_listing: { id: "l1", title: "IT Engineer", company: "Acme" } }]);
+      return Promise.resolve([]);
+    });
+    post.mockResolvedValue(RUN);
+    renderButton();
+    await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    const onJob = await screen.findByRole("radio", { name: /Use the one on this job/ });
+    expect(onJob).toHaveAttribute("aria-checked", "true");
+    expect(onJob).toHaveTextContent("Sam_Acme.pdf");
+    expect(screen.getByText(/skips the questions/)).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("radio", { name: /Use another résumé/ }));
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+    const list = screen.getByRole("combobox", { name: "Your résumés" });
+    // Your own résumés only, never another job's made one.
+    expect([...list.querySelectorAll("option")].map((o) => o.textContent)).toEqual(["Choose…", "Sam.pdf", "Sam_old.pdf"]);
+    await userEvent.selectOptions(list, "old");
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await screen.findByText("application page");
+    expect(post).toHaveBeenCalledWith("/v1/apply/runs", { saved_job_id: "s1", resume_id: "old" });
   });
 
   it("offers the open one when another is going", async () => {
@@ -234,6 +267,7 @@ describe("Apply with Claude button", () => {
     post.mockRejectedValue(new ApiError(409, "Another application is already going."));
     renderButton();
     await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start" }));
     expect(await screen.findByRole("link", { name: "Open it" })).toHaveAttribute("href", "/apply/r9");
   });
 
@@ -295,3 +329,50 @@ describe("after the review fixes", () => {
     expect(post).not.toHaveBeenCalled();
   });
 });
+
+describe("look over the résumé (spec 025)", () => {
+  beforeEach(() => {
+    get.mockReset();
+    post.mockReset();
+  });
+
+  it("waits for Use it, or sends what to change", async () => {
+    const run: ApplyRun = {
+      ...RUN,
+      status: "resume_review",
+      resume_id: "made",
+      document_id: "d1",
+      resume_check: { round: 1, decision: null, note: null, at: null },
+    };
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/apply/runs/r1") return Promise.resolve(run);
+      if (path === "/v1/users/me") return Promise.resolve({ id: "u", email: "a@b.c", review_resumes: true });
+      if (path.startsWith("/v1/ai/resumes")) return Promise.resolve([{ id: "made", filename: "Sam_Acme.pdf", document_id: "d1" }]);
+      if (path.startsWith("/v1/ai/documents")) return Promise.resolve({ id: "d1", content: "# Sam", edited_content: null });
+      return Promise.resolve([]);
+    });
+    post.mockResolvedValue({ ...run, resume_check: { ...run.resume_check!, decision: "change", note: "Lead with Intune" } });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <MemoryRouter initialEntries={["/apply/r1"]}>
+          <Routes>
+            <Route path="/apply/:runId" element={<ApplyRunPage />} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+    expect(await screen.findByRole("heading", { name: "Look over your résumé" })).toBeInTheDocument();
+    expect(screen.getByText("Your résumé is ready to look over")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Use it" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: "Change something" }));
+    const send = screen.getByRole("button", { name: "Send to Claude" });
+    expect(send).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "What should Claude change?" }), "Lead with Intune");
+    await userEvent.click(send);
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/resume-decision", { decision: "change", note: "Lead with Intune" }),
+    );
+  });
+});
+
