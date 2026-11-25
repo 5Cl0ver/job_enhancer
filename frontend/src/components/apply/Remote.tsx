@@ -225,7 +225,7 @@ export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
 /** See the application's screen as it is now. */
 export function ScreenNow({ run, open }: { run: ApplyRun; open: boolean }) {
   // Nothing to see before Claude is on the application.
-  if (!open || run.ask_if_sent || ["waiting", "reading", "questions", "writing"].includes(run.status)) return null;
+  if (!open || run.ask_if_sent || ["waiting", "reading", "questions", "writing", "resume_review"].includes(run.status)) return null;
   if (run.status === "needs_you" && !run.help?.done_at) return null;
   return (
     <section className="space-y-3 rounded-lg border p-4">

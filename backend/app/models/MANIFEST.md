@@ -19,7 +19,7 @@ imports every model so Alembic can discover them.
 | `resume_track.py` | `ResumeTrack` | Claude Scout resume type: target titles, key skills, `skip_rules`, `min_pay`, the resume to apply with. ≤8 per user, `UNIQUE(user_id, name)`; `saved_jobs.track_id` points here. | `User`, `Resume` |
 | `generated_document.py` | `GeneratedDocument` | AI resume/cover output; `model_used` + `generation_ms` (transparency); `edited_content`. | `User`, `JobListing`, `Resume`, `SavedJob` |
 | `skipped_site.py` | `SkippedSite` | Sites to skip (spec 024): one plain host per row ("learn4good.com", lowercase, no "www."); `UNIQUE(user_id, host)`, ≤100 per user (service); RLS on. | `User` |
-| `apply.py` | `ApplyRun`, `ApplyRequest`, `ApplyPhoto`, `ProfileFact` (spec 022): an application Claude makes for one saved job (questions, pages, review, events as JSON), what it asked Job Catcher to do, Job Catcher's photos of each page, and the things the user told Claude. `resumes.is_master` / `resumes.document_id` mark the master résumé and résumés made for a job |
+| `apply.py` | `ApplyRun`, `ApplyRequest`, `ApplyPhoto`, `ProfileFact` (spec 022): an application Claude makes for one saved job (questions, pages, review, events as JSON), what it asked Job Catcher to do, Job Catcher's photos of each page, and the things the user told Claude. `resumes.is_master` / `resumes.document_id` mark the master résumé and résumés made for a job. Spec 025: `apply_runs.resume_picked` / `resume_check` (the user's look at the résumé), `users.review_resumes` |
 
 ## Migrations (`alembic/versions/`)
 1. `0001_initial_schema` — core tables

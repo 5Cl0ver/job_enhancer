@@ -15,6 +15,7 @@ class UserProfile(BaseModel):
     role: str
     follow_up_days: int
     claude_project_url: str | None = None
+    review_resumes: bool = True
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -58,6 +59,7 @@ class UserUpdate(BaseModel):
     name: str | None = None
     follow_up_days: int | None = Field(None, ge=1, le=90)
     claude_project_url: str | None = Field(None, max_length=2048)
+    review_resumes: bool | None = None
 
     @field_validator("claude_project_url")
     @classmethod

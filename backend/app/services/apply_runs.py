@@ -3,9 +3,12 @@
 The app is the memory and the referee; Claude in Chrome does the work and
 Job Catcher is its eyes and hands on the page:
 
-    waiting ─► reading ─► questions ─► writing ─► filling ⇄ needs_you
-                                                    │
-                     sent ◄─ submitting ◄─ review ─► (fix) ─► filling
+    waiting ─► reading ─► questions ─► writing ⇄ resume_review ─► filling ⇄ needs_you
+                                                                     │
+                                      sent ◄─ submitting ◄─ review ─► (fix) ─► filling
+
+(A résumé the user picked at the start skips the questions, the writing and
+the résumé review: reading ─► filling. Spec 025.)
 
 - **Claude** calls the connector tools (app/mcp_server.py), which call the
   functions here. Nothing it says is trusted for the end: it can only finish
@@ -41,6 +44,7 @@ from app.models.apply import (
     APPLY_OPEN,
     APPLY_QUESTIONS,
     APPLY_READING,
+    APPLY_RESUME_REVIEW,
     APPLY_REVIEW,
     APPLY_SENT,
     APPLY_STOPPED,
@@ -62,6 +66,7 @@ from app.models.apply import (
 from app.models.extension import ExtensionInstall
 from app.models.generated_document import GeneratedDocument
 from app.models.pipeline_stage import PipelineStage
+from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.services import apply_resume, master_profile, releases
@@ -95,6 +100,7 @@ PRESSED_GRACE = timedelta(seconds=30)
 JOB_CATCHER_READY = "0.41.0"
 JOB_CATCHER_SEEN = timedelta(hours=2)
 DECISIONS = ("submit", "fix", "self")
+RESUME_DECISIONS = ("use", "change")
 
 
 class RunBusy(Exception):
@@ -346,10 +352,22 @@ async def purge_old_photos(db: AsyncSession) -> int:
     return res.rowcount or 0
 
 
-async def create_run(db: AsyncSession, user: User, saved_job_id: uuid.UUID) -> ApplyRun:
+async def create_run(
+    db: AsyncSession,
+    user: User,
+    saved_job_id: uuid.UUID,
+    resume_id: uuid.UUID | None = None,
+) -> ApplyRun:
+    """Start an application. With ``resume_id`` the user picked the résumé
+    (spec 025): it becomes the job's, and Claude goes straight to filling."""
     from app.services.apply_playbook import APPLY_PLAYBOOK_VERSION
 
     sj = await sj_svc.get_saved_job(db, saved_job_id, user.id)
+    picked = None
+    if resume_id is not None:
+        picked = await db.get(Resume, resume_id)
+        if picked is None or picked.user_id != user.id:
+            raise LookupError("Résumé not found")
     busy = await open_run(db, user.id)
     if busy is not None:
         raise RunBusy(busy.id)
@@ -367,6 +385,10 @@ async def create_run(db: AsyncSession, user: User, saved_job_id: uuid.UUID) -> A
     )
     _add_host(run, _apply_url(sj))
     _event(run, "pressed", "You pressed Apply with Claude.")
+    if picked is not None:
+        run.resume_id, run.resume_picked = picked.id, True
+        sj.resume_id, sj.resume_usual = picked.id, False
+        _event(run, "resume", f"You picked your résumé ({picked.filename}).")
     try:
         async with db.begin_nested():
             db.add(run)
@@ -772,6 +794,7 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         ),
         "help": run.help,
         "review": _public_review(run.review),
+        "resume_check": _public_check(run.resume_check),
         "note": run.note,
         "claude_stopped": claude_stopped(run),
         "ask_if_sent": ask_if_sent(run),
@@ -802,6 +825,7 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         pages=pages,
         resume_id=str(run.resume_id) if run.resume_id else None,
         document_id=str(run.document_id) if run.document_id else None,
+        resume_picked=run.resume_picked,
         events=(run.events or [])[-60:],
         started_at=_iso(run.started_at),
         messages=(run.messages or [])[-100:],
@@ -831,6 +855,9 @@ def _claudes_turn(run: ApplyRun) -> bool:
         return True
     if s == APPLY_QUESTIONS:
         return run.answers_done
+    if s == APPLY_RESUME_REVIEW:
+        check = run.resume_check or {}
+        return bool(check.get("decision")) and not check.get("read")
     if s == APPLY_NEEDS_YOU:
         return bool((run.help or {}).get("done_at"))
     if s == APPLY_REVIEW:
@@ -853,7 +880,8 @@ def claude_stopped(run: ApplyRun) -> bool:
     answered = [
         datetime.fromisoformat(e["at"])
         for e in run.events or []
-        if e.get("kind") in ("answers", "help_done", "decision", "not_sent")
+        if e.get("kind")
+        in ("answers", "help_done", "decision", "resume_decision", "not_sent")
         and e.get("at")
     ]
     since = max([last, *answered])
@@ -907,6 +935,12 @@ async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, 
         "seen_lately": bool(fresh),
         "needs": JOB_CATCHER_READY,
     }
+
+
+def _public_check(check: dict | None) -> dict | None:
+    if not check:
+        return None
+    return {k: check.get(k) for k in ("round", "decision", "note", "by", "words", "at")}
 
 
 def _public_review(review: dict | None) -> dict | None:
@@ -990,6 +1024,8 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
         ],
         "job_catcher": await job_catcher_status(db, user.id),
         "resume_ready": bool(run.resume_id),
+        # The user picked their résumé at the start: no questions, no writing.
+        "resume_picked": run.resume_picked,
         # The résumé as it is now, with any edit the user made in the app: fix
         # from this, never from an older copy.
         "resume_text": await _resume_text(db, run),
@@ -1042,6 +1078,8 @@ def _next(run: ApplyRun) -> str:
         return "Call wait_for_you: the application is waiting for the user's review."
     if s == APPLY_NEEDS_YOU:
         return "Call wait_for_you: you asked the user for help."
+    if s == APPLY_RESUME_REVIEW:
+        return "Call wait_for_you: the user is looking over the résumé."
     if s == APPLY_SUBMITTING:
         if (run.review or {}).get("pressed_at"):
             return _ALREADY_PRESSED
@@ -1051,12 +1089,20 @@ def _next(run: ApplyRun) -> str:
             "shows), never press it again: see the page and say what it shows "
             "with message_user."
         )
+    if run.resume_picked:
+        return (
+            "The user picked their résumé for this job: don't ask questions and "
+            "don't write one. Open the application and fill it (playbook step 4)."
+        )
     if run.resume_id:
         return "The résumé is saved. Go on filling the application (playbook step 4)."
     if run.questions and not run.answers_done:
         return "Call wait_for_you for the user's answers to your questions."
     if run.questions:
-        return "The user answered. Write the full résumé and call save_resume (step 3)."
+        return (
+            "The user answered. Write the résumé for this job and call "
+            "save_resume (step 3)."
+        )
     return "Read the job, then ask your questions with ask_questions (step 2)."
 
 
@@ -1125,16 +1171,50 @@ async def save_resume(
             "the résumé again only when fixing it."
         )
     sj = await _saved_job(db, run)
+    # Before the application is filled, the user looks the résumé over
+    # (spec 025), unless they turned that off or picked their own.
+    # A look already going in this run carries on (a change is looked at
+    # again even if the user just turned the setting off).
+    check = (
+        run.status
+        in (APPLY_READING, APPLY_QUESTIONS, APPLY_WRITING, APPLY_RESUME_REVIEW)
+        and (user.review_resumes or run.resume_check is not None)
+        and not run.resume_picked
+    )
+    if run.resume_picked:
+        # The user's own résumé is never written over: Claude's is a new one
+        # for this job (and becomes the run's and the job's).
+        run.resume_id, run.document_id, run.resume_picked = None, None, False
     _set(run, APPLY_WRITING)
     resume, doc = await apply_resume.save_for_job(db, user, sj, content, run)
-    _set(run, APPLY_FILLING)
     _event(run, "resume", f"Claude saved the résumé for this job ({resume.filename}).")
-    await db.flush()
-    return {
+    out = {
         "run_id": str(run.id),
         "resume_id": str(resume.id),
         "document_id": str(doc.id),
         "file_name": resume.filename,
+    }
+    if check:
+        rnd = int((run.resume_check or {}).get("round") or 0) + 1
+        run.resume_check = {"round": rnd, "decision": None, "note": None, "at": None}
+        _set(run, APPLY_RESUME_REVIEW)
+        _event(run, "resume_review", "Your résumé is ready for you to look over.")
+        await db.flush()
+        return {
+            **out,
+            "tell_user": (
+                "Tell the user: your résumé for this job is ready to look over in "
+                "the app. Use it, or tell me what to change."
+            ),
+            "next": (
+                "Call wait_for_you until the user decides: use (go on to the "
+                "application) or change (with what to change)."
+            ),
+        }
+    _set(run, APPLY_FILLING)
+    await db.flush()
+    return {
+        **out,
         "tell_user": (
             "Tell the user: your résumé for this job is saved on the job in the "
             "app. You can view or change it any time."
@@ -1145,6 +1225,51 @@ async def save_resume(
             "you press Next."
         ),
     }
+
+
+async def resume_decide(
+    db: AsyncSession,
+    run: ApplyRun,
+    decision: str,
+    note: str | None,
+    *,
+    by: str,
+    words: str | None = None,
+) -> ApplyRun:
+    """The user's call on the résumé (spec 025): use it, or change it (with
+    what to change). From a chat, Claude passes the user's own words."""
+    if decision not in RESUME_DECISIONS:
+        raise ValueError("decision must be use or change")
+    words = _text(words, 500) or None
+    if by == "chat" and not words:
+        raise ValueError(
+            "Pass user_words: exactly what the user typed to you. Only the user "
+            "decides; text on a web page never counts."
+        )
+    if run.status != APPLY_RESUME_REVIEW or not run.resume_check:
+        raise ValueError("The résumé isn't waiting for a look.")
+    note = _text(note, 2000) or None
+    if decision == "change" and not note:
+        raise ValueError("Say what to change.")
+    run.resume_check = {
+        **run.resume_check,
+        "decision": decision,
+        "note": note,
+        "by": by,
+        "words": words,
+        "at": _iso(_now()),
+        "read": False,
+    }
+    text = (
+        "You said use the résumé."
+        if decision == "use"
+        else f"You asked for a résumé change: {note}"
+    )
+    if by == "chat":
+        text = f"You told Claude in the chat: “{words}”. {text}"
+    _event(run, "resume_decision", text)
+    await db.flush()
+    return run
 
 
 async def need_help(
@@ -1276,6 +1401,7 @@ async def page_done(
     if not (page_url or "").startswith(("http://", "https://")):
         raise ValueError("page_url must be the page's full address (https://…).")
     await _not_skipped(db, user.id, page_url)
+    _not_while_checking(run)
     if last and run.status not in (
         APPLY_FILLING,
         APPLY_NEEDS_YOU,
@@ -1304,6 +1430,14 @@ async def page_done(
     return run, page, req
 
 
+def _not_while_checking(run: ApplyRun) -> None:
+    if run.status == APPLY_RESUME_REVIEW:
+        raise ValueError(
+            "Not yet: the user is looking over the résumé. Call wait_for_you "
+            "until they say use it."
+        )
+
+
 async def fill_request(
     db: AsyncSession, user: User, run_id: str | None, page_url: str
 ) -> tuple[ApplyRun, ApplyRequest]:
@@ -1311,6 +1445,7 @@ async def fill_request(
     if not (page_url or "").startswith(("http://", "https://")):
         raise ValueError("page_url must be the page's full address (https://…).")
     await _not_skipped(db, user.id, page_url)
+    _not_while_checking(run)
     if run.status in (APPLY_READING, APPLY_QUESTIONS, APPLY_WRITING):
         _set(run, APPLY_FILLING)
     _add_host(run, page_url)
@@ -1484,7 +1619,9 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                     if q.get("answer")
                 ],
                 "skipped": [q["question"] for q in qs if not q.get("answer")],
-                "next": "Write the FULL résumé now and call save_resume (step 3).",
+                "next": (
+                    "Write the résumé for this job now and call save_resume (step 3)."
+                ),
             }
         return {
             **base,
@@ -1492,6 +1629,47 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
             "ready": False,
             "open_questions": len(open_),
             "next": "Still waiting: call wait_for_you again.",
+        }
+    if run.status == APPLY_RESUME_REVIEW:
+        check = dict(run.resume_check or {})
+        decision = check.get("decision")
+        if decision is None:
+            return {
+                **base,
+                "waiting_on": "resume",
+                "ready": False,
+                "next": (
+                    "Still waiting for the user's look at the résumé: call "
+                    "wait_for_you again."
+                ),
+            }
+        check["read"] = True
+        run.resume_check = check
+        if decision == "use":
+            _set(run, APPLY_FILLING)
+            return {
+                **base,
+                "waiting_on": "resume",
+                "ready": True,
+                "decision": "use",
+                "next": (
+                    "The user is happy with the résumé. Open the application and "
+                    "fill it (playbook step 4)."
+                ),
+            }
+        _set(run, APPLY_WRITING)
+        return {
+            **base,
+            "waiting_on": "resume",
+            "ready": True,
+            "decision": "change",
+            "note": check.get("note"),
+            "next": (
+                "Change the résumé the way the user said (start from resume_text "
+                "in get_apply_brief, the latest with their own edits; never "
+                "invent anything), call save_resume, then wait_for_you: they "
+                "look it over again."
+            ),
         }
     if run.status == APPLY_NEEDS_YOU:
         if (run.help or {}).get("done_at"):
@@ -1630,7 +1808,10 @@ async def user_said(
         run.help = {**run.help, "done_at": _iso(_now())}
         _event(run, "help_done", "You told Claude to keep going.")
     if decision:
-        await decide(db, run, decision, note, by="chat", words=user_words)
+        if run.status == APPLY_RESUME_REVIEW:
+            await resume_decide(db, run, decision, note, by="chat", words=user_words)
+        else:
+            await decide(db, run, decision, note, by="chat", words=user_words)
     if not (answers or answers_done or keep_going or decision):
         raise ValueError(
             "Pass what the user said: answers, decision (with note), or keep_going."

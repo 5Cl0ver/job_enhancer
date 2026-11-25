@@ -161,6 +161,13 @@ async def test_the_whole_application(engine, monkeypatch):
             "Have you used Okta?",
             "Yes, SSO for 40 apps",
         )
+        # The user looks the résumé over first (spec 025) and says use it.
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        assert run.status == "resume_review"
+        await svc.resume_decide(db, run, "use", None, by="app")
+        await db.commit()
+    got = await mcp_mod.wait_for_you(rid)
+    assert (got["ready"], got["decision"]) == (True, "use")
 
     seen = _job_catcher(monkeypatch, maker, user.id)
     filled = await mcp_mod.fill_page(rid, "https://acme.wd1.myworkdayjobs.com/apply/1")

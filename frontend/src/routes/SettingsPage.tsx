@@ -22,6 +22,7 @@ import { api, getAccessToken, API_BASE } from "@/lib/api";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { EmailConnectCard } from "@/components/settings/EmailConnectCard";
 import { ResumesCard } from "@/components/settings/ResumesCard";
+import { ReviewResumesCard } from "@/components/settings/ReviewResumesCard";
 import { InfoBubble } from "@/components/common/InfoBubble";
 import { Switch } from "@/components/ui/switch";
 import { useOnboarding, useUpdateOnboarding } from "@/hooks/useOnboarding";
@@ -44,6 +45,7 @@ export default function SettingsPage() {
       </Section>
       <Section id="resumes" title="Résumés">
         <ResumesCard />
+        <ReviewResumesCard />
       </Section>
       <Section id="profile" title="Application profile & saved answers">
         <AutofillMemoryLink />

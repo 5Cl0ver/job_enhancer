@@ -9,6 +9,8 @@ from pydantic import BaseModel, Field
 
 class ApplyStart(BaseModel):
     saved_job_id: uuid.UUID
+    # A résumé the user picked (spec 025): Claude skips writing one.
+    resume_id: uuid.UUID | None = None
 
 
 class AnswerIn(BaseModel):
@@ -20,6 +22,11 @@ class AnswerIn(BaseModel):
 class AnswersIn(BaseModel):
     answers: list[AnswerIn] = Field(default_factory=list, max_length=12)
     done: bool = False
+
+
+class ResumeDecisionIn(BaseModel):
+    decision: Literal["use", "change"]
+    note: str | None = Field(default=None, max_length=2000)
 
 
 class DecisionIn(BaseModel):

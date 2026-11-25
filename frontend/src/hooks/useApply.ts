@@ -65,9 +65,10 @@ export class BusyError extends Error {
 export function useStartApply() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async (savedJobId: string) => {
+    /** resumeId: a résumé the user picked, so Claude doesn't write one (spec 025). */
+    mutationFn: async ({ savedJobId, resumeId }: { savedJobId: string; resumeId?: string | null }) => {
       try {
-        return await api.post<ApplyRun>("/v1/apply/runs", { saved_job_id: savedJobId });
+        return await api.post<ApplyRun>("/v1/apply/runs", { saved_job_id: savedJobId, resume_id: resumeId ?? null });
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) {
           const open = await api.get<ApplyRunShort | null>("/v1/apply/runs/open").catch(() => null);
@@ -117,6 +118,13 @@ export const usePostMessage = () =>
   useRunAction<{ runId: string; text: string }>(
     (v) => `/v1/apply/runs/${v.runId}/messages`,
     (v) => ({ text: v.text }),
+  );
+
+/** The user's look at Claude's résumé: use it, or change it (spec 025). */
+export const useResumeDecision = () =>
+  useRunAction<{ runId: string; decision: "use" | "change"; note?: string }>(
+    (v) => `/v1/apply/runs/${v.runId}/resume-decision`,
+    (v) => ({ decision: v.decision, note: v.note ?? null }),
   );
 
 /** "It wasn't sent": back to the review. */

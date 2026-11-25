@@ -8,6 +8,7 @@ export type ApplyStatus =
   | "reading"
   | "questions"
   | "writing"
+  | "resume_review"
   | "filling"
   | "needs_you"
   | "review"
@@ -72,6 +73,16 @@ export interface ApplyReview {
   confirmed?: { words: string; at: string } | null;
 }
 
+/** The user's look at Claude's résumé before it's used (spec 025). */
+export interface ApplyResumeCheck {
+  round: number;
+  decision: "use" | "change" | null;
+  note: string | null;
+  by?: "app" | "chat" | null;
+  words?: string | null;
+  at: string | null;
+}
+
 export interface ApplyMessage {
   id: string;
   by: "you" | "claude";
@@ -106,6 +117,7 @@ export interface ApplyRunShort {
   questions_open: number;
   help: ApplyHelp | null;
   review: ApplyReview | null;
+  resume_check?: ApplyResumeCheck | null;
   note: string | null;
   /** Claude's turn, and no word from it for 3 minutes (spec 023). */
   claude_stopped?: boolean;
@@ -119,6 +131,8 @@ export interface ApplyRun extends ApplyRunShort {
   pages: ApplyPage[];
   resume_id: string | null;
   document_id: string | null;
+  /** The user picked their résumé at the start (spec 025). */
+  resume_picked?: boolean;
   events: ApplyEvent[];
   started_at: string | null;
   messages?: ApplyMessage[];
@@ -137,6 +151,7 @@ const OPEN: ApplyStatus[] = [
   "reading",
   "questions",
   "writing",
+  "resume_review",
   "filling",
   "needs_you",
   "review",
@@ -165,6 +180,7 @@ export function currentStep(run: ApplyRun): StepKey {
     case "questions":
       return "questions";
     case "writing":
+    case "resume_review":
       return "resume";
     case "filling":
     case "needs_you":
@@ -201,7 +217,11 @@ export function statusLine(run: ApplyRunShort): string {
         ? `Claude has ${run.questions_open} question${run.questions_open === 1 ? "" : "s"} for you`
         : "Claude is reading your answers…";
     case "writing":
-      return "Claude is writing your résumé…";
+      return run.resume_check?.decision === "change" ? "Claude is changing your résumé…" : "Claude is writing your résumé…";
+    case "resume_review":
+      if (run.resume_check?.decision === "use") return "Claude is moving on to the application…";
+      if (run.resume_check?.decision === "change") return "Claude is changing your résumé…";
+      return "Your résumé is ready to look over";
     case "filling":
       return "Claude is filling the application…";
     case "needs_you":
@@ -223,6 +243,7 @@ export function statusLine(run: ApplyRunShort): string {
 export function needsYou(run: ApplyRunShort): boolean {
   if (run.ask_if_sent) return true;
   if (run.status === "questions") return run.questions_open > 0;
+  if (run.status === "resume_review") return !run.resume_check?.decision;
   if (run.status === "needs_you") return !run.help?.done_at;
   if (run.status === "review") return !run.review?.decision;
   return false;
@@ -233,6 +254,7 @@ export function bannerLine(run: ApplyRunShort): string {
   const job = [run.job.title, run.job.company].filter(Boolean).join(" at ");
   if (run.status === "questions") return `${statusLine(run)}: ${job}`;
   if (run.status === "needs_you") return `Claude needs you: ${run.help?.what ?? job}`;
+  if (run.status === "resume_review") return `Look over your résumé: ${job}`;
   if (run.ask_if_sent) return `Did it go through? ${job}`;
   return `Ready for your review: ${job}`;
 }
