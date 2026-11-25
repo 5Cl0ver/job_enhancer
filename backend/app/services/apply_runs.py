@@ -88,7 +88,7 @@ MAX_ANSWERS = 120
 MAX_EVENTS = 200
 MAX_PHOTO_BYTES = 400_000
 MAX_PARTS = 8
-HELP_KINDS = ("sign_in", "sign_up", "captcha", "question", "site", "other")
+HELP_KINDS = ("sign_in", "sign_up", "captcha", "question", "site", "file", "other")
 MAX_CHOICES = 4
 MAX_MESSAGES = 200
 MAX_PEEKS = 5
@@ -100,7 +100,25 @@ PRESSED_GRACE = timedelta(seconds=30)
 JOB_CATCHER_READY = "0.41.0"
 JOB_CATCHER_SEEN = timedelta(hours=2)
 DECISIONS = ("submit", "fix", "self")
+# Job Catcher that reads the page for the live view, attaches the run's own
+# résumé and brings the tab forward for photos (spec 026).
+JOB_CATCHER_LIVE = "0.42.0"
+LIVE_STATUSES = (APPLY_FILLING, APPLY_NEEDS_YOU)
+MAX_LIVE_BOXES = 150
+MAX_FIXES = 30
+# What Job Catcher did with the résumé on a page (spec 026).
+RESUME_STATES = ("attached", "no_box", "no_file", "failed")
+# Never kept or shown, wherever they come from.
+SENSITIVE = re.compile(
+    r"password|passcode|\bpin\b|social security|\bssn\b|card number|credit card"
+    r"|\bcvv\b|\bcvc\b",
+    re.I,
+)
 RESUME_DECISIONS = ("use", "change")
+
+
+class NotFilling(ValueError):
+    """Job Catcher's live view came while the run isn't filling."""
 
 
 class RunBusy(Exception):
@@ -164,6 +182,8 @@ def _event(run: ApplyRun, kind: str, text: str) -> None:
 def _set(run: ApplyRun, status: str) -> None:
     run.status = status
     run.last_activity_at = _now()
+    if status not in LIVE_STATUSES:
+        run.live = None
 
 
 def _add_host(run: ApplyRun, url: str) -> None:
@@ -196,13 +216,16 @@ def _answers(raw: Any, limit: int = MAX_ANSWERS) -> list[dict[str, Any]]:
             continue
         q = _text(item.get("q") or item.get("question"), 300)
         a = _text(item.get("a") or item.get("answer"), 2000)
-        if not q or re.search(
-            r"password|passcode|\bpin\b|social security|\bssn\b", q, re.I
-        ):
+        if not q or SENSITIVE.search(q):
             continue
         row: dict[str, Any] = {"q": q, "a": a}
-        if item.get("claude"):
-            row["claude"] = True
+        # Who put it there (spec 026): Claude wrote it, Claude's best guess,
+        # an agreement Claude ticked, or Job Catcher.
+        for flag in ("claude", "guess", "agreement"):
+            if item.get(flag) is True:
+                row[flag] = True
+        if item.get("by") == "job_catcher":
+            row["by"] = "job_catcher"
         out.append(row)
     return out
 
@@ -674,8 +697,13 @@ async def decide(
     *,
     by: str,
     words: str | None = None,
+    fixes: list[dict[str, Any]] | None = None,
 ) -> ApplyRun:
     """The user's call at the review: submit, fix (with a note), or self.
+
+    A fix from the app's answer bubbles (spec 026) carries ``fixes``: each a
+    change ("to") or a question ("ask") about one answer, sent together; the
+    note is written from them when the user didn't write one.
 
     From a chat, Claude must pass the user's own words: the app can't see the
     chat, so what the user typed is kept and shown on the application page
@@ -691,10 +719,14 @@ async def decide(
     if run.status != APPLY_REVIEW or not run.review:
         raise ValueError("The application isn't ready for review yet.")
     note = _text(note, 2000) or None
+    clean = _fixes(fixes) if decision == "fix" else []
+    if clean and not note:
+        note = _fix_note(clean)
     if decision == "fix" and not note:
         raise ValueError("Say what to fix.")
     run.review = {
         **run.review,
+        "fixes": clean,
         "pressed_at": None,
         "retry": False,
         "decision": decision,
@@ -714,6 +746,40 @@ async def decide(
     _event(run, "decision", text)
     await db.flush()
     return run
+
+
+def _fixes(raw: Any) -> list[dict[str, Any]]:
+    out = []
+    for f in (raw or [])[:MAX_FIXES]:
+        if not isinstance(f, dict):
+            continue
+        q = _text(f.get("q"), 300)
+        to = _text(f.get("to"), 2000)
+        ask = _text(f.get("ask"), 500)
+        if not q or not (to or ask) or SENSITIVE.search(q):
+            continue
+        row: dict[str, Any] = {"q": q, "a": _text(f.get("a"), 300)}
+        page = f.get("page")
+        if isinstance(page, int) and 0 < page <= MAX_PAGES:
+            row["page"] = page
+        if to:
+            row["to"] = to
+        if ask:
+            row["ask"] = ask
+        out.append(row)
+    return out
+
+
+def _fix_note(fixes: list[dict[str, Any]]) -> str:
+    lines = []
+    for f in fixes:
+        where = f"page {f['page']}, " if f.get("page") else ""
+        now = f" (now “{f['a']}”)" if f.get("a") else ""
+        if f.get("to"):
+            lines.append(f"Change {where}“{f['q']}”{now} to “{f['to']}”.")
+        if f.get("ask"):
+            lines.append(f"About {where}“{f['q']}”{now}: {f['ask']}")
+    return _text(" ".join(lines), 2000)
 
 
 async def mark_sent(
@@ -826,6 +892,8 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         resume_id=str(run.resume_id) if run.resume_id else None,
         document_id=str(run.document_id) if run.document_id else None,
         resume_picked=run.resume_picked,
+        resume_file=await _resume_file(db, run),
+        live=run.live if run.status in LIVE_STATUSES else None,
         events=(run.events or [])[-60:],
         started_at=_iso(run.started_at),
         messages=(run.messages or [])[-100:],
@@ -843,6 +911,16 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         job_catcher=await job_catcher_status(db, run.user_id),
     )
     return out
+
+
+async def _resume_file(db: AsyncSession, run: ApplyRun) -> dict[str, str] | None:
+    """The run's résumé, for the app's Download (spec 026)."""
+    if not run.resume_id:
+        return None
+    r = await db.get(Resume, run.resume_id)
+    if r is None or r.user_id != run.user_id:
+        return None
+    return {"id": str(r.id), "filename": r.filename}
 
 
 def _claudes_turn(run: ApplyRun) -> bool:
@@ -934,6 +1012,8 @@ async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, 
         "new_enough": new_enough,
         "seen_lately": bool(fresh),
         "needs": JOB_CATCHER_READY,
+        # Reads the page for the live view (spec 026).
+        "live": new_enough and not releases.is_older(version, JOB_CATCHER_LIVE),
     }
 
 
@@ -957,6 +1037,7 @@ def _public_review(review: dict | None) -> dict | None:
             "at",
             "pressed_at",
             "confirmed",
+            "fixes",
         )
     }
 
@@ -1365,6 +1446,44 @@ def _new_page(
     return page
 
 
+async def _with_fill(db: AsyncSession, run: ApplyRun, page: dict[str, Any]) -> None:
+    """What Job Catcher's fill of this page said (spec 026): whether the
+    résumé went on, and which boxes it filled (marked "Job Catcher")."""
+    row = (
+        await db.execute(
+            select(ApplyRequest.result, ApplyRequest.url)
+            .where(
+                ApplyRequest.run_id == run.id,
+                ApplyRequest.kind == REQUEST_FILL,
+                ApplyRequest.page_n == page["n"],
+                ApplyRequest.status == REQUEST_DONE,
+            )
+            # The latest fill (two in the same second share created_at).
+            .order_by(ApplyRequest.done_at.desc())
+            .limit(1)
+        )
+    ).first()
+    # Only a fill of this very page (one left on a sign-up page isn't this one).
+    if not row or not row.result or _key(row.url) != _key(page["url"]):
+        return
+    res = row.result
+    filled = {x.lower() for x in res.get("filled") or []}
+    pages = [dict(p) for p in run.pages or []]
+    for p in pages:
+        if p["n"] != page["n"]:
+            continue
+        if res.get("resume") in RESUME_STATES:
+            p["resume"] = res["resume"]
+        p["answers"] = [
+            {**a, "by": "job_catcher"}
+            if a["q"].lower() in filled and not a.get("claude")
+            else a
+            for a in p["answers"]
+        ]
+        page.update(p)
+    run.pages = pages
+
+
 async def _request(
     db: AsyncSession, run: ApplyRun, kind: str, url: str, page_n: int
 ) -> ApplyRequest:
@@ -1410,6 +1529,7 @@ async def page_done(
     ):
         raise ValueError("Only call ready_for_review while filling the application.")
     page = _new_page(run, page_url, page_title, answers, last=last)
+    await _with_fill(db, run, page)
     req = await _request(db, run, REQUEST_PHOTO, page_url, page["n"])
     if last:
         rnd = page["round"]
@@ -1494,8 +1614,15 @@ async def wait_request(
 
 REASONS = {
     "no_answer": "Job Catcher didn't answer (is it on and signed in on this computer?)",
-    "no_tab": "The tab wasn't showing",
+    "no_tab": "The application's tab wasn't found",
     "not_visible": "The tab wasn't showing",
+    "tab_closed": "The application's tab was closed",
+    "locked": "The computer was locked, so no photo (the answers are kept)",
+    "hidden": (
+        "Chrome was behind other windows while you used the computer, so no "
+        "photo (the answers are kept)"
+    ),
+    "changed": "The page changed while the photo was taken",
     "replaced": "A newer page came first",
     "error": "Job Catcher hit an error on this page",
 }
@@ -1540,6 +1667,22 @@ async def photo_result(
     }
 
 
+RESUME_WORDS = {
+    "attached": "Job Catcher attached the résumé for this job. Don't attach it again.",
+    "no_box": "There's no résumé box on this page.",
+    "no_file": (
+        "Job Catcher couldn't get the résumé file for this job. If the page "
+        "needs a résumé, call need_help(kind='file', what=…, page_url=…): the "
+        "app gives the user the file to attach."
+    ),
+    "failed": (
+        "Job Catcher found the résumé box but couldn't attach the file. Call "
+        "need_help(kind='file', what=…, page_url=…): the app gives the user "
+        "the file to attach."
+    ),
+}
+
+
 def fill_result(res: dict) -> dict[str, Any]:
     if res.get("status") != REQUEST_DONE:
         reason = res.get("reason") or ""
@@ -1548,14 +1691,19 @@ def fill_result(res: dict) -> dict[str, Any]:
             "job_catcher": REASONS.get(reason, reason or "No answer"),
             "next": "Fill the page yourself, then call page_done.",
         }
-    return {
+    out: dict[str, Any] = {
         "filled": res.get("filled", []),
         "still_needs_an_answer": res.get("need", []),
         "next": (
             "Check every box Job Catcher filled, fill what's left yourself "
-            "(answers you write get claude: true), then call page_done."
+            "with your best judgment (claude: true for what you write, "
+            "guess: true for your picks), then call page_done."
         ),
     }
+    if res.get("resume") in RESUME_STATES:
+        out["resume"] = res["resume"]
+        out["resume_note"] = RESUME_WORDS[res["resume"]]
+    return out
 
 
 async def wait_for_you(
@@ -1733,7 +1881,7 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
             }
         if decision == "fix":
             _set(run, APPLY_FILLING)
-            return {
+            out = {
                 **base,
                 "waiting_on": "review",
                 "ready": True,
@@ -1744,6 +1892,16 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                     "page_done for each page you change, then ready_for_review again."
                 ),
             }
+            if review.get("fixes"):
+                out["fixes"] = review["fixes"]
+                out["next"] = (
+                    "Do every fix: `to` means change that answer to exactly "
+                    "`to`; `ask` is the user's question about that answer: "
+                    "answer it in one or two lines with message_user, and change "
+                    "the answer only if they asked you to. Then page_done for "
+                    "each page you changed, and ready_for_review again."
+                )
+            return out
         return {
             **base,
             "waiting_on": "review",
@@ -1930,11 +2088,62 @@ async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
         "watch": _watching(run),
         "hosts": run.apply_hosts or [],
         "saved_job_id": str(run.saved_job_id),
+        # The résumé Job Catcher attaches on this run's pages (spec 026): the
+        # run's own, else the job's. Never a guess from the page's address.
+        "resume_id": await _run_resume_id(db, run),
+        # Read the run's tab for the live view while it's being filled.
+        "live": run.status in LIVE_STATUSES,
         "requests": [
             {"id": str(r.id), "kind": r.kind, "url": r.url, "page_n": r.page_n}
             for r in reqs
         ],
     }
+
+
+async def _run_resume_id(db: AsyncSession, run: ApplyRun) -> str | None:
+    rid = run.resume_id or await db.scalar(
+        select(SavedJob.resume_id).where(SavedJob.id == run.saved_job_id)
+    )
+    return str(rid) if rid else None
+
+
+def _on_host(host: str, hosts: list[str]) -> bool:
+    return any(host == h or host.endswith(f".{h}") for h in hosts or [] if h)
+
+
+async def save_live(
+    db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID, payload: dict[str, Any]
+) -> ApplyRun:
+    """Job Catcher's reading of the page being filled (spec 026): every box
+    and what's in it, replacing the last one. Only while filling, only for a
+    page on the run's sites; never passwords or card numbers."""
+    run = await _locked(db, user_id, run_id)
+    if run.status not in LIVE_STATUSES:
+        raise NotFilling("The application isn't being filled now.")
+    url = _text(payload.get("url"), 2000)
+    if not url.startswith(("http://", "https://")) or not _on_host(
+        _host(url), run.apply_hosts or []
+    ):
+        raise ValueError("That page isn't part of this application.")
+    boxes = []
+    for b in (payload.get("boxes") or [])[:MAX_LIVE_BOXES]:
+        if not isinstance(b, dict):
+            continue
+        q = _text(b.get("q"), 300)
+        if not q or SENSITIVE.search(q):
+            continue
+        row = {"q": q, "a": _text(b.get("a"), 300)}
+        if b.get("by") == "job_catcher":
+            row["by"] = "job_catcher"
+        boxes.append(row)
+    run.live = {
+        "url": url,
+        "title": _text(payload.get("title"), 120),
+        "at": _iso(_now()),
+        "boxes": boxes,
+    }
+    await db.flush()
+    return run
 
 
 async def _own_request(
@@ -2029,6 +2238,8 @@ async def finish_request(
         result["need"] = [
             _text(x, 200) for x in (payload.get("need") or [])[:MAX_ANSWERS]
         ]
+        if payload.get("resume") in RESUME_STATES:
+            result["resume"] = payload["resume"]
     else:
         result["answers"] = _answers(payload.get("answers"))
     # Only if still being worked on: a request the tool gave up on stays given up.

@@ -149,6 +149,10 @@ class ApplyRun(Base):
     # The résumé review (spec 025): {round, decision: None|"use"|"change",
     # note, by, words, at, read}.
     resume_check: Mapped[dict | None] = mapped_column(JSON)
+    # What's in the boxes of the page being filled, as Job Catcher reads it
+    # every few seconds (spec 026): {url, title, at, boxes: [{q, a, by}]}.
+    # Only while filling; cleared when the run moves on.
+    live: Mapped[dict | None] = mapped_column(JSON)
     note: Mapped[str | None] = mapped_column(Text)
     playbook_version: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = _now_col()

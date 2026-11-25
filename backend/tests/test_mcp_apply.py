@@ -182,9 +182,10 @@ async def test_the_whole_application(engine, monkeypatch):
     )
     assert page["page"] == 1 and page["photos"] == 2 and page["photo"] == "taken"
     run = await _run(maker, run_id)
+    # Never a password; Job Catcher's boxes are marked (spec 026).
     assert run.pages[0]["answers"] == [
-        {"q": "First name", "a": "Sam"}
-    ]  # never a password
+        {"q": "First name", "a": "Sam", "by": "job_catcher"}
+    ]
     assert len(run.pages[0]["photo_ids"]) == 2
 
     review = await mcp_mod.ready_for_review(

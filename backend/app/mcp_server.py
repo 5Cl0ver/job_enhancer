@@ -724,8 +724,9 @@ async def save_resume(run_id: str, content: str) -> dict:
 async def fill_page(run_id: str, page_url: str) -> dict:
     """Ask Job Catcher to fill this application page with what it knows
     (profile, saved answers, this job's résumé file). Waits up to ~45 s and
-    returns what it filled and what still needs an answer. page_url is the
-    page's full address."""
+    returns what it filled, what still needs an answer, and `resume`
+    (attached / no_box / no_file / failed, with `resume_note`). page_url is
+    the page's full address."""
     async with _session_user() as (db, user):
         try:
             run, req = await apply_svc.fill_request(db, user, run_id, page_url)
@@ -763,9 +764,10 @@ async def page_done(
 ) -> dict:
     """Call when you've filled a page, BEFORE pressing Next. answers lists every
     question on the page and what's in it: [{"q", "a", "claude": true if you
-    wrote it}]. Job Catcher takes photos of the whole page (it scrolls; wait
-    for this to return). Returns the page number and whether photos were
-    taken."""
+    wrote it, "guess": true if it's your best-judgment pick rather than a fact
+    from the profile, "agreement": true for an agreement box you ticked}].
+    Job Catcher takes photos of the whole page (it scrolls; wait for this to
+    return). Returns the page number and whether photos were taken."""
     return await _page(run_id, page_url, page_title, answers, last=False)
 
 
@@ -788,7 +790,8 @@ async def need_help(
     page_url: str | None = None,
 ) -> dict:
     """Ask the user for something only they can give or do: kind is sign_in,
-    sign_up, captcha, question, site or other; what says exactly what you need.
+    sign_up, captcha, question, site, file (a file Job Catcher couldn't
+    attach) or other; what says exactly what you need.
     For a question, offer up to 4 short `choices` (e.g. ["Yes", "No"] or
     ["$120,000", "$130,000"]); they can also type any answer. page_url: the
     page you're on (the app shows the user a photo of it). The user answers in
@@ -804,8 +807,9 @@ async def need_help(
 
 @mcp.tool
 async def wait_for_you(run_id: str) -> dict:
-    """Wait (about 45 s) for the user: their answers, their reply to need_help,
-    or their review decision (submit / fix + note / self). Returns ready: false
+    """Wait (about 45 s) for the user: their answers, their look at the
+    résumé (use / change + note), their reply to need_help, or their review
+    decision (submit / fix + note and `fixes` / self). Returns ready: false
     while still waiting: call it again, for up to 30 minutes. It also returns
     early with from_user when the user writes to you in the app. next says what
     to do."""

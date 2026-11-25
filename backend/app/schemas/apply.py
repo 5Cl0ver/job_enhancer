@@ -29,9 +29,28 @@ class ResumeDecisionIn(BaseModel):
     note: str | None = Field(default=None, max_length=2000)
 
 
+class FixIn(BaseModel):
+    """One answer bubble the user changed or asked about (spec 026)."""
+
+    page: int | None = Field(default=None, ge=1, le=99)
+    q: str = Field(max_length=300)
+    a: str = Field(default="", max_length=300)
+    to: str | None = Field(default=None, max_length=2000)
+    ask: str | None = Field(default=None, max_length=500)
+
+
 class DecisionIn(BaseModel):
     decision: Literal["submit", "fix", "self"]
     note: str | None = Field(default=None, max_length=2000)
+    fixes: list[FixIn] | None = Field(default=None, max_length=30)
+
+
+class LiveIn(BaseModel):
+    """Job Catcher's reading of the page being filled (spec 026)."""
+
+    url: str = Field(max_length=2000)
+    title: str | None = Field(default=None, max_length=300)
+    boxes: list[dict] = Field(default_factory=list, max_length=300)
 
 
 class RequestResult(BaseModel):
@@ -40,6 +59,8 @@ class RequestResult(BaseModel):
     filled: list[str] = Field(default_factory=list, max_length=200)
     need: list[str] = Field(default_factory=list, max_length=200)
     answers: list[dict] = Field(default_factory=list, max_length=200)
+    # fill: what happened to the résumé on this page (spec 026).
+    resume: Literal["attached", "no_box", "no_file", "failed"] | None = None
 
 
 class ExtensionEvent(BaseModel):

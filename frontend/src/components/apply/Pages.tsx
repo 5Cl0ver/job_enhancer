@@ -5,7 +5,21 @@ import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/compone
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { usePhoto } from "@/hooks/useApply";
-import { type ApplyPage, latestPages, pageAnswers } from "@/lib/apply";
+import { AnswerBubble } from "@/components/apply/Bubbles";
+import { type ApplyPage, type Fix, type PageAnswer, fixKey, latestPages, pageAnswers } from "@/lib/apply";
+
+/** Answers as bubbles you can tap to fix (spec 026), at the review. */
+export interface BubbleProps {
+  fixes: Map<string, Fix>;
+  onTap?: (page: ApplyPage, answer: PageAnswer, i: number) => void;
+}
+
+const RESUME_LINE: Record<NonNullable<ApplyPage["resume"]>, string | null> = {
+  attached: "Résumé attached",
+  failed: "Résumé not attached",
+  no_file: "No résumé file",
+  no_box: null,
+};
 
 export function Photo({ id, alt, className }: { id: string; alt: string; className?: string }) {
   const { data: src, isError } = usePhoto(id);
@@ -58,10 +72,12 @@ function PageRow({
   page,
   onPhoto,
   startOpen,
+  bubbles,
 }: {
   page: ApplyPage;
   onPhoto: (photoId: string) => void;
   startOpen: boolean;
+  bubbles?: BubbleProps;
 }) {
   const [open, setOpen] = useState(startOpen);
   const answers = pageAnswers(page);
@@ -92,6 +108,7 @@ function PageRow({
             {` · ${answers.length} answer${answers.length === 1 ? "" : "s"}`}
             {wrote > 0 && ` · ${wrote} Claude wrote`}
             {empty > 0 && ` · ${empty} left empty`}
+            {page.resume && RESUME_LINE[page.resume] && ` · ${RESUME_LINE[page.resume]}`}
           </span>
         </span>
         <ChevronDown className={cn("h-4 w-4 shrink-0 transition-transform", open && "rotate-180")} aria-hidden />
@@ -113,7 +130,21 @@ function PageRow({
               ))}
             </div>
           )}
-          {answers.length > 0 && (
+          {answers.length > 0 && bubbles && (
+            <ul className="space-y-2">
+              {answers.map((a, i) => (
+                <li key={i}>
+                  <AnswerBubble
+                    page={page}
+                    answer={a}
+                    fix={bubbles.fixes.get(fixKey(page.n, i))}
+                    onTap={bubbles.onTap && (() => bubbles.onTap!(page, a, i))}
+                  />
+                </li>
+              ))}
+            </ul>
+          )}
+          {answers.length > 0 && !bubbles && (
             <dl className="space-y-2 text-sm">
               {answers.map((a, i) => (
                 <div key={i} className="grid gap-0.5 sm:grid-cols-[minmax(0,2fr)_minmax(0,3fr)] sm:gap-3">
@@ -143,7 +174,15 @@ function PageRow({
  * Every page Claude filled, as it goes: photos (tap for full size) and each
  * question with its answer. A fix's redone page replaces the old one.
  */
-export function Pages({ pages, openAll = false }: { pages: ApplyPage[]; openAll?: boolean }) {
+export function Pages({
+  pages,
+  openAll = false,
+  bubbles,
+}: {
+  pages: ApplyPage[];
+  openAll?: boolean;
+  bubbles?: BubbleProps;
+}) {
   const shown = latestPages(pages);
   const photos = shown.flatMap((p) =>
     p.photo_ids.map((id, i) => ({ id, label: `Page ${p.n}: ${p.title} (${i + 1}/${p.photo_ids.length})` })),
@@ -158,6 +197,7 @@ export function Pages({ pages, openAll = false }: { pages: ApplyPage[]; openAll?
             key={`${p.n}-${p.url}`}
             page={p}
             startOpen={openAll}
+            bubbles={bubbles}
             onPhoto={(id) => setAt(photos.findIndex((x) => x.id === id))}
           />
         ))}

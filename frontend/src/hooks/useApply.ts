@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
-import { type ApplyRun, type ApplyRunShort, isOpenApply } from "@/lib/apply";
+import { type ApplyRun, type ApplyRunShort, type Fix, isOpenApply } from "@/lib/apply";
 
 const LIVE_MS = 3000;
 const BANNER_MS = 15_000;
@@ -140,9 +140,9 @@ export function usePeek() {
 }
 
 export const useDecide = () =>
-  useRunAction<{ runId: string; decision: "submit" | "fix" | "self"; note?: string }>(
+  useRunAction<{ runId: string; decision: "submit" | "fix" | "self"; note?: string; fixes?: Fix[] }>(
     (v) => `/v1/apply/runs/${v.runId}/decision`,
-    (v) => ({ decision: v.decision, note: v.note }),
+    (v) => ({ decision: v.decision, note: v.note, ...(v.fixes?.length ? { fixes: v.fixes } : {}) }),
   );
 
 export const useMarkSent = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/sent`);

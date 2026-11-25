@@ -2,16 +2,18 @@ import { useState } from "react";
 import { Loader2, Send, Wrench, MousePointerClick } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
+import { AnswerBubble, FixSheet, FixTray } from "@/components/apply/Bubbles";
+import { Pages } from "@/components/apply/Pages";
 import { useDecide, useMarkSent } from "@/hooks/useApply";
 import { useIsPhone } from "@/hooks/useIsPhone";
-import type { ApplyRun } from "@/lib/apply";
+import { type ApplyPage, type ApplyRun, type Fix, type PageAnswer, checkFirst, fixKey } from "@/lib/apply";
 
 /**
  * The user's call before anything is sent: Submit (Claude presses it), Fix
  * something (Claude fixes and asks again), or I'll submit it myself (on the
  * computer: Job Catcher lifts its Submit block and notices the press).
  */
-export function Review({ run }: { run: ApplyRun }) {
+export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
   const decide = useDecide();
   const sent = useMarkSent();
   const phone = useIsPhone();
@@ -20,6 +22,10 @@ export function Review({ run }: { run: ApplyRun }) {
   const [changing, setChanging] = useState(false);
   const review = run.review;
   const decision = changing ? null : review?.decision;
+  const pending = fixes.length;
+  // Fixes the user marked but didn't send would be lost.
+  const dropFixes = () =>
+    !pending || window.confirm(`You have ${pending} fix${pending === 1 ? "" : "es"} not sent. Go on without them?`);
   // What the user told Claude in a chat, in their own words (spec 022).
   const told = review?.by === "chat" && review.words && (
     <p className="text-sm">
@@ -75,7 +81,10 @@ export function Review({ run }: { run: ApplyRun }) {
           <Button
             className="gap-1.5"
             disabled={decide.isPending}
-            onClick={() => decide.mutate({ runId: run.id, decision: "submit" }, { onSuccess: () => setChanging(false) })}
+            onClick={() => {
+              if (!dropFixes()) return;
+              decide.mutate({ runId: run.id, decision: "submit" }, { onSuccess: () => setChanging(false) });
+            }}
           >
             {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
             Submit
@@ -88,7 +97,10 @@ export function Review({ run }: { run: ApplyRun }) {
               variant="ghost"
               className="gap-1.5"
               disabled={decide.isPending}
-              onClick={() => decide.mutate({ runId: run.id, decision: "self" }, { onSuccess: () => setChanging(false) })}
+              onClick={() => {
+                if (!dropFixes()) return;
+                decide.mutate({ runId: run.id, decision: "self" }, { onSuccess: () => setChanging(false) });
+              }}
             >
               <MousePointerClick className="h-4 w-4" aria-hidden /> I'll submit it myself
             </Button>
@@ -108,8 +120,9 @@ export function Review({ run }: { run: ApplyRun }) {
             <Button
               disabled={!note.trim() || decide.isPending}
               onClick={() =>
+                // The typed note goes with any bubbles' fixes.
                 decide.mutate(
-                  { runId: run.id, decision: "fix", note: note.trim() },
+                  { runId: run.id, decision: "fix", note: note.trim(), fixes },
                   { onSuccess: () => (setChanging(false), setFixing(false)) },
                 )
               }
@@ -126,6 +139,74 @@ export function Review({ run }: { run: ApplyRun }) {
       <p className="text-xs text-muted-foreground">
         You can also tell Claude in the chat, or in the Claude app on your phone.
       </p>
+    </div>
+  );
+}
+
+/**
+ * The review (spec 026): the decision buttons, then what to check first
+ * (what Claude agreed to for you, its guesses, empty boxes), then every
+ * page's photos and answers as bubbles. Tap a bubble to change it or ask
+ * Claude about it; the fixes go to Claude together, and the review comes
+ * back with them done.
+ */
+export function ReviewBoard({ run }: { run: ApplyRun }) {
+  const decide = useDecide();
+  const [fixes, setFixes] = useState<Map<string, Fix>>(new Map());
+  const [target, setTarget] = useState<{ page: ApplyPage; answer: PageAnswer; i: number } | null>(null);
+  const open = run.status === "review" && !run.review?.decision;
+  const first = checkFirst(run.pages);
+  const tap = open ? (page: ApplyPage, answer: PageAnswer, i: number) => setTarget({ page, answer, i }) : undefined;
+  const key = target ? fixKey(target.page.n, target.i) : "";
+  const send = () =>
+    decide.mutate(
+      { runId: run.id, decision: "fix", fixes: [...fixes.values()] },
+      { onSuccess: () => setFixes(new Map()) },
+    );
+
+  return (
+    <div className="space-y-4">
+      <Review run={run} fixes={open ? [...fixes.values()] : []} />
+      {first.length > 0 && (
+        <section className="space-y-2">
+          <h3 className="text-sm font-semibold">Check these first</h3>
+          <p className="text-xs text-muted-foreground">
+            What Claude agreed to for you, its best guesses, and boxes left empty.{open && " Tap one to change it."}
+          </p>
+          <ul className="space-y-2">
+            {first.map(({ page, answer, i }) => (
+              <li key={fixKey(page.n, i)}>
+                <AnswerBubble
+                  page={page}
+                  answer={answer}
+                  showPage
+                  fix={fixes.get(fixKey(page.n, i))}
+                  onTap={tap && (() => tap(page, answer, i))}
+                />
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+      <Pages pages={run.pages} openAll bubbles={{ fixes, onTap: tap }} />
+      {open && (
+        <FixTray count={fixes.size} sending={decide.isPending} onSend={send} onClear={() => setFixes(new Map())} />
+      )}
+      {decide.isError && <p className="text-sm text-destructive">Couldn't send the fixes. Try again.</p>}
+      <FixSheet
+        key={key}
+        target={target}
+        current={fixes.get(key)}
+        onClose={() => setTarget(null)}
+        onSave={(fix) => setFixes((m) => new Map(m).set(key, fix))}
+        onRemove={() =>
+          setFixes((m) => {
+            const next = new Map(m);
+            next.delete(key);
+            return next;
+          })
+        }
+      />
     </div>
   );
 }

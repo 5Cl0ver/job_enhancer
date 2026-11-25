@@ -59,6 +59,7 @@ PASS_ROUTES = {
     ("POST", "/v1/apply/requests/{request_id}/photo"),
     ("POST", "/v1/apply/requests/{request_id}/result"),
     ("POST", "/v1/apply/runs/{run_id}/event"),
+    ("POST", "/v1/apply/runs/{run_id}/live"),
     ("POST", "/v1/extension/hello"),
     ("DELETE", "/v1/extension/tokens/current"),
 }

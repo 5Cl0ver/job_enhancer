@@ -30,6 +30,12 @@ export interface PageAnswer {
   q: string;
   a: string;
   claude?: boolean;
+  /** Claude's best-judgment pick, not a fact from the profile (spec 026). */
+  guess?: boolean;
+  /** An agreement box Claude ticked: shown to the user before Submit. */
+  agreement?: boolean;
+  /** Job Catcher filled it. */
+  by?: "job_catcher";
 }
 
 export interface ApplyPage {
@@ -44,10 +50,12 @@ export interface ApplyPage {
   at: string;
   round: number;
   last: boolean;
+  /** What happened to the résumé on this page (spec 026). */
+  resume?: "attached" | "no_box" | "no_file" | "failed";
 }
 
 export interface ApplyHelp {
-  kind: "sign_in" | "sign_up" | "captcha" | "question" | "site" | "other";
+  kind: "sign_in" | "sign_up" | "captcha" | "question" | "site" | "file" | "other";
   what: string;
   at: string;
   done_at: string | null;
@@ -71,6 +79,26 @@ export interface ApplyReview {
   pressed_at?: string | null;
   /** Job Catcher saw the confirmation page (spec 023). */
   confirmed?: { words: string; at: string } | null;
+  /** The answer bubbles the user changed or asked about (spec 026). */
+  fixes?: Fix[];
+}
+
+/** One answer bubble the user changed ("to") or asked Claude about ("ask"). */
+export interface Fix {
+  page?: number;
+  q: string;
+  a: string;
+  to?: string;
+  ask?: string;
+}
+
+/** What's in the boxes of the page Claude is filling, read by Job Catcher
+ * every few seconds (spec 026). */
+export interface LiveFill {
+  url: string;
+  title: string;
+  at: string;
+  boxes: { q: string; a: string; by?: "job_catcher" }[];
 }
 
 /** The user's look at Claude's résumé before it's used (spec 025). */
@@ -99,6 +127,8 @@ export interface JobCatcherStatus {
   new_enough?: boolean;
   seen_lately?: boolean;
   needs: string;
+  /** New enough for the live view, the run's own résumé and the photo fix (spec 026). */
+  live?: boolean;
 }
 
 export interface ApplyEvent {
@@ -140,6 +170,10 @@ export interface ApplyRun extends ApplyRunShort {
   peeks?: { id: string; at: string }[];
   claude_at?: string | null;
   job_catcher?: JobCatcherStatus;
+  /** The boxes being filled now (spec 026). */
+  live?: LiveFill | null;
+  /** The run's résumé, for Download (spec 026). */
+  resume_file?: { id: string; filename: string } | null;
 }
 
 export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";
@@ -264,9 +298,50 @@ export function bannerLine(run: ApplyRunShort): string {
  * Claude's own writing is marked either way. */
 export function pageAnswers(page: ApplyPage): PageAnswer[] {
   if (!page.jc_answers.length) return page.answers;
-  const wrote = new Set(page.answers.filter((a) => a.claude).map((a) => a.q.toLowerCase()));
-  return page.jc_answers.map((a) => (wrote.has(a.q.toLowerCase()) ? { ...a, claude: true } : a));
+  // Who put each answer there comes from Claude's list (spec 026).
+  const said = new Map(page.answers.map((a) => [a.q.toLowerCase(), a]));
+  return page.jc_answers.map((a) => {
+    const c = said.get(a.q.toLowerCase());
+    if (!c) return a;
+    const flags: Partial<PageAnswer> = {};
+    if (c.claude) flags.claude = true;
+    if (c.guess) flags.guess = true;
+    if (c.agreement) flags.agreement = true;
+    if (c.by) flags.by = c.by;
+    return { ...a, ...flags };
+  });
 }
+
+export type AnswerSource = "agreement" | "guess" | "claude" | "job_catcher" | "page";
+
+/** Who put an answer there, most important first. */
+export function sourceOf(a: PageAnswer): AnswerSource {
+  if (a.agreement) return "agreement";
+  if (a.guess) return "guess";
+  if (a.claude) return "claude";
+  if (a.by === "job_catcher") return "job_catcher";
+  return "page";
+}
+
+export const SOURCE_LABEL: Record<AnswerSource, string> = {
+  agreement: "You're agreeing",
+  guess: "Claude guessed",
+  claude: "Claude wrote it",
+  job_catcher: "Job Catcher",
+  page: "On the page",
+};
+
+/** The answers to check before Submit (spec 026): what Claude agreed to for
+ * you, then its guesses, then boxes left empty. */
+export function checkFirst(pages: ApplyPage[]): { page: ApplyPage; answer: PageAnswer; i: number }[] {
+  const all = latestPages(pages).flatMap((page) => pageAnswers(page).map((answer, i) => ({ page, answer, i })));
+  const rank = ({ answer: a }: { answer: PageAnswer }) =>
+    a.agreement ? 0 : a.guess ? 1 : !a.a.trim() ? 2 : 3;
+  return all.filter((x) => rank(x) < 3).sort((x, y) => rank(x) - rank(y));
+}
+
+/** One answer's place: a page can ask the same question twice (each job's "Job Title"). */
+export const fixKey = (page: number, i: number) => `${page}|${i}`;
 
 /** The pages to review, in order: every page of the latest round, plus the
  * earlier rounds' pages a fix didn't redo. Never merged within a round: many
@@ -287,5 +362,6 @@ export const HELP_TITLES: Record<ApplyHelp["kind"], string> = {
   captcha: "Prove you're not a robot",
   question: "A question only you can answer",
   site: "The site needs you",
+  file: "Attach a file",
   other: "Claude needs you",
 };

@@ -8,7 +8,8 @@ import { Pages } from "@/components/apply/Pages";
 import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
 import { ResumeReview } from "@/components/apply/ResumeReview";
-import { Review } from "@/components/apply/Review";
+import { LiveFill } from "@/components/apply/LiveFill";
+import { ReviewBoard } from "@/components/apply/Review";
 import {
   Conversation,
   CopyLine,
@@ -207,11 +208,11 @@ export function ApplyRunPage() {
 
       {reviewing && (
         <Card title="Your review" tone={run.review?.decision ? undefined : "you"}>
-          <Review run={run} />
-          <Pages pages={run.pages} openAll />
+          <ReviewBoard run={run} />
         </Card>
       )}
 
+      <LiveFill run={run} />
       <Conversation run={run} open={open} />
       <ScreenNow run={run} open={open} />
 

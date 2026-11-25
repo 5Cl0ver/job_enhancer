@@ -2,10 +2,12 @@ import { describe, expect, it } from "vitest";
 import {
   type ApplyRun,
   bannerLine,
+  checkFirst,
   currentStep,
   latestPages,
   needsYou,
   pageAnswers,
+  sourceOf,
   statusLine,
 } from "@/lib/apply";
 
@@ -116,5 +118,68 @@ describe("pages", () => {
       page(3, one, { title: "Review" }),
     ];
     expect(latestPages(pages).map((p) => p.n)).toEqual([1, 2, 3]);
+  });
+});
+
+describe("best judgment (spec 026)", () => {
+  it("says who put each answer there, most important first", () => {
+    expect(sourceOf({ q: "a", a: "b", agreement: true, guess: true })).toBe("agreement");
+    expect(sourceOf({ q: "a", a: "b", guess: true, claude: true })).toBe("guess");
+    expect(sourceOf({ q: "a", a: "b", claude: true })).toBe("claude");
+    expect(sourceOf({ q: "a", a: "b", by: "job_catcher" })).toBe("job_catcher");
+    expect(sourceOf({ q: "a", a: "b" })).toBe("page");
+  });
+
+  it("keeps Claude's marks on Job Catcher's reading of the page", () => {
+    const p = page(1, "https://a.example/1", {
+      answers: [
+        { q: "Prefix", a: "Mr.", guess: true },
+        { q: "I agree", a: "Yes", agreement: true },
+        { q: "First name", a: "Sam", by: "job_catcher" },
+      ],
+      jc_answers: [
+        { q: "Prefix", a: "Mr." },
+        { q: "I agree", a: "Checked" },
+        { q: "First name", a: "Sam" },
+      ],
+    });
+    expect(pageAnswers(p)).toEqual([
+      { q: "Prefix", a: "Mr.", guess: true },
+      { q: "I agree", a: "Checked", agreement: true },
+      { q: "First name", a: "Sam", by: "job_catcher" },
+    ]);
+  });
+
+  it("puts agreements, then guesses, then empty boxes first", () => {
+    const pages = [
+      page(1, "https://a.example/1", {
+        answers: [
+          { q: "First name", a: "Sam" },
+          { q: "Phone ext", a: "" },
+          { q: "Prefix", a: "Mr.", guess: true },
+        ],
+      }),
+      page(2, "https://a.example/2", { answers: [{ q: "I certify", a: "Yes", agreement: true }] }),
+    ];
+    expect(checkFirst(pages).map((x) => `${x.page.n}:${x.answer.q}`)).toEqual([
+      "2:I certify",
+      "1:Prefix",
+      "1:Phone ext",
+    ]);
+  });
+
+  it("a résumé waiting for a look is the user's turn", () => {
+    const run = {
+      ...base,
+      status: "resume_review" as const,
+      resume_check: { round: 1, decision: null, note: null, at: null },
+    };
+    expect(needsYou(run)).toBe(true);
+    expect(statusLine(run)).toBe("Your résumé is ready to look over");
+    expect(bannerLine(run)).toBe("Look over your résumé: IT Engineer at Acme");
+    expect(currentStep(run)).toBe("resume");
+    const changing = { ...run, resume_check: { ...run.resume_check, decision: "change" as const } };
+    expect(needsYou(changing)).toBe(false);
+    expect(statusLine(changing)).toBe("Claude is changing your résumé…");
   });
 });
