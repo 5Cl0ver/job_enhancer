@@ -54,18 +54,20 @@ RUBRIC_LABELS = {
     "recency": "posted recently",
     "pay_location": "pay and location",
 }
-LIMITS = {"links": 6, "search_pages": 2, "titles": 8, "companies": 15}
+LIMITS = {"links": 6, "search_pages": 2, "titles": 8, "companies": 15, "looks": 200}
 LIMIT_RANGES = {
     "links": (1, 10),
     "search_pages": (1, 8),
     "titles": (2, 8),
     "companies": (5, 25),
+    "looks": (50, 500),
 }
 LIMIT_LABELS = {
     "links": "Searches a run makes (one per title)",
     "search_pages": "Results pages read per search",
     "titles": "Titles an Anything I'd be good at run searches",
     "companies": "Companies a Local companies run checks",
+    "looks": "Jobs a run looks through before it stops adding searches",
 }
 # Shown on the page, not editable.
 FIXED_LIMITS = (

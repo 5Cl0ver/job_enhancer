@@ -143,8 +143,10 @@ class TestStartUrls:
         q = parse_qs(urlsplit(url).query)
         assert url.startswith("https://www.google.com/search?")
         assert q["udm"] == ["8"]
+        # Plain words Google's job search understands (spec 021): "near" the
+        # place, never "within N miles of", and the window.
         assert q["q"] == [
-            "IT Systems Administrator jobs within 25 miles of Springfield, IL"
+            "IT Systems Administrator jobs near Springfield, IL in the last week"
         ]
 
     def test_google_jobs_remote_only(self):
@@ -152,7 +154,7 @@ class TestStartUrls:
             self._criteria(source="google_jobs", remote="remote_only")
         )
         assert parse_qs(urlsplit(url).query)["q"] == [
-            "IT Systems Administrator remote jobs"
+            "IT Systems Administrator remote jobs in the last week"
         ]
 
 

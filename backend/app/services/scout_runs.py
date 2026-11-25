@@ -34,6 +34,7 @@ from fastapi import HTTPException
 from sqlalchemy import and_, false, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.models.application_profile import ApplicationProfile
 from app.models.collection import Collection
 from app.models.job_listing import JobListing
 from app.models.resume import Resume
@@ -95,7 +96,7 @@ from app.services.scout_results import band, status_of
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.9"
+PLAYBOOK_VERSION = "2026.11.11"
 # What Claude is told lives in app/scout/*.md and scout_instructions (the user
 # can edit most of it; a run uses its own snapshot).
 SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
@@ -117,6 +118,14 @@ COPY_TRIES = 3
 # next window (research R5).
 THIN = 25
 WIDEN = {1: 3, 3: 7}
+# Keep going (spec 021): a run whose searches are all read while it's still
+# short of good fits adds more, one step at a time: remote jobs anywhere in
+# the country, then a longer window, then the titles this round left out.
+# It stops adding once it has looked through the "looks" limit of jobs.
+KEEP_GOING = ("remote", "wider", "titles")
+MORE_DAYS = 14
+# LinkedIn's id for the United States (remote searches).
+US_GEO_ID = "103644278"
 # Outcomes the user decided on. (A duplicate points at a job already in the
 # tracker, which in_tracker covers, or at an earlier finding that carries its
 # own outcome.)
@@ -353,68 +362,119 @@ def search_titles(c: dict) -> list[str]:
     return (titles[first:] + titles[:first])[:group]
 
 
+def _groups(c: dict, titles: list[str]) -> list[tuple[str, str]]:
+    """(label, words) for each search of these titles."""
+    if c["track"].get("exact") and not c.get("broad"):
+        return [(" / ".join(titles), " OR ".join(f'"{t}"' for t in titles))]
+    # Each title its own search, as plain words LinkedIn matches loosely.
+    return [(t, t) for t in titles]
+
+
 def search_links(c: dict) -> list[dict]:
     """The searches this run makes: what each one asks for, and its link with
-    the filters already set, so Claude never spends screenshots on them."""
+    the filters already set, so Claude never spends screenshots on them. The
+    searches a run added to keep going (``more``, spec 021) come after."""
     if c["source"] == LOCAL:
         return [{"title": "", "url": u} for u in company_searches(c)]
-    titles = search_titles(c)
-    if c["track"].get("exact") and not c.get("broad"):
-        groups = [(" / ".join(titles), " OR ".join(f'"{t}"' for t in titles))]
-    else:  # each title its own search, as plain words LinkedIn matches loosely
-        groups = [(t, t) for t in titles]
+    specs = [
+        {"title": label, "words": words}
+        for label, words in _groups(c, search_titles(c))
+    ]
+    specs += list(c.get("more") or [])
     # Searches widened because they were thin keep their own, longer window.
     widened = c.get("widened") or {}
     return [
-        {"title": label, "url": _link(c, words, widened.get(str(i)))}
-        for i, (label, words) in enumerate(groups)
+        {
+            "title": s["title"],
+            "url": _link(
+                c,
+                s["words"],
+                widened.get(str(i)) or s.get("days"),
+                remote=bool(s.get("remote")),
+            ),
+        }
+        for i, s in enumerate(specs)
     ]
+
+
+def base_count(c: dict) -> int:
+    """How many of the run's searches it started with (before keep-going ones)."""
+    return len(search_links(c)) - len(c.get("more") or [])
 
 
 def start_urls(c: dict) -> list[str]:
     return [link["url"] for link in search_links(c)]
 
 
-def _link(c: dict, words: str, days: int | None = None) -> str:
+def search_place(c: dict) -> str:
+    """The place to search, with its state when the app knows it ("Beaverton,
+    OR"): a bare town name can be another town (spec 021)."""
+    return c.get("where") or c.get("location") or ""
+
+
+def _google_window(days: int) -> str:
+    """How Google's job search is told the window, in words it understands."""
+    if days <= 1:
+        return " since yesterday"
+    if days <= 3:
+        return " in the last 3 days"
+    if days <= 7:
+        return " in the last week"
+    return " in the last month"
+
+
+def _link(c: dict, words: str, days: int | None = None, *, remote: bool = False) -> str:
+    """One search's link. ``remote``: the same search for remote jobs anywhere
+    in the country, which a search around a place leaves out (spec 021)."""
     days = int(days or c["posted_within_days"])
-    location = c.get("location") or ""
-    remote = c.get("remote", "any")
-    radius = _radius(c)
+    remote = remote or c.get("remote") == "remote_only"
+    location = "" if remote else search_place(c)
+    radius = None if remote else _radius(c)
     source = c["source"]
     if source == "linkedin":
         q = {"keywords": words}
-        q["location"] = location or ("United States" if remote == "remote_only" else "")
-        if c.get("geo_id"):  # signed in, LinkedIn goes by this, not the name
-            q["geoId"] = c["geo_id"]
+        if remote:  # the whole country: a place would keep only its own jobs
+            q["location"] = "United States"
+            q["geoId"] = US_GEO_ID
+        else:
+            q["location"] = location
+            if c.get("geo_id"):  # signed in, LinkedIn goes by this, not the name
+                q["geoId"] = c["geo_id"]
         if radius:
             q["distance"] = str(board_radius(source, radius))
         q["f_TPR"] = f"r{days * 86400}"
         # Experience levels (spec 012).
         q["f_E"] = levels_svc.linkedin_f_e(c["track"].get("levels"))
         q["sortBy"] = "DD"
-        if remote == "remote_only":
+        if remote:
             q["f_WT"] = "2"
-        elif remote == "no_remote":
+        elif c.get("remote") == "no_remote":
             q["f_WT"] = "1,3"
         return f"https://www.linkedin.com/jobs/search/?{urlencode(q)}"
-    where = "Remote" if remote == "remote_only" else location
     if source == "google_jobs":
-        if remote == "remote_only":
+        # Google's job search reads plain words: "near" a place and a window.
+        if remote:
             q = f"{words} remote jobs"
         elif location:
-            near = f"within {radius} miles of" if radius else "near"
-            q = f"{words} jobs {near} {location}"
+            q = f"{words} jobs near {location}"
         else:
             q = f"{words} jobs"
+        q += _google_window(days)
         # udm=8: Google's own Jobs results.
         return f"https://www.google.com/search?{urlencode({'q': q, 'udm': '8'})}"
     if source == "indeed":
-        q = {"q": words, "l": where, "fromage": str(min(days, 14)), "sort": "date"}
+        q = {"q": words, "l": "Remote" if remote else location}
+        if remote:
+            q["sc"] = "0kf:attr(DSQF7);"  # Indeed's own Remote filter
+        q |= {"fromage": str(min(days, 14)), "sort": "date"}
         if radius:
             q["radius"] = str(board_radius(source, radius))
         return f"https://www.indeed.com/jobs?{urlencode(q)}"
     zip_days = next(d for d in (1, 5, 10, 30) if d >= days)
-    q = {"search": words, "location": where, "days": str(zip_days)}
+    q = {"search": words, "location": "Remote" if remote else location}
+    q["days"] = str(zip_days)
+    if remote:
+        q["refine_by_location_type"] = "only_remote"
     if radius:
         q["radius"] = str(board_radius(source, radius))
     return f"https://www.ziprecruiter.com/jobs-search?{urlencode(q)}"
@@ -473,8 +533,28 @@ def links_line(c: dict, stats: dict | None) -> str | None:
     if not rows:
         return None
     board = SOURCE_LABEL.get(c.get("source", ""), "The board")
-    parts = " · ".join(f"{r['title']} {r['total']}" for r in rows)
+    parts = " · ".join(f"{r['title']} {r['total']}" for r in rows[:LINE_SEARCHES])
+    if len(rows) > LINE_SEARCHES:
+        parts += f" · and {len(rows) - LINE_SEARCHES} more"
     return f"{board}'s results per search: {parts}."
+
+
+# Searches named in the finish line (a run that kept going has many).
+LINE_SEARCHES = 8
+
+
+def looked_line(c: dict, stats: dict | None) -> str | None:
+    """ "Looked through 180 jobs, and kept going with remote jobs anywhere in
+    the country." for a run that searched job boards (spec 021)."""
+    rows = int((stats or {}).get("rows", 0))
+    if c.get("source") == LOCAL or not rows:
+        return None
+    line = f"Looked through {rows} job{'s' if rows != 1 else ''}"
+    added = {m.get("step") for m in c.get("more") or []}
+    shown = [STEP_WORDS[s] for s in KEEP_GOING if s in added]
+    if shown:
+        line += ", and kept going with " + " and ".join(shown)
+    return line + "."
 
 
 def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
@@ -576,6 +656,25 @@ def company_searches(c: dict) -> list[str]:
     ]
 
 
+async def _with_state(
+    db: AsyncSession, user_id: uuid.UUID, location: str | None
+) -> str | None:
+    """ "Beaverton" → "Beaverton, OR" when it's the town in the user's
+    application profile; a place that already names more, or another town,
+    as typed."""
+    town = " ".join((location or "").split())
+    if not town or "," in town:
+        return location
+    profile = await db.scalar(
+        select(ApplicationProfile).where(ApplicationProfile.user_id == user_id)
+    )
+    city = " ".join((profile.city or "").split()) if profile else ""
+    state = " ".join((profile.state or "").split()) if profile else ""
+    if state and city.casefold() == town.casefold():
+        return f"{town}, {state}"[:120]
+    return location
+
+
 async def _criteria(
     db: AsyncSession, user_id: uuid.UUID, mission: ScoutMission, track: ResumeTrack
 ) -> dict:
@@ -593,6 +692,8 @@ async def _criteria(
         "posted_within_days": mission.posted_within_days,
         "min_pay": mission.min_pay if mission.min_pay is not None else track.min_pay,
         "location": mission.location,
+        # The same place with its state, for the search links (spec 021).
+        "where": await _with_state(db, user_id, mission.location),
         "radius_miles": mission.radius_miles,
         "remote": mission.remote,
         "min_fit": mission.min_fit,
@@ -1116,7 +1217,7 @@ async def _brief_body(
     ):
         radius = _radius(c)
         extra["place"] = {
-            "location": c.get("location"),
+            "location": search_place(c),
             "geo_id": c.get("geo_id"),
             "radius_miles": radius,
             "linkedin_distance": board_radius("linkedin", radius),
@@ -1217,7 +1318,7 @@ async def _brief_body(
 def area_rule(c: dict) -> dict | None:
     """Where jobs count for this search, so Claude can send in_area with each
     job (spec 012). None when the search has no place."""
-    location = c.get("location")
+    location = search_place(c)
     remote = c.get("remote", "any")
     if not location or remote == "remote_only":
         return None
@@ -1508,7 +1609,7 @@ async def check_jobs(
     # the last page again) changes nothing and gets the same answer. Rows the
     # next search shares with the last page are told apart: by the address
     # Claude landed on, or by being sent a second time.
-    seen_link = _link_of(c, page_url_seen) if paged and page_url_seen else None
+    seen_link = _link_of(c, page_url_seen, link) if paged and page_url_seen else None
     resent = False
     if seen_link is not None and seen_link < link:
         resent = True  # a page of a search already done
@@ -1541,6 +1642,8 @@ async def check_jobs(
     nxt_url: str | None = None
     note = ""
     widened_to: int | None = None
+    added: dict | None = None
+    looked_enough = False
     read_on = link  # the search this page was read on
     if paged:
         if place_fixed and page_url_seen and c["source"] == "linkedin":
@@ -1594,6 +1697,22 @@ async def check_jobs(
             nxt_url = links[link]["url"]
         elif link_done:
             link, link_pages = link + 1, 0
+            if link >= len(links) and not (await _progress(db, run))["done"]:
+                # Every search read and still short: keep going (spec 021).
+                added = _keep_going(c, stats)
+                if added:
+                    c = {
+                        **c,
+                        "more": [*(c.get("more") or []), *added["more"]],
+                        "steps": added["steps"],
+                    }
+                    run.criteria = c
+                    links = search_links(c)
+                else:
+                    looked_enough = _looked_enough(c, stats)
+            elif base_count(c) <= link < len(links) and _looked_enough(c, stats):
+                # Looked through enough: none of the rest of the added searches.
+                link, looked_enough = len(links), True
             nxt_url = links[link]["url"] if link < len(links) else None
         else:
             nxt_url = page_url(c, link, link_pages)
@@ -1614,11 +1733,23 @@ async def check_jobs(
     else:
         links = search_links(c)
         link = stats["_link"]
-        if link >= len(links):
+        if link >= len(links) and looked_enough:
+            after = (
+                f"call finish_scout_run: the run has looked through "
+                f"{stats.get('rows', 0)} jobs, its limit"
+            )
+        elif link >= len(links):
             after = (
                 "there are no more results, so call finish_scout_run"
                 if ran_out and len(links) == 1
                 else "call finish_scout_run: that was the last search"
+            )
+        elif added and stats["_link_pages"] == 0:
+            after = (
+                "keep going: the run is still short of good fits, so the app "
+                f"added {len(added['more'])} more searches "
+                f"({STEP_WORDS[added['step']]}). Open next_page_url: "
+                f"{links[link]['title']} ({link + 1} of {len(links)})"
             )
         elif widened_to:
             after = (
@@ -1669,19 +1800,110 @@ def _widened_now(stats: dict, link: int) -> bool:
 
 def _widen_to(c: dict, link: int, info: dict) -> int | None:
     """The longer window to search again when a search had fewer than ``THIN``
-    results (research R5), or None: once per search, job boards only."""
-    if c["source"] not in PER_PAGE or info.get("widened_days"):
+    results (research R5), or None: once per search, job boards and Google."""
+    if c["source"] == LOCAL or info.get("widened_days"):
         return None
     total = info.get("total")
     if total is None or total >= THIN:
         return None
-    days = int((c.get("widened") or {}).get(str(link)) or c["posted_within_days"])
-    return WIDEN.get(days)
+    return WIDEN.get(_days_at(c, link))
 
 
-def _link_of(c: dict, url: str) -> int | None:
+def _days_at(c: dict, link: int) -> int:
+    """The window one of the run's searches asks for, in days."""
+    widened = (c.get("widened") or {}).get(str(link))
+    more = c.get("more") or []
+    added = link - (len(search_links(c)) - len(more))
+    own = more[added].get("days") if 0 <= added < len(more) else None
+    return int(widened or own or c["posted_within_days"])
+
+
+# What each keep-going step adds, for Claude's next line.
+STEP_WORDS = {
+    "remote": "remote jobs anywhere in the country",
+    "wider": f"the past {MORE_DAYS} days",
+    "titles": "titles this run had left out",
+}
+
+
+def _looked_enough(c: dict, stats: dict) -> bool:
+    return int(stats.get("rows", 0)) >= instr.limit(c, "looks")
+
+
+def _left_out(c: dict) -> list[str]:
+    """A resume type's titles this round's searches didn't ask for (runs take
+    turns when there are more than fit), up to one run's worth."""
+    if c.get("broad"):
+        return []
+    track = c["track"]
+    asked = {t.lower() for t in search_titles(c)}
+    rest: list[str] = []
+    for t in (
+        list(track.get("titles") or [])
+        + list(track.get("related") or [])
+        + list(track.get("suggested") or [])
+    ):
+        if t.lower() not in asked and t.lower() not in {r.lower() for r in rest}:
+            rest.append(t)
+    group = TITLES_PER_SEARCH if track.get("exact") else instr.limit(c, "links")
+    return rest[:group]
+
+
+def _keep_going(c: dict, stats: dict) -> dict | None:
+    """The next step for a run whose searches are all read while it's still
+    short of good fits (spec 021): the searches it adds, or None when there's
+    nothing left to add or it has looked through enough jobs."""
+    if c["source"] == LOCAL or _looked_enough(c, stats):
+        return None
+    taken = list(c.get("steps") or [])
+    groups = _groups(c, search_titles(c))
+    remote_too = "remote" in taken
+    for step in KEEP_GOING:
+        if step in taken:
+            continue
+        taken.append(step)
+        more: list[dict] = []
+        if step == "remote":
+            if c.get("remote", "any") == "any" and c.get("location"):
+                remote_too = True
+                more = [
+                    {"title": f"{label} (remote)", "words": words, "remote": True}
+                    for label, words in groups
+                ]
+        elif step == "wider":
+            if int(c["posted_within_days"]) < MORE_DAYS:
+                more = [
+                    {"title": f"{label} (past {MORE_DAYS} days)", "words": words}
+                    for label, words in groups
+                ]
+                if remote_too:
+                    more += [
+                        {
+                            "title": f"{label} (remote, past {MORE_DAYS} days)",
+                            "words": words,
+                            "remote": True,
+                        }
+                        for label, words in groups
+                    ]
+                more = [{**m, "days": MORE_DAYS} for m in more]
+        else:
+            rest = _groups(c, _left_out(c)) if _left_out(c) else []
+            more = [{"title": label, "words": words} for label, words in rest]
+            if remote_too:
+                more += [
+                    {"title": f"{label} (remote)", "words": words, "remote": True}
+                    for label, words in rest
+                ]
+        if more:
+            more = [{**m, "step": step} for m in more]
+            return {"step": step, "steps": taken, "more": more}
+    return None
+
+
+def _link_of(c: dict, url: str, at: int | None = None) -> int | None:
     """Which of the run's searches an address is a page of, by the words it
-    searched for (None when it can't tell)."""
+    searched for (None when it can't tell). Searches a run added to keep going
+    share their words with the first ones: the one it's on (``at``) wins."""
     key = {"linkedin": "keywords", "indeed": "q", "ziprecruiter": "search"}.get(
         c["source"], "q"
     )
@@ -1696,10 +1918,12 @@ def _link_of(c: dict, url: str) -> int | None:
     landed = words(url)
     if not landed:
         return None
-    for i, link in enumerate(search_links(c)):
-        if words(link["url"]) == landed:
-            return i
-    return None
+    found = [
+        i for i, link in enumerate(search_links(c)) if words(link["url"]) == landed
+    ]
+    if at in found:
+        return at
+    return found[0] if found else None
 
 
 def _geo_id(url: str) -> str | None:
@@ -1989,6 +2213,9 @@ async def finish_run(
     looked = companies.summary(run.stats)
     if looked:
         tell = f"{looked} {tell[0].upper()}{tell[1:]}"
+    looked_through = looked_line(run.criteria or {}, run.stats)
+    if looked_through:
+        tell = f"{tell} {looked_through}"
     per_search = links_line(run.criteria or {}, run.stats)
     if per_search:
         tell = f"{tell} {per_search}"
