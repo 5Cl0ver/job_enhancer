@@ -41,7 +41,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `ScoutCompanies.tsx` | Above History: the local companies checked, folded away; each links to its careers page, with "Check next run" and "Never check" |
 | `RunFindings.tsx` | A run's jobs, best fit first: saved (links to the job and its collection), passed on or below bar (Save to My Jobs while the page copy exists), already had, not copied (open and press Save); Claude's reasons labelled as Claude's |
 | `errorText.ts` | The server's `detail` message for a failed request |
-| `ResumeTypes.tsx` | Resume types: five suggested types to start, cards, add/edit/delete dialog, resume upload that keeps the main resume |
+| `ResumeTypes.tsx` | Resume types: five suggested types to start, cards, add/edit/delete dialog, resume upload that keeps the main resume, View (in the app viewer) |
 | `JobResumeType.tsx` | Resume type picker on a saved job's page |
 
 ## `layout/`
@@ -94,6 +94,8 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `ErrorState.tsx` | A load failed: plain words + Try again |
 | `AllowanceNote.tsx` | "4 of 5 live searches left today ⓘ" (spec 019 part C); nothing for the owner or a kind not in use |
 | `InfoBubble.tsx` | The ⓘ (spec 019): what it is, why it helps, what it needs (text in `lib/help.ts`); hover or click on a computer, tap on a phone, Esc closes (Base UI Popover) |
+| `PdfViewer.tsx` | A PDF drawn in the app (spec 025): every page on a canvas (PDF.js, lazy), as wide as the viewer and sharp on phone screens, zoom, Download; a .docx says it can't be shown, with Download |
+| `FileViewer.tsx` | `FileViewerDialog` / `useFileViewer`: one of the user's own files (résumé, document PDF) fetched with the sign-in token and shown in `PdfViewer` (a box on a computer, a tall sheet on a phone); `resumeFile` / `documentFile` paths |
 
 ## `onboarding/` — the Welcome and Getting started (spec 019)
 | `ResumeStep.tsx` upload, read (no AI), check name/phone/city/LinkedIn, "We found N jobs" · `JobCatcherStep.tsx` get it (computer) or send the link (phone), Connected ✓ by itself · `ExtrasStep.tsx` email and Claude, optional · `GettingStarted.tsx` the checklist card on Find Jobs and My Jobs (I'm all set, Open the welcome again) |
@@ -103,8 +105,8 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `ResumeUpload.tsx` | Drag-drop PDF/DOCX upload (≤10 MB) |
 | `GeneratedDocViewer.tsx` | Tabbed resume/cover editor + AI-transparency footer |
-| `DocumentControls.tsx` | Regenerate / copy / download-PDF |
-| `JobDocuments.tsx` | Per-job résumés/cover letters (incl. Claude connector drafts): read, copy, PDF |
+| `DocumentControls.tsx` | Regenerate / copy / View PDF (in the app viewer, Download there) |
+| `JobDocuments.tsx` | Per-job résumés/cover letters (incl. Claude connector drafts): read, edit, copy, View PDF (in the app viewer) |
 
 ## `autofill/` — the Autofill memory page
 
@@ -127,7 +129,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 
 ## `admin/`
 | `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users with setup dots, Job Catcher version (old ones marked), last active and today's use · `AllowancesCard.tsx` the daily free allowances and the JSearch reserve · `SignupTrendChart.tsx` recharts line chart |
-| `apply/*` (spec 022) | `ApplyWithClaudeButton` (job page), `ApplySteps`, `Questions` (Yes/No + details), `ResumeForJob` (view, edit text → PDF remade, change), `Pages` (photos + answers, full-size viewer), `Review` (Submit / Fix / I'll submit it myself), `ApplyBanner` (every screen while Claude waits for you), `WhatYouSent`; `settings/ResumesCard.tsx` (master résumé, made for a job, things you've told Claude) |
+| `apply/*` (spec 022) | `ApplyWithClaudeButton` (job page), `ApplySteps`, `Questions` (Yes/No + details), `ResumeForJob` (view in the app, edit text → PDF remade, change), `Pages` (photos + answers, full-size viewer), `Review` (Submit / Fix / I'll submit it myself), `ApplyBanner` (every screen while Claude waits for you), `WhatYouSent`; `settings/ResumesCard.tsx` (tap a résumé to view it in the app; master résumé, made for a job, things you've told Claude) |
 | `apply/Remote.tsx` (spec 023) | The application page as a remote control: `HelpCard` (Claude's question, a photo of the screen, quick answers, your own words; CAPTCHA/sign-in "needs you at the computer"), `Conversation` (Claude's updates and your messages, Read by Claude), `ScreenNow` (Show me the screen), `Stopped` (Claude went quiet + the carry-on line), `DidItGo` (It was sent / It wasn't), `Readiness` (Job Catcher 0.41.0+ seen lately), `SentCard` (Sent, confirmed: what Job Catcher saw) |
 
 **How this folder connects:** components are composed by `routes/*`; they get

@@ -3,7 +3,7 @@ import {
   FileText,
   Copy,
   Check,
-  Download,
+  Eye,
   Loader2,
   ChevronDown,
   Sparkles,
@@ -12,7 +12,7 @@ import {
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { downloadDocumentPdf } from "@/lib/downloadDocumentPdf";
+import { documentFile, useFileViewer } from "@/components/common/FileViewer";
 import { useJobDocuments, useUpdateDocument } from "@/hooks/useAI";
 import { cn } from "@/lib/utils";
 import type { GeneratedDocument } from "@/types/api";
@@ -32,9 +32,8 @@ function docText(doc: GeneratedDocument) {
 function DocumentRow({ doc }: { doc: GeneratedDocument }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState(false);
   const [editing, setEditing] = useState(false);
+  const { view, viewer } = useFileViewer();
   const [draft, setDraft] = useState("");
 
   const updateDoc = useUpdateDocument();
@@ -49,18 +48,6 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
       setTimeout(() => setCopied(false), 2000);
     } catch {
       /* clipboard blocked (insecure context / permission) — the text is still on screen */
-    }
-  };
-
-  const downloadPdf = async () => {
-    setDownloading(true);
-    setDownloadError(false);
-    try {
-      await downloadDocumentPdf(doc.id, `${doc.document_type}-${doc.id}.pdf`);
-    } catch {
-      setDownloadError(true);
-    } finally {
-      setDownloading(false);
     }
   };
 
@@ -176,25 +163,18 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={downloadPdf}
-                  disabled={downloading}
+                  onClick={() => view(documentFile(doc.id, `${doc.document_type}-${doc.id}.pdf`))}
                   className="flex-1 sm:flex-none"
                 >
-                  {downloading ? (
-                    <Loader2 className="mr-1 h-4 w-4 animate-spin" aria-hidden />
-                  ) : (
-                    <Download className="mr-1 h-4 w-4" aria-hidden />
-                  )}
-                  {downloading ? "Preparing…" : "PDF"}
+                  <Eye className="mr-1 h-4 w-4" aria-hidden />
+                  View PDF
                 </Button>
               </div>
-              {downloadError && (
-                <p className="text-xs text-destructive">Couldn't build the PDF. Try again.</p>
-              )}
             </>
           )}
         </div>
       )}
+      {viewer}
     </div>
   );
 }

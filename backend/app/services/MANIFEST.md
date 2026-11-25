@@ -34,7 +34,7 @@ transaction boundary (services `flush`, routers `commit`).
 | `apply_resume.py` | A résumé made for one job (spec 022) | `check_layout` (name heading + sections), `save_for_job` (a document + a PDF résumé set as the job's résumé, with the master's read-in history), `rerender` (an edit remakes the PDF), `forget_resume` (delete; jobs go back to the usual one) |
 | `master_profile.py` | What Claude writes from (spec 022) | `master_resume` (the master, else the usual), `facts` (things told to Claude), `profile_text` (profile + saved answers + facts + master résumé) |
 | `apply_playbook.py` | Claude's steps for an application | `playbook_text` (`app/apply/playbook.md` + the locked `rules.md`), `APPLY_PLAYBOOK_VERSION` |
-| `resume_pdf.py` | The PDF maker (moved from `api/v1/ai.py`) | `render_pdf(markdown)` — fpdf2, Carlito font, the résumé layout |
+| `resume_pdf.py` | The PDF maker (moved from `api/v1/ai.py`), drawn in the owner's master résumé template (spec 025) | `render_pdf(markdown)` — fpdf2, Carlito, US Letter: navy name + rule, blue `> title line`, grey contact, section headings on a light-blue rule, `**Label:** items` as a two-column skills table, job headers (`**Title** · Company \| dates` or the older `**Company** \| *Title* \| dates`) with dates on the right, blue `### Group` sub-headings, `## CORE AREAS` boxes, "Page X of Y" (2+ pages); the colors and sizes are constants at the top. Cover letters get the same header |
 
 **Scheduled jobs** (registered in `app/main.py` via APScheduler): follow-up
 reminders (hourly), saved-search refresh, listing expiry, deleted-account purge (daily).

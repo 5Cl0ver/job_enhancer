@@ -18,7 +18,7 @@ import { errorText } from "@/components/scout/errorText";
 import { FillSkills, PassedTitles } from "@/components/scout/TrackMemory";
 import { RecommendedButton } from "@/components/scout/Recommended";
 import { useResumes } from "@/hooks/useAI";
-import { openOwnFile } from "@/lib/openFile";
+import { resumeFile, useFileViewer } from "@/components/common/FileViewer";
 import {
   resumeSkills,
   useAttachResume,
@@ -167,19 +167,13 @@ function StartHere({ onCustom }: { onCustom: () => void }) {
   );
 }
 
-/** Open a resume in a new tab, or say why it couldn't be. */
-function viewResume(resumeId: string, filename?: string | null) {
-  openOwnFile(`/v1/ai/resumes/${resumeId}/file`, filename ?? undefined).catch(
-    () => toast.error("Couldn't open that resume. Try uploading it again."),
-  );
-}
-
 const RESUME_FILES =
   ".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 
 function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
   const attach = useAttachResume();
   const fileInput = useRef<HTMLInputElement>(null);
+  const { view, viewer } = useFileViewer();
   const onFile = (file: File | undefined) => {
     if (!file) return;
     attach.mutate(
@@ -271,7 +265,7 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
             variant="ghost"
             size="sm"
             className="h-7 gap-1 px-2"
-            onClick={() => viewResume(t.resume_id!, t.resume_filename)}
+            onClick={() => view(resumeFile(t.resume_id!, t.resume_filename))}
           >
             <Eye className="h-3.5 w-3.5" aria-hidden /> View
           </Button>
@@ -300,6 +294,7 @@ function TrackCard({ track: t, onEdit }: { track: Track; onEdit: () => void }) {
           {attach.isPending ? "Uploading…" : "Upload the resume for this type"}
         </Button>
       )}
+      {viewer}
     </li>
   );
 }
@@ -345,6 +340,7 @@ function EditorForm({
   const remove = useDeleteTrack();
   const upload = useUploadTrackResume();
   const fileInput = useRef<HTMLInputElement>(null);
+  const { view, viewer } = useFileViewer();
 
   const skip = track?.skip_rules ?? DEFAULT_SKIP;
   const [name, setName] = useState(track?.name ?? "");
@@ -633,9 +629,11 @@ function EditorForm({
               variant="outline"
               className="gap-1.5"
               onClick={() =>
-                viewResume(
-                  resumeId,
-                  resumes.find((r) => r.id === resumeId)?.filename,
+                view(
+                  resumeFile(
+                    resumeId,
+                    resumes.find((r) => r.id === resumeId)?.filename,
+                  ),
                 )
               }
             >
@@ -799,6 +797,7 @@ function EditorForm({
           </Button>
         </div>
       </DialogFooter>
+      {viewer}
     </form>
   );
 }

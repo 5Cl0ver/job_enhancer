@@ -1,11 +1,39 @@
 """The PDF maker for written documents (résumés, cover letters).
 
-Markdown in the layout the writers are told to use (``# Name``, a contact
-line, ``## SECTIONS``, ``**Company** | *Title* | dates`` job lines, ``- ``
-bullets) becomes a clean letter-size PDF. Uses fpdf2 — pure Python, so it
-works on Windows and free-tier Linux with no native GTK/Cairo libraries (which
-is why weasyprint was dropped). Moved out of ``api/v1/ai.py`` (spec 022) so a
-résumé made for a job can be stored as a real PDF file.
+Markdown in the layout the writers are told to use becomes a letter-size PDF
+drawn in the owner's master résumé template (spec 025): a navy name with a
+thick navy rule under the header, a blue title line, grey contact text, section
+headings on a light-blue rule, a two-column skills table, job headers with the
+dates on the right, blue sub-headings, core-areas boxes, and "Page X of Y".
+
+The layout (every piece is optional, so older résumés still render)::
+
+    # Full Name
+    > Title line
+    City, ST · phone · email · links
+
+    ## SUMMARY
+    A paragraph.
+
+    ## CORE AREAS            (boxes side by side; the master's, not a job's)
+    ### Box title
+    a short list
+
+    ## SKILLS
+    **Label:** items, items   (a table row)
+
+    ## EXPERIENCE
+    **Job Title** · Company | Sep 2024 – Present
+    ### Group                 (a blue sub-heading)
+    - Bullet
+
+    **Company** | *Job Title* | 2019 – 2021     (the older layout, same look)
+
+Uses fpdf2 — pure Python, so it works on Windows and free-tier Linux with no
+native GTK/Cairo libraries (which is why weasyprint was dropped). Moved out of
+``api/v1/ai.py`` (spec 022) so a résumé made for a job can be stored as a real
+PDF file. Text stays real text in reading order, so applicant tracking systems
+can read it.
 """
 
 import re
@@ -21,6 +49,35 @@ _DATE_RE = re.compile(
     r"|present|current|now)\s*$",
     re.I,
 )
+# "**Label:** items" (or "**Label**: items") — one skills-table row.
+_LABEL_RE = re.compile(r"^\*\*([^*]+?):\*\*\s*(.*)$|^\*\*([^*]+?)\*\*:\s*(.*)$")
+# The parts of a header line: "a | b" (the older layout) or "a · b".
+_PART_SPLIT = re.compile(r"\s*\|\s*|\s+·\s+")
+# Sections whose entries are jobs or projects: the big header (title in 11 pt,
+# company in blue). Other sections (education, certifications) get a compact one.
+_BIG_SECTIONS = (
+    "EXPERIENCE",
+    "EMPLOYMENT",
+    "WORK",
+    "PROJECT",
+    "VOLUNTEER",
+    "LEADERSHIP",
+)
+
+# The template, measured from the owner's master résumé (sizes in points).
+NAVY = (30, 58, 138)  # #1E3A8A: name, header rule, section headings, labels
+BLUE = (37, 99, 235)  # #2563EB: title line, companies, sub-headings
+GREY = (75, 85, 99)  # #4B5563: contact text
+MUTED = (107, 114, 128)  # #6B7280: dates, footer
+INK = (17, 24, 39)  # #111827: job titles
+TEXT = (31, 41, 55)  # #1F2937: body text
+BOX_TEXT = (55, 65, 81)  # #374151: core-areas box text
+BAR = (191, 219, 254)  # #BFDBFE: the rule under a section heading
+LINE = (229, 231, 235)  # #E5E7EB: skills-table rows, box borders
+BOX = (248, 250, 252)  # #F8FAFC: core-areas boxes
+MARGIN_X, MARGIN_Y = 43.2, 36.0
+BODY, LH = 10.3, 13.0  # body text size and line height
+LABEL_W = 118.5  # the skills table's label column
 
 
 def _register_fonts(pdf) -> str:
@@ -48,249 +105,478 @@ def _md_inline(s: str) -> str:
     return s.replace("\x00", "**")
 
 
+def _label_row(s: str) -> tuple[str, str] | None:
+    """("Label", "items") for a one-label "**Label:** items" line, else None."""
+    m = _LABEL_RE.match(s)
+    if not m or s.count("**") != 2:
+        return None
+    label, items = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+    return label.strip(), items.strip()
+
+
+def _split_header(s: str) -> tuple[list[str], str | None] | None:
+    """A job/school/certification header → (left parts, right text), else None.
+
+    The right text is a trailing date range, or (after a "|") a short unmarked
+    note such as "In progress". Headers start bold, or end with a date range."""
+    if _label_row(s) or s.startswith(("- ", "* ")):
+        return None
+    pipe = re.split(r"\s*\|\s*", s)
+    right = None
+    if len(pipe) > 1:
+        last = pipe[-1].strip()
+        if _DATE_RE.search(last) or ("*" not in last and 0 < len(last) <= 40):
+            right, s = last, " | ".join(pipe[:-1])
+    elif m := _DATE_RE.search(s):
+        right, s = s[m.start() :].strip(), s[: m.start()].rstrip(" ,·–—-")
+    if right is None and len(pipe) == 1:
+        return None
+    if not s.startswith("**") and (
+        right is None or len(s) > 100 or not _DATE_RE.search(right)
+    ):
+        return None
+    parts = [p.strip() for p in _PART_SPLIT.split(s) if p.strip()]
+    return (parts, right) if parts else None
+
+
+def _parse(text: str) -> list[dict]:
+    """The Markdown as a list of blocks: {"kind", "text", ...}."""
+    blocks: list[dict] = []
+    lines = text.replace("\r\n", "\n").split("\n")
+    in_header = False
+    section = ""
+    blank = False
+    i = 0
+    while i < len(lines):
+        s = lines[i].strip()
+        i += 1
+        if not s:
+            if in_header:
+                in_header = False
+                blocks.append({"kind": "rule"})
+            blank = True
+            continue
+        if s.startswith("# ") and not s.startswith("## "):
+            blocks.append({"kind": "name", "text": _strip_md(s[2:])})
+            in_header = True
+            blank = False
+            continue
+        if s.startswith("## "):
+            if in_header:
+                in_header = False
+                blocks.append({"kind": "rule"})
+            section = _strip_md(s[3:]).strip().upper()
+            blocks.append({"kind": "section", "text": section})
+            blank = False
+            if section == "CORE AREAS":
+                # "### Box" + its lines, up to the next "## " heading.
+                boxes: list[dict] = []
+                while i < len(lines) and not lines[i].strip().startswith(("## ", "# ")):
+                    t = lines[i].strip()
+                    i += 1
+                    if t.startswith("### "):
+                        boxes.append({"title": _strip_md(t[4:]), "lines": []})
+                    elif t and boxes:
+                        boxes[-1]["lines"].append(_strip_md(t.lstrip("-* ")))
+                    elif t:
+                        boxes.append({"title": "", "lines": [_strip_md(t)]})
+                if boxes:
+                    blocks.append({"kind": "boxes", "boxes": boxes})
+            continue
+        if re.fullmatch(r"[-*_ ]{3,}", s):
+            continue  # a Markdown horizontal rule: the template draws its own
+        if s.startswith("> "):
+            blocks.append({"kind": "title", "text": _strip_md(s[2:])})
+        elif in_header:
+            contact = re.sub(r"\s+\|\s+", " · ", _strip_md(s))
+            blocks.append({"kind": "contact", "text": contact})
+        elif s.startswith(("### ", "#### ")):
+            blocks.append({"kind": "group", "text": _strip_md(s.lstrip("#").strip())})
+        elif s.startswith(("- ", "* ", "• ")):
+            blocks.append({"kind": "bullet", "text": _md_inline(s[2:])})
+        elif row := _label_row(s):
+            blocks.append(
+                {"kind": "row", "label": _strip_md(row[0]), "text": _md_inline(row[1])}
+            )
+        elif head := _split_header(s):
+            big = any(k in section for k in _BIG_SECTIONS)
+            blocks.append(
+                {"kind": "entry", "parts": head[0], "right": head[1], "big": big}
+            )
+        else:
+            blocks.append({"kind": "para", "text": s, "blank": blank})
+        blank = False
+    if in_header:
+        blocks.append({"kind": "rule"})
+    return blocks
+
+
 def _render_markdown(pdf, text: str) -> None:
-    """Render an LLM's Markdown into a resume/letter that mirrors a real template:
-    Carlito (Calibri) throughout, a centered name + contact header, black section
-    headings with a full-width rule, bold skill labels, job headers with
-    right-aligned dates, and round bullet points.
+    """Draw the Markdown in the master's template onto ``pdf`` (any unit).
 
     fpdf2 has no CSS, so page-break rules are applied by measuring blocks first:
     a section heading or job/project/education header is never left alone at the
-    bottom of a page (it moves down with its first bullet or line), and a bullet
-    is never split across pages."""
+    bottom of a page (it moves down with its first line), a bullet or a table
+    row is never split across pages, and the dates sit on their header's line."""
     from fpdf.enums import MethodReturnValue, XPos, YPos
 
     FONT = _register_fonts(pdf)
-    BODY = 10.5
-    # Bullet dot indent, and the dot's cell width — sized to the old "•  "
-    # prefix so the first line of every bullet starts exactly where it did.
-    BULLET_X = 3
-    pdf.set_font(FONT, "", BODY)
-    BULLET_W = pdf.get_string_width("•  ")
-    lines = text.split("\n")
+    pdf.c_margin = 0  # text sits exactly on the margins, like the master
+    k = pdf.k  # points per user unit: every size below is in points
 
-    def para(
-        txt: str, h: float, align: str = "L", style: str = "", size: float = BODY
-    ) -> None:
+    def u(pt: float) -> float:
+        return pt / k
+
+    def font(style: str = "", size: float = BODY, color=TEXT) -> None:
         pdf.set_font(FONT, style, size)
-        pdf.multi_cell(
-            0,
-            h,
-            _md_inline(txt),
-            align=align,
-            markdown=True,
-            new_x=XPos.LMARGIN,
-            new_y=YPos.NEXT,
-        )
+        pdf.set_text_color(*color)
 
-    def seg_style(seg: str) -> tuple[str, str]:
-        if seg.startswith("**") and seg.endswith("**"):
-            return seg[2:-2], "B"
-        if seg.startswith("*") and seg.endswith("*"):
-            return seg[1:-1], "I"
-        return seg, ""
+    font()
+    BULLET_X = u(3)
+    # The text starts ~10.5 pt in, like the master, with a clear gap after the
+    # dot (so text readers see "•" as its own word).
+    BULLET_W = max(u(7.5), pdf.get_string_width("•") + u(3.5))
+    blocks = _parse(text)
 
-    def is_job_header(s: str) -> bool:
-        return s.startswith("**") and bool(_DATE_RE.search(s))
-
-    def text_h(
-        txt: str, h: float, style: str = "", size: float = BODY, indent: float = 0
-    ) -> float:
-        # Height a multi_cell would take, measured without drawing anything.
+    def lines_of(
+        txt: str, w: float, style: str = "", size: float = BODY, md=True
+    ) -> int:
         pdf.set_font(FONT, style, size)
         rows = pdf.multi_cell(
-            pdf.epw - indent,
-            h,
-            txt,
-            markdown=True,
-            dry_run=True,
-            output=MethodReturnValue.LINES,
+            w, u(LH), txt, markdown=md, dry_run=True, output=MethodReturnValue.LINES
         )
-        pdf.set_font(FONT, "", BODY)
-        return h * len(rows)
+        return max(1, len(rows))
 
-    def block_h(s: str) -> float:
-        if s.startswith(("- ", "* ")):
-            return text_h(_md_inline(s[2:]), 5, indent=BULLET_X + BULLET_W)
-        if s.startswith("### "):
-            return text_h(_md_inline(s[4:]), 5.5, style="B", size=11)
-        if is_job_header(s):
-            return 1.5 + 5
-        # Plain paragraph: two lines are enough to not strand what's above it.
-        return min(text_h(_md_inline(s), 5), 2 * 5)
+    def right_w(b: dict) -> float:
+        if not b.get("right"):
+            return 0
+        pdf.set_font(FONT, "", 9.6)
+        return pdf.get_string_width(b["right"]) + u(10)
 
-    def next_content(i: int) -> int | None:
-        for j in range(i + 1, len(lines)):
-            if lines[j].strip():
-                return j
-        return None
+    def entry_lines(b: dict) -> int:
+        joined = " · ".join(_strip_md(p) for p in b["parts"])
+        return lines_of(
+            joined, pdf.epw - right_w(b), "B", 11 if b["big"] else BODY, md=False
+        )
 
-    def with_first_line(i: int) -> float:
-        # Height of block i plus the gap and first block that must follow it
-        # (a header keeps at least its first bullet).
-        h = block_h(lines[i].strip())
-        j = next_content(i)
-        if j is None:
-            return h
-        nxt = lines[j].strip()
-        if nxt.startswith("#") or is_job_header(nxt):
-            return h
-        return h + 2 * (j - i - 1) + block_h(nxt)
+    def box_h(box: dict, w: float) -> float:
+        h = u(6.5 + 14 + 6.5)
+        for ln in box["lines"]:
+            h += lines_of(ln, w - u(13), size=9.4, md=False) * u(12.6)
+        return h if box["title"] else h - u(14)
 
-    def keep_together(h: float) -> None:
-        # break-inside/break-after: avoid — start a new page now if the next
-        # `h` mm won't fit, unless we're already at the top of a page.
-        if (
-            pdf.get_y() + h > pdf.page_break_trigger
-            and pdf.get_y() > pdf.t_margin + 0.01
-        ):
+    def height(b: dict, full: bool = True) -> float:
+        """Height of block ``b`` (its gap above included). ``full=False`` is the
+        part that must stay with the header above it: two lines at most."""
+        kind = b["kind"]
+        if kind == "section":
+            return u(6 + 14.6 + 0.8 + 3.6)
+        if kind == "entry":
+            lh = 14 if b["big"] else 14.3
+            return u(5) + entry_lines(b) * u(lh)
+        if kind == "group":
+            return u(4) + lines_of(b["text"], pdf.epw, "B") * u(LH + 1)
+        if kind == "bullet":
+            n = lines_of(b["text"], pdf.epw - BULLET_X - BULLET_W)
+            return u(1) + min(n, 99 if full else 2) * u(LH)
+        if kind == "row":
+            n = max(
+                lines_of(b["label"], u(LABEL_W - 6), "B", md=False),
+                lines_of(b["text"], pdf.epw - u(LABEL_W)),
+            )
+            return u(2.6 + 0.6 + 3) + n * u(LH)
+        if kind == "boxes":
+            n = min(4, len(b["boxes"]))
+            w = (pdf.epw - u(10.4) * (n - 1)) / n
+            return u(8) + max(box_h(x, w) for x in b["boxes"][:n])
+        if kind == "para":
+            n = lines_of(_md_inline(b["text"]), pdf.epw)
+            return u(7 if b.get("blank") else 0) + min(n, 99 if full else 2) * u(LH)
+        return 0
+
+    def keep_together(h: float) -> bool:
+        """break-inside/break-after: avoid — start a new page now if the next
+        ``h`` won't fit, unless we're already at the top of a page. True when
+        the block now starts a page (so it drops its gap above)."""
+        top = pdf.t_margin + 0.01
+        if pdf.get_y() + h > pdf.page_break_trigger and pdf.get_y() > top:
             pdf.add_page()
+        return pdf.get_y() <= top
 
-    def job_header(line: str) -> None:
-        # "**Company** | *Title* | Sep 2024 – Present" — left parts inline (with
-        # their styles), the date range right-aligned on the same line.
-        parts = [p.strip() for p in line.split("|")]
-        date = None
-        if parts and _DATE_RE.search(parts[-1]):
-            date = parts[-1].strip()
-            parts = parts[:-1]
-        pdf.ln(1.5)
-        y, page = pdf.get_y(), pdf.page
-        pdf.set_x(pdf.l_margin)
-        for i, seg in enumerate(parts):
-            if i > 0:
-                pdf.set_font(FONT, "", BODY)
-                pdf.write(5, "  |  ")
-            txt, style = seg_style(seg)
-            pdf.set_font(FONT, style, BODY)
-            pdf.write(5, txt)
-        if date:
-            pdf.set_font(FONT, "", BODY)
-            if pdf.page != page:
-                # The title wrapped onto a new page: keep the date on its line
-                # there, not at the old page's y (which strands it a page later).
-                y = pdf.get_y()
-            pdf.set_xy(pdf.l_margin, y)
-            pdf.cell(0, 5, date, align="R", new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+    def gap(pt: float, fresh: bool) -> None:
+        if not fresh and pt:
+            pdf.ln(u(pt))
+
+    def with_next(i: int) -> float:
+        """Block ``i`` plus what must follow it onto the same page."""
+        h = height(blocks[i])
+        if i + 1 < len(blocks):
+            nxt = blocks[i + 1]
+            if nxt["kind"] in ("bullet", "para", "row", "boxes"):
+                h += height(nxt, full=False)
+            elif nxt["kind"] in ("entry", "group") and blocks[i]["kind"] != "group":
+                h += height(nxt)
+                if i + 2 < len(blocks) and blocks[i + 2]["kind"] in (
+                    "bullet",
+                    "para",
+                    "row",
+                ):
+                    h += height(blocks[i + 2], full=False)
+        return h
+
+    def runs(segments: list[tuple[str, str, float, tuple]], h: float) -> None:
+        """Write styled pieces on one wrapping line (left-aligned)."""
+        for txt, style, size, color in segments:
+            font(style, size, color)
+            pdf.write(h, txt)
+
+    def draw_entry(b: dict, fresh: bool) -> None:
+        big = b["big"]
+        lh = u(14 if big else 14.3)
+        if prev_section:
+            gap(1.5, fresh)
+        elif big:
+            gap(6, fresh)
         else:
-            pdf.ln(5)
-            pdf.set_x(pdf.l_margin)  # write() left the cursor mid-line
-        pdf.set_font(FONT, "", BODY)
-
-    in_header = False
-    pdf.set_font(FONT, "", BODY)
-
-    for i, raw in enumerate(lines):
-        stripped = raw.strip()
-
-        if stripped.startswith("# ") and not stripped.startswith("## "):
-            # Name — large, centered.
-            pdf.set_font(FONT, "B", 17)
-            pdf.multi_cell(
-                0,
-                8,
-                _strip_md(stripped[2:]),
-                align="C",
-                new_x=XPos.LMARGIN,
-                new_y=YPos.NEXT,
-            )
-            pdf.set_font(FONT, "", BODY)
-            in_header = True
-            continue
-
-        if stripped.startswith("## "):
-            # Section heading — bold caps with a full-width rule under it.
-            in_header = False
-            # Keep the heading with its first entry (and that entry's first
-            # bullet) so it never sits alone at the bottom of a page.
-            heading_h = (
-                2 + text_h(_strip_md(stripped[3:]).upper(), 5.5, "B", 11.5) + 1.8
-            )
-            j = next_content(i)
-            # A "###" sub-heading is the section's first entry; only another
-            # "#"/"##" heading means the section is empty.
-            if j is not None and not lines[j].strip().startswith(("# ", "## ")):
-                heading_h += 2 * (j - i - 1) + with_first_line(j)
-            keep_together(heading_h)
-            pdf.ln(2)
-            pdf.set_font(FONT, "B", 11.5)
-            pdf.multi_cell(
-                0,
-                5.5,
-                _strip_md(stripped[3:]).upper(),
-                new_x=XPos.LMARGIN,
-                new_y=YPos.NEXT,
-            )
-            y = pdf.get_y() + 0.3
-            pdf.set_draw_color(70, 70, 70)
-            pdf.set_line_width(0.3)
-            pdf.line(pdf.l_margin, y, pdf.w - pdf.r_margin, y)
-            pdf.ln(1.8)
-            pdf.set_font(FONT, "", BODY)
-            continue
-
-        if in_header:
-            if not stripped:
-                in_header = False
-                pdf.ln(1.5)
+            gap(0 if prev_kind == "entry" else 3, fresh)
+        y, page = pdf.get_y(), pdf.page
+        rw = right_w(b)
+        old_r = pdf.r_margin
+        pdf.set_right_margin(old_r + rw)  # the left text never runs into the dates
+        pdf.set_x(pdf.l_margin)
+        segs: list[tuple[str, str, float, tuple]] = []
+        for n, part in enumerate(b["parts"]):
+            txt = _strip_md(part)
+            if n == 0:
+                segs.append((txt, "B", 11 if big else BODY, INK))
                 continue
-            # Title / contact line — centered under the name.
-            pdf.set_font(FONT, "", 10)
+            segs.append((" · ", "", BODY, TEXT))
+            segs.append((txt, "B", BODY, BLUE) if big else (txt, "", BODY, TEXT))
+        runs(segs, lh)
+        pdf.set_right_margin(old_r)
+        end_y = pdf.get_y() + lh
+        if b.get("right"):
+            if pdf.page != page:
+                y = pdf.get_y()  # wrapped onto a new page: the date goes there
+            font("", 9.6, MUTED)
+            pdf.set_xy(pdf.l_margin, y)
+            pdf.cell(0, lh, b["right"], align="R")
+        pdf.set_xy(pdf.l_margin, end_y)
+        font()
+
+    def draw_boxes(b: dict, fresh: bool) -> None:
+        boxes = b["boxes"]
+        first = True
+        for start in range(0, len(boxes), 4):
+            row = boxes[start : start + 4]
+            n = len(row)
+            w = (pdf.epw - u(10.4) * (n - 1)) / n
+            h = max(box_h(x, w) for x in row)
+            fresh_row = keep_together(u(8) + h)
+            gap(4 if first else 8, fresh and first or fresh_row)
+            first = False
+            y = pdf.get_y()
+            for c, box in enumerate(row):
+                x = pdf.l_margin + c * (w + u(10.4))
+                pdf.set_fill_color(*BOX)
+                pdf.set_draw_color(*LINE)
+                pdf.set_line_width(u(0.75))
+                pdf.rect(x, y, w, h, style="DF", round_corners=True, corner_radius=u(4))
+                pdf.set_xy(x + u(6.5), y + u(6.5))
+                if box["title"]:
+                    font("B", 10, NAVY)
+                    pdf.multi_cell(
+                        w - u(13),
+                        u(14),
+                        box["title"],
+                        align="L",
+                        new_x=XPos.LEFT,
+                        new_y=YPos.NEXT,
+                    )
+                font("", 9.4, BOX_TEXT)
+                for ln in box["lines"]:
+                    pdf.multi_cell(
+                        w - u(13),
+                        u(12.6),
+                        ln,
+                        align="L",
+                        new_x=XPos.LEFT,
+                        new_y=YPos.NEXT,
+                    )
+            pdf.set_xy(pdf.l_margin, y + h)
+        font()
+
+    prev_section = False
+    for i, b in enumerate(blocks):
+        kind = b["kind"]
+        prev_kind = blocks[i - 1]["kind"] if i else ""
+
+        if kind == "name":
+            font("B", 24, NAVY)
             pdf.multi_cell(
-                0,
-                5,
-                _strip_md(stripped),
-                align="C",
-                new_x=XPos.LMARGIN,
-                new_y=YPos.NEXT,
+                0, u(30), b["text"], align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT
             )
-            pdf.set_font(FONT, "", BODY)
+        elif kind == "title":
+            font("B", 11.5, BLUE)
+            pdf.multi_cell(
+                0, u(15), b["text"], align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT
+            )
+            pdf.ln(u(2.6))
+        elif kind == "contact":
+            font("", 9.6, GREY)
+            pdf.multi_cell(
+                0, u(12), b["text"], align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT
+            )
+        elif kind == "rule":
+            # The header's thick navy rule, full width.
+            pdf.ln(u(5))
+            pdf.set_fill_color(*NAVY)
+            pdf.rect(pdf.l_margin, pdf.get_y(), pdf.epw, u(2.3), style="F")
+            nxt = blocks[i + 1]["kind"] if i + 1 < len(blocks) else ""
+            # A section heading brings its own gap; a letter's text needs one.
+            pdf.ln(u(2.3 + (1.5 if nxt == "section" else 12)))
+            prev_section = True
             continue
-
-        if not stripped:
-            pdf.ln(2)
+        elif kind == "section":
+            # Keep the heading with its first entry (and that entry's first
+            # line) so it never sits alone at the bottom of a page.
+            fresh = keep_together(with_next(i))
+            gap(0 if prev_section else 6, fresh)
+            font("B", 10.5, NAVY)
+            pdf.set_char_spacing(1)
+            pdf.cell(0, u(14.6), b["text"], new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+            pdf.set_char_spacing(0)
+            pdf.set_fill_color(*BAR)
+            pdf.rect(pdf.l_margin, pdf.get_y(), pdf.epw, u(0.8), style="F")
+            pdf.ln(u(0.8 + 3.6))
+            font()
+            prev_section = True
             continue
-
-        if stripped.startswith("### "):
-            keep_together(with_first_line(i))
-            para(stripped[4:], 5.5, style="B", size=11)
-            continue
-
-        if stripped.startswith(("- ", "* ")):
-            keep_together(block_h(stripped))  # a bullet never splits
+        elif kind == "boxes":
+            draw_boxes(b, prev_section)
+        elif kind == "entry":
+            fresh = keep_together(with_next(i))
+            draw_entry(b, fresh)
+        elif kind == "group":
+            fresh = keep_together(with_next(i))
+            gap(0 if prev_section else 4, fresh)
+            font("B", BODY, BLUE)
+            pdf.multi_cell(
+                0, u(LH + 1), b["text"], align="L", new_x=XPos.LMARGIN, new_y=YPos.NEXT
+            )
+            font()
+        elif kind == "bullet":
+            fresh = keep_together(height(b))  # a bullet never splits
+            gap(1 if prev_kind == "bullet" else 0, fresh)
             # Hanging indent: the dot sits in its own cell and the text wraps
             # under itself, not under the dot. Left-aligned (ragged right), not
             # justified, so word spacing stays even.
-            pdf.set_font(FONT, "", BODY)
+            font()
             pdf.set_x(pdf.l_margin + BULLET_X)
-            pdf.cell(BULLET_W, 5, "•")
+            pdf.cell(BULLET_W, u(LH), "•")
             pdf.multi_cell(
                 0,
-                5,
-                _md_inline(stripped[2:]),
+                u(LH),
+                b["text"],
                 align="L",
                 markdown=True,
                 new_x=XPos.LMARGIN,
                 new_y=YPos.NEXT,
             )
-            continue
-
-        # A job-header line: starts bold and ends with a date range.
-        if is_job_header(stripped):
-            keep_together(with_first_line(i))
-            job_header(stripped)
-            continue
-
-        para(stripped, 5)
+        elif kind == "row":
+            # A skills-table row: bold navy label left, items right, a thin
+            # grey line under it.
+            fresh = keep_together(height(b) - u(3))
+            gap(0 if prev_section or prev_kind == "row" else 3, fresh)
+            y = pdf.get_y() + u(2.6)
+            font("B", BODY, NAVY)
+            pdf.set_xy(pdf.l_margin, y)
+            pdf.multi_cell(
+                u(LABEL_W - 6),
+                u(LH),
+                b["label"],
+                align="L",
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
+            y1 = pdf.get_y()
+            font()
+            pdf.set_xy(pdf.l_margin + u(LABEL_W), y)
+            pdf.multi_cell(
+                0,
+                u(LH),
+                b["text"],
+                markdown=True,
+                align="L",
+                new_x=XPos.LMARGIN,
+                new_y=YPos.NEXT,
+            )
+            y2 = max(y1, pdf.get_y()) + u(0.6)
+            pdf.set_draw_color(*LINE)
+            pdf.set_line_width(u(0.375))
+            pdf.line(pdf.l_margin, y2, pdf.l_margin + pdf.epw, y2)
+            pdf.set_xy(pdf.l_margin, y2)
+        else:  # para
+            fresh = keep_together(height(b, full=False))
+            gap(7 if b.get("blank") and prev_kind in ("para", "bullet") else 0, fresh)
+            gap(3 if prev_kind == "row" else 0, fresh)
+            segs = re.split(r"(\*\*[^*]+\*\*)", b["text"])
+            labels = [s for s in segs if s.startswith("**")]
+            if labels and all(s[2:-2].rstrip().endswith(":") for s in labels):
+                # "**Languages:** English. **Work:** authorized" — navy labels inline.
+                pdf.set_x(pdf.l_margin)
+                runs(
+                    [
+                        (s[2:-2], "B", BODY, NAVY)
+                        if s.startswith("**")
+                        else (_md_inline(s), "", BODY, TEXT)
+                        for s in segs
+                        if s
+                    ],
+                    u(LH),
+                )
+                pdf.ln(u(LH))
+            else:
+                font()
+                pdf.multi_cell(
+                    0,
+                    u(LH),
+                    _md_inline(b["text"]),
+                    align="L",
+                    markdown=True,
+                    new_x=XPos.LMARGIN,
+                    new_y=YPos.NEXT,
+                )
+        prev_section = False
+    font()
 
 
 def render_pdf(text: str) -> bytes:
-    """Markdown → the PDF's bytes."""
+    """Markdown → the PDF's bytes, in the master's template.
+
+    Drawn twice: the first pass counts the pages so the footer can say
+    "Page 1 of 2" exactly (a one-page document has no footer)."""
     from fpdf import FPDF
 
-    pdf = FPDF(format="letter")
-    pdf.set_auto_page_break(auto=True, margin=15)
-    pdf.add_page()
-    pdf.set_margins(16, 14, 16)
-    _render_markdown(pdf, text or "")
-    return bytes(pdf.output())
+    class _Doc(FPDF):
+        total = 0
+
+        def footer(self) -> None:
+            if self.total < 2:
+                return
+            self.set_y(-23)
+            self.set_font(self.font_family or "Helvetica", "", 8.5)
+            self.set_text_color(*MUTED)
+            self.cell(0, 10, f"Page {self.page_no()} of {self.total}", align="R")
+
+    def build(total: int) -> "FPDF":
+        pdf = _Doc(format="letter", unit="pt")
+        pdf.total = total
+        pdf.set_margins(MARGIN_X, MARGIN_Y, MARGIN_X)
+        pdf.set_auto_page_break(auto=True, margin=MARGIN_Y)
+        pdf.add_page()
+        _render_markdown(pdf, text or "")
+        return pdf
+
+    pages = build(0).pages_count
+    return bytes(build(pages).output())

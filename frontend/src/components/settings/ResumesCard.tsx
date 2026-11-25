@@ -6,9 +6,9 @@ import { Textarea } from "@/components/ui/textarea";
 import { ResumeUpload } from "@/components/ai/ResumeUpload";
 import { type ResumeRecord, useResumes } from "@/hooks/useAI";
 import { useDeleteFact, useDeleteResume, useEditFact, useFacts, useSetMasterResume } from "@/hooks/useApply";
-import { openOwnFile } from "@/lib/openFile";
+import { resumeFile, useFileViewer, type ViewFile } from "@/components/common/FileViewer";
 
-function ResumeRow({ r, master }: { r: ResumeRecord; master: boolean }) {
+function ResumeRow({ r, master, onView }: { r: ResumeRecord; master: boolean; onView: (f: ViewFile) => void }) {
   const setMaster = useSetMasterResume();
   const del = useDeleteResume();
   const made = !!r.document_id;
@@ -17,7 +17,7 @@ function ResumeRow({ r, master }: { r: ResumeRecord; master: boolean }) {
       <button
         type="button"
         className="flex min-w-0 items-center gap-1.5 text-left text-sm hover:underline"
-        onClick={() => openOwnFile(`/v1/ai/resumes/${r.id}/file`, r.filename)}
+        onClick={() => onView(resumeFile(r.id, r.filename))}
       >
         <FileText className="h-4 w-4 shrink-0 text-muted-foreground" aria-hidden />
         <span className="truncate">{r.filename}</span>
@@ -59,6 +59,7 @@ export function ResumesCard() {
   const own = resumes.filter((r) => !r.document_id);
   const made = resumes.filter((r) => r.document_id);
   const masterId = (own.find((r) => r.is_master) ?? own.find((r) => r.is_active))?.id;
+  const { view, viewer } = useFileViewer();
   return (
     <Card>
       <CardHeader>
@@ -72,7 +73,7 @@ export function ResumesCard() {
         {own.length > 0 && (
           <ul className="divide-y">
             {own.map((r) => (
-              <ResumeRow key={r.id} r={r} master={r.id === masterId} />
+              <ResumeRow key={r.id} r={r} master={r.id === masterId} onView={view} />
             ))}
           </ul>
         )}
@@ -82,12 +83,13 @@ export function ResumesCard() {
             <p className="text-sm font-medium">Made for a job</p>
             <ul className="divide-y">
               {made.map((r) => (
-                <ResumeRow key={r.id} r={r} master={false} />
+                <ResumeRow key={r.id} r={r} master={false} onView={view} />
               ))}
             </ul>
           </div>
         )}
         <FactsList />
+        {viewer}
       </CardContent>
     </Card>
   );
