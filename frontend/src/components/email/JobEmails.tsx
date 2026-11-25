@@ -4,10 +4,15 @@
  * says what the email was and what it did to the card, opens the email here
  * for a quick read, or opens it in the user's own mail to use its links.
  */
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 import { ExternalLink, Mail } from "lucide-react";
-import { useJobEmails, type DetectedEvent } from "@/hooks/useEmailAccount";
+import {
+  useJobEmails,
+  useMarkJobEmailsSeen,
+  type DetectedEvent,
+} from "@/hooks/useEmailAccount";
+import { groupBySection, isNew, latestLine } from "@/lib/emailSections";
 import { emailWhen, mailName, sentence } from "@/lib/emailUpdates";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -47,6 +52,21 @@ export function JobEmails({
     isFetching,
   } = useJobEmails(jobListingId);
   const [open, setOpen] = useState<string | null>(null);
+  const [all, setAll] = useState<Record<string, boolean>>({});
+  // What was new when the page opened stays marked New for this visit, even
+  // after the app hears it was seen (spec 027).
+  const [fresh, setFresh] = useState<Set<string> | null>(null);
+  const markSeen = useMarkJobEmailsSeen();
+  const marked = useRef(false);
+  useEffect(() => {
+    if (!emails || fresh) return;
+    const ids = new Set(emails.filter(isNew).map((e) => e.id));
+    setFresh(ids);
+    if (ids.size && !marked.current) {
+      marked.current = true;
+      markSeen.mutate(jobListingId);
+    }
+  }, [emails, fresh, jobListingId, markSeen]);
   if (!emails) {
     // Where the job's emails are expected (its page and pop-up), say what's
     // happening instead of leaving a gap that looks like "no emails".
@@ -94,53 +114,101 @@ export function JobEmails({
     );
   }
   const viewing = emails.find((e) => e.id === open);
+  const latest = latestLine(emails);
   return (
     <section className={className}>
-      <h2 className="mb-2 flex items-center gap-2 text-sm font-semibold text-muted-foreground">
+      <h2 className="flex items-center gap-2 text-sm font-semibold text-muted-foreground">
         <Mail className="h-4 w-4" aria-hidden /> Emails about this job (
         {emails.length})
       </h2>
-      <ul className="space-y-2">
-        {emails.map((ev) => {
-          const did = effect(ev);
+      {latest && (
+        <p className="mb-3 mt-0.5 text-xs text-muted-foreground">{latest}</p>
+      )}
+      <div className="space-y-4">
+        {groupBySection(emails).map((sec) => {
+          const shown = all[sec.key] ? sec.emails : sec.emails.slice(0, 3);
           return (
-            <li
-              key={ev.id}
-              className="flex flex-col gap-2 rounded-lg border bg-card px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4"
-            >
-              <div className="min-w-0">
-                <p className="text-sm leading-snug">{sentence(ev)}</p>
-                <p className="text-xs text-muted-foreground">
-                  {emailWhen(ev)}
-                  {did ? ` · ${did}` : ""}
-                </p>
-              </div>
-              <div className="flex shrink-0 gap-2 max-sm:*:flex-1">
-                <Button
-                  size="sm"
-                  variant="outline"
-                  onClick={() => setOpen(ev.id)}
+            <div key={sec.key} role="group" aria-label={sec.title}>
+              <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                {sec.title}{" "}
+                <span className="font-normal">({sec.emails.length})</span>
+              </h3>
+              <ul className="space-y-2">
+                {shown.map((ev) => {
+                  const did = effect(ev);
+                  const isFresh = fresh?.has(ev.id);
+                  return (
+                    <li
+                      key={ev.id}
+                      className={cn(
+                        "flex flex-col gap-2 rounded-lg border bg-card px-3 py-2.5 sm:flex-row sm:items-center sm:justify-between sm:gap-3 sm:px-4",
+                        isFresh && "border-primary/50",
+                      )}
+                    >
+                      <div className="min-w-0">
+                        <p className="text-sm leading-snug">
+                          {isFresh && (
+                            <span className="mr-1.5 rounded bg-primary px-1.5 py-0.5 text-[10px] font-semibold uppercase text-primary-foreground">
+                              New
+                            </span>
+                          )}
+                          {sentence(ev)}
+                        </p>
+                        <p className="text-xs text-muted-foreground">
+                          {emailWhen(ev)}
+                          {did ? ` · ${did}` : ""}
+                        </p>
+                      </div>
+                      <div className="flex shrink-0 gap-2 max-sm:*:flex-1">
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          onClick={() => setOpen(ev.id)}
+                        >
+                          View email
+                        </Button>
+                        {ev.mail_link && (
+                          <Button
+                            asChild
+                            size="sm"
+                            variant="outline"
+                            className="gap-1.5"
+                          >
+                            <a
+                              href={ev.mail_link}
+                              target="_blank"
+                              rel="noreferrer"
+                            >
+                              Open in {mailName(ev.mail_link)}
+                              <ExternalLink
+                                className="h-3.5 w-3.5"
+                                aria-hidden
+                              />
+                            </a>
+                          </Button>
+                        )}
+                      </div>
+                    </li>
+                  );
+                })}
+              </ul>
+              {sec.emails.length > 3 && (
+                <button
+                  type="button"
+                  className="mt-1.5 min-h-9 text-sm font-medium text-primary underline underline-offset-2"
+                  onClick={() =>
+                    setAll((a) => ({ ...a, [sec.key]: !a[sec.key] }))
+                  }
                 >
-                  View email
-                </Button>
-                {ev.mail_link && (
-                  <Button
-                    asChild
-                    size="sm"
-                    variant="outline"
-                    className="gap-1.5"
-                  >
-                    <a href={ev.mail_link} target="_blank" rel="noreferrer">
-                      Open in {mailName(ev.mail_link)}
-                      <ExternalLink className="h-3.5 w-3.5" aria-hidden />
-                    </a>
-                  </Button>
-                )}
-              </div>
-            </li>
+                  {all[sec.key]
+                    ? "Show fewer"
+                    : `Show ${sec.emails.length - 3} more`}
+                </button>
+              )}
+            </div>
           );
         })}
-      </ul>
+      </div>
       <EmailViewer
         eventId={open}
         mailLink={viewing?.mail_link}

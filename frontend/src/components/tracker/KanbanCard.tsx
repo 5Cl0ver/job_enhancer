@@ -14,7 +14,7 @@ import { EmailViewer } from "@/components/email/EmailViewer";
 import { OriginLabel } from "@/components/jobs/OriginLabel";
 import { NameCheckLine } from "@/components/jobs/RenameJob";
 import { JobDetailDialog } from "@/components/tracker/JobDetailDialog";
-import type { JobEmailLatest } from "@/hooks/useEmailAccount";
+import { useUnseenByJob, type JobEmailLatest } from "@/hooks/useEmailAccount";
 import { useToggleResearchFlag } from "@/hooks/useTracker";
 import { highlightParts } from "@/lib/boardFilter";
 import { emailLabel } from "@/lib/emailUpdates";
@@ -67,6 +67,9 @@ export function CardFace({
   className,
 }: CardFaceProps) {
   const { job_listing, last_stage_change, applied_at, flagged_for_research, emailed_at } = savedJob;
+  // New emails kept on this job that the user hasn't opened yet (spec 027).
+  const { data: unseen } = useUnseenByJob();
+  const newEmails = Array.isArray(unseen) ? (unseen.find((u) => u.saved_job_id === savedJob.id)?.count ?? 0) : 0;
   const daysSinceStageChange = differenceInDays(new Date(), new Date(last_stage_change));
   // The CRM "next step" for this card (what to do / who's ghosting you).
   const nextAction = getNextAction(savedJob, { followUpDays, stageName: stageName ?? null });
@@ -101,6 +104,13 @@ export function CardFace({
           </span>
         ))}
       </p>
+
+      {newEmails > 0 && (
+        <p className="mt-1 inline-flex items-center gap-1 rounded-full bg-primary/10 px-2 py-0.5 text-xs font-medium text-primary">
+          <span className="h-1.5 w-1.5 rounded-full bg-primary" aria-hidden />
+          {newEmails === 1 ? "New email" : `${newEmails} new emails`}
+        </p>
+      )}
 
       {/* How it got into My Jobs (Claude Scout, an email…), when that's known. */}
       <OriginLabel savedJob={savedJob} className="mt-1 flex max-w-full text-muted-foreground/80" />
