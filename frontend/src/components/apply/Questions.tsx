@@ -6,13 +6,17 @@ import { cn } from "@/lib/utils";
 import { useAnswerQuestions } from "@/hooks/useApply";
 import type { ApplyQuestion, ApplyRun } from "@/lib/apply";
 
-type Draft = { yes: boolean | null; details: string; skipped: boolean };
+/** `touched`: the user changed it here, so a newer answer from the chat
+ * never overwrites it (and an untouched one always follows the server). */
+type Draft = { yes: boolean | null; details: string; skipped: boolean; touched: boolean; from: string | null };
 
-const blank = (q: ApplyQuestion): Draft => ({
-  yes: q.answer ? true : null,
-  details: q.answer ?? "",
-  skipped: q.skipped,
-});
+/** A saved answer back into Yes/No + details ("No. Never used it"). */
+function draftOf(q: ApplyQuestion): Draft {
+  const a = q.answer ?? "";
+  const m = a.match(/^(yes|no)\b[.,:]?\s*(.*)$/is);
+  const yes = m ? m[1].toLowerCase() === "yes" : null;
+  return { yes, details: m ? m[2] : a, skipped: q.skipped, touched: false, from: q.answer };
+}
 
 /** "Yes. Moved 200 laptops to Intune at Logical Position." */
 function answerOf(d: Draft): string {
@@ -33,28 +37,32 @@ export function Questions({ run }: { run: ApplyRun }) {
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const open = run.status === "questions" && !run.answers_done;
 
-  // New questions (Claude asked more) get a blank draft; typed ones are kept.
+  // New questions get a draft; an untouched draft follows the server (an
+  // answer the user gave Claude in the chat shows up here); typed ones stay.
   useEffect(() => {
     setDrafts((d) => {
       const next = { ...d };
-      for (const q of run.questions) next[q.id] ??= blank(q);
+      for (const q of run.questions) {
+        const cur = next[q.id];
+        if (!cur || (!cur.touched && cur.from !== q.answer)) next[q.id] = draftOf(q);
+      }
       return next;
     });
   }, [run.questions]);
 
-  const set = (id: string, patch: Partial<Draft>) =>
-    setDrafts((d) => ({ ...d, [id]: { ...(d[id] ?? { yes: null, details: "", skipped: false }), ...patch } }));
+  const set = (q: ApplyQuestion, patch: Partial<Draft>) =>
+    setDrafts((d) => ({ ...d, [q.id]: { ...(d[q.id] ?? draftOf(q)), ...patch, touched: true } }));
 
-  const send = () =>
-    answer.mutate({
-      runId: run.id,
-      done: true,
-      answers: run.questions.map((q) => {
-        const d = drafts[q.id] ?? blank(q);
-        const text = answerOf(d);
-        return d.skipped || !text ? { id: q.id, skipped: true } : { id: q.id, answer: text };
-      }),
-    });
+  // Only what the user changed here, or left unanswered: an answer already
+  // saved (from the chat, say) is never sent back as "skipped".
+  const outgoing = run.questions.flatMap((q) => {
+    const d = drafts[q.id] ?? draftOf(q);
+    if (!d.touched && q.answer) return [];
+    const text = answerOf(d);
+    return [d.skipped || !text ? { id: q.id, skipped: true } : { id: q.id, answer: text }];
+  });
+  const skipping = outgoing.filter((a) => "skipped" in a).length;
+  const send = () => answer.mutate({ runId: run.id, done: true, answers: outgoing });
 
   if (!open) {
     return (
@@ -80,14 +88,14 @@ export function Questions({ run }: { run: ApplyRun }) {
       </p>
       <ol className="space-y-3">
         {run.questions.map((q, i) => {
-          const d = drafts[q.id] ?? blank(q);
+          const d = drafts[q.id] ?? draftOf(q);
           return (
             <li key={q.id} className={cn("space-y-2 rounded-lg border p-3", d.skipped && "opacity-60")}>
-              <p className="text-sm font-medium">
+              <p className="text-sm font-medium" id={`q-${q.id}`}>
                 {i + 1}. {q.question}
               </p>
               {q.why && <p className="text-xs text-muted-foreground">The listing says: “{q.why}”</p>}
-              <div className="flex flex-wrap gap-2" role="group" aria-label="Your answer">
+              <div className="flex flex-wrap gap-2" role="group" aria-labelledby={`q-${q.id}`}>
                 {[
                   { label: "Yes", value: true },
                   { label: "No", value: false },
@@ -98,7 +106,7 @@ export function Questions({ run }: { run: ApplyRun }) {
                     size="sm"
                     variant={d.yes === o.value && !d.skipped ? "default" : "outline"}
                     aria-pressed={d.yes === o.value && !d.skipped}
-                    onClick={() => set(q.id, { yes: o.value, skipped: false })}
+                    onClick={() => set(q, { yes: o.value, skipped: false })}
                   >
                     {o.label}
                   </Button>
@@ -108,7 +116,7 @@ export function Questions({ run }: { run: ApplyRun }) {
                   size="sm"
                   variant="ghost"
                   aria-pressed={d.skipped}
-                  onClick={() => set(q.id, { skipped: !d.skipped })}
+                  onClick={() => set(q, { skipped: !d.skipped })}
                 >
                   {d.skipped ? "Skipped" : "Skip"}
                 </Button>
@@ -120,7 +128,7 @@ export function Questions({ run }: { run: ApplyRun }) {
                   value={d.details}
                   rows={2}
                   maxLength={1900}
-                  onChange={(e) => set(q.id, { details: e.target.value })}
+                  onChange={(e) => set(q, { details: e.target.value })}
                 />
               )}
             </li>
@@ -132,6 +140,11 @@ export function Questions({ run }: { run: ApplyRun }) {
           {answer.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
           Done, make my résumé
         </Button>
+        {skipping > 0 && (
+          <p className="text-xs text-muted-foreground">
+            {skipping} unanswered will be skipped.
+          </p>
+        )}
         {answer.isError && <p className="text-sm text-destructive">Couldn't send that. Try again.</p>}
       </div>
     </div>

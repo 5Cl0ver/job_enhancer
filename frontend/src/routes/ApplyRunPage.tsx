@@ -99,6 +99,7 @@ function HelpCard({ run }: { run: ApplyRun }) {
       <Button onClick={() => done.mutate(run.id)} disabled={done.isPending}>
         Done, keep going
       </Button>
+      {done.isError && <p className="text-sm text-destructive">{(done.error as Error).message}</p>}
     </Card>
   );
 }
@@ -144,7 +145,9 @@ export function ApplyRunPage() {
   const stop = useStopApply();
 
   if (isLoading) return <Skeleton className="mx-auto h-64 max-w-3xl" />;
-  if (isError || !run) {
+  // A failed poll keeps what's on screen (and anything typed): only a page
+  // that never loaded shows the error.
+  if (!run) {
     return (
       <div className="mx-auto max-w-3xl rounded-lg border border-destructive/50 bg-destructive/10 p-6 text-center text-sm text-destructive">
         Couldn't load this application.
@@ -182,14 +185,23 @@ export function ApplyRunPage() {
             size="sm"
             className="gap-1.5 self-start"
             disabled={stop.isPending}
-            onClick={() => stop.mutate(run.id)}
+            onClick={() => {
+              if (window.confirm("Stop this application? Claude stops, and nothing more is sent.")) stop.mutate(run.id);
+            }}
           >
             <Square className="h-3.5 w-3.5" aria-hidden /> Stop
           </Button>
         )}
       </header>
+      {stop.isError && <p className="text-sm text-destructive">Couldn't stop it. Try again.</p>}
 
-      <ApplySteps step={step} ended={!open} />
+      {isError && (
+        <p className="text-xs text-muted-foreground" role="status">
+          Reconnecting…
+        </p>
+      )}
+
+      <ApplySteps step={step} ended={!open} sent={run.status === "sent"} />
 
       <StartCard run={run} />
       <HelpCard run={run} />

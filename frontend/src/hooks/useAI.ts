@@ -20,11 +20,14 @@ export interface ResumeRecord {
   created_at: string;
 }
 
-export function useResumes() {
-  return useQuery<ResumeRecord[]>({
+/** Your résumés. Ones Claude made for one job (spec 022) are left out unless
+ * `withMade`: they belong to that job, not to every picker. */
+export function useResumes({ withMade = false }: { withMade?: boolean } = {}) {
+  return useQuery<ResumeRecord[], Error, ResumeRecord[]>({
     queryKey: ["resumes"],
     queryFn: () => api.get<ResumeRecord[]>("/v1/ai/resumes"),
     staleTime: 5 * 60_000,
+    select: withMade ? undefined : (list) => list.filter((r) => !r.document_id),
   });
 }
 

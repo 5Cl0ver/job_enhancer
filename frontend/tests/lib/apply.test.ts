@@ -55,6 +55,15 @@ describe("where an application is", () => {
     expect(currentStep({ ...base, status: "sent" })).toBe("sent");
   });
 
+  it("a stopped run stays at the step it got to, never Sent", () => {
+    expect(currentStep({ ...base, status: "stopped" })).toBe("start");
+    expect(currentStep({ ...base, status: "stopped", questions: [{ id: "q", question: "Q?", why: null, answer: null, skipped: false }] })).toBe("questions");
+    expect(currentStep({ ...base, status: "not_sent", pages: [page(1, "u")] })).toBe("application");
+    expect(statusLine({ ...base, status: "needs_you", help: { kind: "sign_in", what: "x", at: "", done_at: "now" } })).toBe(
+      "Claude is picking it up…",
+    );
+  });
+
   it("says it in plain words", () => {
     expect(statusLine({ ...base, status: "questions", questions_open: 4 })).toBe("Claude has 4 questions for you");
     expect(statusLine({ ...base, status: "not_sent", note: "Posting closed" })).toBe("Not sent: Posting closed");
@@ -91,7 +100,21 @@ describe("pages", () => {
   });
 
   it("a fix's redone page replaces the old one", () => {
-    const pages = [page(1, "https://x/a"), page(2, "https://x/b"), page(3, "https://x/a#fix", { round: 2 })];
+    const pages = [
+      page(1, "https://x/a", { title: "Info" }),
+      page(2, "https://x/b", { title: "Review" }),
+      page(3, "https://x/a#fix", { title: "Info", round: 2 }),
+    ];
     expect(latestPages(pages).map((p) => p.n)).toEqual([2, 3]);
+  });
+
+  it("keeps every step of an application that never changes its address", () => {
+    const one = "https://acme.wd1.myworkdayjobs.com/apply";
+    const pages = [
+      page(1, one, { title: "My Information" }),
+      page(2, one, { title: "My Experience" }),
+      page(3, one, { title: "Review" }),
+    ];
+    expect(latestPages(pages).map((p) => p.n)).toEqual([1, 2, 3]);
   });
 });

@@ -57,6 +57,8 @@ export interface ApplyReview {
   decision: "submit" | "fix" | "self" | null;
   note: string | null;
   by: "app" | "chat" | null;
+  /** What the user typed to Claude, for a decision made in a chat. */
+  words?: string | null;
   at: string | null;
 }
 
@@ -132,8 +134,15 @@ export function currentStep(run: ApplyRun): StepKey {
     case "review":
     case "submitting":
       return "review";
-    default:
+    case "sent":
       return "sent";
+    default:
+      // Stopped or not sent: the last step it really got to, never "Sent".
+      if (run.review) return "review";
+      if (run.pages.length) return "application";
+      if (run.resume_id) return "resume";
+      if (run.questions.length) return "questions";
+      return "start";
   }
 }
 
@@ -157,7 +166,7 @@ export function statusLine(run: ApplyRunShort): string {
     case "filling":
       return "Claude is filling the application…";
     case "needs_you":
-      return "Claude needs you";
+      return run.help?.done_at ? "Claude is picking it up…" : "Claude needs you";
     case "review":
       return run.review?.decision ? "Claude is acting on your answer…" : "Ready for your review";
     case "submitting":
@@ -196,11 +205,17 @@ export function pageAnswers(page: ApplyPage): PageAnswer[] {
   return page.jc_answers.map((a) => (wrote.has(a.q.toLowerCase()) ? { ...a, claude: true } : a));
 }
 
-/** The pages of the latest round, in order (a fix redoes some pages). */
+/** The pages to review, in order: every page of the latest round, plus the
+ * earlier rounds' pages a fix didn't redo. Never merged within a round: many
+ * applications keep one address for every step. */
 export function latestPages(pages: ApplyPage[]): ApplyPage[] {
-  const byKey = new Map<string, ApplyPage>();
-  for (const p of pages) byKey.set(p.url.split("#")[0] || `#${p.n}`, p);
-  return [...byKey.values()].sort((a, b) => a.n - b.n);
+  const key = (p: ApplyPage) => `${p.url.split("#")[0]} | ${p.title}`;
+  const out: ApplyPage[] = [];
+  for (const p of pages) {
+    const redone = pages.some((q) => q.round > p.round && key(q) === key(p));
+    if (!redone) out.push(p);
+  }
+  return out.sort((a, b) => a.n - b.n);
 }
 
 export const HELP_TITLES: Record<ApplyHelp["kind"], string> = {

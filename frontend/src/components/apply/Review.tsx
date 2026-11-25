@@ -17,22 +17,52 @@ export function Review({ run }: { run: ApplyRun }) {
   const phone = useIsPhone();
   const [fixing, setFixing] = useState(false);
   const [note, setNote] = useState("");
-  const decision = run.review?.decision;
+  const [changing, setChanging] = useState(false);
+  const review = run.review;
+  const decision = changing ? null : review?.decision;
+  // What the user told Claude in a chat, in their own words (spec 022).
+  const told = review?.by === "chat" && review.words && (
+    <p className="text-sm">
+      You told Claude: <q className="italic">{review.words}</q>
+    </p>
+  );
+  // Decided, and Claude hasn't acted on it yet: it can still be changed.
+  const change = run.status === "review" && (
+    <Button variant="ghost" size="sm" onClick={() => setChanging(true)}>
+      Change my answer
+    </Button>
+  );
 
   if (run.status === "review" && decision === "self") {
     return (
       <div className="space-y-2">
+        {told}
         <p className="text-sm">
           Go to the application's tab and press its <strong>Submit</strong> button. Job Catcher notices and
           moves the job to Applied.
         </p>
-        <Button variant="outline" onClick={() => sent.mutate(run.id)} disabled={sent.isPending}>
-          I sent it
-        </Button>
+        <div className="flex flex-wrap gap-2">
+          <Button variant="outline" onClick={() => sent.mutate(run.id)} disabled={sent.isPending}>
+            I sent it
+          </Button>
+          {change}
+        </div>
       </div>
     );
   }
-  if (run.status !== "review" || decision) return null;
+  if (run.status === "review" && decision) {
+    return (
+      <div className="space-y-2">
+        {told}
+        <p className="text-sm">
+          {decision === "submit" ? "You said Submit." : `You asked Claude to fix: ${review?.note ?? ""}`} Claude
+          picks it up the next time it checks. If its chat was closed, tell Claude in Chrome to carry on.
+        </p>
+        {change}
+      </div>
+    );
+  }
+  if (run.status !== "review") return told || null;
 
   return (
     <div className="space-y-3">
@@ -45,7 +75,7 @@ export function Review({ run }: { run: ApplyRun }) {
           <Button
             className="gap-1.5"
             disabled={decide.isPending}
-            onClick={() => decide.mutate({ runId: run.id, decision: "submit" })}
+            onClick={() => decide.mutate({ runId: run.id, decision: "submit" }, { onSuccess: () => setChanging(false) })}
           >
             {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
             Submit
@@ -58,7 +88,7 @@ export function Review({ run }: { run: ApplyRun }) {
               variant="ghost"
               className="gap-1.5"
               disabled={decide.isPending}
-              onClick={() => decide.mutate({ runId: run.id, decision: "self" })}
+              onClick={() => decide.mutate({ runId: run.id, decision: "self" }, { onSuccess: () => setChanging(false) })}
             >
               <MousePointerClick className="h-4 w-4" aria-hidden /> I'll submit it myself
             </Button>
@@ -77,7 +107,12 @@ export function Review({ run }: { run: ApplyRun }) {
           <div className="flex gap-2">
             <Button
               disabled={!note.trim() || decide.isPending}
-              onClick={() => decide.mutate({ runId: run.id, decision: "fix", note: note.trim() })}
+              onClick={() =>
+                decide.mutate(
+                  { runId: run.id, decision: "fix", note: note.trim() },
+                  { onSuccess: () => (setChanging(false), setFixing(false)) },
+                )
+              }
             >
               Send to Claude
             </Button>

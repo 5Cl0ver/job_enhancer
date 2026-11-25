@@ -35,7 +35,6 @@ function Frame() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <OfflineBanner />
-      <ApplyBanner />
       <div className="flex min-h-0 flex-1">
         {/* Desktop sidebar — hidden on phones in favour of the bars. */}
         <aside className="hidden w-56 shrink-0 flex-col border-r bg-card p-4 md:flex">
@@ -77,6 +76,7 @@ function Frame() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
+          <ApplyBanner />
           {/* On a phone: one 16px gutter (pages add none of their own), and
               bottom padding that clears the fixed tab bar. */}
           <main className="min-w-0 flex-1 px-4 pb-24 pt-3 md:p-8">

@@ -32,7 +32,7 @@ function ResumeRow({ r, master }: { r: ResumeRecord; master: boolean }) {
         )}
         {!r.is_active && !r.is_master && (
           <Button
-            size="sm"
+            size="icon"
             variant="ghost"
             className="text-destructive hover:text-destructive"
             disabled={del.isPending}
@@ -55,7 +55,7 @@ function ResumeRow({ r, master }: { r: ResumeRecord; master: boolean }) {
  * job, which can be deleted.
  */
 export function ResumesCard() {
-  const { data: resumes = [] } = useResumes();
+  const { data: resumes = [] } = useResumes({ withMade: true });
   const own = resumes.filter((r) => !r.document_id);
   const made = resumes.filter((r) => r.document_id);
   const masterId = (own.find((r) => r.is_master) ?? own.find((r) => r.is_active))?.id;
@@ -122,16 +122,26 @@ function FactRow({ id, question, answer }: { id: string; question: string; answe
         <div className="flex items-start justify-between gap-2">
           <p className="whitespace-pre-wrap text-muted-foreground">{answer}</p>
           <span className="flex shrink-0">
-            <Button size="sm" variant="ghost" aria-label={`Edit the answer to: ${question}`} onClick={() => setEditing(true)}>
+            <Button
+              size="icon"
+              variant="ghost"
+              aria-label={`Edit the answer to: ${question}`}
+              onClick={() => {
+                setText(answer);
+                setEditing(true);
+              }}
+            >
               <Pencil className="h-3.5 w-3.5" aria-hidden />
             </Button>
             <Button
-              size="sm"
+              size="icon"
               variant="ghost"
               className="text-destructive hover:text-destructive"
               aria-label={`Delete: ${question}`}
               disabled={del.isPending}
-              onClick={() => del.mutate(id)}
+              onClick={() => {
+                if (window.confirm("Forget this? Claude won't use it for later jobs.")) del.mutate(id);
+              }}
             >
               <Trash2 className="h-3.5 w-3.5" aria-hidden />
             </Button>

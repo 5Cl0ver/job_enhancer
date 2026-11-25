@@ -239,3 +239,55 @@ describe("Apply with Claude button", () => {
     expect(await screen.findByRole("button", { name: /Open application/ })).toBeInTheDocument();
   });
 });
+
+
+describe("after the review fixes", () => {
+  it("an answer given in the chat shows, and isn't sent back as skipped", async () => {
+    serve({
+      ...RUN,
+      status: "questions",
+      questions_open: 1,
+      questions: [
+        { id: "q1", question: "Have you used Okta?", why: null, answer: "No. Never used it", skipped: false, source: "chat" },
+        { id: "q2", question: "Have you used Jamf?", why: null, answer: null, skipped: false },
+      ],
+    });
+    post.mockResolvedValue({ ...RUN, status: "writing" });
+    renderPage();
+    expect(await screen.findByDisplayValue("Never used it")).toBeInTheDocument();
+    expect(screen.getByText("1 unanswered will be skipped.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Done, make my résumé" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/answers", { done: true, answers: [{ id: "q2", skipped: true }] }),
+    );
+  });
+
+  it("a stopped run never looks sent", async () => {
+    serve({ ...RUN, status: "stopped", note: "You stopped it." });
+    renderPage();
+    expect(await screen.findByText("Stopped: You stopped it.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Stopped here")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Sent" })).not.toBeInTheDocument();
+  });
+
+  it("shows what the user told Claude, and the answer can still be changed", async () => {
+    serve({
+      ...RUN,
+      status: "review",
+      review: { round: 1, decision: "submit", note: null, by: "chat", words: "looks good, submit", at: "" },
+    });
+    renderPage();
+    expect(await screen.findByText("looks good, submit")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Change my answer" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+  });
+
+  it("Stop asks first", async () => {
+    serve(RUN);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Stop/ }));
+    expect(confirm).toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+});

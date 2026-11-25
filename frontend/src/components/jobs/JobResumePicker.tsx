@@ -10,11 +10,13 @@ import { useSavedJobs } from "@/hooks/useSavedJobs";
  */
 export function JobResumePicker({ jobListingId }: { jobListingId: string }) {
   const { data: saved } = useSavedJobs();
-  const { data: resumes = [] } = useResumes();
+  const { data: all = [] } = useResumes({ withMade: true });
   const setResume = useSetJobResume();
   const job = saved?.find((sj) => sj.job_listing_id === jobListingId);
+  const chosen = (job as { resume_id?: string | null } | undefined)?.resume_id ?? "";
+  // Your own résumés, plus the one Claude made for THIS job (never another job's).
+  const resumes = all.filter((r) => !r.document_id || r.id === chosen);
   if (!job || resumes.length < 2) return null;
-  const chosen = (job as { resume_id?: string | null }).resume_id ?? "";
   return (
     <section className="flex flex-col gap-2 rounded-lg border p-4 sm:flex-row sm:items-center sm:justify-between">
       <div className="min-w-0">

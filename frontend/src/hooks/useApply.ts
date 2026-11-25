@@ -3,6 +3,7 @@
  * live, answer, keep going, decide, stop; the things told to Claude; and the
  * master / made-for-a-job résumés.
  */
+import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
 import { type ApplyRun, type ApplyRunShort, isOpenApply } from "@/lib/apply";
@@ -24,6 +25,7 @@ export function useApplyRun(id: string | undefined) {
         qc.invalidateQueries({ queryKey: ["resumes"] });
         qc.invalidateQueries({ queryKey: ["documents"] });
         qc.invalidateQueries({ queryKey: ["apply-open"] });
+        qc.invalidateQueries({ queryKey: ["apply-runs"] });
       }
       return run;
     },
@@ -37,7 +39,9 @@ export function useOpenApply() {
   return useQuery<ApplyRunShort | null>({
     queryKey: ["apply-open"],
     queryFn: () => api.get<ApplyRunShort | null>("/v1/apply/runs/open"),
-    refetchInterval: (q) => (q.state.data ? BANNER_MS : false),
+    // 15 s while one is open; a slow minute otherwise, so a run started on the
+    // computer reaches the phone's banner too.
+    refetchInterval: (q) => (q.state.data ? BANNER_MS : 60_000),
     refetchOnWindowFocus: true,
     staleTime: 10_000,
   });
@@ -84,6 +88,8 @@ function useRunAction<T>(path: (vars: T) => string, body: (vars: T) => unknown =
   const qc = useQueryClient();
   return useMutation({
     mutationFn: (vars: T) => api.post<ApplyRun>(path(vars), body(vars)),
+    // A poll already on its way must not write the old run back over this one.
+    onMutate: () => qc.cancelQueries({ queryKey: ["apply-run"] }),
     onSuccess: (run) => {
       qc.setQueryData(["apply-run", run.id], run);
       qc.invalidateQueries({ queryKey: ["apply-open"] });
@@ -161,12 +167,22 @@ export function useDeleteResume() {
   });
 }
 
-/** A photo of an application page, fetched with the sign-in token. */
+/** A photo of an application page, fetched with the sign-in token, as a URL
+ * that lives only while it's on screen (freed after, so a phone's memory isn't
+ * filled by a long application's photos). */
 export function usePhoto(id: string) {
-  return useQuery<string>({
+  const { data: blob, isError } = useQuery<Blob>({
     queryKey: ["apply-photo", id],
-    queryFn: async () => URL.createObjectURL(await api.getBlob(`/v1/apply/photos/${id}`)),
+    queryFn: () => api.getBlob(`/v1/apply/photos/${id}`),
     staleTime: Infinity,
     gcTime: 10 * 60_000,
   });
+  const [src, setSrc] = useState<string | null>(null);
+  useEffect(() => {
+    if (!blob) return;
+    const url = URL.createObjectURL(blob);
+    setSrc(url);
+    return () => URL.revokeObjectURL(url);
+  }, [blob]);
+  return { data: src, isError };
 }

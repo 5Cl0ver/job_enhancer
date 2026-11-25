@@ -98,7 +98,12 @@ export function JobDetailPage() {
           }
           stage={savedJob ? <StagePicker savedJob={savedJob} /> : null}
           savedJob={savedJob}
-          applyWithClaude={savedJob ? <ApplyWithClaudeButton savedJobId={savedJob.id} /> : null}
+          applyWithClaude={
+            // A job made from an email has no posting to apply on (its link is the email).
+            savedJob && savedJob.origin !== "email" && job.apply_url ? (
+              <ApplyWithClaudeButton savedJobId={savedJob.id} />
+            ) : null
+          }
         />
       )}
     </div>

@@ -13,7 +13,7 @@ import type { ApplyRun } from "@/lib/apply";
  * résumé. Open at every step, before, during and after the application.
  */
 export function ResumeForJob({ run }: { run: ApplyRun }) {
-  const { data: resumes = [] } = useResumes();
+  const { data: resumes = [] } = useResumes({ withMade: true });
   const { data: doc } = useGeneratedDocument(run.document_id);
   const update = useUpdateDocument();
   const [editing, setEditing] = useState(false);
