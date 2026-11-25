@@ -52,6 +52,9 @@ async def test_the_users_own_press_after_submit_ends_it(engine, monkeypatch):
         await svc.extension_event(
             db, user.id, run_id, "submit_pressed", "https://acme.example/9"
         )
+        await svc.extension_event(
+            db, user.id, run_id, "confirmation_seen", "https://acme.example/9", "Done"
+        )
         await db.commit()
     assert (await _run(maker, run_id)).status == "sent"
     with pytest.raises(ValueError, match="has ended"):

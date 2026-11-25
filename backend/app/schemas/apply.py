@@ -36,8 +36,18 @@ class RequestResult(BaseModel):
 
 
 class ExtensionEvent(BaseModel):
-    kind: Literal["blocked_submit", "submit_pressed"]
+    kind: Literal["blocked_submit", "submit_pressed", "confirmation_seen"]
     url: str | None = Field(default=None, max_length=2000)
+    # The confirmation's own words ("Thank you for applying"), spec 023.
+    words: str | None = Field(default=None, max_length=300)
+
+
+class HelpDoneIn(BaseModel):
+    reply: str | None = Field(default=None, max_length=1000)
+
+
+class MessageIn(BaseModel):
+    text: str = Field(min_length=1, max_length=1000)
 
 
 class FactOut(BaseModel):

@@ -270,8 +270,25 @@ async def test_submit_myself_ends_when_job_catcher_sees_it(engine, monkeypatch):
             db, user.id, run_id, "submit_pressed", "https://acme.example/x"
         )
         await db.commit()
+    # Pressed is not yet sent: Job Catcher looks for the confirmation.
+    run = await _run(maker, run_id)
+    assert run.status == "review" and run.review["pressed_at"]
+    async with maker() as db:
+        await svc.extension_event(
+            db,
+            user.id,
+            run_id,
+            "confirmation_seen",
+            "https://acme.example/thanks",
+            "Thank you for applying!",
+        )
+        await db.commit()
     run = await _run(maker, run_id)
     assert run.status == "sent"
+    assert run.review["confirmed"]["words"] == "Thank you for applying!"
+    assert run.events[-1]["text"] == (
+        "Sent, confirmed. Job Catcher saw: “Thank you for applying!”."
+    )
     assert any(e["kind"] == "blocked_submit" for e in run.events)
 
 

@@ -27,6 +27,8 @@ from app.schemas.apply import (
     ExtensionEvent,
     FactIn,
     FactOut,
+    HelpDoneIn,
+    MessageIn,
     RequestResult,
 )
 from app.services import apply_runs as svc
@@ -126,12 +128,14 @@ async def answer(
 @router.post("/runs/{run_id}/help-done")
 async def help_done(
     run_id: uuid.UUID,
+    data: HelpDoneIn | None = None,
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ):
+    """Keep going, with the user's answer when Claude asked (spec 023)."""
     await _run(db, user, run_id)
     try:
-        run = await svc.help_done(db, user.id, run_id)
+        run = await svc.help_done(db, user.id, run_id, data.reply if data else None)
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()
@@ -165,6 +169,55 @@ async def sent(
         run = await svc.mark_sent(
             db, user.id, run_id, "You said you sent it. It's in Applied."
         )
+    except ValueError as exc:
+        raise _bad(exc) from exc
+    await db.commit()
+    return await svc.view(db, run)
+
+
+@router.post("/runs/{run_id}/messages")
+async def message(
+    run_id: uuid.UUID,
+    data: MessageIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Write to Claude: it gets it on its next connector call (spec 023)."""
+    await _run(db, user, run_id)
+    try:
+        run = await svc.post_message(db, user.id, run_id, data.text)
+    except ValueError as exc:
+        raise _bad(exc) from exc
+    await db.commit()
+    return await svc.view(db, run)
+
+
+@router.post("/runs/{run_id}/peek", status_code=202)
+async def peek(
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """A photo of the application's screen as it is now (spec 023)."""
+    await _run(db, user, run_id)
+    try:
+        req = await svc.peek(db, user.id, run_id)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    await db.commit()
+    return {"request_id": str(req.id)}
+
+
+@router.post("/runs/{run_id}/not-sent")
+async def not_sent(
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """ "It wasn't sent": back to the review."""
+    await _run(db, user, run_id)
+    try:
+        run = await svc.not_sent(db, user.id, run_id)
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()
@@ -285,7 +338,9 @@ async def extension_event(
 ):
     await _run(db, user, run_id)
     try:
-        run = await svc.extension_event(db, user.id, run_id, data.kind, data.url)
+        run = await svc.extension_event(
+            db, user.id, run_id, data.kind, data.url, data.words
+        )
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()

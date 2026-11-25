@@ -50,6 +50,7 @@ from app.models.apply import (
     REQUEST_DONE,
     REQUEST_FAILED,
     REQUEST_FILL,
+    REQUEST_PEEK,
     REQUEST_PENDING,
     REQUEST_PHOTO,
     REQUEST_WORKING,
@@ -58,18 +59,21 @@ from app.models.apply import (
     ApplyRun,
     ProfileFact,
 )
+from app.models.extension import ExtensionInstall
 from app.models.generated_document import GeneratedDocument
 from app.models.pipeline_stage import PipelineStage
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.services import apply_resume, master_profile
+from app.services import apply_resume, master_profile, releases
 from app.services import saved_jobs as sj_svc
 from app.services import tracker as tracker_svc
 from app.services.match import match_resume
 
 STALE_AFTER = timedelta(hours=3)
 PHOTOS_KEPT = timedelta(days=30)
-WAIT_SECONDS = 25.0  # how long a tool waits for Job Catcher or the user
+# How long a tool waits for Job Catcher or the user: under the MCP client's
+# ~60 s request timeout, and long enough that waiting costs Claude few steps.
+WAIT_SECONDS = 45.0
 POLL_SECONDS = 1.0
 MAX_QUESTIONS = 12
 MAX_PAGES = 40
@@ -78,6 +82,15 @@ MAX_EVENTS = 200
 MAX_PHOTO_BYTES = 400_000
 MAX_PARTS = 8
 HELP_KINDS = ("sign_in", "sign_up", "captcha", "question", "site", "other")
+MAX_CHOICES = 4
+MAX_MESSAGES = 200
+MAX_PEEKS = 5
+STOPPED_AFTER = timedelta(minutes=3)
+ASK_IF_SENT_AFTER = timedelta(minutes=2)
+PRESSED_GRACE = timedelta(seconds=30)
+# Job Catcher with "screen now" and the confirmation watch (spec 023).
+JOB_CATCHER_READY = "0.41.0"
+JOB_CATCHER_SEEN = timedelta(hours=2)
 DECISIONS = ("submit", "fix", "self")
 
 
@@ -220,6 +233,9 @@ async def get_run(
 ) -> ApplyRun:
     q = select(ApplyRun).where(ApplyRun.id == run_id, ApplyRun.user_id == user_id)
     if lock:
+        # Changes this session made are written first, so the fresh read below
+        # never throws them away.
+        await db.flush()
         # A fresh read every time: another session (Job Catcher, the app) may
         # have changed it since this session last looked.
         q = q.with_for_update().execution_options(populate_existing=True)
@@ -264,6 +280,7 @@ async def for_agent(
         )
     if run.status == APPLY_WAITING and not start:
         raise ValueError("This application hasn't started. Call get_apply_brief first.")
+    run.claude_at = _now()  # "Claude seems to have stopped" reads this
     return run
 
 
@@ -442,15 +459,137 @@ async def record_answers(
 
 
 async def help_done(
-    db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run_id: uuid.UUID,
+    reply: str | None = None,
+    *,
+    source: str = "app",
 ) -> ApplyRun:
+    """Keep going, with the user's answer when Claude asked something (a
+    quick answer or typed words)."""
     run = await _locked(db, user_id, run_id)
     if run.status != APPLY_NEEDS_YOU or not run.help:
         raise ValueError("Claude isn't waiting for you right now.")
-    run.help = {**run.help, "done_at": _iso(_now())}
-    _event(run, "help_done", "You said keep going.")
+    reply = _text(reply, 1000) or None
+    run.help = {**run.help, "done_at": _iso(_now()), "reply": reply}
+    if reply:
+        _message(run, "you", reply, read=False)
+        _event(run, "help_done", f"You answered: {reply}")
+    else:
+        _event(run, "help_done", "You said keep going.")
     await db.flush()
     return run
+
+
+# --------------------------------------------------------------------------- #
+# The conversation (spec 023): the user and Claude, through the app
+# --------------------------------------------------------------------------- #
+
+
+def _message(run: ApplyRun, by: str, text: str, *, read: bool) -> dict[str, Any]:
+    msg = {
+        "id": uuid.uuid4().hex[:10],
+        "by": by,
+        "text": text,
+        "at": _iso(_now()),
+        "read": read,
+    }
+    run.messages = [*(run.messages or []), msg][-MAX_MESSAGES:]
+    return msg
+
+
+async def post_message(
+    db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID, text: str
+) -> ApplyRun:
+    """The user writes to Claude from the app. Claude gets it on its next call."""
+    run = await _locked(db, user_id, run_id)
+    if run.status not in APPLY_OPEN:
+        raise ValueError("This application has ended.")
+    text = _text(text, 1000)
+    if not text:
+        raise ValueError("Write something first.")
+    _message(run, "you", text, read=False)
+    run.last_activity_at = _now()
+    await db.flush()
+    return run
+
+
+def inbox(run: ApplyRun) -> list[dict[str, Any]]:
+    """The user's messages Claude hasn't seen, marked seen now."""
+    unread = [
+        m for m in run.messages or [] if m.get("by") == "you" and not m.get("read")
+    ]
+    if unread:
+        run.messages = [
+            {**m, "read": True} if m.get("by") == "you" else m
+            for m in run.messages or []
+        ]
+    return [{"text": m["text"], "at": m["at"]} for m in unread]
+
+
+async def with_inbox(
+    db: AsyncSession, user: User, run_id: Any, out: dict[str, Any]
+) -> dict[str, Any]:
+    """Every tool result carries what the user wrote since Claude's last call."""
+    rid = out.get("run_id") or run_id
+    if not rid:
+        return out
+    try:
+        run = await _locked(db, user.id, uuid.UUID(str(rid)))
+    except (LookupError, ValueError):
+        return out
+    told = inbox(run)
+    if told:
+        out = {
+            **out,
+            "from_user": told,
+            "user_message_note": (
+                "The user wrote to you in the app (above). If it changes what "
+                "to do, do that; reply briefly with message_user."
+            ),
+        }
+    await db.flush()
+    return out
+
+
+async def message_user(
+    db: AsyncSession, user: User, run_id: str | None, text: str
+) -> dict[str, Any]:
+    run = await for_agent(db, user.id, run_id)
+    text = _text(text, 1000)
+    if not text:
+        raise ValueError("Say something.")
+    _message(run, "claude", text, read=True)
+    await db.flush()
+    return {"run_id": str(run.id), "posted": True}
+
+
+async def peek(
+    db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID, *, url: str | None = None
+) -> ApplyRequest:
+    """Ask Job Catcher for the application's screen as it is now."""
+    run = await _locked(db, user_id, run_id)
+    if run.status not in APPLY_OPEN and run.status != APPLY_SENT:
+        raise ValueError("This application has ended.")
+    waiting = await db.scalar(
+        select(ApplyRequest.id).where(
+            ApplyRequest.run_id == run.id,
+            ApplyRequest.kind == REQUEST_PEEK,
+            ApplyRequest.status.in_((REQUEST_PENDING, REQUEST_WORKING)),
+        )
+    )
+    if waiting:
+        raise ValueError("A photo of the screen is already on its way.")
+    # Where Claude was last: its newest request's page, else the apply link.
+    where = url or await db.scalar(
+        select(ApplyRequest.url)
+        .where(ApplyRequest.run_id == run.id, ApplyRequest.kind != REQUEST_PEEK)
+        .order_by(ApplyRequest.created_at.desc())
+        .limit(1)
+    )
+    where = where or _apply_url(await _saved_job(db, run))
+    return await _request(db, run, REQUEST_PEEK, where or "about:blank", 0)
 
 
 async def decide(
@@ -517,6 +656,18 @@ async def mark_sent(
     return run
 
 
+async def not_sent(db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID) -> ApplyRun:
+    """ "It wasn't sent": back to the review, to decide again."""
+    run = await _locked(db, user_id, run_id)
+    if run.status not in (APPLY_SUBMITTING, APPLY_REVIEW) or not run.review:
+        raise ValueError("This application isn't being sent.")
+    run.review = {**run.review, "decision": None, "read": False, "pressed_at": None}
+    _set(run, APPLY_REVIEW)
+    _event(run, "not_sent", "You said it wasn't sent. Back to the review.")
+    await db.flush()
+    return run
+
+
 async def _end_sent(db: AsyncSession, run: ApplyRun, text: str) -> None:
     _set(run, APPLY_SENT)
     run.finished_at = _now()
@@ -557,6 +708,7 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         "help": run.help,
         "review": _public_review(run.review),
         "note": run.note,
+        "claude_stopped": claude_stopped(run),
     }
     if not full:
         return out
@@ -586,15 +738,110 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         document_id=str(run.document_id) if run.document_id else None,
         events=(run.events or [])[-60:],
         started_at=_iso(run.started_at),
+        messages=(run.messages or [])[-100:],
+        peeks=[
+            {"id": str(i), "at": _iso(at)}
+            for i, at in await db.execute(
+                select(ApplyPhoto.id, ApplyPhoto.created_at)
+                .where(ApplyPhoto.run_id == run.id, ApplyPhoto.page_n == 0)
+                .order_by(ApplyPhoto.created_at.desc())
+                .limit(MAX_PEEKS)
+            )
+        ],
+        claude_at=_iso(run.claude_at),
+        ask_if_sent=ask_if_sent(run),
+        job_catcher=await job_catcher_status(db, run.user_id),
     )
     return out
+
+
+def _claudes_turn(run: ApplyRun) -> bool:
+    s = run.status
+    if s in (APPLY_READING, APPLY_WRITING, APPLY_FILLING, APPLY_SUBMITTING):
+        return True
+    if s == APPLY_QUESTIONS:
+        return run.answers_done
+    if s == APPLY_NEEDS_YOU:
+        return bool((run.help or {}).get("done_at"))
+    if s == APPLY_REVIEW:
+        review = run.review or {}
+        return bool(review.get("decision")) and not review.get("read")
+    return False
+
+
+def claude_stopped(run: ApplyRun) -> bool:
+    """Claude's turn, and no word from it for 3 minutes (spec 023)."""
+    if run.status not in APPLY_OPEN or not _claudes_turn(run):
+        return False
+    last = _aware(run.claude_at) or _aware(run.started_at)
+    if last is None:
+        return False
+    # The user's own last move (an answer, keep going) restarts the clock.
+    moved = _aware(run.last_activity_at)
+    since = max(last, moved) if moved else last
+    return _now() - since > STOPPED_AFTER
+
+
+def ask_if_sent(run: ApplyRun) -> bool:
+    """Submit was pressed (or Claude has been pressing it a while) and nothing
+    confirmed it: the app asks "Did it go through?"."""
+    if run.status not in (APPLY_SUBMITTING, APPLY_REVIEW):
+        return False
+    review = run.review or {}
+    if review.get("confirmed"):
+        return False
+    pressed = review.get("pressed_at")
+    if pressed and _now() - datetime.fromisoformat(pressed) > PRESSED_GRACE:
+        return True
+    return (
+        run.status == APPLY_SUBMITTING
+        and _now() - _aware(run.last_activity_at) > ASK_IF_SENT_AFTER
+    )
+
+
+async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
+    """Is Job Catcher ready on a computer: new enough, and seen lately?"""
+    row = (
+        await db.execute(
+            select(ExtensionInstall.version, ExtensionInstall.last_seen_at)
+            .where(ExtensionInstall.user_id == user_id)
+            .order_by(ExtensionInstall.last_seen_at.desc())
+            .limit(1)
+        )
+    ).first()
+    if row is None:
+        return {
+            "version": None,
+            "last_seen_at": None,
+            "ready": False,
+            "needs": JOB_CATCHER_READY,
+        }
+    version, seen = row
+    fresh = _aware(seen) and _now() - _aware(seen) < JOB_CATCHER_SEEN
+    new_enough = not releases.is_older(version, JOB_CATCHER_READY)
+    return {
+        "version": version,
+        "last_seen_at": _iso(seen),
+        "ready": bool(fresh and new_enough),
+        "needs": JOB_CATCHER_READY,
+    }
 
 
 def _public_review(review: dict | None) -> dict | None:
     if not review:
         return None
     return {
-        k: review.get(k) for k in ("round", "decision", "note", "by", "words", "at")
+        k: review.get(k)
+        for k in (
+            "round",
+            "decision",
+            "note",
+            "by",
+            "words",
+            "at",
+            "pressed_at",
+            "confirmed",
+        )
     }
 
 
@@ -650,6 +897,11 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
             {k: q.get(k) for k in ("id", "question", "answer", "skipped")}
             for q in run.questions or []
         ],
+        "messages": [
+            {"by": m["by"], "text": m["text"], "at": m["at"]}
+            for m in (run.messages or [])[-30:]
+        ],
+        "job_catcher": await job_catcher_status(db, user.id),
         "resume_ready": bool(run.resume_id),
         # The résumé as it is now, with any edit the user made in the app: fix
         # from this, never from an older copy.
@@ -775,9 +1027,22 @@ async def save_resume(
 
 
 async def need_help(
-    db: AsyncSession, user: User, run_id: str | None, kind: str, what: str
+    db: AsyncSession,
+    user: User,
+    run_id: str | None,
+    kind: str,
+    what: str,
+    choices: list[str] | None = None,
+    page_url: str | None = None,
 ) -> dict[str, Any]:
     run = await for_agent(db, user.id, run_id)
+    quick = []
+    for c in choices or []:
+        c = _text(c, 80)
+        if c and c not in quick:
+            quick.append(c)
+    if len(quick) > MAX_CHOICES:
+        raise ValueError(f"Offer at most {MAX_CHOICES} quick answers.")
     if kind not in HELP_KINDS:
         kind = "other"
     what = _text(what, 500)
@@ -792,17 +1057,29 @@ async def need_help(
         "from": (run.help or {}).get("from")
         if run.status == APPLY_NEEDS_YOU
         else run.status,
+        "choices": quick,
+        "reply": None,
     }
     _set(run, APPLY_NEEDS_YOU)
     _event(run, "help", f"Claude needs you: {what}")
     await db.flush()
+    # A photo of the screen for the app (nobody waits for it).
+    try:
+        async with db.begin_nested():
+            await peek(db, user.id, run.id, url=page_url)
+    except ValueError:
+        pass
+    await db.flush()
     return {
         "run_id": str(run.id),
         "tell_user": (
-            f"Tell the user, here in the chat too: {what} Then press Done, keep "
-            "going in the app (or tell me here)."
+            f"Tell the user, here in the chat too: {what} They can answer in "
+            "the Job Enhancer app (phone or computer) or here."
         ),
-        "next": "Call wait_for_you until the user says keep going.",
+        "next": (
+            "Call wait_for_you until it's ready: it returns their answer as "
+            "`reply` (or nothing, for 'done, keep going')."
+        ),
     }
 
 
@@ -843,10 +1120,15 @@ def _new_page(
 async def _request(
     db: AsyncSession, run: ApplyRun, kind: str, url: str, page_n: int
 ) -> ApplyRequest:
-    # Older requests nobody took are dropped: only the newest page matters.
+    # Older requests of the same kind nobody took are dropped: only the newest
+    # page matters (a "screen now" photo never cancels a fill).
     await db.execute(
         update(ApplyRequest)
-        .where(ApplyRequest.run_id == run.id, ApplyRequest.status == REQUEST_PENDING)
+        .where(
+            ApplyRequest.run_id == run.id,
+            ApplyRequest.status == REQUEST_PENDING,
+            ApplyRequest.kind == kind,
+        )
         .values(status=REQUEST_FAILED, result={"reason": "replaced"}, done_at=_now())
     )
     req = ApplyRequest(run_id=run.id, kind=kind, url=_text(url, 2000), page_n=page_n)
@@ -1017,7 +1299,8 @@ def fill_result(res: dict) -> dict[str, Any]:
 async def wait_for_you(
     db: AsyncSession, user: User, run_id: str | None, seconds: float | None = None
 ) -> dict[str, Any]:
-    """Wait (up to ~25 s) for whatever the run is waiting on from the user."""
+    """Wait (up to ~45 s) for whatever the run is waiting on from the user, or
+    for a message they write in the app."""
     run = await for_agent(db, user.id, run_id)
     rid, user_id = run.id, user.id
     deadline = asyncio.get_running_loop().time() + (
@@ -1025,7 +1308,19 @@ async def wait_for_you(
     )
     while True:
         out = await _what_now(db, run)
-        if out.get("ready") or asyncio.get_running_loop().time() >= deadline:
+        told = inbox(run)
+        if told:
+            # The user wrote: hand it over now, even while still waiting.
+            out = {
+                **out,
+                "from_user": told,
+                "user_message_note": (
+                    "The user wrote to you in the app. Act on it if it's an "
+                    "instruction, reply briefly with message_user, then call "
+                    "wait_for_you again if you were waiting."
+                ),
+            }
+        if out.get("ready") or told or asyncio.get_running_loop().time() >= deadline:
             await db.flush()
             return out
         await db.commit()
@@ -1081,6 +1376,18 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                 else APPLY_FILLING,
             )
             run.help = {**run.help, "resolved": True}
+            reply = (run.help or {}).get("reply")
+            if reply:
+                return {
+                    **base,
+                    "waiting_on": "help",
+                    "ready": True,
+                    "reply": reply,
+                    "next": (
+                        "The user answered (reply). Use it, tell them in one "
+                        "line with message_user, and carry on where you were."
+                    ),
+                }
             return {
                 **base,
                 "waiting_on": "help",
@@ -1325,23 +1632,38 @@ async def add_photo(
     db: AsyncSession, user_id: uuid.UUID, req_id: uuid.UUID, part: int, data: bytes
 ) -> ApplyPhoto:
     req = await _own_request(db, user_id, req_id)
-    if req.kind != REQUEST_PHOTO or req.status != REQUEST_WORKING:
+    if req.kind not in (REQUEST_PHOTO, REQUEST_PEEK) or req.status != REQUEST_WORKING:
         raise ValueError("This request isn't taking photos.")
+    if req.kind == REQUEST_PEEK and part != 0:
+        raise ValueError("A photo of the screen is one photo.")
     if not 0 <= part < MAX_PARTS:
         raise ValueError(f"At most {MAX_PARTS} photos per page.")
     if not data or len(data) > MAX_PHOTO_BYTES:
         raise ValueError("A photo must be under 400 KB.")
     if not data.startswith(b"\xff\xd8\xff"):
         raise ValueError("Photos must be JPEG.")
-    old = await db.scalar(
-        select(ApplyPhoto).where(
-            ApplyPhoto.run_id == req.run_id,
-            ApplyPhoto.page_n == req.page_n,
-            ApplyPhoto.part == part,
+    if req.kind == REQUEST_PEEK:
+        # Screen-now photos: the newest few are kept, not replaced.
+        old_peeks = list(
+            await db.scalars(
+                select(ApplyPhoto)
+                .where(ApplyPhoto.run_id == req.run_id, ApplyPhoto.page_n == 0)
+                .order_by(ApplyPhoto.created_at.desc())
+                .offset(MAX_PEEKS - 1)
+            )
         )
-    )
-    if old is not None:
-        await db.delete(old)
+        for old in old_peeks:
+            await db.delete(old)
+    else:
+        old = await db.scalar(
+            select(ApplyPhoto).where(
+                ApplyPhoto.run_id == req.run_id,
+                ApplyPhoto.page_n == req.page_n,
+                ApplyPhoto.part == part,
+            )
+        )
+        if old is not None:
+            await db.delete(old)
     photo = ApplyPhoto(
         run_id=req.run_id,
         user_id=user_id,
@@ -1387,12 +1709,21 @@ async def finish_request(
 
 
 async def extension_event(
-    db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID, kind: str, url: str | None
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run_id: uuid.UUID,
+    kind: str,
+    url: str | None,
+    words: str | None = None,
 ) -> ApplyRun:
     run = await _locked(db, user_id, run_id)
     if run.status not in APPLY_OPEN:
         return run
     host = _host(url)
+    decision = (run.review or {}).get("decision")
+    approved = run.status == APPLY_SUBMITTING or (
+        run.status == APPLY_REVIEW and decision in ("self", "submit")
+    )
     if kind == "blocked_submit":
         _event(
             run,
@@ -1400,14 +1731,28 @@ async def extension_event(
             f"Job Catcher stopped a Submit press on {host or 'the page'}.",
         )
     elif kind == "submit_pressed":
-        decision = (run.review or {}).get("decision")
-        if run.status == APPLY_REVIEW and decision in ("self", "submit"):
-            # The user's own press (Claude only presses once it's "submitting").
-            await _end_sent(db, run, "You pressed Submit. Your job is in Applied.")
+        # Pressed, not yet sure it went: Job Catcher looks for the
+        # confirmation, and the app asks if none shows (spec 023).
+        if approved and run.review:
+            run.review = {**run.review, "pressed_at": _iso(_now())}
+        _event(run, "submit_pressed", f"Submit was pressed on {host or 'the page'}.")
+    elif kind == "confirmation_seen":
+        seen = _text(words, 300) or "a confirmation"
+        if approved:
+            run.review = {
+                **(run.review or {}),
+                "confirmed": {"words": seen, "at": _iso(_now())},
+            }
+            await _end_sent(db, run, f"Sent, confirmed. Job Catcher saw: “{seen}”.")
+            await db.flush()
+            # A photo of the confirmation (still served for two minutes).
+            try:
+                async with db.begin_nested():
+                    await _request(db, run, REQUEST_PEEK, url or "about:blank", 0)
+            except ValueError:
+                pass
         else:
-            _event(
-                run, "submit_pressed", f"Submit was pressed on {host or 'the page'}."
-            )
+            _event(run, "confirmation_seen", f"Job Catcher saw “{seen}”.")
     else:
         raise ValueError("Unknown event")
     await db.flush()
