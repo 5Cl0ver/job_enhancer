@@ -107,6 +107,7 @@ class TestVersions:
                 "search_pages": 3,
                 "titles": 5,
                 "companies": 15,
+                "looks": 200,
             }
 
     async def test_restore_rechecks_the_version(self, engine, monkeypatch):
@@ -217,7 +218,7 @@ class TestRunsUseThem:
         from tests.test_mcp_scout import _page
 
         out = await mcp_mod.check_jobs(str(run_id), _page(0))
-        assert "next_page_url" not in out and "last search" in out["next"]
+        assert "keep going" in out["next"] and "f_WT=2" in out["next_page_url"]
 
     async def test_titles_limit(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="l2@test.dev")

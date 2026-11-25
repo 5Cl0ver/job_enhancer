@@ -37,6 +37,7 @@ class TestInstructionsPage:
             "search_pages": 6,
             "titles": 8,
             "companies": 15,
+            "looks": 200,
         }
         r = await client.post("/v1/scout/instructions/playbook/reset")
         assert r.json()["edited"] is False

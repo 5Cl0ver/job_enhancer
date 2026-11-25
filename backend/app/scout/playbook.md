@@ -51,5 +51,7 @@ app as your memory. Keep your own context small: the app remembers everything.
    search, or the first page of the next search (don't click through the
    site's page buttons). If it shows the same jobs as before or an empty list
    while the page says there are more, use the site's own Next button once and
-   send those rows. Stop when report_job says done or check_jobs says that was
-   the last search. Then call finish_scout_run with a one-line note.
+   send those rows. When the run is still short, check_jobs adds more
+   searches (remote jobs, a longer window, more titles): keep going with its
+   next_page_url. Stop when report_job says done or check_jobs says to finish.
+   Then call finish_scout_run with a one-line note.

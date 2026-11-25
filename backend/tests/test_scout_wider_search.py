@@ -278,7 +278,7 @@ class TestReviewFixes:
         out = await mcp_mod.check_jobs(
             str(run_id), ROWS5, total_results=5, page_url=brief["start_urls"][1]
         )
-        assert "next_page_url" not in out and "last search" in out["next"]
+        assert "keep going" in out["next"] and "f_WT=2" in out["next_page_url"]
 
     async def test_same_jobs_without_an_address_move_on_the_second_time(
         self, engine, monkeypatch
@@ -290,7 +290,7 @@ class TestReviewFixes:
         out = await mcp_mod.check_jobs(str(run_id), ROWS5)  # could be a retry
         assert out["next_page_url"] == brief["start_urls"][1]
         out = await mcp_mod.check_jobs(str(run_id), ROWS5)  # again: it moved on
-        assert "next_page_url" not in out and "last search" in out["next"]
+        assert "keep going" in out["next"] and "f_WT=2" in out["next_page_url"]
 
     async def test_a_retry_changes_nothing(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="r3@test.dev")

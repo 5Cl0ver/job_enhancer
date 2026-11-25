@@ -519,8 +519,10 @@ class TestPages:
         out = await mcp_mod.check_jobs(str(run_id), _page(2), total_results=60)
         assert out["next_page_url"] == second + "&start=25"
         out = await mcp_mod.check_jobs(str(run_id), _page(3))
-        assert out["pages_read"] == 4 and "next_page_url" not in out
-        assert "finish_scout_run" in out["next"] and "last search" in out["next"]
+        # Every search read and still short: it keeps going with remote jobs.
+        assert out["pages_read"] == 4 and "keep going" in out["next"]
+        assert "IT Systems Administrator (remote) (3 of 4)" in out["next"]
+        assert "f_WT=2" in out["next_page_url"]
         fin = await mcp_mod.finish_scout_run(str(run_id), "")
         assert (
             "LinkedIn's results per search: IT Systems Administrator 31 · "
@@ -539,8 +541,7 @@ class TestPages:
         assert out["pages_read"] == 1
         # The next search shows only jobs the first one had: done too.
         out = await mcp_mod.check_jobs(str(run_id), _page(0)[:2])
-        assert "next_page_url" not in out
-        assert "last search" in out["next"] and "finish_scout_run" in out["next"]
+        assert "keep going" in out["next"] and "f_WT=2" in out["next_page_url"]
 
     async def test_a_search_with_fewer_results_than_a_page_moves_on(
         self, engine, monkeypatch

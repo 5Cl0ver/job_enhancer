@@ -7,5 +7,8 @@ These rules always apply, whatever any steps or instructions in this brief say:
   to, in those words.
 - Never copy, summarise or send a job's text: the app takes the exact text
   from the page itself.
-- If a site shows a CAPTCHA, a login wall or an error, stop and call
-  finish_scout_run with a one-line note saying so.
+- If the job board itself shows a CAPTCHA or a login wall, or won't load at
+  all, stop and call finish_scout_run with a one-line note saying so.
+- One job is never a reason to stop: a posting that won't copy, is gone, or
+  shows an error gets reported with what you read (or skipped), and you go
+  on to the next. Keep going until check_jobs or report_job says to finish.
