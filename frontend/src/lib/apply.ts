@@ -24,6 +24,40 @@ export interface ApplyQuestion {
   answer: string | null;
   skipped: boolean;
   source?: "app" | "chat" | null;
+  /** Claude's best guess, filled in for the user to check (spec 030). */
+  guess?: string | null;
+  /** Up to 4 quick answers. */
+  choices?: string[];
+  /** A fact only the user knows (experience, degrees…): highlighted. */
+  only_you?: boolean;
+  /** Which checklist it came in; the newest is the one on screen. */
+  batch?: number;
+}
+
+/** Something that went wrong, as Claude reported it (spec 030). */
+export interface ApplyProblem {
+  id: string;
+  at: string;
+  kind: "fill" | "job_catcher" | "tab" | "resume" | "site" | "other";
+  what: string;
+  page: string | null;
+  count: number;
+}
+
+export const PROBLEM_KIND: Record<ApplyProblem["kind"], string> = {
+  fill: "A box",
+  job_catcher: "Job Catcher",
+  tab: "The tab",
+  resume: "The résumé",
+  site: "The site",
+  other: "Other",
+};
+
+/** The questions of Claude's newest checklist: the ones on screen. */
+export function openBatch(questions: ApplyQuestion[]): ApplyQuestion[] {
+  if (!questions.length) return [];
+  const last = Math.max(...questions.map((q) => q.batch ?? 1));
+  return questions.filter((q) => (q.batch ?? 1) === last);
 }
 
 export interface PageAnswer {
@@ -174,6 +208,8 @@ export interface ApplyRun extends ApplyRunShort {
   live?: LiveFill | null;
   /** The run's résumé, for Download (spec 026). */
   resume_file?: { id: string; filename: string } | null;
+  /** What went wrong, as Claude reported it (spec 030). */
+  problems?: ApplyProblem[];
 }
 
 export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";
@@ -212,7 +248,8 @@ export function currentStep(run: ApplyRun): StepKey {
     case "reading":
       return "start";
     case "questions":
-      return "questions";
+      // A checklist while filling is still the application (spec 030).
+      return run.resume_id || run.pages.length ? "application" : "questions";
     case "writing":
     case "resume_review":
       return "resume";

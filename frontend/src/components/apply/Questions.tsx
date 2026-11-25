@@ -1,41 +1,31 @@
 import { useEffect, useState } from "react";
-import { Loader2 } from "lucide-react";
+import { Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { cn } from "@/lib/utils";
 import { useAnswerQuestions } from "@/hooks/useApply";
-import type { ApplyQuestion, ApplyRun } from "@/lib/apply";
+import { type ApplyQuestion, type ApplyRun, openBatch } from "@/lib/apply";
 
 /** `touched`: the user changed it here, so a newer answer from the chat
  * never overwrites it (and an untouched one always follows the server). */
-type Draft = { yes: boolean | null; details: string; skipped: boolean; touched: boolean; from: string | null };
+type Draft = { text: string; touched: boolean; from: string | null };
 
-/** A saved answer back into Yes/No + details ("No. Never used it"). */
-function draftOf(q: ApplyQuestion): Draft {
-  const a = q.answer ?? "";
-  const m = a.match(/^(yes|no)\b[.,:]?\s*(.*)$/is);
-  const yes = m ? m[1].toLowerCase() === "yes" : null;
-  return { yes, details: m ? m[2] : a, skipped: q.skipped, touched: false, from: q.answer };
-}
+const draftOf = (q: ApplyQuestion): Draft => ({ text: q.answer ?? q.guess ?? "", touched: false, from: q.answer });
 
-/** "Yes. Moved 200 laptops to Intune at Logical Position." */
-function answerOf(d: Draft): string {
-  const said = d.details.trim();
-  if (d.yes === false) return said ? `No. ${said}` : "No";
-  if (d.yes === true) return said && !/^yes\b/i.test(said) ? `Yes. ${said}` : said || "Yes";
-  return said;
-}
+/** Facts only the user knows first, then Claude's order. */
+const ordered = (qs: ApplyQuestion[]) => [...qs].sort((a, b) => Number(!!b.only_you) - Number(!!a.only_you));
 
 /**
- * Claude's questions about what the listing wants that the résumé doesn't
- * show. Yes / No plus a details box each; any can be skipped. "Done, make my
- * résumé" sends them all. Answers are kept as things told to Claude, so the
- * same question never comes back for a later job.
+ * Claude's questions as one checklist (spec 030): each with Claude's best
+ * guess filled in and a few quick answers. What only you can answer is
+ * highlighted. Check them, change any, then one button sends them all.
+ * Answers are kept as things told to Claude, so they never come back.
  */
 export function Questions({ run }: { run: ApplyRun }) {
   const answer = useAnswerQuestions();
   const [drafts, setDrafts] = useState<Record<string, Draft>>({});
   const open = run.status === "questions" && !run.answers_done;
+  const list = ordered(openBatch(run.questions));
 
   // New questions get a draft; an untouched draft follows the server (an
   // answer the user gave Claude in the chat shows up here); typed ones stay.
@@ -50,18 +40,18 @@ export function Questions({ run }: { run: ApplyRun }) {
     });
   }, [run.questions]);
 
-  const set = (q: ApplyQuestion, patch: Partial<Draft>) =>
-    setDrafts((d) => ({ ...d, [q.id]: { ...(d[q.id] ?? draftOf(q)), ...patch, touched: true } }));
+  const set = (q: ApplyQuestion, text: string) =>
+    setDrafts((d) => ({ ...d, [q.id]: { ...(d[q.id] ?? draftOf(q)), text, touched: true } }));
 
   // Only what the user changed here, or left unanswered: an answer already
   // saved (from the chat, say) is never sent back as "skipped".
-  const outgoing = run.questions.flatMap((q) => {
+  const outgoing = list.flatMap((q) => {
     const d = drafts[q.id] ?? draftOf(q);
     if (!d.touched && q.answer) return [];
-    const text = answerOf(d);
-    return [d.skipped || !text ? { id: q.id, skipped: true } : { id: q.id, answer: text }];
+    const text = d.text.trim();
+    return [text ? { id: q.id, answer: text } : { id: q.id, skipped: true }];
   });
-  const skipping = outgoing.filter((a) => "skipped" in a).length;
+  const empty = outgoing.filter((a) => "skipped" in a).length;
   const send = () => answer.mutate({ runId: run.id, done: true, answers: outgoing });
 
   if (!open) {
@@ -81,56 +71,64 @@ export function Questions({ run }: { run: ApplyRun }) {
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-3">
       <p className="text-sm text-muted-foreground">
-        Your answers help Claude write a résumé that shows what this job wants, and only what's true. You can
-        also answer Claude in the chat.
+        Claude filled in its best guesses. Check them, change any, then press go.
       </p>
-      <ol className="space-y-3">
-        {run.questions.map((q, i) => {
+      <ol className="space-y-2">
+        {list.map((q) => {
           const d = drafts[q.id] ?? draftOf(q);
+          const id = `q-${q.id}`;
+          const guessed = !!q.guess && !d.touched && !q.answer && d.text === q.guess;
           return (
-            <li key={q.id} className={cn("space-y-2 rounded-lg border p-3", d.skipped && "opacity-60")}>
-              <p className="text-sm font-medium" id={`q-${q.id}`}>
-                {i + 1}. {q.question}
+            <li
+              key={q.id}
+              className={cn(
+                "space-y-2 rounded-xl border p-3",
+                q.only_you && "border-amber-500/60 bg-amber-500/5",
+              )}
+            >
+              {q.only_you && (
+                <span className="inline-block rounded-full bg-amber-500/15 px-2 text-xs font-medium text-amber-700 dark:text-amber-300">
+                  Only you can answer
+                </span>
+              )}
+              <p className="text-sm font-medium" id={id}>
+                {q.question}
               </p>
               {q.why && <p className="text-xs text-muted-foreground">The listing says: “{q.why}”</p>}
-              <div className="flex flex-wrap gap-2" role="group" aria-labelledby={`q-${q.id}`}>
-                {[
-                  { label: "Yes", value: true },
-                  { label: "No", value: false },
-                ].map((o) => (
-                  <Button
-                    key={o.label}
-                    type="button"
-                    size="sm"
-                    variant={d.yes === o.value && !d.skipped ? "default" : "outline"}
-                    aria-pressed={d.yes === o.value && !d.skipped}
-                    onClick={() => set(q, { yes: o.value, skipped: false })}
-                  >
-                    {o.label}
-                  </Button>
-                ))}
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="ghost"
-                  aria-pressed={d.skipped}
-                  onClick={() => set(q, { skipped: !d.skipped })}
-                >
-                  {d.skipped ? "Skipped" : "Skip"}
-                </Button>
-              </div>
-              {!d.skipped && (
-                <Textarea
-                  aria-label={`Details for: ${q.question}`}
-                  placeholder={d.yes === false ? "Anything close? (optional)" : "Where, and what did you do with it?"}
-                  value={d.details}
-                  rows={2}
-                  maxLength={1900}
-                  onChange={(e) => set(q, { details: e.target.value })}
-                />
+              {!!q.choices?.length && (
+                <div className="flex flex-wrap gap-1.5" role="group" aria-label={`Quick answers for: ${q.question}`}>
+                  {q.choices.map((c) => {
+                    const on = d.text.trim() === c;
+                    return (
+                      <button
+                        key={c}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => set(q, c)}
+                        className={cn(
+                          "inline-flex min-h-9 items-center gap-1 rounded-full border px-3 text-sm transition-colors",
+                          on ? "border-primary bg-primary text-primary-foreground" : "hover:bg-muted",
+                        )}
+                      >
+                        {on && <Check className="h-3.5 w-3.5" aria-hidden />}
+                        {c}
+                      </button>
+                    );
+                  })}
+                </div>
               )}
+              <Textarea
+                aria-labelledby={id}
+                className="min-h-10"
+                placeholder={q.only_you ? "Only you know this" : "Your answer (empty = skip)"}
+                value={d.text}
+                rows={1}
+                maxLength={1900}
+                onChange={(e) => set(q, e.target.value)}
+              />
+              {guessed && <p className="text-xs text-muted-foreground">Claude's best guess</p>}
             </li>
           );
         })}
@@ -138,11 +136,11 @@ export function Questions({ run }: { run: ApplyRun }) {
       <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
         <Button onClick={send} disabled={answer.isPending} className="gap-1.5">
           {answer.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
-          Done, make my résumé
+          Looks good, go
         </Button>
-        {skipping > 0 && (
+        {empty > 0 && (
           <p className="text-xs text-muted-foreground">
-            {skipping} unanswered will be skipped.
+            {empty} left empty: Claude skips {empty === 1 ? "it" : "them"}.
           </p>
         )}
         {answer.isError && <p className="text-sm text-destructive">Couldn't send that. Try again.</p>}

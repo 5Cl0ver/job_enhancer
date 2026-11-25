@@ -20,7 +20,8 @@ class AnswerIn(BaseModel):
 
 
 class AnswersIn(BaseModel):
-    answers: list[AnswerIn] = Field(default_factory=list, max_length=12)
+    # One checklist is at most 12; a whole run at most 30 (spec 030).
+    answers: list[AnswerIn] = Field(default_factory=list, max_length=30)
     done: bool = False
 
 
@@ -35,6 +36,15 @@ class FixIn(BaseModel):
     page: int | None = Field(default=None, ge=1, le=99)
     q: str = Field(max_length=300)
     a: str = Field(default="", max_length=300)
+    to: str | None = Field(default=None, max_length=2000)
+    ask: str | None = Field(default=None, max_length=500)
+
+
+class LiveFixIn(BaseModel):
+    """A box the user tapped in Filling now: change it, or ask Claude (spec 030)."""
+
+    q: str = Field(min_length=1, max_length=300)
+    a: str = Field(default="", max_length=2000)
     to: str | None = Field(default=None, max_length=2000)
     ask: str | None = Field(default=None, max_length=500)
 

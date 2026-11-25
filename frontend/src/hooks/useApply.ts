@@ -113,6 +113,13 @@ export const useHelpDone = () =>
     (v) => ({ reply: v.reply ?? null }),
   );
 
+/** Change a box while Claude fills, or ask Claude about it (spec 030). */
+export const useLiveFix = () =>
+  useRunAction<{ runId: string; q: string; a: string; to?: string; ask?: string }>(
+    (v) => `/v1/apply/runs/${v.runId}/live-fix`,
+    (v) => ({ q: v.q, a: v.a.slice(0, 300), ...(v.to ? { to: v.to } : {}), ...(v.ask ? { ask: v.ask } : {}) }),
+  );
+
 /** Write to Claude: it gets it on its next connector call. */
 export const usePostMessage = () =>
   useRunAction<{ runId: string; text: string }>(

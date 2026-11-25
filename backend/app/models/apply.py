@@ -153,6 +153,9 @@ class ApplyRun(Base):
     # every few seconds (spec 026): {url, title, at, boxes: [{q, a, by}]}.
     # Only while filling; cleared when the run moves on.
     live: Mapped[dict | None] = mapped_column(JSON)
+    # What went wrong, as Claude reported it for the developer (spec 030):
+    # [{id, at, kind, what, page, count}], at most 20 a run.
+    problems: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     note: Mapped[str | None] = mapped_column(Text)
     playbook_version: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = _now_col()

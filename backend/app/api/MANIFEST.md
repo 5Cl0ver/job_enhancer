@@ -18,10 +18,10 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload; `?make_active=false` keeps the main resume), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET /ai/documents` (list, optional `?job_listing_id=`), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
 | `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export` (includes the sites to skip), `DELETE /users/me` |
 | `v1/skipped_sites.py` | `/skipped-sites` | Sites to skip (spec 024), owner only: `GET` (newest first), `POST {site, confirm?}` (201 added, 200 already there, 400 not a site / over 100, 409 `needs_confirm` for a site Scout searches), `DELETE /{id}`, `GET /suggestions` |
-| `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}` — requires `role=admin` |
+| `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}`, `GET /admin/apply-problems` (problems Claude ran into, everyone's, spec 030) — requires `role=admin` |
 | `v1/auth.py` | — | auth helpers/routes (see file) |
 | `v1/router.py` | — | aggregates all routers under `/v1` |
-| `v1/apply.py` | `/v1/apply/*` (the app: start (with a picked résumé, spec 025), open, runs for a job, one run, answers, help-done, resume-decision, decision, sent, stop, photos; Job Catcher with its pass: active, claim, photo, result, event, live (spec 026)) and `/v1/profile-facts` (list, edit, delete) — spec 022 |
+| `v1/apply.py` | `/v1/apply/*` (the app: start (with a picked résumé, spec 025), open, runs for a job, one run, answers, help-done, resume-decision, decision, sent, stop, photos; Job Catcher with its pass: active, claim, photo, result, event, live (spec 026); live-fix (change a box while Claude fills, spec 030)) and `/v1/profile-facts` (list, edit, delete) — spec 022 |
 
 ## Auth pattern (`middleware/auth.py`)
 - **`CurrentUser`** — verifies the Supabase **ES256** token via the project **JWKS**; lazy-creates the User on first login.

@@ -699,10 +699,15 @@ async def get_apply_brief(run_id: str | None = None) -> dict:
 
 @mcp.tool
 async def ask_questions(run_id: str, questions: list[dict]) -> dict:
-    """Ask the user about what the listing wants that their profile doesn't
-    show. Each question is {"question", "why"} (why = the listing's own words).
-    At most 12 in all. The user answers in the app or the chat; then call
-    wait_for_you."""
+    """Ask the user several things at once, as one checklist they check and
+    send with one button. Each question is {"question", "why" (the listing's
+    own words, optional), "guess" (your best answer from the profile, filled
+    in for them; leave it out when you can't know), "choices" (up to 4 short
+    quick answers), "only_you": true (facts only the user knows: experience,
+    years with a tool, degrees, licences, authorisation, sponsorship)}.
+    Use it before the résumé (the listing's gaps) and while filling (facts a
+    page asks for that the profile doesn't give). At most 12 at once, 30 in a
+    run. Then call wait_for_you: it returns their answers."""
     return await _apply(
         lambda db, user: apply_svc.ask_questions(db, user, run_id, questions), run_id
     )
@@ -789,10 +794,12 @@ async def need_help(
     choices: list[str] | None = None,
     page_url: str | None = None,
 ) -> dict:
-    """Ask the user for something only they can give or do: kind is sign_in,
-    sign_up, captcha, question, site, file (a file Job Catcher couldn't
-    attach) or other; what says exactly what you need.
-    For a question, offer up to 4 short `choices` (e.g. ["Yes", "No"] or
+    """Ask the user for something only they can DO, that blocks you: kind is
+    sign_in, sign_up, captcha (or any human check), site, file (a file Job
+    Catcher couldn't attach), question or other; what says exactly what you
+    need. Questions go in ask_questions, all together, as one checklist; use
+    kind=question only for a single question that blocks the page.
+    Offer up to 4 short `choices` (e.g. ["Yes", "No"] or
     ["$120,000", "$130,000"]); they can also type any answer. page_url: the
     page you're on (the app shows the user a photo of it). The user answers in
     the app on their phone or computer; then call wait_for_you, which returns
@@ -800,6 +807,26 @@ async def need_help(
     return await _apply(
         lambda db, user: apply_svc.need_help(
             db, user, run_id, kind, what, choices, page_url
+        ),
+        run_id,
+    )
+
+
+@mcp.tool
+async def report_problem(
+    run_id: str, what: str, page_url: str | None = None, kind: str | None = None
+) -> dict:
+    """Note something that went wrong, for the developer, as it happens: one
+    short line (what you tried, what happened). kind: fill (a box you couldn't
+    fill), job_catcher (a Job Catcher tool error or wrong answer, e.g. it said
+    there's no résumé box when there is one), tab (the application's tab was
+    lost or closed), resume (the résumé file), site (the site misbehaved) or
+    other. page_url: the page it happened on. Never include passwords, codes
+    or the user's personal details. It doesn't ask the user anything: carry
+    on after it."""
+    return await _apply(
+        lambda db, user: apply_svc.report_problem(
+            db, user, run_id, what, page_url, kind
         ),
         run_id,
     )

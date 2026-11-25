@@ -1,6 +1,15 @@
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import type { ApplyProblem } from "@/lib/apply";
 import type { AdminUserRow, Allowances, UserProfile } from "@/types/api";
+
+/** A problem Claude ran into on someone's application (spec 030). */
+export interface AdminApplyProblem extends ApplyProblem {
+  run_id: string;
+  status: string;
+  user_email: string;
+  job: string;
+}
 
 interface ServiceStatus {
   name: string;
@@ -82,5 +91,14 @@ export function useSaveAllowances() {
   return useMutation({
     mutationFn: (values: Partial<Allowances>) => api.put<Allowances>("/v1/admin/allowances", values),
     onSuccess: (saved) => qc.setQueryData(["admin", "allowances"], saved),
+  });
+}
+
+/** What Claude ran into during everyone's applications, newest first (spec 030). */
+export function useApplyProblems() {
+  return useQuery<AdminApplyProblem[]>({
+    queryKey: ["admin", "apply-problems"],
+    queryFn: () => api.get<AdminApplyProblem[]>("/v1/admin/apply-problems?limit=100"),
+    staleTime: 60_000,
   });
 }

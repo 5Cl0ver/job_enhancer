@@ -6,6 +6,7 @@ import { HealthPanel } from "@/components/admin/HealthPanel";
 import { StatsOverview } from "@/components/admin/StatsOverview";
 import { UserTable } from "@/components/admin/UserTable";
 import { AllowancesCard } from "@/components/admin/AllowancesCard";
+import { ApplyProblemsCard } from "@/components/admin/ApplyProblemsCard";
 import { SignupTrendChart } from "@/components/admin/SignupTrendChart";
 import { useAdminStats } from "@/hooks/useAdmin";
 
@@ -63,6 +64,7 @@ function AdminDashboard() {
           <HealthPanel />
           <UserTable />
           <AllowancesCard />
+          <ApplyProblemsCard />
         </>
       )}
     </div>
