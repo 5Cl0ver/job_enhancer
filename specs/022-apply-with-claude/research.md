@@ -3,7 +3,8 @@
 ## R1: Who takes the photos
 
 - **Decision:** Job Catcher takes them, with `chrome.tabs.captureVisibleTab`, at Claude's request through the app.
-- **Why:** Claude in Chrome can see the page, but a connector tool can't send images to the app. Job Catcher already has host permission on every http(s) site, which `captureVisibleTab` accepts in place of `<all_urls>` (Chrome docs, tabs API).
+- **Why:** Claude in Chrome can see the page, but a connector tool can't send images to the app.
+- **Permission:** `captureVisibleTab` needs `<all_urls>` (or activeTab). The browser test showed Chrome refuses `http(s)://*/*`, so Job Catcher's host permission became `<all_urls>`: the same all-sites access.
 - **Limits:**
   - At most 2 captures per second (`MAX_CAPTURE_VISIBLE_TAB_CALLS_PER_SECOND`).
   - Only the visible part of the active tab is captured, so a long page is several photos: Job Catcher scrolls, shoots, then puts the scroll back.
@@ -14,7 +15,7 @@
 ## R2: How Job Catcher hears about a request
 
 - **Decision:** Job Catcher learns about an open apply run the way it learns about a Scout run: it asks the server.
-  - Content scripts on visible pages send a tick to the background. The background asks `GET /v1/apply/active` (a 30 s cache when no run is open).
+  - Content scripts on visible pages send a tick to the background. The background asks `GET /v1/apply/active` (a 60 s cache when no run is open; a failed ask keeps the last answer and retries in 3 s).
   - While a run is open, the background asks every 2 seconds and does pending requests.
 - **Keeping the service worker alive:** a call to an extension API resets its 30 s idle timer (Chrome docs, service worker lifecycle). The loop reads `chrome.storage.session` on each turn.
 - **No request is done twice:** each request is claimed atomically (`pending → working`) before it is done.
@@ -30,10 +31,10 @@
 ## R4: The Submit safety net
 
 - **Decision:** while the run isn't approved, Job Catcher's page script blocks clicks and form submits whose button text is a final-submit phrase. Examples:
-  - "Submit", "Submit application", "Submit my application", "Submit your application", "Send application", "Apply now" on a form's last step.
-  - Never "Next", "Continue", "Save" or "Review".
+  - "Submit", "Submit application", "Submit my application", "Submit your application", "Send application".
+  - Never "Next", "Continue", "Save" or "Review", and never "Apply"/"Apply now" (the button that opens an application). Never in a sign-in or one-time-code form.
 - **Why:** Claude in Chrome's clicks are trusted events, so the block can't tell Claude from the user. That's why the user's own "I'll submit it myself" first lifts the block in the app.
-- **Scope:** only on the run's hosts, the apply link's host and the hosts of pages Claude marked done. It never applies anywhere else.
+- **Scope:** only the run's tab: the one Claude's requests pointed at, with every frame in it (a form embedded from another site too). Never the whole site: a board like LinkedIn holds the user's other applications.
 - **False block:** a mid-form "Submit" just means an early review. Claude is told and asks for review.
 
 ## R5: Where photos and résumés live

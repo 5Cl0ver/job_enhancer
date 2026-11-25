@@ -1209,12 +1209,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "scoutAnySite") {
         sendResponse({ ok: true, ...(await scoutAnySite()) });
       } else if (msg.type === "applyTick") {
-        sendResponse(await applyRun.tick(msg.url || sender.tab?.url || ""));
+        // The tab decides (every frame in it, a form embedded from another
+        // site included); the frame's own address only goes in the log.
+        sendResponse(await applyRun.tick(sender.tab));
       } else if (msg.type === "applyBlocked") {
-        await applyRun.event("blocked_submit", msg.url || sender.tab?.url || "");
+        await applyRun.event("blocked_submit", sender.tab, msg.url);
         sendResponse({ ok: true });
       } else if (msg.type === "applySubmitPressed") {
-        await applyRun.event("submit_pressed", msg.url || sender.tab?.url || "");
+        await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
       } else if (msg.type === "scoutCapture") {
         sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });

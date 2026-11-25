@@ -1,5 +1,5 @@
 // Apply with Claude (spec 022), Job Catcher's side: which presses are a final
-// Submit, the photo plan, the page's answers, the Submit block on the page,
+// Submit, the photo plan, the page's answers, the Submit lock on the page,
 // and the background loop doing the app's requests once each.
 import { describe, it, expect, vi } from "vitest";
 import { Window } from "happy-dom";
@@ -19,12 +19,15 @@ describe("a final Submit", () => {
     <button id="c">Submit your application</button><button id="d">Save and continue</button>
     <button id="e">Next</button><button id="f">Apply now</button><button id="g">Review</button>
     <form role="search"><button id="h">Submit</button></form>
-    <div role="button" id="i"><span>Send application</span></div>`).document;
-  it("is the send button, in the words sites use", () => {
-    for (const id of ["a", "b", "c", "i"]) expect(finalSubmitButton(doc.getElementById(id))).not.toBeNull();
+    <div role="button" id="i"><span>Send application</span></div>
+    <button id="j">Submit Application ›</button><a href="#" id="k">Submit application</a>
+    <form><input type="password"><button id="l">Submit</button></form>
+    <form><input autocomplete="one-time-code"><button id="m">Submit</button></form>`).document;
+  it("is the send button, in the words sites use, arrows and links included", () => {
+    for (const id of ["a", "b", "c", "i", "j", "k"]) expect(finalSubmitButton(doc.getElementById(id))).not.toBeNull();
   });
-  it("is never a step, the button that opens an application, or a search", () => {
-    for (const id of ["d", "e", "f", "g", "h"]) expect(finalSubmitButton(doc.getElementById(id))).toBeNull();
+  it("is never a step, the button that opens an application, a search, or a sign-in's", () => {
+    for (const id of ["d", "e", "f", "g", "h", "l", "m"]) expect(finalSubmitButton(doc.getElementById(id))).toBeNull();
   });
   it("counts a press on the button's own text", () => {
     expect(finalSubmitButton(doc.querySelector("#i span"))).not.toBeNull();
@@ -51,6 +54,8 @@ describe("photos and answers", () => {
       { question: "First name", kind: "text" },
       { question: "Password", kind: "text", hints: { type: "password" } },
       { question: "Verification code", kind: "text" },
+      { question: "Enter the code", kind: "text", hints: { autocomplete: "one-time-code" } },
+      { question: "SIN", kind: "text" },
       { question: "Willing to relocate?", kind: "checkbox" },
       { question: "Résumé", kind: "file", el: { files: [{ name: "Sam - Résumé.pdf" }] } },
       { question: "Skills", kind: "multi" },
@@ -71,38 +76,63 @@ describe("photos and answers", () => {
   });
 });
 
-describe("the Submit block on the page", () => {
-  async function mode(reply) {
-    const win = page(`<form><input name="x"><button id="go">Submit application</button><button id="next" type="button">Next</button></form>`);
+describe("the Submit lock on the page", () => {
+  async function mode(reply, { current = () => true, html } = {}) {
+    const win = page(
+      html ||
+        `<form><input name="x"><button id="go">Submit application</button><button id="next" type="button">Next</button></form>
+         <div id="spa"><div role="button" id="send">Submit application</div></div>`,
+    );
     const sent = [];
     const send = vi.fn(async (m) => {
       sent.push(m);
       return m.type === "applyTick" ? reply : null;
     });
-    win.document.querySelector("form").addEventListener("submit", (e) => e.preventDefault());
-    const m = startApplyMode({ send, isCurrent: () => true, scan: () => [], readField: () => "", doc: win.document, win });
+    win.document.querySelector("form")?.addEventListener("submit", (e) => e.preventDefault());
+    const m = startApplyMode({ send, isCurrent: current, scan: () => [], readField: () => "", doc: win.document, win });
     await vi.waitFor(() => expect(m.state.active).toBe(reply.active));
     return { win, sent, m };
   }
 
-  it("stops a final Submit until the user's OK, and says so", async () => {
+  it("stops a final Submit until the user's OK, and says so once", async () => {
     const { win, sent, m } = await mode({ active: true, guard: true });
     let reachedPage = 0;
     win.document.getElementById("go").addEventListener("click", () => reachedPage++);
     win.document.getElementById("go").click();
     expect(reachedPage).toBe(0);
-    expect(sent.map((x) => x.type)).toContain("applyBlocked");
+    expect(sent.filter((x) => x.type === "applyBlocked")).toHaveLength(1);
     win.document.getElementById("next").click(); // a step button is never stopped
     m.stop();
   });
 
-  it("once allowed, lets it through and reports the press", async () => {
+  it("once allowed, lets it through and reports the form really sent, once", async () => {
     const { win, sent, m } = await mode({ active: true, guard: false });
     let reachedPage = 0;
     win.document.getElementById("go").addEventListener("click", () => reachedPage++);
     win.document.getElementById("go").click();
     expect(reachedPage).toBe(1);
-    expect(sent.map((x) => x.type)).toContain("applySubmitPressed");
+    expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
+    m.stop();
+  });
+
+  it("a press the site turns down (required box empty) isn't reported", async () => {
+    const { win, sent, m } = await mode(
+      { active: true, guard: false },
+      { html: `<form><input required name="x"><button id="go">Submit application</button></form>` },
+    );
+    win.document.querySelector("form").dispatchEvent(new win.Event("submit", { cancelable: true }));
+    expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(0);
+    m.stop();
+  });
+
+  it("a button with no form counts only once the page moved on", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const { win, sent, m } = await mode({ active: true, guard: false });
+    win.document.getElementById("send").click();
+    win.document.getElementById("spa").remove(); // the SPA showed its thank-you
+    await vi.advanceTimersByTimeAsync(2100);
+    vi.useRealTimers();
+    expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
     m.stop();
   });
 
@@ -112,17 +142,44 @@ describe("the Submit block on the page", () => {
     expect(sent.map((x) => x.type)).toEqual(["applyTick"]);
     m.stop();
   });
+
+  it("a copy left behind by an update lets go of the lock", async () => {
+    let current = true;
+    const { win, sent, m } = await mode({ active: true, guard: true }, { current: () => current });
+    current = false;
+    let reachedPage = 0;
+    win.document.getElementById("go").addEventListener("click", () => reachedPage++);
+    win.document.getElementById("go").click();
+    expect(reachedPage).toBe(1);
+    expect(sent.filter((x) => x.type === "applyBlocked")).toHaveLength(0);
+    m.stop();
+  });
 });
 
 describe("the background loop", () => {
-  function fakeChrome({ tabActive = true } = {}) {
+  const URL1 = "https://acme.example/apply/1";
+
+  function fakeChrome({ tabActive = true, tabs, switchAfter = Infinity } = {}) {
+    const session = {};
+    let gets = 0;
+    const list = tabs || [
+      { id: 7, windowId: 1, active: tabActive, url: `${URL1}?step=2` },
+      { id: 8, windowId: 1, active: false, url: "https://other.example/" },
+    ];
     return {
-      storage: { session: { get: vi.fn().mockResolvedValue({}) } },
+      storage: {
+        session: {
+          get: vi.fn(async (k) => (typeof k === "string" ? { [k]: session[k] } : {})),
+          set: vi.fn(async (o) => Object.assign(session, o)),
+        },
+      },
       tabs: {
-        query: vi.fn().mockResolvedValue([
-          { id: 7, windowId: 1, active: tabActive, url: "https://acme.example/apply/1?step=2" },
-          { id: 8, windowId: 1, active: false, url: "https://other.example/" },
-        ]),
+        query: vi.fn().mockResolvedValue(list),
+        get: vi.fn(async (id) => {
+          gets++;
+          const t = list.find((x) => x.id === id);
+          return gets > switchAfter ? { ...t, active: false } : t;
+        }),
         sendMessage: vi.fn(async (_tab, msg) => (msg.op === "measure" ? { y: 120, height: 1800, view: 1000 } : { y: msg.y })),
         captureVisibleTab: vi.fn().mockResolvedValue("data:image/jpeg;base64,/9j/4AAQ"),
       },
@@ -130,19 +187,19 @@ describe("the background loop", () => {
       scripting: {
         executeScript: vi.fn().mockResolvedValue([{ result: [{ q: "Name", a: "Sam" }] }, { result: [{ q: "Email", a: "s@x" }] }]),
       },
+      _session: session,
     };
   }
 
-  function fakeApi(requests) {
+  function fakeApi(requests, { failFirst = false } = {}) {
     const calls = [];
-    let served = false;
+    let served = 0;
     const api = vi.fn(async (path, init = {}) => {
       calls.push([init.method || "GET", path, init.body]);
       if (path === "/v1/apply/active") {
-        const body = served
-          ? { run_id: null }
-          : { run_id: "r1", guard: true, hosts: ["acme.example"], requests };
-        served = true;
+        served++;
+        if (failFirst && served === 1) return { ok: false, json: async () => ({}) };
+        const body = served > (failFirst ? 2 : 1) ? { run_id: null } : { run_id: "r1", guard: true, hosts: ["acme.example"], requests };
         return { ok: true, json: async () => body };
       }
       return { ok: true, json: async () => ({}) };
@@ -150,15 +207,18 @@ describe("the background loop", () => {
     return { api, calls };
   }
 
-  it("takes the photos screen by screen, puts the scroll back, sends the answers", async () => {
+  async function runLoop(run) {
     vi.useFakeTimers({ toFake: ["setTimeout"] });
-    const c = fakeChrome();
-    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: "https://acme.example/apply/1", page_n: 1 }]);
-    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     const done = run.loop();
     await vi.runAllTimersAsync();
     await done;
     vi.useRealTimers();
+  }
+
+  it("takes the photos screen by screen, puts the scroll back, sends the answers", async () => {
+    const c = fakeChrome();
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
     expect(calls.map(([m, p]) => `${m} ${p}`)).toEqual([
       "GET /v1/apply/active",
       "POST /v1/apply/requests/q1/claim",
@@ -170,58 +230,68 @@ describe("the background loop", () => {
     const scrolls = c.tabs.sendMessage.mock.calls.map(([, m]) => m).filter((m) => m.op === "scroll").map((m) => m.y);
     expect(scrolls).toEqual([0, 800, 120]); // two screens, then back where it was
     expect(JSON.parse(calls[4][2])).toEqual({ ok: true, answers: [{ q: "Name", a: "Sam" }, { q: "Email", a: "s@x" }] });
+    expect(c._session["je_apply_tabs:r1"]).toEqual([7]); // the run's tab, remembered
+  });
+
+  it("stops at once if the tab stops showing: another tab is never photographed", async () => {
+    const c = fakeChrome({ switchAfter: 2 }); // showing for the first check only
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(0);
+    const result = calls.find(([, p]) => p.endsWith("/result"));
+    expect(JSON.parse(result[2]).ok).toBe(false);
   });
 
   it("no photo when the tab isn't showing", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout"] });
-    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: "https://acme.example/apply/1", page_n: 1 }]);
-    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome({ tabActive: false }) });
-    const done = run.loop();
-    await vi.runAllTimersAsync();
-    await done;
-    vi.useRealTimers();
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome({ tabActive: false }) }));
     const result = calls.find(([, p]) => p.endsWith("/result"));
     expect(JSON.parse(result[2])).toEqual({ ok: false, reason: "not_visible" });
   });
 
+  it("a computer without the application's tab leaves the request to the other", async () => {
+    const c = fakeChrome({ tabs: [{ id: 8, windowId: 1, active: true, url: "https://news.example/" }] });
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(calls.some(([, p]) => p.endsWith("/claim"))).toBe(false);
+  });
+
   it("fills on request, like the panel's press, and says what's left", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout"] });
-    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: "https://acme.example/apply/1", page_n: 1 }]);
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 1 }]);
     const press = vi.fn().mockResolvedValue({ ok: true, filled: 2, need: 1 });
     const fillSession = vi.fn().mockResolvedValue({
       frames: { 0: { entries: [{ label: "First name" }, { label: "Email" }], need_you: [{ label: "Why Acme?" }] } },
     });
-    const run = createApplyRun({ api, press, fillSession, chrome: fakeChrome() });
-    const done = run.loop();
-    await vi.runAllTimersAsync();
-    await done;
-    vi.useRealTimers();
+    await runLoop(createApplyRun({ api, press, fillSession, chrome: fakeChrome() }));
     expect(press).toHaveBeenCalledWith(7);
     const result = calls.find(([, p]) => p.endsWith("/result"));
     expect(JSON.parse(result[2])).toEqual({ ok: true, reason: null, filled: ["First name", "Email"], need: ["Why Acme?"] });
   });
 
-  it("a request someone else claimed is left alone", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout"] });
-    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: "https://acme.example/apply/1", page_n: 1 }]);
-    api.mockImplementation(async (path, init = {}) => {
-      calls.push([init.method || "GET", path]);
-      if (path.endsWith("/claim")) return { ok: false, json: async () => ({}) };
-      return { ok: true, json: async () => (calls.length > 2 ? { run_id: null } : { run_id: "r1", hosts: ["acme.example"], requests: [{ id: "q1", kind: "photo", url: "https://acme.example/apply/1" }] }) };
-    });
-    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
-    const done = run.loop();
-    await vi.runAllTimersAsync();
-    await done;
-    vi.useRealTimers();
-    expect(calls.some(([, p]) => p.includes("/photo"))).toBe(false);
+  it("the lock is the application's tab, never every page on the same site", async () => {
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    const api = vi.fn(async () => ({ ok: true, json: async () => ({ run_id: "r1", guard: true, hosts: ["acme.example"], requests: [] }) }));
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    run.loop = vi.fn();
+    expect(await run.tick({ id: 7, url: `${URL1}?x` })).toEqual({ active: true, guard: true });
+    expect(await run.tick({ id: 9, url: "https://acme.example/apply/other-job" })).toEqual({ active: false, guard: false });
   });
 
-  it("a page hears whether Submit is blocked, only on the run's sites", async () => {
-    const api = vi.fn(async () => ({ ok: true, json: async () => ({ run_id: "r1", guard: true, hosts: ["acme.example"], requests: [] }) }));
-    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
+  it("a server that doesn't answer never lifts the lock", async () => {
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    let up = true;
+    const api = vi.fn(async () =>
+      up
+        ? { ok: true, json: async () => ({ run_id: "r1", guard: true, hosts: ["acme.example"], requests: [] }) }
+        : { ok: false, json: async () => ({}) },
+    );
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     run.loop = vi.fn();
-    expect(await run.tick("https://acme.example/apply/1")).toEqual({ active: true, guard: true });
-    expect(await run.tick("https://news.example/")).toEqual({ active: false, guard: false });
+    expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(true);
+    up = false;
+    await run.active(true);
+    expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(true);
   });
 });
