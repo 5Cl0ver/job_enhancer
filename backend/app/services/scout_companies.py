@@ -210,12 +210,12 @@ async def rechecks(db: AsyncSession, user_id: uuid.UUID, run: ScoutRun) -> list[
                 | (ScoutCompany.last_checked_at <= cutoff),
             )
             .order_by(
-                # "Check next run" first, then ones a run couldn't check, then
-                # ones that had openings, then the longest since a look.
+                # "Check next run" first, then ones that had openings, then
+                # ones a run couldn't check, then the longest since a look.
                 case(
-                    (ScoutCompany.last_result == COMPANY_NOT_CHECKED, 1),
+                    (ScoutCompany.last_result == COMPANY_NOT_CHECKED, 2),
                     (ScoutCompany.last_checked_at.is_(None), 0),
-                    (ScoutCompany.last_result == COMPANY_OPENINGS, 2),
+                    (ScoutCompany.last_result == COMPANY_OPENINGS, 1),
                     else_=3,
                 ),
                 ScoutCompany.last_checked_at,
@@ -354,10 +354,12 @@ async def checked(
             "That company wasn't handed out in this search. Send it to "
             "check_companies first, with the same website."
         )
+    before = company.last_result
     company.last_result = result
-    company.last_openings = (
-        clean_openings(openings) if result == COMPANY_OPENINGS else []
-    )
+    if result != COMPANY_NOT_CHECKED:  # a site that didn't load keeps its list
+        company.last_openings = (
+            clean_openings(openings) if result == COMPANY_OPENINGS else []
+        )
     link = _http(careers_url)
     if result == COMPANY_NO_CAREERS:
         company.careers_url = None
@@ -373,7 +375,10 @@ async def checked(
     stats["companies_with_openings"] = len(opened)
     missed = set(stats.get("_not_checked", []))
     if result == COMPANY_NOT_CHECKED:
-        company.last_checked_at = None  # due again on the next run
+        if key not in missed and before != COMPANY_NOT_CHECKED:
+            company.last_checked_at = None  # due again on the next run
+        # Twice in a row: it waits the usual week, so it can't take a
+        # look-again place every run.
         missed.add(key)
     elif key in missed:  # a corrected report: it was checked after all
         company.last_checked_at = _now()

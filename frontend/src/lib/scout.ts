@@ -841,7 +841,8 @@ export function companyStatus(c: Company): string {
     month: "short",
     day: "numeric",
   });
-  return `${result} · checked ${when}`;
+  // A site that didn't load was only tried, not checked.
+  return `${result} · ${c.last_result === "not_checked" ? "tried" : "checked"} ${when}`;
 }
 
 /**

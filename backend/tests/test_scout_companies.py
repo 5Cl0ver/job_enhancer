@@ -139,15 +139,28 @@ class TestStartUrls:
         return [q.split(" near ")[0] for q in self._queries(**over)]
 
     def test_every_search_comes_from_the_titles(self):
-        titles = ["IT Systems Administrator", "Help Desk Technician"]
+        titles = ["IT Systems Administrator", "Help Desk Technician", "Jira Admin"]
         assert self._asks(track=self._track(titles)) == [
             "IT Admin companies",
             "companies that hire IT Systems Administrator",
             "companies that hire Help Desk Technician",
         ]
+        # Few titles: they take turns in two searches and a kind of employer
+        # rotates in the third, so every run reaches new businesses.
+        few = self._track(titles[:2])
+        first, second = self._asks(track=few), self._asks(track=few, round=1)
+        assert first[:2] == [
+            "IT Admin companies",
+            "companies that hire IT Systems Administrator",
+        ]
+        assert (
+            first[2] in scout_runs.EMPLOYER_KINDS
+            and second[2] in scout_runs.EMPLOYER_KINDS
+        )
+        assert first != second and first[2] != second[2]
         # Related titles count too.
-        asks = self._asks(track=self._track(titles[:1], related=["Help Desk Tech"]))
-        assert asks[2] == "companies that hire Help Desk Tech"
+        track = self._track(titles[:1], related=["Help Desk Tech"])
+        assert "companies that hire Help Desk Tech" in self._asks(track=track, round=1)
 
     def test_broad_runs_search_the_titles_claude_chose(self):
         chosen = ["Desktop Support", "Network Technician", "Help Desk Analyst"]
@@ -510,7 +523,7 @@ class TestNotChecked:
         assert missed.last_result == "not_checked"
         assert missed.last_checked_at is None  # due again
         assert missed.careers_url == "https://brambleworks.example/careers"
-        assert missed.last_openings == []
+        assert not missed.last_openings
         assert rows["vellacor.example"].last_checked_at is not None
         # It used up one of this run's companies, and isn't handed out twice.
         assert run.stats["companies"] == 2
@@ -531,7 +544,7 @@ class TestNotChecked:
         brief = await mcp_mod.get_scout_brief()
         assert [c["name"] for c in brief["recheck"]] == ["Brambleworks"]
 
-    async def test_rechecked_after_check_next_run_before_openings(
+    async def test_rechecked_after_check_next_run_and_openings(
         self, engine, monkeypatch
     ):
         maker = await _connected_user(engine, monkeypatch, email="nc2@test.dev")
@@ -553,7 +566,7 @@ class TestNotChecked:
             await db.commit()
         brief = await mcp_mod.get_scout_brief()
         names = [c["name"] for c in brief["recheck"]]
-        assert names == ["Asked", "Missed", "Hiring Co"]
+        assert names == ["Asked", "Hiring Co", "Missed"]
 
     async def test_a_corrected_report_is_checked_after_all(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="nc3@test.dev")
@@ -870,3 +883,42 @@ async def test_each_companys_openings_arent_counted_as_results_pages(
         out = await mcp_mod.check_jobs(str(run_id), [row])
         assert out["open"] == [0] and "next_page_url" not in out
         assert "company_checked" in out["next"] and "last" not in out["next"]
+
+
+@pytest.mark.asyncio
+class TestNotCheckedTwice:
+    async def test_twice_in_a_row_waits_the_usual_week_and_keeps_its_list(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="nc9@test.dev")
+        user_id, _, run_id = await _setup(maker, "nc9@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_companies(
+            str(run_id), [_co("Brambleworks", "brambleworks.example")]
+        )
+        async with maker() as db:
+            co = await db.scalar(
+                select(ScoutCompany).where(ScoutCompany.key == "brambleworks.example")
+            )
+            # Last week it had openings, and the week before it didn't load.
+            co.last_result = "not_checked"
+            co.last_openings = [{"title": "IT Admin", "url": None, "fit": None}]
+            await db.commit()
+        await mcp_mod.company_checked(
+            str(run_id), "brambleworks.example", "not_checked"
+        )
+        async with maker() as db:
+            co = await db.scalar(
+                select(ScoutCompany).where(ScoutCompany.key == "brambleworks.example")
+            )
+            assert co.last_checked_at is not None  # not due again next run
+            assert co.last_openings == [{"title": "IT Admin", "url": None, "fit": None}]
+
+
+def test_a_local_run_chooses_only_the_titles_it_searches():
+    from app.services import scout_titles
+
+    assert scout_titles.max_titles({"source": "local_companies"}) == 3
+    assert scout_titles.max_titles({"source": "linkedin"}) == 8
+    c = {"source": "local_companies", "limits": {"titles": 2}}
+    assert scout_titles.max_titles(c) == 2

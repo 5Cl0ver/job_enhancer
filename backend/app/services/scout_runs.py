@@ -662,9 +662,17 @@ def company_searches(c: dict) -> list[str]:
         if r.lower() not in {q.lower() for q in queries}:
             queries.append(r)
     n = int(c.get("round") or 0)
-    if len(queries) >= COMPANY_SEARCHES:
+    if c.get("broad"):  # Claude chooses new titles each run
+        queries = queries[:COMPANY_SEARCHES]
+    elif len(queries) > COMPANY_SEARCHES:
         first = (COMPANY_SEARCHES * n) % len(queries)
-        return _google((queries[first:] + queries[:first])[:COMPANY_SEARCHES], c)
+        queries = (queries[first:] + queries[:first])[:COMPANY_SEARCHES]
+    else:
+        # Few titles: they take turns in all but one search, and kinds of
+        # employer fill the rest, so each run still reaches new businesses.
+        take = min(len(queries), COMPANY_SEARCHES - 1)
+        first = (take * n) % len(queries) if queries else 0
+        queries = (queries[first:] + queries[:first])[:take]
     need = COMPANY_SEARCHES - len(queries)
     kinds = len(EMPLOYER_KINDS)
     queries += [EMPLOYER_KINDS[(need * n + i) % kinds] for i in range(need)]
@@ -673,7 +681,7 @@ def company_searches(c: dict) -> list[str]:
 
 def _google(queries: list[str], c: dict) -> list[str]:
     """Each query as a Google search near the user's place, job boards left out."""
-    place = c.get("where") or c.get("location") or ""
+    place = search_place(c)
     near = f" near {place}" if place else ""
     return [
         f"https://www.google.com/search?{urlencode({'q': f'{q}{near} {_NOT_BOARDS}'})}"
@@ -1275,7 +1283,7 @@ async def _brief_body(
         extra.update(
             broad=True,
             broad_steps=instr.text_for(c, "broad"),
-            max_titles=instr.limit(c, "titles"),
+            max_titles=titles_svc.max_titles(c),
             titles_tried=await titles_svc.for_brief(db, run),
             always=ov["always"],
             never=ov["never"],
@@ -1313,7 +1321,7 @@ async def _brief_body(
     elif choosing:
         first = (
             "Call get_master_profile, choose up to "
-            f"{instr.limit(c, 'titles')} job titles the user would be good at (see "
+            f"{titles_svc.max_titles(c)} job titles the user would be good at (see "
             "broad_steps), then call set_search_titles: it gives you the start URLs."
         )
     elif ready and not done_searching:
@@ -1715,7 +1723,7 @@ async def check_jobs(
         link_done = (
             ran_out
             or link_pages >= per_search
-            or (total is not None and link_pages * per_page >= total)
+            or (total is not None and (link_pages + _skip(c, link)) * per_page >= total)
         )
         widened_to = _widen_to(c, link, info) if link_done else None
         if widened_to:

@@ -248,6 +248,9 @@ describe("local companies", () => {
         last_checked_at: null,
       }),
     ).toBe("Couldn't check · tried again next run");
+    expect(companyStatus({ ...c, last_result: "not_checked" })).toMatch(
+      /^Couldn't check · tried Nov 1[78]$/,
+    );
   });
 });
 
