@@ -259,10 +259,11 @@ if ((IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS) || IS_LINKEDIN || IS_ZI
   try {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg?.type !== "extractJob") return;
+      // Same escape hatch as the panel's inline reader: highlighted text wins
+      // (read before anything is pressed; expandMore leaves a highlight alone).
+      const sel = (window.getSelection?.().toString() || "").trim();
       readWhole()
         .then((job) => {
-          // Same escape hatch as the panel's inline reader: highlighted text wins.
-          const sel = (window.getSelection?.().toString() || "").trim();
           if (sel.length > 40) job.description = sel;
           sendResponse({ ok: true, job });
         })
@@ -417,10 +418,15 @@ async function onSave() {
     return;
   }
   setState(btn, "busy", "Saving…");
-  const job = await readWhole(); // re-read fresh at click time, the whole description
-  btn._job = job;
-  if (!job.title) {
-    setState(btn, "error", "Can't read here → use panel Capture");
+  let job = null;
+  try {
+    job = await readWhole(); // re-read fresh at click time, the whole description
+  } catch {
+    /* a page we can't read: same as no title below */
+  }
+  if (btn) btn._job = job;
+  if (!job?.title || !job.company) {
+    setState(btn, "error", job?.title ? "No company here → save from the panel" : "Can't read here → use panel Capture");
     setTimeout(() => btn && setState(btn, "idle", LABEL), 3500);
     return;
   }

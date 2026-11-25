@@ -184,9 +184,12 @@ export function parseJobTypes(text) {
   return found.join(", ").slice(0, 50);
 }
 
-// The job boards' own names: never a company (a page with no employer name in
-// it otherwise saves "ZipRecruiter" as the company).
-const BOARD_NAME = /^(indeed(\.com)?|linkedin|ziprecruiter|glassdoor|dice|monster|simplyhired|built ?in|google|careerbuilder)$/i;
+// The job boards' own names: not a company when a page's own text says so (a
+// page with no employer name otherwise saves "ZipRecruiter" as the company).
+// Structured posting data (JSON-LD, Indeed's own data) is trusted: LinkedIn
+// and Indeed hire people too.
+const BOARD_NAME = /^(indeed(\.com)?|linkedin|ziprecruiter|glassdoor|dice|monster|simplyhired|built ?in|careerbuilder)$/i;
+const TRUSTED = new Set(["jsonld", "indeed-embedded"]);
 const BOARD_TAIL = /\s*[-–—|·]\s*(indeed(\.com)?|linkedin|ziprecruiter|glassdoor|dice(\.com)?|monster|simplyhired|built ?in|careerbuilder)\s*$/i;
 // "Systems Engineer - Clackamas, OR 97015" / "… - Remote": the tab title's place.
 const PLACE_TAIL = /\s+[-–—|]\s+([Rr]emote|[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3},\s*[A-Z]{2}(?:\s+\d{5})?)\s*$/;
@@ -220,13 +223,18 @@ export function cleanDescription(s) {
   return cleanMultiline(lines.join("\n"));
 }
 
+/** "careers-nscglobal" (a hiring site's address) → "nscglobal". */
+function siteless(company) {
+  return clean(company).replace(/^(careers?|jobs?)-(?=\w)/i, "").replace(/-careers?$/i, "");
+}
+
 /** The same tidy-up on a whole job, for readers outside mergeJob (the panel). */
 export function tidyJob(job) {
   if (!job) return job;
   const out = { ...job };
   out.title = cleanTitle(out.title);
   if (isBoardName(out.company)) out.company = "";
-  out.company = clean(out.company).replace(/^(careers?|jobs?)-(?=\w)/i, "").replace(/-careers?$/i, "");
+  out.company = siteless(out.company);
   out.description = cleanDescription(out.description);
   return out;
 }
@@ -248,7 +256,7 @@ export function mergeJob(candidates, url) {
   for (const field of ["company", "title", "location", "job_type", "url"]) {
     for (const c of candidates) {
       let v = clean(c.data?.[field]);
-      if (field === "company" && isBoardName(v)) v = "";
+      if (field === "company") v = TRUSTED.has(c.via) ? v : isBoardName(v) ? "" : siteless(v);
       if (field === "title") {
         v = cleanTitle(v);
         if (v && out.company && v.toLowerCase() === out.company.toLowerCase()) {

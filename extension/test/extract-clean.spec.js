@@ -78,6 +78,18 @@ describe("companies are never a board, and a title is never just the company", (
     expect(job.company).toBe("Industrial eNet");
   });
 
+  it("trusts a posting's own data: LinkedIn and Indeed hire people too", () => {
+    const job = mergeJob([{ via: "jsonld", data: { title: "Senior SWE", company: "LinkedIn" } }], "u");
+    expect(job.company).toBe("LinkedIn");
+    expect(mergeJob([{ via: "site", data: { title: "SWE", company: "Google" } }], "u").company).toBe("Google");
+  });
+
+  it("drops 'careers-' from a company read off the page", () => {
+    expect(mergeJob([{ via: "site", data: { title: "IT Support", company: "careers-nscglobal" } }], "u").company).toBe(
+      "nscglobal",
+    );
+  });
+
   it("leaves the company blank rather than a board's name", () => {
     const job = mergeJob([{ via: "site", data: { title: "Systems Engineer", company: "ZipRecruiter" } }], "u");
     expect(job.company).toBe("");
@@ -145,8 +157,42 @@ describe("a Save opens a description hidden behind 'See more'", () => {
     expect(expandMore(doc)).toBe(0);
   });
 
-  it("presses at most three", () => {
-    const btns = Array.from({ length: 5 }, () => `<button aria-expanded="false">Show more</button>`).join("");
-    expect(expandMore(docOf(`<section><p>${long}</p>${btns}</section>`))).toBe(3);
+  it("never presses menus, 'Show all', navigation or a form's submit button", () => {
+    const doc = docOf(`<nav><p>${long}</p><button aria-expanded="false">Show more</button></nav>
+      <div class="job-description"><p>${long}</p>
+        <button aria-expanded="false" aria-haspopup="menu">See more</button>
+        <button>Show all</button></div>
+      <form><div class="job-description"><p>${long}</p><button>Show more</button></div></form>`);
+    let submitted = 0;
+    doc.querySelector("form").addEventListener("submit", (e) => {
+      submitted++;
+      e.preventDefault();
+    });
+    expect(expandMore(doc)).toBe(0);
+    expect(submitted).toBe(0);
+  });
+
+  it("presses a form's plain button (type=button) inside the description", () => {
+    const doc = docOf(`<form><div class="job-description"><p>${long}</p><button type="button">Show more</button></div></form>`);
+    expect(expandMore(doc)).toBe(1);
+  });
+
+  it("presses only one, the visible one, so a twin toggle doesn't close it again", () => {
+    const doc = docOf(`<div class="job-description"><p>${long}</p>
+      <button class="mobile" hidden>Read more</button>
+      <button class="desktop">Read more</button>
+      <button class="footer">See more</button></div>`);
+    const pressed = [];
+    for (const b of doc.querySelectorAll("button")) b.addEventListener("click", () => pressed.push(b.className));
+    expect(expandMore(doc)).toBe(1);
+    expect(pressed).toEqual(["desktop"]);
+  });
+
+  it("presses nothing while the user has text highlighted", () => {
+    const doc = docOf(`<div class="job-description"><p id="t">${long}</p><button>Read more</button></div>`);
+    const range = doc.createRange();
+    range.selectNodeContents(doc.getElementById("t"));
+    doc.defaultView.getSelection().addRange(range);
+    expect(expandMore(doc)).toBe(0);
   });
 });
