@@ -123,11 +123,12 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     await c.storage.session.set({ [tabsKey(runId)]: [...tabs].slice(-5) }).catch(() => {});
   }
 
-  /** The résumé for a page of the open run (spec 026), else null. */
+  /** The résumé for the open run's own tab (spec 026), else null: never
+   * another job's application on the same site (LinkedIn, Greenhouse…). */
   async function resumeFor(tab) {
     const data = await active();
-    if (!data.run_id || !data.resume_id || !tab?.url) return null;
-    return onRunHost(hostOf(tab.url), data.hosts) ? data.resume_id : null;
+    if (!data.run_id || !data.resume_id || !tab?.url || tab.id == null) return null;
+    return (await isRunTab(data, tab)) ? data.resume_id : null;
   }
 
   /** Is this the application's own tab (and still on its site)? */
@@ -195,7 +196,8 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
 
   async function handle(req, data) {
     // Only the computer with the application's tab takes it.
-    const tab = await findTab(req.url, data.run_id, { ownFirst: req.kind === "peek" });
+    // The run's own tab first: another tab on the same page is never it.
+    const tab = await findTab(req.url, data.run_id, { ownFirst: true });
     if (!tab) return;
     const claimed = await api(`/v1/apply/requests/${req.id}/claim`, { method: "POST", body: "{}" }).catch(() => null);
     if (!claimed) return; // network: try again next turn
@@ -224,7 +226,8 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
     const key = pageKey(url);
     const same = tabs.filter((t) => t.url && pageKey(t.url) === key);
-    const pick = same.find((t) => t.active) || same[0];
+    // Showing, else the one used last (where Claude is working).
+    const pick = same.find((t) => t.active) || [...same].sort((a, b) => (b.lastAccessed || 0) - (a.lastAccessed || 0))[0];
     if (pick) return pick;
     const host = hostOf(url);
     const mine = await runTabs(runId);
@@ -255,14 +258,17 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
 
   /**
    * Show the application's tab for a photo (spec 026): make it the tab
-   * showing in its window, restoring a minimised window. Never focuses the
-   * window over another app. `restore` puts back what was showing, unless the
-   * user has moved on since.
+   * showing in its window, restoring a minimised window. Never while the user
+   * is typing in that window (their keys would land in the form): then it's
+   * "busy" and the page is kept as text. `restore` puts back what was
+   * showing, unless the user has moved on since.
    */
   async function showFor(tab) {
     const now = await c.tabs.get(tab.id).catch(() => null);
     const win = now && (await c.windows.get(now.windowId).catch(() => null));
     if (!now || !win) return { reason: "tab_closed" };
+    const inUse = async () => (await c.idle?.queryState?.(15).catch(() => null)) === "active";
+    if ((win.state === "minimized" || (!now.active && win.focused)) && (await inUse())) return { reason: "busy" };
     const undo = [];
     if (win.state === "minimized") {
       await c.windows.update(win.id, { state: "normal" }).catch(() => {});
@@ -295,7 +301,10 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
 
   async function photos(req, tab) {
     const shown = await showFor(tab);
-    if (!shown.tab) return { ok: false, reason: shown.reason };
+    if (!shown.tab) {
+      // In use: no photo now, but the page's questions and answers still go.
+      return shown.reason === "busy" ? { ok: false, reason: "busy", answers: await readAnswers(tab.id) } : { ok: false, reason: shown.reason };
+    }
     try {
       return await photosShown(req, shown.tab);
     } finally {

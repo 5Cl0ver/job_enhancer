@@ -1623,6 +1623,10 @@ REASONS = {
         "photo (the answers are kept)"
     ),
     "changed": "The page changed while the photo was taken",
+    "busy": (
+        "You were using Chrome on this computer, so no photo then (the answers "
+        "are kept)"
+    ),
     "replaced": "A newer page came first",
     "error": "Job Catcher hit an error on this page",
 }

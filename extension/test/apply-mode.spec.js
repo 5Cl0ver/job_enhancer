@@ -259,7 +259,7 @@ describe("the background loop", () => {
   });
 
   it("a tab behind another is shown for its photos, then the user's tab comes back (spec 026)", async () => {
-    const c = fakeChrome({ tabActive: false });
+    const c = fakeChrome({ tabActive: false, idle: "idle" });
     const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
     await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
     expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(2);
@@ -268,8 +268,23 @@ describe("the background loop", () => {
     expect(c.windows.update).not.toHaveBeenCalled(); // never raised over other apps
   });
 
+  it("never takes the window from someone typing in it: the page is kept as text", async () => {
+    for (const opts of [{ tabActive: false }, { windowState: "minimized" }]) {
+      const c = fakeChrome({ ...opts, idle: "active" });
+      const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+      await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+      expect(c.tabs.update).not.toHaveBeenCalled();
+      expect(c.windows.update).not.toHaveBeenCalled();
+      expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({
+        ok: false,
+        reason: "busy",
+        answers: [{ q: "Name", a: "Sam" }, { q: "Email", a: "s@x" }],
+      });
+    }
+  });
+
   it("a minimised window is restored for the photos and minimised again", async () => {
-    const c = fakeChrome({ windowState: "minimized" });
+    const c = fakeChrome({ windowState: "minimized", idle: "idle" });
     const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
     await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
     expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(2);
@@ -322,14 +337,18 @@ describe("the background loop", () => {
     expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).resume).toBe("attached");
   });
 
-  it("the run's own résumé for its pages, never another site's (spec 026)", async () => {
+  it("the run's own résumé for its own tab only, never another job on the same site (spec 026)", async () => {
     const api = vi.fn(async () => ({
       ok: true,
       json: async () => ({ run_id: "r1", hosts: ["myworkdayjobs.com"], resume_id: "res-9", requests: [] }),
     }));
-    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     expect(await run.resumeFor({ id: 7, url: "https://acme.wd1.myworkdayjobs.com/apply" })).toBe("res-9");
-    expect(await run.resumeFor({ id: 8, url: "https://www.linkedin.com/jobs/view/1" })).toBe(null);
+    // Another company's Workday application in another tab.
+    expect(await run.resumeFor({ id: 9, url: "https://globex.wd5.myworkdayjobs.com/apply" })).toBe(null);
+    expect(await run.resumeFor({ id: 7, url: "https://www.linkedin.com/jobs/view/1" })).toBe(null);
   });
 
   it("sends the live view while filling, only when the page changed (spec 026)", async () => {

@@ -1239,7 +1239,9 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // the one made for the job or picked for it, never a guess.
         const runResume = await applyRun.resumeFor(tab).catch(() => null);
         if (runResume) {
-          sendResponse({ ok: true, ...(await autofill.get({ resumeId: runResume })) });
+          // Never the usual résumé in its place: no file, and Claude is told.
+          const got = await autofill.get({ resumeId: runResume });
+          sendResponse({ ok: true, ...got, ...(got.chosenFailed ? { resume: null } : {}) });
         } else {
           const { key, choice, resumeId } = await resumeFor(tab);
           const got = await autofill.get({ resumeId });

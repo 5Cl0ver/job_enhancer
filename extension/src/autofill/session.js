@@ -184,8 +184,10 @@ export function createSession(deps) {
   const declined = new Set();
   /** The résumé on this page: attached / no_box / no_file / failed (spec 026). */
   let resumeState = null;
-  /** The page the résumé went up on (a site may swap its box for the file's name). */
+  /** Where the résumé went up, and its name: a site may swap its box for the
+   * file's name (Workday), but later steps at the same address aren't it. */
   let attachedOn = "";
+  let attachedName = "";
   /** Fields already put to the AI: never asked twice (each step, each run). */
   const aiAsked = new Set();
 
@@ -372,8 +374,9 @@ export function createSession(deps) {
     const boxes = scan().filter((f) => f.kind === "file" && isResumeUpload(f));
     const here = doc.location?.href || "";
     // What happened to the résumé on this page, for Apply with Claude (spec 026).
-    const state = (s) => ((resumeState = s), s === "attached" && (attachedOn = here), false);
-    if (!boxes.length) return state(attachedOn === here ? "attached" : "no_box");
+    const state = (s) => ((resumeState = s), false);
+    const shows = () => !!attachedName && (doc.body?.textContent || "").includes(attachedName);
+    if (!boxes.length) return state(attachedOn === here && shows() ? "attached" : "no_box");
     if (boxes.some((f) => f.el.files?.length || filled.has(f.id))) return state("attached");
     if (!copy.resumeFile) return state("no_file");
     let tried = false;
@@ -385,6 +388,8 @@ export function createSession(deps) {
       const res = await fillOne(field, d.values, d.source);
       if (res.ok) {
         state("attached");
+        attachedOn = here;
+        attachedName = copy.resumeFile.name || "";
         return true; // one résumé per page, never into a second box
       }
     }

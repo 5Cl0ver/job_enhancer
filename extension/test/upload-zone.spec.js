@@ -42,3 +42,27 @@ describe("hidden upload boxes", () => {
     expect(isResumeUpload(box)).toBe(false);
   });
 });
+
+describe("what happened to the résumé, step by step (spec 026)", () => {
+  it("says attached on its page, and no box on a later step at the same address", async () => {
+    const { createSession } = await import("../src/autofill/session.js");
+    const doc = parse(`<form><label for="r">Résumé</label><input id="r" type="file" accept=".pdf"></form>`);
+    const s = createSession({ doc, send: async () => ({}), visible: () => true });
+    const resumeFile = new File(["%PDF"], "wren-acme.pdf", { type: "application/pdf" });
+    const copy = { values: {}, answers: [], resumeFile };
+    expect(await s.uploadResume(copy)).toBe(true);
+    expect(s.report().resume).toBe("attached");
+    // The site swaps the box for the file's name (Workday): still attached.
+    doc.body.innerHTML = `<p>Successfully uploaded: wren-acme.pdf</p>`;
+    await s.uploadResume(copy);
+    expect(s.report().resume).toBe("attached");
+    // A later step at the same address with no résumé box.
+    doc.body.innerHTML = `<form><label for="v">Veteran status</label><select id="v"><option>No</option></select></form>`;
+    await s.uploadResume(copy);
+    expect(s.report().resume).toBe("no_box");
+    // No file for this job.
+    doc.body.innerHTML = `<form><label for="r2">Résumé</label><input id="r2" type="file" accept=".pdf"></form>`;
+    await s.uploadResume({ ...copy, resumeFile: null });
+    expect(s.report().resume).toBe("no_file");
+  });
+});
