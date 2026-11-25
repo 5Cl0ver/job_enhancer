@@ -18,7 +18,9 @@ export function expandMore(root = document) {
 
   const MORE = /^(?:…|\.\.\.)?\s*(?:(?:see|show|read|view)\s+(?:more|full(?:\s+job)?\s+description|the\s+full\s+description)(?:\s+details)?|(?:…|\.\.\.)\s*more)\s*(?:…|\.\.\.)?$/i;
   const DESCRIPTION = /(?:job|posting)[-_]?description|jobs-description|jobdescription|description[-_]?(?:text|content|body)|about-?the-?job/i;
-  const AWAY = "nav, header, footer, [role='menu'], [role='menubar'], [role='dialog'], [role='navigation'], [role='listbox'], [aria-modal='true']";
+  // Page-level only: a description's own "See more" often sits in a small
+  // <footer> inside the description (LinkedIn's jobs-description__footer).
+  const AWAY = "body > header, body > footer, [role='banner'], [role='contentinfo'], nav, [role='menu'], [role='menubar'], [role='dialog'], [role='navigation'], [role='listbox'], [aria-modal='true']";
   const laidOut = (root.body?.getClientRects?.().length || 0) > 0;
 
   const words = (el) => (el.textContent || el.getAttribute("aria-label") || "").replace(/\s+/g, " ").trim();
@@ -33,7 +35,8 @@ export function expandMore(root = document) {
     return laidOut && !el.getClientRects().length;
   };
   const safe = (el) => {
-    if (el.disabled || el.getAttribute("aria-haspopup") || el.closest(AWAY)) return false;
+    const popup = el.getAttribute("aria-haspopup");
+    if (el.disabled || (popup && popup !== "false") || el.closest(AWAY)) return false;
     if (el.tagName === "A") {
       const href = (el.getAttribute("href") || "").trim();
       return !href || href === "#" || /^javascript:/i.test(href);

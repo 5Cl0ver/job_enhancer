@@ -144,6 +144,20 @@ describe("a Save opens a description hidden behind 'See more'", () => {
     expect(pressed).toBe(1);
   });
 
+  it("presses LinkedIn's button in the description's own footer", () => {
+    const doc = docOf(`<body><header><nav>Jobs</nav></header><div class="jobs-description__container">
+      <div class="jobs-description__content"><p>${long}</p></div>
+      <footer class="jobs-description__footer"><button class="jobs-description__footer-button"
+        aria-label="Click to see more description" aria-haspopup="false">See more</button></footer></div></body>`);
+    expect(expandMore(doc)).toBe(1);
+  });
+
+  it("never presses one in the page's own header or footer", () => {
+    const doc = docOf(`<body><div class="job-description"><p>${long}</p></div>
+      <footer><p>${long}</p><button aria-expanded="false">Show more</button></footer></body>`);
+    expect(expandMore(doc)).toBe(0);
+  });
+
   it("presses a closed 'Read more' toggle beside a long text", () => {
     const doc = docOf(`<section><p>${long}</p><button aria-expanded="false">Read more</button></section>`);
     expect(expandMore(doc)).toBe(1);
