@@ -489,9 +489,25 @@ def page_url(c: dict, link: int, pages_read: int) -> str | None:
     if source not in PER_PAGE or link >= len(urls):
         return None
     url = urls[link]
+    page = pages_read + _skip(c, link)
     if source == "ziprecruiter":
-        return f"{url}&page={pages_read + 1}"
-    return f"{url}&start={pages_read * PER_PAGE[source]}"
+        return f"{url}&page={page + 1}"
+    return f"{url}&start={page * PER_PAGE[source]}"
+
+
+def _skip(c: dict, link: int) -> int:
+    """Pages an added search starts past: a longer window repeats a search
+    already read, whose newest jobs it would show again first (spec 021)."""
+    more = c.get("more") or []
+    added = link - base_count(c)
+    return int(more[added].get("skip") or 0) if 0 <= added < len(more) else 0
+
+
+def first_url(c: dict, link: int) -> str:
+    """Where one of the run's searches starts reading."""
+    if _skip(c, link):
+        return page_url(c, link, 0) or search_links(c)[link]["url"]
+    return search_links(c)[link]["url"]
 
 
 def dropped_params(sent: str, landed: str) -> list[str]:
@@ -568,7 +584,14 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
     rows = s.get("rows", 0)
     if found >= c.get("job_count", 0) or not rows:
         return None
+    if _looked_enough(c, s):
+        return (
+            f"The run looked through {rows} jobs, its limit. For more, raise "
+            '"Jobs a run looks through" in Instructions › Limits.'
+        )
     days = c.get("posted_within_days", 7)
+    if "wider" in (c.get("steps") or []):
+        days = max(days, MORE_DAYS)  # it already searched the past 14 days
     wider = next((d for d in (3, 7, 14, 30) if d > days), None)
     widen = f'widen "Posted" to "Last {wider} days"' if wider else ""
     radius = c.get("radius_miles")
@@ -595,7 +618,7 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
             "related titles to the resume type, pick a bigger radius"
             + (f", or {widen}." if widen else ".")
         )
-    budget = instr.limit(c, "search_pages") * max(1, len(search_links(c)))
+    budget = instr.limit(c, "search_pages") * max(1, base_count(c))
     ran_out = run.status == RUN_DONE and s.get("pages", budget) < budget
     if ran_out and (widen or (radius and radius < 100)):
         more = [w for w in (widen, "pick a bigger radius" if radius else "") if w]
@@ -1263,9 +1286,9 @@ async def _brief_body(
         links = search_links(c)
         at, at_pages = int(so_far["_link"]), int(so_far.get("_link_pages", 0))
         if at < len(links):
-            resume = (page_url(c, at, at_pages) if at_pages else None) or links[at][
-                "url"
-            ]
+            resume = (page_url(c, at, at_pages) if at_pages else None) or first_url(
+                c, at
+            )
             extra["resume_url"] = resume
             first = (
                 f"Carry on where the run was: open resume_url (search {at + 1} of "
@@ -1609,7 +1632,11 @@ async def check_jobs(
     # the last page again) changes nothing and gets the same answer. Rows the
     # next search shares with the last page are told apart: by the address
     # Claude landed on, or by being sent a second time.
-    seen_link = _link_of(c, page_url_seen, link) if paged and page_url_seen else None
+    found = _links_of(c, page_url_seen) if paged and page_url_seen else []
+    seen_link = link if link in found else (found[0] if found else None)
+    # Searches a run added share their words with the first ones: an address
+    # that fits more than one can't tell a resend from the next search.
+    sure = len(found) == 1
     resent = False
     if seen_link is not None and seen_link < link:
         resent = True  # a page of a search already done
@@ -1622,7 +1649,7 @@ async def check_jobs(
     ):
         moved_on = last.get("link") != link
         repeats = int(last.get("repeats", 0)) + 1
-        resent = not (moved_on and (seen_link == link or repeats >= 2))
+        resent = not (moved_on and ((seen_link == link and sure) or repeats >= 2))
         last = {**last, "repeats": repeats}
         stats["_last"] = last
     if resent and last.get("answer"):
@@ -1646,8 +1673,12 @@ async def check_jobs(
     looked_enough = False
     read_on = link  # the search this page was read on
     if paged:
-        if place_fixed and page_url_seen and c["source"] == "linkedin":
+        # Only a page of the run's own searches around its place: an added
+        # remote search shows the whole country (spec 021).
+        local_search = link < base_count(c) and c.get("remote") != "remote_only"
+        if place_fixed and page_url_seen and c["source"] == "linkedin" and local_search:
             geo = _geo_id(page_url_seen)
+            geo = None if geo == US_GEO_ID else geo
             mission = (
                 await db.get(ScoutMission, run.mission_id) if run.mission_id else None
             )
@@ -1694,7 +1725,7 @@ async def check_jobs(
             all_links[str(link)] = info
             link_pages = 0
             links = search_links(c)
-            nxt_url = links[link]["url"]
+            nxt_url = first_url(c, link)
         elif link_done:
             link, link_pages = link + 1, 0
             if link >= len(links) and not (await _progress(db, run))["done"]:
@@ -1713,7 +1744,7 @@ async def check_jobs(
             elif base_count(c) <= link < len(links) and _looked_enough(c, stats):
                 # Looked through enough: none of the rest of the added searches.
                 link, looked_enough = len(links), True
-            nxt_url = links[link]["url"] if link < len(links) else None
+            nxt_url = first_url(c, link) if link < len(links) else None
         else:
             nxt_url = page_url(c, link, link_pages)
         stats["_link"], stats["_link_pages"] = link, link_pages
@@ -1826,6 +1857,20 @@ STEP_WORDS = {
 }
 
 
+def _pages_read(c: dict, stats: dict, link: int) -> int:
+    """Whole results pages one search has read, counting only the results
+    there were (a search of 30 read in 2 pages of 25 read 1 whole page)."""
+    per_page = PER_PAGE.get(c["source"])
+    info = (stats.get("_links") or {}).get(str(link)) or {}
+    if not per_page or not info.get("pages"):
+        return 0
+    read = int(info["pages"]) * per_page
+    total = info.get("total")
+    if isinstance(total, int):
+        read = min(read, total)
+    return read // per_page
+
+
 def _looked_enough(c: dict, stats: dict) -> bool:
     return int(stats.get("rows", 0)) >= instr.limit(c, "looks")
 
@@ -1872,9 +1917,21 @@ def _keep_going(c: dict, stats: dict) -> dict | None:
                 ]
         elif step == "wider":
             if int(c["posted_within_days"]) < MORE_DAYS:
+                # Each search again over the longer window, starting past the
+                # pages already read: the newest jobs come first again.
+                base = len(groups)
+                remote_at = [
+                    base + i
+                    for i, m in enumerate(c.get("more") or [])
+                    if m.get("step") == "remote"
+                ]
                 more = [
-                    {"title": f"{label} (past {MORE_DAYS} days)", "words": words}
-                    for label, words in groups
+                    {
+                        "title": f"{label} (past {MORE_DAYS} days)",
+                        "words": words,
+                        "skip": _pages_read(c, stats, i),
+                    }
+                    for i, (label, words) in enumerate(groups)
                 ]
                 if remote_too:
                     more += [
@@ -1882,8 +1939,9 @@ def _keep_going(c: dict, stats: dict) -> dict | None:
                             "title": f"{label} (remote, past {MORE_DAYS} days)",
                             "words": words,
                             "remote": True,
+                            "skip": _pages_read(c, stats, at),
                         }
-                        for label, words in groups
+                        for (label, words), at in zip(groups, remote_at, strict=False)
                     ]
                 more = [{**m, "days": MORE_DAYS} for m in more]
         else:
@@ -1904,6 +1962,15 @@ def _link_of(c: dict, url: str, at: int | None = None) -> int | None:
     """Which of the run's searches an address is a page of, by the words it
     searched for (None when it can't tell). Searches a run added to keep going
     share their words with the first ones: the one it's on (``at``) wins."""
+    found = _links_of(c, url)
+    if at in found:
+        return at
+    return found[0] if found else None
+
+
+def _links_of(c: dict, url: str) -> list[int]:
+    """Every one of the run's searches an address could be a page of, by the
+    words it searched for."""
     key = {"linkedin": "keywords", "indeed": "q", "ziprecruiter": "search"}.get(
         c["source"], "q"
     )
@@ -1917,13 +1984,8 @@ def _link_of(c: dict, url: str, at: int | None = None) -> int | None:
 
     landed = words(url)
     if not landed:
-        return None
-    found = [
-        i for i, link in enumerate(search_links(c)) if words(link["url"]) == landed
-    ]
-    if at in found:
-        return at
-    return found[0] if found else None
+        return []
+    return [i for i, link in enumerate(search_links(c)) if words(link["url"]) == landed]
 
 
 def _geo_id(url: str) -> str | None:

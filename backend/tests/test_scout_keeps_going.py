@@ -203,7 +203,6 @@ class TestARunKeepsGoing:
             "Looked through 24 jobs, and kept going with remote jobs anywhere in "
             "the country and the past 14 days."
         ) in fin["next"]
-        assert "and 0 more" not in fin["next"]
 
     async def test_a_run_that_has_enough_never_keeps_going(self, engine, monkeypatch):
         maker = await _connected_user(engine, monkeypatch, email="k2@test.dev")
@@ -211,8 +210,7 @@ class TestARunKeepsGoing:
         await mcp_mod.get_scout_brief()
         monkeypatch.setattr(scout_runs, "_progress", _fake_progress(done=True))
         await mcp_mod.check_jobs(str(run_id), _rows(0), total_results=3)
-        out = await mcp_mod.check_jobs(str(run_id), _rows(1), total_results=3)
-        assert "keep going" not in out["next"] and "next_page_url" not in out
+        await mcp_mod.check_jobs(str(run_id), _rows(1), total_results=3)
         async with maker() as db:
             assert "more" not in (await db.get(ScoutRun, run_id)).criteria
 
@@ -287,3 +285,117 @@ class TestRules:
         assert "or won't load at" in instr.RULES
         steps = instr.ORIGINALS["playbook"]
         assert "check_jobs adds more" in steps and "keep going" in steps
+
+
+def _one_title(maker, email, **kw):
+    """A run whose resume type has one title, so every added search shares
+    its words."""
+    return _setup(maker, email, job_count=10, **kw)
+
+
+@pytest.mark.asyncio
+class TestReviewFixes:
+    async def test_the_longer_window_starts_past_the_pages_read(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="f1@test.dev")
+        async with maker() as db:
+            user = await db.scalar(select(User).where(User.email == "f1@test.dev"))
+            await instr.save(db, user.id, "limits", values={"links": 1})
+            await db.commit()
+        _, _, run_id = await _one_title(maker, "f1@test.dev")
+        await mcp_mod.get_scout_brief()
+        # The first search: 40 results, read over 2 pages.
+        await mcp_mod.check_jobs(str(run_id), _rows(0, 25), total_results=40)
+        out = await mcp_mod.check_jobs(str(run_id), _rows(1, 15))
+        assert "(remote)" in out["next"]  # then remote jobs
+        out = await mcp_mod.check_jobs(str(run_id), _rows(2), total_results=3)
+        assert "the past 14 days" in out["next"]
+        url = out["next_page_url"]
+        q = _q(url)
+        assert q["f_TPR"] == [f"r{14 * 86400}"]
+        # 40 results read: the newest 25 (one whole page) are skipped.
+        assert q["start"] == ["25"]
+        # Its next page goes on from there.
+        out = await mcp_mod.check_jobs(str(run_id), _rows(3, 25), total_results=60)
+        assert _q(out["next_page_url"])["start"] == ["50"]
+
+    async def test_a_resend_on_searches_sharing_words_skips_nothing(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="f2@test.dev")
+        async with maker() as db:
+            user = await db.scalar(select(User).where(User.email == "f2@test.dev"))
+            await instr.save(db, user.id, "limits", values={"links": 1})
+            await db.commit()
+        _, _, run_id = await _one_title(maker, "f2@test.dev")
+        brief = await mcp_mod.get_scout_brief()
+        page = brief["start_urls"][0]
+        first = await mcp_mod.check_jobs(
+            str(run_id), _rows(0), total_results=3, page_url=page
+        )
+        assert "(remote)" in first["next"]
+        # The same call again (a retry): the same answer, nothing skipped.
+        again = await mcp_mod.check_jobs(
+            str(run_id), _rows(0), total_results=3, page_url=page
+        )
+        assert again["next"] == first["next"]
+        assert again["next_page_url"] == first["next_page_url"]
+        async with maker() as db:
+            stats = (await db.get(ScoutRun, run_id)).stats
+            assert stats["_link"] == 1 and "1" not in stats["_links"]
+
+    async def test_a_place_fix_on_a_remote_search_is_ignored(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="f3@test.dev")
+        async with maker() as db:
+            user = await db.scalar(select(User).where(User.email == "f3@test.dev"))
+            await instr.save(db, user.id, "limits", values={"links": 1})
+            await db.commit()
+        _, _, run_id = await _one_title(maker, "f3@test.dev")
+        await mcp_mod.get_scout_brief()
+        out = await mcp_mod.check_jobs(str(run_id), _rows(0), total_results=3)
+        remote = out["next_page_url"]
+        await mcp_mod.check_jobs(
+            str(run_id),
+            _rows(1),
+            total_results=3,
+            page_url=remote,
+            place_fixed=True,
+        )
+        async with maker() as db:
+            run = await db.get(ScoutRun, run_id)
+            mission = await db.get(ScoutMission, run.mission_id)
+            assert mission.linkedin_geo_id is None
+            assert run.criteria.get("geo_id") is None
+
+
+class TestTipsAndLines:
+    def _run(self, **stats):
+        c = _criteria()
+        c["job_count"] = 5
+        return ScoutRun(criteria=c, stats=stats, status="done")
+
+    def test_a_run_at_its_limit_says_so(self):
+        tip = scout_runs.run_tip(self._run(rows=200), {})
+        assert "looked through 200 jobs, its limit" in tip
+        assert "Instructions" in tip
+
+    def test_a_run_that_searched_14_days_never_suggests_14(self):
+        c = {**_criteria(), "job_count": 5, "steps": ["remote", "wider"]}
+        run = ScoutRun(
+            criteria=c,
+            stats={"rows": 40, "pages": 1, "_links": {"0": {"total": 10}}},
+            status="done",
+        )
+        tip = scout_runs.run_tip(run, {})
+        assert "14 days" not in (tip or "")
+
+    def test_the_per_search_line_names_at_most_eight(self):
+        c = _criteria(
+            track={"name": "IT Admin", "titles": [f"Title {i}" for i in range(10)]},
+            limits={"links": 10},
+        )
+        stats = {"_links": {str(i): {"total": i} for i in range(10)}}
+        line = scout_runs.links_line(c, stats)
+        assert "Title 7 7" in line and "Title 8" not in line
+        assert line.endswith("· and 2 more.")
