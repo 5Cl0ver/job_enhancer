@@ -69,11 +69,12 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     asking ??= (async () => {
       try {
         const res = await api("/v1/apply/active");
-        if (res === null) {
-          // Signed out: no application here.
+        if (res === null && (await signedOut())) {
+          // Signed out: no application here. (No token for a moment, a
+          // refresh that failed, is just a failed ask, below.)
           state = { at: Date.now(), ttl: IDLE_TTL, data: { run_id: null }, okAt: Date.now() };
         } else {
-          if (!res?.ok) throw new Error("no answer");
+          if (!res || !res.ok) throw new Error("no answer");
           const data = (await res.json()) || { run_id: null };
           state = { at: Date.now(), ttl: data.run_id ? OPEN_TTL : IDLE_TTL, data, okAt: Date.now() };
         }
@@ -88,6 +89,11 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
       return state.data;
     })();
     return asking;
+  }
+
+  async function signedOut() {
+    const held = await c.storage.local.get(["je_token", "je_refresh"]).catch(() => ({}));
+    return !held?.je_token && !held?.je_refresh;
   }
 
   // The run's tab(s), kept in the session so a sleeping worker remembers them.

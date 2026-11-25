@@ -299,10 +299,20 @@ describe("the background loop", () => {
     expect(c.tabs.captureVisibleTab).not.toHaveBeenCalled();
   });
 
-  it("signed out means no application here", async () => {
-    const api = vi.fn(async () => null);
-    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
+  it("signed out means no application here; a failed refresh doesn't lift the lock", async () => {
+    const c = fakeChrome();
+    let signedIn = true;
+    c.storage.local = { get: vi.fn(async () => (signedIn ? { je_token: "t", je_refresh: "r" } : {})) };
+    let answer = { ok: true, json: async () => ({ run_id: "r1", guard: true, hosts: ["acme.example"], requests: [] }) };
+    const api = vi.fn(async () => answer);
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     run.loop = vi.fn();
+    expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(true);
+    answer = null; // no token for a moment: the refresh failed
+    await run.active(true);
+    expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(true);
+    signedIn = false; // really signed out
+    await run.active(true);
     expect(await run.tick({ id: 7, url: URL1 })).toEqual({ active: false, guard: false });
   });
 
