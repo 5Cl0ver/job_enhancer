@@ -1,14 +1,14 @@
 import { useEffect, useState } from "react";
-import { FileText, Loader2, Pencil } from "lucide-react";
+import { Eye, FileText, Loader2, Pencil } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { JobResumePicker } from "@/components/jobs/JobResumePicker";
 import { useGeneratedDocument, useResumes, useUpdateDocument } from "@/hooks/useAI";
-import { openOwnFile } from "@/lib/openFile";
+import { resumeFile, useFileViewer } from "@/components/common/FileViewer";
 import type { ApplyRun } from "@/lib/apply";
 
 /**
- * The résumé Claude made for this job: view the PDF, edit its text (the PDF is
+ * The résumé Claude made for this job: view the PDF in the app, edit its text (the PDF is
  * remade, and that's what Job Catcher uploads), or switch the job to any other
  * résumé. Open at every step, before, during and after the application.
  */
@@ -19,6 +19,7 @@ export function ResumeForJob({ run }: { run: ApplyRun }) {
   const [editing, setEditing] = useState(false);
   const [text, setText] = useState("");
   const resume = resumes.find((r) => r.id === run.resume_id);
+  const { view, viewer } = useFileViewer();
 
   useEffect(() => {
     if (doc && !editing) setText(doc.edited_content ?? doc.content);
@@ -42,9 +43,10 @@ export function ResumeForJob({ run }: { run: ApplyRun }) {
           <Button
             variant="outline"
             size="sm"
-            onClick={() => openOwnFile(`/v1/ai/resumes/${run.resume_id}/file`, resume?.filename)}
+            className="gap-1.5"
+            onClick={() => view(resumeFile(run.resume_id!, resume?.filename))}
           >
-            View
+            <Eye className="h-3.5 w-3.5" aria-hidden /> View
           </Button>
           {run.document_id && !editing && (
             <Button variant="outline" size="sm" className="gap-1.5" onClick={() => setEditing(true)}>
@@ -74,6 +76,7 @@ export function ResumeForJob({ run }: { run: ApplyRun }) {
         </div>
       )}
       <JobResumePicker jobListingId={run.job.listing_id} />
+      {viewer}
     </div>
   );
 }

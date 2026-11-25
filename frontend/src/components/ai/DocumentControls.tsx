@@ -1,9 +1,9 @@
 import { useState } from "react";
-import { Download, Copy, RefreshCw, Check, Loader2 } from "lucide-react";
+import { Copy, Eye, RefreshCw, Check } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { downloadDocumentPdf } from "@/lib/downloadDocumentPdf";
+import { documentFile, useFileViewer } from "@/components/common/FileViewer";
 import type { GeneratedDocument } from "@/types/api";
 
 interface DocumentControlsProps {
@@ -15,26 +15,13 @@ interface DocumentControlsProps {
 export function DocumentControls({ doc, onRegenerate, isRegenerating }: DocumentControlsProps) {
   const [emphasis, setEmphasis] = useState("");
   const [copied, setCopied] = useState(false);
-  const [downloading, setDownloading] = useState(false);
-  const [downloadError, setDownloadError] = useState(false);
+  const { view, viewer } = useFileViewer();
 
   const handleCopy = async () => {
     const text = doc.edited_content ?? doc.content;
     await navigator.clipboard.writeText(text);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  };
-
-  const handleDownload = async () => {
-    setDownloadError(false);
-    setDownloading(true);
-    try {
-      await downloadDocumentPdf(doc.id, `${doc.document_type}-${doc.id}.pdf`);
-    } catch {
-      setDownloadError(true);
-    } finally {
-      setDownloading(false);
-    }
   };
 
   return (
@@ -74,21 +61,14 @@ export function DocumentControls({ doc, onRegenerate, isRegenerating }: Document
         <Button
           variant="outline"
           size="sm"
-          onClick={handleDownload}
-          disabled={downloading}
+          onClick={() => view(documentFile(doc.id, `${doc.document_type}-${doc.id}.pdf`))}
           className="gap-1.5"
         >
-          {downloading ? (
-            <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          ) : (
-            <Download className="h-3.5 w-3.5" />
-          )}
-          {downloading ? "Preparing…" : "Download PDF"}
+          <Eye className="h-3.5 w-3.5" />
+          View PDF
         </Button>
-        {downloadError && (
-          <span className="text-xs text-destructive">Download failed. Try again.</span>
-        )}
       </div>
+      {viewer}
     </div>
   );
 }
