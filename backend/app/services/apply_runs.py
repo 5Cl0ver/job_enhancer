@@ -774,10 +774,11 @@ def _fix_note(fixes: list[dict[str, Any]]) -> str:
     lines = []
     for f in fixes:
         where = f"page {f['page']}, " if f.get("page") else ""
+        now = f" (now “{f['a']}”)" if f.get("a") else ""
         if f.get("to"):
-            lines.append(f"Change {where}“{f['q']}” to “{f['to']}”.")
+            lines.append(f"Change {where}“{f['q']}”{now} to “{f['to']}”.")
         if f.get("ask"):
-            lines.append(f"About {where}“{f['q']}”: {f['ask']}")
+            lines.append(f"About {where}“{f['q']}”{now}: {f['ask']}")
     return _text(" ".join(lines), 2000)
 
 
@@ -1448,20 +1449,24 @@ def _new_page(
 async def _with_fill(db: AsyncSession, run: ApplyRun, page: dict[str, Any]) -> None:
     """What Job Catcher's fill of this page said (spec 026): whether the
     résumé went on, and which boxes it filled (marked "Job Catcher")."""
-    res = await db.scalar(
-        select(ApplyRequest.result)
-        .where(
-            ApplyRequest.run_id == run.id,
-            ApplyRequest.kind == REQUEST_FILL,
-            ApplyRequest.page_n == page["n"],
-            ApplyRequest.status == REQUEST_DONE,
+    row = (
+        await db.execute(
+            select(ApplyRequest.result, ApplyRequest.url)
+            .where(
+                ApplyRequest.run_id == run.id,
+                ApplyRequest.kind == REQUEST_FILL,
+                ApplyRequest.page_n == page["n"],
+                ApplyRequest.status == REQUEST_DONE,
+            )
+            # The latest fill (two in the same second share created_at).
+            .order_by(ApplyRequest.done_at.desc())
+            .limit(1)
         )
-        # The latest fill (two in the same second share created_at).
-        .order_by(ApplyRequest.done_at.desc())
-        .limit(1)
-    )
-    if not res:
+    ).first()
+    # Only a fill of this very page (one left on a sign-up page isn't this one).
+    if not row or not row.result or _key(row.url) != _key(page["url"]):
         return
+    res = row.result
     filled = {x.lower() for x in res.get("filled") or []}
     pages = [dict(p) for p in run.pages or []]
     for p in pages:
@@ -1665,7 +1670,11 @@ async def photo_result(
 RESUME_WORDS = {
     "attached": "Job Catcher attached the résumé for this job. Don't attach it again.",
     "no_box": "There's no résumé box on this page.",
-    "no_file": "Job Catcher has no résumé file for this job.",
+    "no_file": (
+        "Job Catcher couldn't get the résumé file for this job. If the page "
+        "needs a résumé, call need_help(kind='file', what=…, page_url=…): the "
+        "app gives the user the file to attach."
+    ),
     "failed": (
         "Job Catcher found the résumé box but couldn't attach the file. Call "
         "need_help(kind='file', what=…, page_url=…): the app gives the user "

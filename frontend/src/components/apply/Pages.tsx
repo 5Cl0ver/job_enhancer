@@ -11,7 +11,7 @@ import { type ApplyPage, type Fix, type PageAnswer, fixKey, latestPages, pageAns
 /** Answers as bubbles you can tap to fix (spec 026), at the review. */
 export interface BubbleProps {
   fixes: Map<string, Fix>;
-  onTap?: (page: ApplyPage, answer: PageAnswer) => void;
+  onTap?: (page: ApplyPage, answer: PageAnswer, i: number) => void;
 }
 
 const RESUME_LINE: Record<NonNullable<ApplyPage["resume"]>, string | null> = {
@@ -137,8 +137,8 @@ function PageRow({
                   <AnswerBubble
                     page={page}
                     answer={a}
-                    fix={bubbles.fixes.get(fixKey(page.n, a.q))}
-                    onTap={bubbles.onTap && (() => bubbles.onTap!(page, a))}
+                    fix={bubbles.fixes.get(fixKey(page.n, i))}
+                    onTap={bubbles.onTap && (() => bubbles.onTap!(page, a, i))}
                   />
                 </li>
               ))}

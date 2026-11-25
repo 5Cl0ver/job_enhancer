@@ -333,14 +333,15 @@ export const SOURCE_LABEL: Record<AnswerSource, string> = {
 
 /** The answers to check before Submit (spec 026): what Claude agreed to for
  * you, then its guesses, then boxes left empty. */
-export function checkFirst(pages: ApplyPage[]): { page: ApplyPage; answer: PageAnswer }[] {
-  const all = latestPages(pages).flatMap((page) => pageAnswers(page).map((answer) => ({ page, answer })));
+export function checkFirst(pages: ApplyPage[]): { page: ApplyPage; answer: PageAnswer; i: number }[] {
+  const all = latestPages(pages).flatMap((page) => pageAnswers(page).map((answer, i) => ({ page, answer, i })));
   const rank = ({ answer: a }: { answer: PageAnswer }) =>
     a.agreement ? 0 : a.guess ? 1 : !a.a.trim() ? 2 : 3;
   return all.filter((x) => rank(x) < 3).sort((x, y) => rank(x) - rank(y));
 }
 
-export const fixKey = (page: number, q: string) => `${page}|${q.toLowerCase()}`;
+/** One answer's place: a page can ask the same question twice (each job's "Job Title"). */
+export const fixKey = (page: number, i: number) => `${page}|${i}`;
 
 /** The pages to review, in order: every page of the latest round, plus the
  * earlier rounds' pages a fix didn't redo. Never merged within a round: many

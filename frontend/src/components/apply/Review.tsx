@@ -13,7 +13,7 @@ import { type ApplyPage, type ApplyRun, type Fix, type PageAnswer, checkFirst, f
  * something (Claude fixes and asks again), or I'll submit it myself (on the
  * computer: Job Catcher lifts its Submit block and notices the press).
  */
-export function Review({ run, pending = 0 }: { run: ApplyRun; pending?: number }) {
+export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
   const decide = useDecide();
   const sent = useMarkSent();
   const phone = useIsPhone();
@@ -22,6 +22,10 @@ export function Review({ run, pending = 0 }: { run: ApplyRun; pending?: number }
   const [changing, setChanging] = useState(false);
   const review = run.review;
   const decision = changing ? null : review?.decision;
+  const pending = fixes.length;
+  // Fixes the user marked but didn't send would be lost.
+  const dropFixes = () =>
+    !pending || window.confirm(`You have ${pending} fix${pending === 1 ? "" : "es"} not sent. Go on without them?`);
   // What the user told Claude in a chat, in their own words (spec 022).
   const told = review?.by === "chat" && review.words && (
     <p className="text-sm">
@@ -78,8 +82,7 @@ export function Review({ run, pending = 0 }: { run: ApplyRun; pending?: number }
             className="gap-1.5"
             disabled={decide.isPending}
             onClick={() => {
-              // Fixes the user marked but didn't send would be lost.
-              if (pending && !window.confirm(`You have ${pending} fix${pending === 1 ? "" : "es"} not sent. Submit anyway?`)) return;
+              if (!dropFixes()) return;
               decide.mutate({ runId: run.id, decision: "submit" }, { onSuccess: () => setChanging(false) });
             }}
           >
@@ -94,7 +97,10 @@ export function Review({ run, pending = 0 }: { run: ApplyRun; pending?: number }
               variant="ghost"
               className="gap-1.5"
               disabled={decide.isPending}
-              onClick={() => decide.mutate({ runId: run.id, decision: "self" }, { onSuccess: () => setChanging(false) })}
+              onClick={() => {
+                if (!dropFixes()) return;
+                decide.mutate({ runId: run.id, decision: "self" }, { onSuccess: () => setChanging(false) });
+              }}
             >
               <MousePointerClick className="h-4 w-4" aria-hidden /> I'll submit it myself
             </Button>
@@ -114,8 +120,9 @@ export function Review({ run, pending = 0 }: { run: ApplyRun; pending?: number }
             <Button
               disabled={!note.trim() || decide.isPending}
               onClick={() =>
+                // The typed note goes with any bubbles' fixes.
                 decide.mutate(
-                  { runId: run.id, decision: "fix", note: note.trim() },
+                  { runId: run.id, decision: "fix", note: note.trim(), fixes },
                   { onSuccess: () => (setChanging(false), setFixing(false)) },
                 )
               }
@@ -146,11 +153,11 @@ export function Review({ run, pending = 0 }: { run: ApplyRun; pending?: number }
 export function ReviewBoard({ run }: { run: ApplyRun }) {
   const decide = useDecide();
   const [fixes, setFixes] = useState<Map<string, Fix>>(new Map());
-  const [target, setTarget] = useState<{ page: ApplyPage; answer: PageAnswer } | null>(null);
+  const [target, setTarget] = useState<{ page: ApplyPage; answer: PageAnswer; i: number } | null>(null);
   const open = run.status === "review" && !run.review?.decision;
   const first = checkFirst(run.pages);
-  const tap = open ? (page: ApplyPage, answer: PageAnswer) => setTarget({ page, answer }) : undefined;
-  const key = target ? fixKey(target.page.n, target.answer.q) : "";
+  const tap = open ? (page: ApplyPage, answer: PageAnswer, i: number) => setTarget({ page, answer, i }) : undefined;
+  const key = target ? fixKey(target.page.n, target.i) : "";
   const send = () =>
     decide.mutate(
       { runId: run.id, decision: "fix", fixes: [...fixes.values()] },
@@ -159,7 +166,7 @@ export function ReviewBoard({ run }: { run: ApplyRun }) {
 
   return (
     <div className="space-y-4">
-      <Review run={run} pending={open ? fixes.size : 0} />
+      <Review run={run} fixes={open ? [...fixes.values()] : []} />
       {first.length > 0 && (
         <section className="space-y-2">
           <h3 className="text-sm font-semibold">Check these first</h3>
@@ -167,14 +174,14 @@ export function ReviewBoard({ run }: { run: ApplyRun }) {
             What Claude agreed to for you, its best guesses, and boxes left empty.{open && " Tap one to change it."}
           </p>
           <ul className="space-y-2">
-            {first.map(({ page, answer }) => (
-              <li key={fixKey(page.n, answer.q)}>
+            {first.map(({ page, answer, i }) => (
+              <li key={fixKey(page.n, i)}>
                 <AnswerBubble
                   page={page}
                   answer={answer}
                   showPage
-                  fix={fixes.get(fixKey(page.n, answer.q))}
-                  onTap={tap && (() => tap(page, answer))}
+                  fix={fixes.get(fixKey(page.n, i))}
+                  onTap={tap && (() => tap(page, answer, i))}
                 />
               </li>
             ))}

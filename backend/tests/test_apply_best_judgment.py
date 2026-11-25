@@ -218,7 +218,8 @@ async def test_fixes_from_the_bubbles(engine, monkeypatch):
         await svc.decide(db, run, "fix", None, by="app", fixes=fixes)
         await db.commit()
         assert run.review["note"] == (
-            "Change page 1, “Prefix” to “None”. About page 1, “Salary”: Is that too low?"
+            "Change page 1, “Prefix” (now “Mr.”) to “None”. About page 1, "
+            "“Salary” (now “$90,000”): Is that too low?"
         )
     got = await mcp_mod.wait_for_you(rid)
     assert got["decision"] == "fix"
@@ -329,3 +330,20 @@ def test_migration_round_trip_and_postgres_sql(tmp_path):
     url = "postgresql+asyncpg://offline:offline@offline.invalid:5432/none"
     up = _ok(_alembic(None, "upgrade", f"{prev}:{head}", "--sql", url=url)).stdout
     assert "ADD COLUMN live JSON" in up
+
+
+@pytest.mark.asyncio
+async def test_a_fill_left_on_another_page_isnt_this_pages(engine, monkeypatch):
+    maker, user, run_id, job_id, rid, saved = await _filling(engine, monkeypatch)
+    _job_catcher(
+        monkeypatch,
+        maker,
+        user.id,
+        {"ok": True, "filled": ["Email"], "need": [], "resume": "failed"},
+    )
+    await mcp_mod.fill_page(rid, "https://acme.wd1.myworkdayjobs.com/signup")
+    _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": []})
+    await mcp_mod.page_done(rid, PAGE, "My Information", [{"q": "Email", "a": "s@x"}])
+    page = (await _run(maker, run_id)).pages[0]
+    assert "resume" not in page
+    assert page["answers"] == [{"q": "Email", "a": "s@x"}]

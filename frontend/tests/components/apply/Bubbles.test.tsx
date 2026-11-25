@@ -120,9 +120,48 @@ describe("answer bubbles (spec 026)", () => {
     await userEvent.type(screen.getByLabelText("Change it to"), "None");
     await userEvent.click(screen.getByRole("button", { name: "Add fix" }));
     await userEvent.click(screen.getByRole("button", { name: "Submit" }));
-    expect(confirm).toHaveBeenCalledWith("You have 1 fix not sent. Submit anyway?");
+    expect(confirm).toHaveBeenCalledWith("You have 1 fix not sent. Go on without them?");
     expect(post).not.toHaveBeenCalled();
     confirm.mockRestore();
+  });
+
+  it("a typed fix goes with the bubbles' fixes", async () => {
+    post.mockResolvedValue({ ...RUN, review: { ...RUN.review!, decision: "fix" } });
+    wrap(<ReviewBoard run={RUN} />);
+    await userEvent.click(within(checkList()).getAllByRole("button")[1]);
+    await userEvent.type(screen.getByLabelText("Change it to"), "None");
+    await userEvent.click(screen.getByRole("button", { name: "Add fix" }));
+    await userEvent.click(screen.getByRole("button", { name: /Fix something/ }));
+    await userEvent.type(screen.getByLabelText("What should Claude fix?"), "Also say hybrid is fine");
+    await userEvent.click(screen.getByRole("button", { name: "Send to Claude" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/decision", {
+        decision: "fix",
+        note: "Also say hybrid is fine",
+        fixes: [{ page: 1, q: "Prefix", a: "Mr.", to: "None" }],
+      }),
+    );
+  });
+
+  it("the same question twice on a page gets its own fix each time", async () => {
+    const twice = {
+      ...RUN,
+      pages: [
+        {
+          ...PAGE,
+          answers: [
+            { q: "Job Title", a: "IT Engineer", guess: true },
+            { q: "Job Title", a: "Support Tech", guess: true },
+          ],
+        },
+      ],
+    };
+    wrap(<ReviewBoard run={twice} />);
+    await userEvent.click(within(checkList()).getAllByRole("button")[1]);
+    await userEvent.type(screen.getByLabelText("Change it to"), "Help Desk Lead");
+    await userEvent.click(screen.getByRole("button", { name: "Add fix" }));
+    expect(within(checkList()).getAllByText("→ Help Desk Lead")).toHaveLength(1);
+    expect(screen.getByText("1 fix ready")).toBeInTheDocument();
   });
 
   it("can't be changed once decided", () => {

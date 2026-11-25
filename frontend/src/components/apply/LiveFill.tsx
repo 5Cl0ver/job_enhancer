@@ -24,11 +24,15 @@ export function LiveFill({ run }: { run: ApplyRun }) {
       if (before !== undefined && before !== b.a) changed.add(b.q);
       seen.current.set(b.q, b.a);
     }
-    if (!changed.size) return;
-    setFresh(changed);
+    if (changed.size) setFresh(changed);
+  }, [live]);
+
+  // Its own timer, so an update with nothing new never leaves a box lit.
+  useEffect(() => {
+    if (!fresh.size) return;
     const t = setTimeout(() => setFresh(new Set()), FRESH_MS);
     return () => clearTimeout(t);
-  }, [live]);
+  }, [fresh]);
 
   if (!filling) return null;
   if (!live) {
