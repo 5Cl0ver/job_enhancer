@@ -1235,16 +1235,25 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // page, else the linked job's own — worked out here, so a press with
         // the panel closed (toolbar, Alt+Shift+J) uses it too.
         const tab = sender.tab;
-        const { key, choice, resumeId } = await resumeFor(tab);
-        const got = await autofill.get({ resumeId });
-        // Never a silent switch: the panel says the chosen résumé failed.
-        if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
-          const { job } = await resumeFor(tab);
-          const note = job ? { failedFor: got.chosenFailed ? resumeId : null, filename: choice?.filename || "" } : { ...(choice || { resumeId, filename: "" }), failed: !!got.chosenFailed };
-          await chrome.storage.session.set({ [key]: note });
-          if (tab?.id != null) changed(tab.id);
+        // On a page of an Apply with Claude run, that run's résumé (spec 026):
+        // the one made for the job or picked for it, never a guess.
+        const runResume = await applyRun.resumeFor(tab).catch(() => null);
+        if (runResume) {
+          // Never the usual résumé in its place: no file, and Claude is told.
+          const got = await autofill.get({ resumeId: runResume });
+          sendResponse({ ok: true, ...got, ...(got.chosenFailed ? { resume: null } : {}) });
+        } else {
+          const { key, choice, resumeId } = await resumeFor(tab);
+          const got = await autofill.get({ resumeId });
+          // Never a silent switch: the panel says the chosen résumé failed.
+          if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
+            const { job } = await resumeFor(tab);
+            const note = job ? { failedFor: got.chosenFailed ? resumeId : null, filename: choice?.filename || "" } : { ...(choice || { resumeId, filename: "" }), failed: !!got.chosenFailed };
+            await chrome.storage.session.set({ [key]: note });
+            if (tab?.id != null) changed(tab.id);
+          }
+          sendResponse({ ok: true, ...got });
         }
-        sendResponse({ ok: true, ...got });
       } else if (msg.type === "listResumes") {
         sendResponse(await listResumes());
       } else if (msg.type === "chooseResume") {

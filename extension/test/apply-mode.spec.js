@@ -161,13 +161,14 @@ describe("the Submit lock on the page", () => {
 describe("the background loop", () => {
   const URL1 = "https://acme.example/apply/1";
 
-  function fakeChrome({ tabActive = true, tabs, switchAfter = Infinity } = {}) {
+  function fakeChrome({ tabActive = true, tabs, switchAfter = Infinity, windowState = "normal", idle = "active", capture } = {}) {
     const session = {};
     let gets = 0;
     const list = tabs || [
       { id: 7, windowId: 1, active: tabActive, url: `${URL1}?step=2` },
-      { id: 8, windowId: 1, active: false, url: "https://other.example/" },
+      { id: 8, windowId: 1, active: !tabActive, url: "https://other.example/" },
     ];
+    const win = { id: 1, state: windowState, focused: true };
     return {
       storage: {
         session: {
@@ -176,16 +177,29 @@ describe("the background loop", () => {
         },
       },
       tabs: {
-        query: vi.fn().mockResolvedValue(list),
+        query: vi.fn(async (q = {}) => list.filter((t) => (q.active === undefined || t.active === q.active) && (q.windowId === undefined || t.windowId === q.windowId))),
         get: vi.fn(async (id) => {
           gets++;
           const t = list.find((x) => x.id === id);
-          return gets > switchAfter ? { ...t, active: false } : t;
+          if (!t) throw new Error("No tab");
+          return gets > switchAfter ? { ...t, active: false } : { ...t };
+        }),
+        update: vi.fn(async (id, { active }) => {
+          const t = list.find((x) => x.id === id);
+          if (active) for (const o of list) if (o.windowId === t.windowId) o.active = o.id === id;
+          return t;
         }),
         sendMessage: vi.fn(async (_tab, msg) => (msg.op === "measure" ? { y: 120, height: 1800, view: 1000 } : { y: msg.y })),
-        captureVisibleTab: vi.fn().mockResolvedValue("data:image/jpeg;base64,/9j/4AAQ"),
+        captureVisibleTab: capture || vi.fn().mockResolvedValue("data:image/jpeg;base64,/9j/4AAQ"),
       },
-      windows: { getAll: vi.fn().mockResolvedValue([{ id: 1, focused: true }]) },
+      windows: {
+        getAll: vi.fn(async () => [win]),
+        get: vi.fn(async () => ({ ...win })),
+        update: vi.fn(async (_id, { state }) => Object.assign(win, { state })),
+      },
+      idle: { queryState: vi.fn().mockResolvedValue(idle) },
+      _win: win,
+      _list: list,
       scripting: {
         executeScript: vi.fn().mockResolvedValue([{ result: [{ q: "Name", a: "Sam" }] }, { result: [{ q: "Email", a: "s@x" }] }]),
       },
@@ -244,11 +258,55 @@ describe("the background loop", () => {
     expect(JSON.parse(result[2]).ok).toBe(false);
   });
 
-  it("no photo when the tab isn't showing", async () => {
+  it("a tab behind another is shown for its photos, then the user's tab comes back (spec 026)", async () => {
+    const c = fakeChrome({ tabActive: false, idle: "idle" });
     const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
-    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome({ tabActive: false }) }));
-    const result = calls.find(([, p]) => p.endsWith("/result"));
-    expect(JSON.parse(result[2])).toEqual({ ok: false, reason: "not_visible" });
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(2);
+    expect(c.tabs.update.mock.calls.map(([id]) => id)).toEqual([7, 8]);
+    expect(c._list.find((t) => t.id === 8).active).toBe(true);
+    expect(c.windows.update).not.toHaveBeenCalled(); // never raised over other apps
+  });
+
+  it("never takes the window from someone typing in it: the page is kept as text", async () => {
+    for (const opts of [{ tabActive: false }, { windowState: "minimized" }]) {
+      const c = fakeChrome({ ...opts, idle: "active" });
+      const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+      await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+      expect(c.tabs.update).not.toHaveBeenCalled();
+      expect(c.windows.update).not.toHaveBeenCalled();
+      expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({
+        ok: false,
+        reason: "busy",
+        answers: [{ q: "Name", a: "Sam" }, { q: "Email", a: "s@x" }],
+      });
+    }
+  });
+
+  it("a minimised window is restored for the photos and minimised again", async () => {
+    const c = fakeChrome({ windowState: "minimized", idle: "idle" });
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(2);
+    expect(c.windows.update.mock.calls.map(([, o]) => o.state)).toEqual(["normal", "minimized"]);
+  });
+
+  it("says why there's no photo, and keeps the page's answers", async () => {
+    const capture = vi.fn().mockRejectedValue(new Error("hidden"));
+    for (const [idle, reason] of [["locked", "locked"], ["active", "hidden"]]) {
+      const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+      await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome({ idle, capture }) }));
+      const result = JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]);
+      expect(result).toEqual({ ok: false, reason, answers: [{ q: "Name", a: "Sam" }, { q: "Email", a: "s@x" }] });
+    }
+  });
+
+  it("a closed tab is said plainly", async () => {
+    const c = fakeChrome();
+    c.tabs.get = vi.fn().mockRejectedValue(new Error("No tab"));
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: false, reason: "tab_closed" });
   });
 
   it("a computer without the application's tab leaves the request to the other", async () => {
@@ -268,6 +326,60 @@ describe("the background loop", () => {
     expect(press).toHaveBeenCalledWith(7);
     const result = calls.find(([, p]) => p.endsWith("/result"));
     expect(JSON.parse(result[2])).toEqual({ ok: true, reason: null, filled: ["First name", "Email"], need: ["Why Acme?"] });
+  });
+
+  it("says what happened to the résumé, the best of every frame (spec 026)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 1 }]);
+    const fillSession = vi.fn().mockResolvedValue({
+      frames: { 0: { entries: [], need_you: [], resume: "no_box" }, 3: { entries: [], need_you: [], resume: "attached" } },
+    });
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: true }), fillSession, chrome: fakeChrome() }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).resume).toBe("attached");
+  });
+
+  it("the run's own résumé for its own tab only, never another job on the same site (spec 026)", async () => {
+    const api = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ run_id: "r1", hosts: ["myworkdayjobs.com"], resume_id: "res-9", requests: [] }),
+    }));
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    expect(await run.resumeFor({ id: 7, url: "https://acme.wd1.myworkdayjobs.com/apply" })).toBe("res-9");
+    // Another company's Workday application in another tab.
+    expect(await run.resumeFor({ id: 9, url: "https://globex.wd5.myworkdayjobs.com/apply" })).toBe(null);
+    expect(await run.resumeFor({ id: 7, url: "https://www.linkedin.com/jobs/view/1" })).toBe(null);
+  });
+
+  it("sends the live view while filling, only when the page changed (spec 026)", async () => {
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    c.scripting.executeScript = vi.fn().mockResolvedValue([
+      { result: [{ q: "First name", a: "Sam", by: "job_catcher" }, { q: "Password", a: "hunter2" }] },
+    ]);
+    const calls = [];
+    let turns = 0;
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push([init.method || "GET", path, init.body]);
+      if (path === "/v1/apply/active") {
+        turns++;
+        const body = turns > 4 ? { run_id: null } : { run_id: "r1", hosts: ["acme.example"], live: true, requests: [] };
+        return { ok: true, json: async () => body };
+      }
+      return { ok: true, status: 204, json: async () => ({}) };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const done = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }).loop();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    const sent = calls.filter(([, p]) => p === "/v1/apply/runs/r1/live");
+    expect(sent).toHaveLength(1); // the same page again isn't sent again
+    expect(JSON.parse(sent[0][2])).toEqual({
+      url: `${URL1}?step=2`,
+      title: "",
+      boxes: [{ q: "First name", a: "Sam", by: "job_catcher" }],
+    });
   });
 
   it("every tab on the site is locked, but only the application's own tab ends the run", async () => {
@@ -359,8 +471,13 @@ describe("spec 023: the screen now, the confirmation, the small fixes", () => {
         get: vi.fn(async () => ({ id: 7, windowId: 1, active: true, url: URL1 })),
         sendMessage: vi.fn(),
         captureVisibleTab: vi.fn().mockResolvedValue("data:image/jpeg;base64,/9j/4AAQ"),
+        update: vi.fn(),
       },
-      windows: { getAll: vi.fn().mockResolvedValue([{ id: 1, focused: true }]) },
+      windows: {
+        getAll: vi.fn().mockResolvedValue([{ id: 1, focused: true }]),
+        get: vi.fn(async (id) => ({ id, state: "normal" })),
+        update: vi.fn(),
+      },
       scripting: { executeScript: vi.fn().mockResolvedValue([]) },
     };
   }

@@ -47,21 +47,21 @@
 
 ## Phase 7: US1 + US2 + US4, Job Catcher 0.42.0
 
-- [ ] T022 [US1] Hidden upload boxes behind visible upload buttons/drop zones in extension/src/autofill/scan.js; the section heading in the box's context
-- [ ] T023 [US1] Workday's résumé box recognised in extension/src/autofill/resolve.js (with a Workday-like fixture extension/test/fixtures/workday-resume.html)
-- [ ] T024 [US1] `getAutofillCopy` uses the open run's `resume_id` for a page on the run's site (`applyRun.resumeFor(tab)`) in extension/src/background.entry.js and extension/src/background/applyRun.js
-- [ ] T025 [US3] The session report carries the résumé state; the fill result sends `resume` in extension/src/autofill.entry.js, extension/src/autofill/session.js and extension/src/background/applyRun.js
-- [ ] T026 [US2] Bring-to-front photos and peeks, put back, minimised windows, `idle` reasons, in extension/src/background/applyRun.js; the `idle` permission and 0.42.0 in extension/manifest.json
-- [ ] T027 [US4] The live loop (every 3 s while filling, only on change, sensitive boxes dropped, `by` from the fill report) in extension/src/background/applyRun.js
-- [ ] T028 [P] Tests in extension/test/apply-mode.spec.js and extension/test/fill-engine.spec.js (hidden upload, Workday résumé, run résumé, photos put back, live snapshot)
-- [ ] T029 The app's "new enough" Job Catcher version becomes 0.42.0 for the live view only (older ones keep working) in backend/app/services/apply_runs.py
+- [X] T022 [US1] Hidden upload boxes behind visible upload buttons/drop zones in extension/src/autofill/scan.js; the section heading in the box's context
+- [X] T023 [US1] Workday's résumé box recognised in extension/src/autofill/resolve.js (with a Workday-like fixture extension/test/fixtures/workday-resume.html)
+- [X] T024 [US1] `getAutofillCopy` uses the open run's `resume_id` for a page on the run's site (`applyRun.resumeFor(tab)`) in extension/src/background.entry.js and extension/src/background/applyRun.js
+- [X] T025 [US3] The session report carries the résumé state; the fill result sends `resume` in extension/src/autofill.entry.js, extension/src/autofill/session.js and extension/src/background/applyRun.js
+- [X] T026 [US2] Bring-to-front photos and peeks, put back, minimised windows, `idle` reasons, in extension/src/background/applyRun.js; the `idle` permission and 0.42.0 in extension/manifest.json
+- [X] T027 [US4] The live loop (every 3 s while filling, only on change, sensitive boxes dropped, `by` from the fill report) in extension/src/background/applyRun.js
+- [X] T028 [P] Tests in extension/test/apply-mode.spec.js and extension/test/fill-engine.spec.js (hidden upload, Workday résumé, run résumé, photos put back, live snapshot)
+- [X] T029 The app's "new enough" Job Catcher version becomes 0.42.0 for the live view only (older ones keep working) in backend/app/services/apply_runs.py
 
 **Checkpoint: PR 026 B (Job Catcher).**
 
 ## Phase 8: Polish
 
-- [ ] T030 MANIFEST updates (backend app/services, frontend components/apply, extension src) and the README feature list
-- [ ] T031 A full test run on all three packages, plus `vite build`
+- [X] T030 MANIFEST updates (backend app/services, frontend components/apply, extension src) and the README feature list
+- [X] T031 A full test run on all three packages, plus `vite build`
 
 ## Dependencies
 

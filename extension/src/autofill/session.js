@@ -182,6 +182,12 @@ export function createSession(deps) {
   const suggestions = new Map();
   /** Fields the user undid: an automatic run (keep filling) leaves them alone. */
   const declined = new Set();
+  /** The résumé on this page: attached / no_box / no_file / failed (spec 026). */
+  let resumeState = null;
+  /** Where the résumé went up, and its name: a site may swap its box for the
+   * file's name (Workday), but later steps at the same address aren't it. */
+  let attachedOn = "";
+  let attachedName = "";
   /** Fields already put to the AI: never asked twice (each step, each run). */
   const aiAsked = new Set();
 
@@ -365,20 +371,30 @@ export function createSession(deps) {
    */
   async function uploadResume(copy, { auto = false } = {}) {
     if (!auto) declined.clear(); // a press means: fill again, undone ones too
-    if (!copy.resumeFile) return false;
-    let done = false;
-    for (const field of scan()) {
-      if (field.kind !== "file" || field.el.files?.length || filled.has(field.id) || declined.has(field.id)) continue;
-      if (!isResumeUpload(field)) continue;
+    const boxes = scan().filter((f) => f.kind === "file" && isResumeUpload(f));
+    const here = doc.location?.href || "";
+    // What happened to the résumé on this page, for Apply with Claude (spec 026).
+    const state = (s) => ((resumeState = s), false);
+    const shows = () => !!attachedName && (doc.body?.textContent || "").includes(attachedName);
+    if (!boxes.length) return state(attachedOn === here && shows() ? "attached" : "no_box");
+    if (boxes.some((f) => f.el.files?.length || filled.has(f.id))) return state("attached");
+    if (!copy.resumeFile) return state("no_file");
+    let tried = false;
+    for (const field of boxes) {
+      if (declined.has(field.id)) continue;
       const d = resolve(field, copy);
       if (d.skip) continue;
+      tried = true;
       const res = await fillOne(field, d.values, d.source);
       if (res.ok) {
-        done = true;
-        break; // one résumé per page, never into a second box
+        state("attached");
+        attachedOn = here;
+        attachedName = copy.resumeFile.name || "";
+        return true; // one résumé per page, never into a second box
       }
     }
-    return done;
+    if (tried) state("failed");
+    return false;
   }
 
   /**
@@ -426,6 +442,7 @@ export function createSession(deps) {
   function report() {
     return {
       url: doc.location?.href || "",
+      resume: resumeState,
       entries: [...filled.values()].map((x) => x.entry),
       need_you: [...needYou.values()].filter((x) => !hasValue(x.field) && !suggestions.has(x.field.id)).map((x) => x.item),
       suggestions: [...suggestions.values()].filter((x) => !hasValue(x.field)).map((x) => x.item),
