@@ -1,0 +1,47 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Experience - Tidewell Labs Careers</title>
+    <style>
+      body { font-family: sans-serif; margin: 24px; }
+      section { margin-bottom: 24px; }
+      .css-zone { border: 2px dashed #999; padding: 16px; }
+      /* Like Workday: the file input itself is never shown. */
+      .css-hidden-input { display: none; }
+    </style>
+  </head>
+  <body>
+    <!-- An invented page shaped like a Workday "My Experience" step (spec 026):
+         the résumé's file input is hidden behind a drop zone named only by a
+         data-automation-id and its own "Select files" button. -->
+    <h2>My Experience</h2>
+    <section>
+      <div><h3>Resume/CV</h3></div>
+      <div data-automation-id="resumeSection">
+        <div data-automation-id="file-upload-drop-zone" class="css-zone">
+          <p>Drop file here</p>
+          <p>or</p>
+          <button type="button" data-automation-id="select-files" id="pick">Select files</button>
+          <input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="resume" />
+        </div>
+      </div>
+      <p>Uploaded: <span id="got"></span></p>
+    </section>
+    <section>
+      <label for="fn">First name</label>
+      <input id="fn" name="firstName" autocomplete="given-name" />
+      <label for="ln">Last name</label>
+      <input id="ln" name="lastName" autocomplete="family-name" />
+      <label for="why">Why do you want to work at Tidewell Labs?</label>
+      <textarea id="why"></textarea>
+    </section>
+    <button type="button" id="next">Save and Continue</button>
+    <script>
+      document.getElementById("pick").addEventListener("click", () => document.getElementById("resume").click());
+      document.getElementById("resume").addEventListener("change", (e) => {
+        document.getElementById("got").textContent = [...e.target.files].map((f) => f.name).join(", ");
+      });
+    </script>
+  </body>
+</html>

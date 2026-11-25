@@ -69,7 +69,7 @@ const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|\bsin\b|socia
  * @param {Array<{question:string, kind:string, el?:Element, hints?:object}>} fields
  * @param {(field:object) => unknown} read  the widget reader
  */
-export function pageAnswers(fields, read) {
+export function pageAnswers(fields, read, filled = null) {
   const out = [];
   const seen = new Set();
   for (const f of fields || []) {
@@ -88,7 +88,8 @@ export function pageAnswers(fields, read) {
     const key = `${q}\u0000${a}`;
     if (seen.has(key)) continue;
     seen.add(key);
-    out.push({ q: q.slice(0, 300), a });
+    // Job Catcher's own answers are marked for the live view (spec 026).
+    out.push(filled?.has(f.id) ? { q: q.slice(0, 300), a, by: "job_catcher" } : { q: q.slice(0, 300), a });
     if (out.length >= 120) break;
   }
   return out;

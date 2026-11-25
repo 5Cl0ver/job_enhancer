@@ -376,6 +376,7 @@ export async function startFakeApi() {
     },
     "POST /v1/apply/requests/:id/result": () => ({ body: { status: "done" } }),
     "POST /v1/apply/runs/:id/event": () => ({ body: { status: "review" } }),
+    "POST /v1/apply/runs/:id/live": () => ({ status: 204 }),
   };
 
   const server = createServer(async (req, res) => {
@@ -384,7 +385,7 @@ export async function startFakeApi() {
     log.push({ method: req.method, path, body, at: Date.now() });
     let key = `${req.method} ${path}`;
     if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
-    const apply = key.match(/^POST \/v1\/apply\/(requests|runs)\/[^/]+\/(claim|photo|result|event)$/);
+    const apply = key.match(/^POST \/v1\/apply\/(requests|runs)\/[^/]+\/(claim|photo|result|event|live)$/);
     if (apply) key = `POST /v1/apply/${apply[1]}/:id/${apply[2]}`;
     if (/^DELETE \/v1\/autofill\/taught\/[^/]+$/.test(key)) key = "DELETE /v1/autofill/taught/:id";
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/file$/.test(key)) key = "GET /v1/autofill/resumes/:id/file";

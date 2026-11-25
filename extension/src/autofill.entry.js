@@ -633,6 +633,9 @@ globalThis.__jecAutofill = {
   // Apply with Claude (spec 022): every question here with its answer, for
   // the photos' review. Read by the background in every frame.
   answers: () => (isCurrent() ? pageAnswers(session.scan(), readField) : []),
+  // The live view (spec 026): the same, with what Job Catcher filled marked.
+  live: () =>
+    isCurrent() ? pageAnswers(session.scan(), readField, new Set(session.report().entries.map((e) => e.id))) : [],
 };
 
 // ---- Start ----------------------------------------------------------------

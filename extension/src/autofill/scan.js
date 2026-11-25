@@ -262,6 +262,31 @@ function labelForOption(el) {
  * @property {Element} mark       what to outline
  */
 
+const ZONE =
+  "label, [class*=drop], [class*=upload], [class*=Drop], [class*=Upload], [data-automation-id*=drop], [data-automation-id*=upload]";
+const UPLOAD_WORDS =
+  /\b(select|choose|browse|upload|attach|add) (a |your )?files?\b|\bupload\b|\bbrowse\b|\battach\b|drop (a |your )?files? here/i;
+
+/**
+ * The visible box a file input hides behind (spec 026): a drop zone or label
+ * around it, else the nearest container (up to 3 levels up) holding a visible
+ * "Select files" / "Upload" button, never one shared with another upload.
+ */
+export function uploadZone(el, visible = isVisible) {
+  // Its containers only (Workday's input is itself "file-upload-input-ref").
+  const named = el.parentElement?.closest(ZONE);
+  if (named) return named;
+  let node = el.parentElement;
+  for (let depth = 0; node && depth < 3; depth++, node = node.parentElement) {
+    if (node.querySelectorAll("input[type=file]").length > 1) break;
+    const button = [...node.querySelectorAll("button, [role=button], a")].find(
+      (b) => visible(b) && UPLOAD_WORDS.test(textOf(b) || b.getAttribute("aria-label") || ""),
+    );
+    if (button) return node;
+  }
+  return null;
+}
+
 /**
  * Every fillable field, in page order.
  * @param {Document|ShadowRoot} root
@@ -310,8 +335,9 @@ export function collectFields(root, opts = {}) {
         continue;
       }
       if (type === "file") {
-        // Often hidden behind a drop zone: count it when it or its zone shows.
-        const zone = el.closest("label, [class*=drop], [class*=upload], [class*=Drop], [class*=Upload]");
+        // Often hidden behind a drop zone or its own "Select files" button
+        // (Workday): count it when it or its zone shows.
+        const zone = uploadZone(el, visible);
         if (!visible(el) && !(zone && visible(zone))) continue;
         // What the box is for is often only in a heading above its card.
         add({ id: fieldId(el), kind: "file", el, mark: zone || el, question: questionFor(el), hints: { ...hintsOf(el), context: nearbyText(zone || el, 8) } });

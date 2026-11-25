@@ -118,3 +118,51 @@ test("no application open: Submit is never touched and nothing is reported", asy
   expect(api.calls("/v1/apply/runs/r1/event")).toHaveLength(0);
   await page.close();
 });
+
+test("best judgment (spec 026): the run's résumé on a Workday-like page, photos from a tab behind, the live view", async () => {
+  test.setTimeout(180000);
+  const url = lab.url("/lab/apply-workday.html");
+  const host = new URL(url).hostname;
+  api.state.resumes = { "resume-run": { filename: "Wren_Tidewell.pdf", bytes: Buffer.from("%PDF-1.4\n% made for this job\n") } };
+  api.state.applyRun = { run_id: "r1", status: "filling", guard: true, hosts: [host], resume_id: "resume-run", live: true, requests: [] };
+
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  // The user is on another tab: Claude's tab is behind it.
+  const mine = await ext.context.newPage();
+  await mine.goto(lab.url("/lab/apply-long.html?mine"));
+  await mine.bringToFront();
+  await mine.waitForTimeout(3500);
+
+  // Fill: the run's own résumé goes into the hidden "Select files" box.
+  api.state.applyRun = { ...api.state.applyRun, requests: [{ id: "f1", kind: "fill", url, page_n: 1 }] };
+  // Job Catcher trusts the last "nothing open" for up to 60 s (the earlier tests).
+  await expect.poll(() => api.calls("/v1/apply/requests/f1/result").length, { timeout: 90000 }).toBe(1);
+  api.state.applyRun = { ...api.state.applyRun, requests: [] };
+  const [{ body: filled }] = api.calls("/v1/apply/requests/f1/result");
+  expect(filled.ok).toBe(true);
+  expect(filled.resume).toBe("attached");
+  expect(await page.textContent("#got")).toBe("Wren_Tidewell.pdf");
+  expect(await page.inputValue("#fn")).toBe("Wren");
+
+  // The live view: the page's boxes, Job Catcher's marked.
+  await expect.poll(() => api.calls("/v1/apply/runs/r1/live").length, { timeout: 15000 }).toBeGreaterThan(0);
+  const live = api.calls("/v1/apply/runs/r1/live").at(-1).body;
+  expect(live.url).toBe(url);
+  expect(live.boxes).toEqual(expect.arrayContaining([{ q: "First name", a: "Wren", by: "job_catcher" }]));
+
+  // Photos: Claude's tab is shown for them, then the user's tab comes back.
+  api.state.applyRun = { ...api.state.applyRun, requests: [{ id: "p1", kind: "photo", url, page_n: 1 }] };
+  await expect.poll(() => api.calls("/v1/apply/requests/p1/result").length, { timeout: 30000 }).toBe(1);
+  api.state.applyRun = { ...api.state.applyRun, requests: [] };
+  expect(api.calls("/v1/apply/requests/p1/result")[0].body.ok).toBe(true);
+  expect(api.calls("/v1/apply/requests/p1/photo").length).toBeGreaterThan(0);
+  await expect.poll(() => mine.evaluate(() => document.visibilityState)).toBe("visible");
+
+  // Nothing new on the page: nothing sent again.
+  const sent = api.calls("/v1/apply/runs/r1/live").length;
+  await mine.waitForTimeout(4000);
+  expect(api.calls("/v1/apply/runs/r1/live").length).toBe(sent);
+  await page.close();
+  await mine.close();
+});

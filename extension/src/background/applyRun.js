@@ -15,9 +15,16 @@
 //     photo → the page screen by screen (at most 8), shrunk to JPEG, uploaded,
 //             the scroll put back; stops at once if the tab stops showing, so
 //             another tab is never photographed; then every question with
-//             its answer;
-//     fill  → the same fill as the panel's Autofill press, then what it filled
-//             and what still needs an answer.
+//             its answer. A tab that isn't showing is shown for the photos
+//             (a minimised window restored), then the user's tab is put back
+//             (spec 026);
+//     fill  → the same fill as the panel's Autofill press, then what it filled,
+//             what still needs an answer, and what happened to the résumé.
+// - While the run is being filled, the application's tab is read every 3 s
+//   and, when it changed, its boxes and values go to the app's live view
+//   (spec 026). Reading a page works in a background tab; no Claude tokens.
+// - The run's own résumé (the one Claude made, or the user picked) is the
+//   one attached on the run's pages: never a guess from the page's address.
 // Extension API calls on each turn keep the service worker awake while a run
 // is open (Chrome resets its idle timer on every extension call).
 import { onRunHost, shotPlan } from "../autofill/applyPage.js";
@@ -30,6 +37,12 @@ const LOOP_MS = 2_000;
 const CAPTURE_GAP_MS = 550; // Chrome allows 2 captures a second
 const MAX_WIDTH = 1200;
 const MAX_BYTES = 390_000;
+const PAINT_MS = 350; // a tab just shown needs a moment to draw
+const LIVE_MS = 3_000;
+const MAX_LIVE = 150;
+const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|card number|credit card|\bcvv\b|\bcvc\b/i;
+// The best of what each frame says happened to the résumé.
+const RESUME_RANK = ["attached", "failed", "no_file", "no_box"];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -110,6 +123,13 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     await c.storage.session.set({ [tabsKey(runId)]: [...tabs].slice(-5) }).catch(() => {});
   }
 
+  /** The résumé for a page of the open run (spec 026), else null. */
+  async function resumeFor(tab) {
+    const data = await active();
+    if (!data.run_id || !data.resume_id || !tab?.url) return null;
+    return onRunHost(hostOf(tab.url), data.hosts) ? data.resume_id : null;
+  }
+
   /** Is this the application's own tab (and still on its site)? */
   async function isRunTab(data, tab) {
     if (!onRunHost(hostOf(tab.url || ""), data.hosts)) return false;
@@ -161,6 +181,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
           if (done.has(req.id)) continue;
           await handle(req, data).catch(() => {});
         }
+        if (data.live) await liveTick(data).catch(() => {});
         await sleep(LOOP_MS);
       }
     } finally {
@@ -220,9 +241,10 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     const frames = Object.values(session?.frames || {});
     const filled = frames.flatMap((f) => (f.entries || []).map((e) => e.label).filter(Boolean));
     const need = frames.flatMap((f) => (f.need_you || []).map((n) => n.label).filter(Boolean));
+    const resume = RESUME_RANK.find((s) => frames.some((f) => f.resume === s)) || null;
     // Busy: Keep filling is already filling this step; its report is the answer.
     const ok = !!out?.ok || !!out?.busy;
-    return { ok, reason: ok ? null : out?.problem || "error", filled, need };
+    return { ok, reason: ok ? null : out?.problem || "error", filled, need, ...(resume ? { resume } : {}) };
   }
 
   /** Still the same tab, showing the same page, in the same window? */
@@ -231,9 +253,59 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return !!now && now.active && now.windowId === tab.windowId && pageKey(now.url || "") === key;
   }
 
+  /**
+   * Show the application's tab for a photo (spec 026): make it the tab
+   * showing in its window, restoring a minimised window. Never focuses the
+   * window over another app. `restore` puts back what was showing, unless the
+   * user has moved on since.
+   */
+  async function showFor(tab) {
+    const now = await c.tabs.get(tab.id).catch(() => null);
+    const win = now && (await c.windows.get(now.windowId).catch(() => null));
+    if (!now || !win) return { reason: "tab_closed" };
+    const undo = [];
+    if (win.state === "minimized") {
+      await c.windows.update(win.id, { state: "normal" }).catch(() => {});
+      undo.push(() => c.windows.update(win.id, { state: "minimized" }));
+    }
+    if (!now.active) {
+      const [was] = await c.tabs.query({ active: true, windowId: now.windowId }).catch(() => []);
+      await c.tabs.update(tab.id, { active: true }).catch(() => {});
+      if (was) {
+        undo.push(async () => {
+          const still = await c.tabs.get(tab.id).catch(() => null);
+          if (still?.active) await c.tabs.update(was.id, { active: true });
+        });
+      }
+    }
+    if (undo.length) await sleep(PAINT_MS);
+    return {
+      tab: { ...tab, windowId: now.windowId },
+      restore: async () => {
+        for (const step of undo.reverse()) await step().catch(() => {});
+      },
+    };
+  }
+
+  /** Why no photo could be taken, in the app's words. */
+  async function noPhoto() {
+    const idle = await c.idle?.queryState?.(60).catch(() => null);
+    return idle === "locked" ? "locked" : "hidden";
+  }
+
   async function photos(req, tab) {
+    const shown = await showFor(tab);
+    if (!shown.tab) return { ok: false, reason: shown.reason };
+    try {
+      return await photosShown(req, shown.tab);
+    } finally {
+      await shown.restore();
+    }
+  }
+
+  async function photosShown(req, tab) {
     const key = pageKey(tab.url || "");
-    if (!(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    if (!(await stillShowing(tab, key))) return { ok: false, reason: "changed" };
     const ask = (msg) => c.tabs.sendMessage(tab.id, { type: "applyPage", ...msg }, { frameId: 0 }).catch(() => null);
     const size = await ask({ op: "measure" });
     const plan = size ? shotPlan(size.height, size.view) : [0];
@@ -271,15 +343,27 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
     // The page changed under us: never read the new page's answers.
     const answers = changed ? [] : await readAnswers(tab.id);
-    return part ? { ok: true, answers } : { ok: false, reason: "not_visible", answers };
+    if (part) return { ok: true, answers };
+    return { ok: false, reason: changed ? "changed" : await noPhoto(), answers };
   }
 
   /** The screen as it is now: one photo, never scrolled (spec 023). */
   async function peekShot(req, tab) {
+    const shown = await showFor(tab);
+    if (!shown.tab) return { ok: false, reason: shown.reason };
+    try {
+      return await peekShown(req, shown.tab);
+    } finally {
+      await shown.restore();
+    }
+  }
+
+  async function peekShown(req, tab) {
     const key = pageKey(tab.url || "");
-    if (!(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    if (!(await stillShowing(tab, key))) return { ok: false, reason: "changed" };
     const shot = await capture(tab.windowId);
-    if (!shot || !(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    if (!(await stillShowing(tab, key))) return { ok: false, reason: "changed" };
+    if (!shot) return { ok: false, reason: await noPhoto() };
     const up = await api(`/v1/apply/requests/${req.id}/photo?part=0`, {
       method: "POST",
       headers: { "Content-Type": "image/jpeg" },
@@ -316,6 +400,42 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return null;
   }
 
+  // The live view (spec 026): what was last sent, per run.
+  let live = { run: null, at: 0, sent: "" };
+
+  /** Read the run's tab and, when its boxes changed, send them to the app. */
+  async function liveTick(data) {
+    if (live.run !== data.run_id) live = { run: data.run_id, at: 0, sent: "" };
+    if (Date.now() - live.at < LIVE_MS) return;
+    live.at = Date.now();
+    const mine = await runTabs(data.run_id);
+    const tabs = await c.tabs.query({}).catch(() => []);
+    // The run's most recent tab still on its site.
+    const tab = [...mine].reverse().map((id) => tabs.find((t) => t.id === id)).find((t) => t?.url && onRunHost(hostOf(t.url), data.hosts));
+    if (!tab) return;
+    const boxes = (await readLive(tab.id))
+      .filter((b) => b?.q && !PRIVATE.test(b.q))
+      .slice(0, MAX_LIVE)
+      .map((b) => ({ q: String(b.q).slice(0, 300), a: String(b.a ?? "").slice(0, 300), ...(b.by ? { by: b.by } : {}) }));
+    const body = JSON.stringify({ url: tab.url, title: (tab.title || "").slice(0, 200), boxes });
+    if (body === live.sent) return;
+    const res = await api(`/v1/apply/runs/${data.run_id}/live`, { method: "POST", body }).catch(() => null);
+    // Sent, or the run moved on (409): either way, not again until it changes.
+    if (res?.ok || res?.status === 409) live.sent = body;
+  }
+
+  async function readLive(tabId) {
+    try {
+      const results = await c.scripting.executeScript({
+        target: { tabId, allFrames: true },
+        func: () => globalThis.__jecAutofill?.live?.() || [],
+      });
+      return results.flatMap((r) => r?.result || []);
+    } catch {
+      return [];
+    }
+  }
+
   async function readAnswers(tabId) {
     try {
       const results = await c.scripting.executeScript({
@@ -328,5 +448,5 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
   }
 
-  return { tick, event, active, loop };
+  return { tick, event, active, loop, resumeFor };
 }
