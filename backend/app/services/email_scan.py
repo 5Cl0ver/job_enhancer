@@ -537,7 +537,11 @@ async def detect_events(
 
         # Matching reads the FULL cleaned text (signatures, quoted job details),
         # plus the display name, sender/Reply-To domains and known senders.
-        match = match_template(jobs, tmpl, msg.date) if tmpl is not None else None
+        match = (
+            match_template(jobs, tmpl, msg.date, subject=msg.subject, text=msg.body)
+            if tmpl is not None
+            else None
+        )
         if match is None:
             match = match_job(
                 jobs,

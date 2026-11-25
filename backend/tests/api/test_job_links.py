@@ -552,8 +552,9 @@ class TestPlacedAutomatically:
         self, client, db_session, test_user, enc_key, monkeypatch
     ):
         sj = await _applied_job(db_session, test_user, company="Vellacor, Inc.")
+        # Spec 028: it moves by itself only when it also named the role.
         _, ev = await self._leftover(
-            client, db_session, test_user, monkeypatch, company="Vellacor"
+            client, db_session, test_user, monkeypatch, company="Vellacor", title=TITLE
         )
         body = await _scan(client, monkeypatch)
         assert body["moved"] == 1
@@ -579,6 +580,24 @@ class TestPlacedAutomatically:
         await _scan(client, monkeypatch)
         await db_session.refresh(ev)
         assert ev.status == "unsaved" and ev.saved_job_id is None
+
+    async def test_by_company_alone_it_waits_for_a_tap(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        """Spec 028: a placement by company alone is a guess; it is put on the
+        job but never moves the card without the user."""
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        _, ev = await self._leftover(
+            client, db_session, test_user, monkeypatch, company="Vellacor"
+        )
+        body = await _scan(client, monkeypatch)
+        assert body["moved"] == 0
+        await db_session.refresh(ev)
+        await db_session.refresh(sj)
+        assert ev.status == "pending" and ev.saved_job_id == sj.id
+        assert (
+            sj.pipeline_stage_id == (await _stage(db_session, test_user, "Applied")).id
+        )
 
     async def test_without_auto_move_it_waits_for_a_tap(
         self, client, db_session, test_user, enc_key, monkeypatch
@@ -628,7 +647,7 @@ class TestPlacedAutomatically:
     ):
         sj = await _applied_job(db_session, test_user, company="Vellacor")
         _, interview = await self._leftover(
-            client, db_session, test_user, monkeypatch, company="Vellacor"
+            client, db_session, test_user, monkeypatch, company="Vellacor", title=TITLE
         )
         _, rejected = await self._leftover(
             client,
@@ -636,6 +655,7 @@ class TestPlacedAutomatically:
             test_user,
             monkeypatch,
             company="Vellacor",
+            title=TITLE,
             kind="rejected",
             stage="Rejected",
         )

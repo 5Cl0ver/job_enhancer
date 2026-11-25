@@ -57,6 +57,12 @@ COMPANY_ONLY = "company_only"
 CONFLICT = "conflicting_evidence"
 # A hiring system's own template named the company (and job).
 TEMPLATE = "template"
+# A template that named only the company (one saved job there, email not from
+# long before it was saved), or only the title (one saved job with that title,
+# applied on the same site around the same time): clear, but not sure enough
+# to move a card without a click (spec 028).
+TEMPLATE_COMPANY = "template_company"
+TEMPLATE_TITLE = "template_title"
 # Set after a scan: an unsaved update whose names point at exactly one saved
 # job's company (services/job_links.promote_unsaved).
 LIKELY_JOB = "likely_job"
@@ -260,9 +266,24 @@ def _tokens(text: str) -> list[str]:
     return [_TITLE_SYNONYMS.get(t, t) for t in re.findall(r"[a-z0-9]+", text)]
 
 
+def _drop_code(tokens: list[str]) -> list[str]:
+    """Drop a leading company code that hiring systems put before the name
+    ("C4410 Vellacor Group", "4100 Kestrel Optics USA", "300 Harbor Bank"): a
+    first word of three or more characters with a digit in it, when a real name
+    follows."""
+    if (
+        len(tokens) >= 2
+        and len(tokens[0]) >= 3
+        and any(c.isdigit() for c in tokens[0])
+        and any(sum(c.isalpha() for c in t) >= 2 for t in tokens[1:])
+    ):
+        return tokens[1:]
+    return tokens
+
+
 def _company_terms(name: str) -> tuple[list[str], list[str], str]:
     """(core words, distinctive words, squashed core) for a company name."""
-    core = [t for t in _tokens(name) if t not in _STOP]
+    core = [t for t in _drop_code(_tokens(name)) if t not in _STOP]
     rare = [t for t in core if t not in _COMMON and len(t) >= 3 and not t.isdigit()]
     return core, rare, "".join(core)
 
@@ -321,10 +342,24 @@ def _job_ids(url: str) -> set[str]:
         return set()
     base, query = _norm_url(url)
     ids = {v.lower() for k, v in query.items() if k in _ID_PARAMS and len(v) >= 5}
+    if "/" not in base:
+        return ids  # a bare site ("go4acme.com") names no job
     tail = base.rsplit("/", 1)[-1]
     if len(tail) >= 6 and re.search(r"\d", tail):
         ids.add(tail)
+    # The requisition a careers site ends its job URLs with ("…_REQ-104422",
+    # "…_R10001"): emails quote it on its own ("REQ-104422").
+    ids.update(_REQ_IN_URL.findall(tail))
     return ids
+
+
+_REQ_IN_URL = re.compile(r"(?<![a-z0-9])((?:req|jr|r)-?\d{4,})(?![0-9])")
+
+
+def _id_digits(job_id: str) -> str:
+    """The number of a requisition id ("REQ-104422" -> "104422"), "" if none."""
+    m = re.fullmatch(r"(?:req|jr|r)?-?0*(\d{4,})", (job_id or "").lower())
+    return m.group(1) if m else ""
 
 
 @dataclass
@@ -386,10 +421,64 @@ _CONTEXT_AFTER = r"(?:team|recruiting|talent|careers?|hiring|hr|people)"
 
 
 def _name_words(company: str) -> list[str]:
-    """The company's whole name as written, minus legal suffixes and a leading
-    "the" ("The Copper Kettle Group, Inc." -> copper kettle group)."""
-    words = [t for t in _tokens(company) if t not in _LEGAL]
-    return words[1:] if words[:1] == ["the"] else words
+    """The company's whole name as written, minus legal suffixes, a leading
+    company code and a leading "the" ("The Copper Kettle Group, Inc." ->
+    copper kettle group). A name that is only a number keeps its "the"
+    ("The 45"): "45" alone is in every price."""
+    words = _drop_code([t for t in _tokens(company) if t not in _LEGAL])
+    if words[:1] == ["the"] and not _numeric_name(words[1:]):
+        return words[1:]
+    return words
+
+
+def _numeric_name(words: list[str]) -> bool:
+    """A name with no real word in it: numbers and one- or two-letter bits."""
+    return bool(words) and not any(
+        sum(c.isalpha() for c in w) >= 3 for w in words if w != "the"
+    )
+
+
+# "Acme Dental (via Northgate Staffing)": a job saved through an agency is named by
+# either company.
+_VIA = re.compile(r"^(.*?)\s*[(\[]?\s*\bvia\s+([^)\]]+?)\s*[)\]]?\s*$", re.I)
+
+
+def _aliases(company: str) -> list[str]:
+    m = _VIA.match(company or "")
+    if not m or not m.group(1).strip():
+        return [company or ""]
+    return [m.group(1).strip(), m.group(2).strip()]
+
+
+def _site_label(job: dict) -> str:
+    """The company's own careers site, from the saved job's apply link
+    ("kestreloptics.com/careers/…" -> "kestreloptics"); "" for job boards and
+    hiring systems, which host every company."""
+    for one in [job, *job.get("_duplicates", ())]:
+        host = (urlsplit((one.get("apply_url") or "").strip()).hostname or "").lower()
+        host = host.removeprefix("www.")
+        parts = host.split(".")
+        if len(parts) < 2 or is_platform_sender(f"x@{host}"):
+            continue
+        if _WEBMAIL.search(host + "."):
+            continue
+        label = re.sub(r"[^a-z0-9]", "", parts[-2])
+        if len(label) >= 4 and not _BOARD_WORDS.match(label):
+            return label
+    return ""
+
+
+def _label_names(label: str, core: list[str], rare: list[str], squashed: str) -> bool:
+    """A sender-domain label that is this company's: its squashed name, a long
+    distinctive word of it, or its first words run together ("harborbank" for
+    "Harbor Bank National Association")."""
+    if label == squashed or (len(squashed) >= 6 and squashed in label):
+        return True
+    if len(label) >= 5 and label in rare:
+        return True
+    return len(label) >= 5 and any(
+        label == "".join(core[:k]) for k in range(2, len(core))
+    )
 
 
 def _company_named(
@@ -398,30 +487,40 @@ def _company_named(
     """Does the email name THIS company, not just one common word of it?
 
     Yes when the whole name is in the subject or the sender's name, the
-    sender's own domain is the company's, the whole name is in the text in an
-    application context ("your interest in Acme", "the Acme team"), or a name
-    of two or more words appears whole. A one-word name loose in the text
-    ("Snap Layouts", "20% off") is not enough.
+    sender's own domain is the company's (or its careers site's), the whole
+    name is in the text in an application context ("your interest in Acme",
+    "the Acme team"), or a name of two or more real words appears whole. A
+    one-word name loose in the text ("Snap Layouts", "20% off") is not enough,
+    and nor is a number ("$45+ purchase" for "The 45").
     """
-    core, rare, squashed = _company_terms(job.get("company") or "")
-    words = _name_words(job.get("company") or "")
+    site = _site_label(job)
+    if site and site in labels:
+        return True
+    return any(
+        _company_named_one(alias, subject, display, text, labels)
+        for alias in _aliases(job.get("company") or "")
+    )
+
+
+def _company_named_one(
+    company: str, subject: str, display: str, text: str, labels: list[str]
+) -> bool:
+    core, rare, squashed = _company_terms(company)
+    words = _name_words(company)
     if not core or not words:
         return False
-    for label in labels:
-        if label == squashed or (len(squashed) >= 6 and squashed in label):
-            return True
-        if len(label) >= 5 and label in rare:
-            return True
+    if any(_label_names(label, core, rare, squashed) for label in labels):
+        return True
     head = _haystack(subject, display, "")
     if _has_phrase(head, words):
         return True
-    if _initials_in(company_initials(job.get("company") or ""), labels, head.upper):
+    if _initials_in(company_initials(company), labels, head.upper):
         return True
     name = " ".join(words)
     body = " ".join(_tokens(text))
     if f" {name} " not in f" {body} ":
         return False
-    if len(words) >= 2:
+    if len(words) >= 2 and not _numeric_name(words):
         return True
     pattern = (
         rf"\b{_CONTEXT_BEFORE} (?:the )?{re.escape(name)}\b"
@@ -430,19 +529,44 @@ def _company_named(
     return bool(re.search(pattern, body))
 
 
+# Words that say what KIND of business a company is, never which one.
+_KIND_WORDS = {
+    "link", "links", "connect", "association", "associates", "talent", "staffing",
+    "recruiting", "recruitment", "resources", "consulting", "consultants",
+    "agency", "enterprises", "industries", "support", "security", "cybersecurity",
+}  # fmt: skip
+
+
 def _company_hit(job: dict, h: _Haystack, domain_labels: list[str]) -> bool:
-    core, rare, squashed = _company_terms(job.get("company") or "")
+    site = _site_label(job)
+    if site and site in domain_labels:
+        return True
+    return any(
+        _company_hit_one(alias, h, domain_labels)
+        for alias in _aliases(job.get("company") or "")
+    )
+
+
+def _company_hit_one(company: str, h: _Haystack, domain_labels: list[str]) -> bool:
+    core, rare, squashed = _company_terms(company)
     if not core:
         return False
-    for label in domain_labels:  # careers@quillfeather.example, copperkettle.example
-        if label == squashed or (len(label) >= 5 and label in rare):
-            return True
-        if len(squashed) >= 6 and squashed in label:
-            return True
-    if _initials_in(company_initials(job.get("company") or ""), domain_labels, h.upper):
+    # careers@quillfeather.example, copperkettle.example
+    if any(_label_names(label, core, rare, squashed) for label in domain_labels):
         return True
-    if rare and all(t in h.words for t in rare):
+    if _initials_in(company_initials(company), domain_labels, h.upper):
         return True
+    # Its distinctive words, when at least one is more than a kind of business
+    # ("Link" alone is in every email; "Brightwave Talent Link" must appear whole).
+    if (
+        rare
+        and any(t not in _KIND_WORDS for t in rare)
+        and all(t in h.words for t in rare)
+    ):
+        return True
+    if _numeric_name(core):
+        # "The 45": only the name as written, with its "the".
+        return _has_phrase(h, _name_words(company)) and len(_name_words(company)) >= 2
     return _has_phrase(h, core)  # all-common names must appear whole
 
 
@@ -560,7 +684,10 @@ def collapse_duplicates(jobs: list[dict]) -> tuple[list[dict], dict]:
 DIGEST_MIN_JOBS = 3
 
 # Evidence that ties an email to one saved job by its company (spec 027).
-_CLEAR = {JOB_URL, JOB_ID, KNOWN_SENDER, COMPANY_TITLE, COMPANY_DATE}
+_CLEAR = {
+    JOB_URL, JOB_ID, KNOWN_SENDER, COMPANY_TITLE, COMPANY_DATE,
+    TEMPLATE_COMPANY, TEMPLATE_TITLE,
+}  # fmt: skip
 
 
 # Job boards: they send lists of other companies' jobs. Applicant-tracking
@@ -617,6 +744,7 @@ _GENERIC_NAME = {
     "digital", "data", "cloud", "network", "networks", "software", "technology",
     "technologies", "tech", "it", "solutions", "systems", "partners", "group",
     "enterprises", "industries", "company", "corporation", "holdings", "core",
+    "association", "associates", "links", "connect",
 }  # fmt: skip
 
 
@@ -806,7 +934,12 @@ _SAME_TITLE = 85
 
 def _same_company(a: str, b: str) -> bool:
     """'Kestrel Optics' ~ 'Kestrel Optics, Inc.'; 'Harrowgate University' ~
-    'Harrowgate University Careers'; never on one common word alone."""
+    'Harrowgate University Careers'; 'Vellacor' ~ 'C4410 Vellacor Group'; 'Northgate
+    Staffing' ~ 'Acme (via Northgate Staffing)'; never on one common word alone."""
+    return any(_same_company_one(x, y) for x in _aliases(a) for y in _aliases(b))
+
+
+def _same_company_one(a: str, b: str) -> bool:
     ca, ra, sa = _company_terms(a)
     cb, rb, sb = _company_terms(b)
     if not ca or not cb:
@@ -826,23 +959,88 @@ def _title_close(a: str, b: str) -> bool:
     return fuzz.token_set_ratio(a.lower(), b.lower()) >= _SAME_TITLE
 
 
+# A receipt naming only a title is about a job saved around when it was sent.
+_TITLE_ONLY_WINDOW = timedelta(days=21)
+
+
+def _near(job: dict, when: datetime | None) -> bool:
+    if when is None:
+        return True
+    for one in [job, *job.get("_duplicates", ())]:
+        saved = one.get("saved_at")
+        if saved is None:
+            return True
+        if saved.tzinfo is None and when.tzinfo is not None:
+            saved = saved.replace(tzinfo=when.tzinfo)
+        elif when.tzinfo is None and saved.tzinfo is not None:
+            when = when.replace(tzinfo=saved.tzinfo)
+        if abs(when - saved) <= _TITLE_ONLY_WINDOW:
+            return True
+    return False
+
+
+def _on_site(job: dict, source: str) -> bool:
+    """The job was saved from this job site (or from nowhere we know): an
+    Indeed receipt isn't about a job saved from a company's Workday page."""
+    hosts = [
+        (urlsplit((one.get("apply_url") or "").strip()).hostname or "").lower()
+        for one in [job, *job.get("_duplicates", ())]
+    ]
+    if not any(hosts):
+        return True
+    return any(source in h for h in hosts)
+
+
+_JOB_SITES = {"indeed", "linkedin", "ziprecruiter"}
+
+
+def _title_only(jobs: list[dict], tmpl, date: datetime | None) -> JobMatch:
+    """Only a title: exact title (or every word of a 3+ word title), saved
+    around the time of the email and, for a job site's receipt, saved from that
+    site. One such job is a clear match, never a sure one."""
+    want = _exact_title(tmpl.title)
+    found = [j for j in jobs if _exact_title(j.get("title") or "") == want]
+    if not found and len(want) >= 3:
+        found = [j for j in jobs if set(want) < set(_exact_title(j.get("title") or ""))]
+    if not found:
+        return JobMatch(NONE)
+    fits = [
+        j
+        for j in found
+        if _near(j, date)
+        and (tmpl.source not in _JOB_SITES or _on_site(j, tmpl.source))
+    ]
+    if len(fits) == 1:
+        return JobMatch(MATCHED, fits[0], TEMPLATE_TITLE)
+    return JobMatch(REVIEW, None, TITLE_ONLY, fits or found)
+
+
 def match_template(
-    jobs: list[dict], tmpl, date: datetime | None = None
+    jobs: list[dict],
+    tmpl,
+    date: datetime | None = None,
+    *,
+    subject: str = "",
+    text: str = "",
 ) -> JobMatch | None:
     """Match the company / title / job id a template states to a saved job.
 
     Returns None when the template names nothing usable (the general matcher
     then runs), NONE when it names a company or role that isn't saved.
+    Only a job id, or the company AND title, is sure; a company alone or a
+    title alone is clear at most (spec 028).
     """
     jobs, _ = collapse_duplicates(jobs)
-    by_id = {j["id"]: j for j in jobs}
     if tmpl.job_id:
+        want = _id_digits(tmpl.job_id) or tmpl.job_id.lower()
         for j in jobs:
-            ids = _job_ids(j.get("apply_url") or "") | {
-                (j.get("external_id") or "").lower()
-            }
-            if tmpl.job_id.lower() in {i for i in ids if i}:
-                return JobMatch(MATCHED, j, JOB_ID)
+            for one in [j, *j.get("_duplicates", ())]:
+                ids = _job_ids(one.get("apply_url") or "") | {
+                    (one.get("external_id") or "").lower()
+                }
+                if want in {_id_digits(i) or i for i in ids if i}:
+                    return JobMatch(MATCHED, j, JOB_ID)
+    from_sender = getattr(tmpl, "company_from", "subject") != "subject"
     if tmpl.company:
         at = [
             j
@@ -851,26 +1049,28 @@ def match_template(
             and _same_company(tmpl.company, j.get("company") or "")
         ]
         if not at:
+            # A name read off the sender ("Jo Rivers", "acmeworkdaynotices")
+            # may be a person or a mailbox: let the general matcher read the
+            # whole email instead of calling it unsaved.
+            if from_sender:
+                return _title_only(jobs, tmpl, date) if tmpl.title else None
             return JobMatch(NONE)
         if tmpl.title:
             close = [j for j in at if _title_close(tmpl.title, j.get("title") or "")]
             if len(close) == 1:
                 return JobMatch(MATCHED, close[0], TEMPLATE)
-            if not close and len(at) == 1:
+            if not close and len(at) == 1 and not from_sender:
                 return JobMatch(NONE)  # another role at the company, not saved
         elif len(at) == 1:
-            return JobMatch(MATCHED, at[0], TEMPLATE)
+            job = at[0]
+            if _names_other_role(job, subject, text):
+                return JobMatch(NONE)  # another role there, not saved
+            if not _date_ok(job, date):
+                return JobMatch(REVIEW, None, COMPANY_ONLY, [job])
+            return JobMatch(MATCHED, job, TEMPLATE_COMPANY)
         # Several roles there and the template didn't say which: the general
         # matcher reads the whole email (the title is usually in the body).
         return None
     if tmpl.title:
-        # Exact only: "Engineer I" and "Engineer II" are different jobs.
-        want = _exact_title(tmpl.title)
-        exact = [j for j in jobs if _exact_title(j.get("title") or "") == want]
-        if len(exact) == 1:
-            return JobMatch(MATCHED, exact[0], TEMPLATE)
-        if exact:
-            return JobMatch(REVIEW, None, TITLE_ONLY, exact)
-        return JobMatch(NONE)
-    del by_id
+        return _title_only(jobs, tmpl, date)
     return None

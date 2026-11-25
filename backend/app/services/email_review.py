@@ -72,8 +72,11 @@ async def _get_event(
 # Evidence that names the job exactly: its link, its job ID, or a hiring
 # site's own template naming the company and role. Only these move a card
 # without a click; anything looser waits for the user.
-# A likely job is one the email's names point at alone (its company), so it
-# moves too; Undo on such a move asks which job it really was.
+# A likely job is one the email's names point at alone; it moves too when the
+# email also named the role (spec 028: by company alone it waits for a
+# click). Undo on such a move asks which job it really was. A template that
+# named only the company or only the title (template_company /
+# template_title) also waits for a click.
 SURE_EVIDENCE = (JOB_URL, JOB_ID, TEMPLATE, LIKELY_JOB)
 AUTO_EVENTS = (APPLIED, INTERVIEW, ASSESSMENT, OFFER, REJECTED)
 # How long the "Moved for you" list keeps an automatic move on the page.
@@ -213,6 +216,9 @@ async def auto_apply(
         if ev.status == STATUS_PENDING
         and ev.saved_job_id is not None
         and ev.match_evidence in SURE_EVIDENCE
+        # A placement by company alone waits for a click (spec 028): only one
+        # that also named this job's role moves by itself.
+        and not (ev.match_evidence == LIKELY_JOB and not (ev.job_title or "").strip())
         and ev.event_type in AUTO_EVENTS
         and ev.target_stage in stages
     ]

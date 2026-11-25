@@ -36,6 +36,10 @@ class TemplateRead:
     title: str | None = None
     event: str | None = None  # applied | rejected | interview | recruiter | ignore
     job_id: str | None = None
+    # Where the company name came from: the email's own words ("subject") or,
+    # failing those, the sender's display name or mailbox ("sender"), which
+    # may be a person ("Jo Rivers") or a mailbox ("acmeworkdaynotices").
+    company_from: str = "subject"
 
 
 def _clean(value: str | None) -> str | None:
@@ -114,10 +118,22 @@ def _indeed(subject: str, name: str, local: str, text: str) -> TemplateRead | No
         return TemplateRead(
             "indeed", company, _clean(t.group(1)) if t else None, INTERVIEW
         )
+    # "You requested new interview times from Acme." — still scheduling.
+    m = re.search(r"requested new interview times from (.+?)\.?$", subject, re.I)
+    if m:
+        return TemplateRead("indeed", _clean(m.group(1)), None, INTERVIEW)
     # "Acme has invited you to apply" — a recruiter reaching out.
     m = re.match(r"\s*(.+?) has invited you to apply", subject, re.I)
     if m:
         return TemplateRead("indeed", _clean(m.group(1)), None, RECRUITER)
+    # "Let Acme Staffing know you are interested" — a recruiter's message sent
+    # through Indeed; the job details block names the role.
+    m = re.match(r"\s*Let (.+?) know you(?:'re| are) interested", subject, re.I)
+    if m:
+        t = re.search(r"\bJob Title:\s*(.+?)\s+Company:", text)
+        return TemplateRead(
+            "indeed", _clean(m.group(1)), _clean(t.group(1)) if t else None, RECRUITER
+        )
     return None
 
 
@@ -136,6 +152,10 @@ def _linkedin(subject: str, text: str) -> TemplateRead | None:
         # The outcome is in LinkedIn's own template name in the email's links.
         event = REJECTED if "application_rejected" in text else None
         return TemplateRead("linkedin", _clean(m.group(2)), _clean(m.group(1)), event)
+    # "Your application was viewed by Acme": still in review, so applied.
+    m = re.match(r"\s*Your application was viewed by (.+)$", subject, re.I)
+    if m:
+        return TemplateRead("linkedin", _clean(m.group(1)), None, APPLIED)
     return None
 
 
@@ -189,6 +209,7 @@ def _ats(source: str, subject: str, name: str, local: str, text: str) -> Templat
             if title and _NOT_A_TITLE.search(title):
                 title = None  # "Interview scheduled at Acme": a company, no role
             break
+    from_subject = bool(company)
     if (
         not company
         and name
@@ -222,6 +243,7 @@ def _ats(source: str, subject: str, name: str, local: str, text: str) -> Templat
         title,
         None,
         job.group(1) if job else None,
+        "subject" if from_subject else "sender",
     )
 
 
