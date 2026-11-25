@@ -176,8 +176,8 @@ describe("the application page", () => {
     post.mockResolvedValue({ ...RUN, status: "review" });
     renderPage();
     expect(await screen.findByText("Page 1: My Information")).toBeInTheDocument();
-    expect(screen.getByText("Claude wrote this")).toBeInTheDocument();
-    expect(screen.getByText("Left empty")).toBeInTheDocument();
+    expect(screen.getAllByText("Claude wrote it")[0]).toBeInTheDocument();
+    expect(screen.getAllByText("Left empty")).toHaveLength(2); // checked first, and on its page
     expect(screen.getByText(/No photo: The tab wasn't showing/)).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Open photo 1 of page 1" })).toBeInTheDocument();
 

@@ -77,34 +77,44 @@ Two or three lines aimed at this job.
   - **change** (with what to change): change it, call `save_resume` again, and wait again. They may also ask you things in the app while they look (`from_user`): answer with `message_user`, suggesting concrete changes, but change the résumé only when they say so.
 - When `save_resume` doesn't ask for a look, tell them it's saved on the job and go on.
 
-## 4. Fill the application
+## 4. Fill the application, with your best judgment
+
+Fill every box yourself and keep going. The user follows along in the app (they watch the boxes fill live) and checks everything at the review, so **only stop for what you truly can't do or know.**
 
 - Open `job.apply_url`.
-  - If it lands on a sign-in or sign-up page, a CAPTCHA ("I'm not a robot"), or anything only the user can do at the computer, call `need_help` with what they need to do and the `page_url`. Then call `wait_for_you` until they say keep going.
-  - For a sign-up, fill the email and the details from the profile. Never type, choose or store a password: the user makes it, and Chrome offers and saves one.
+- **Stop and ask with `need_help` ONLY for:**
+  - **Signing in or making an account** (`sign_in` / `sign_up`). For a sign-up, fill the email and the details from the profile. Never type, choose or store a password: the user makes it, and Chrome offers and saves one.
+  - **A CAPTCHA** or "I'm not a robot" (`captcha`).
+  - **A file Job Catcher couldn't attach** (`file`), when `fill_page` says `resume: failed`. Never ask the user to attach a résumé Job Catcher already attached.
+  - **Facts about the user that the master profile, "Things I told Claude" and their answers don't give:** their experience (years with a tool, whether they've done something), degrees, licences, certifications, work authorisation, visa sponsorship, security clearance, criminal history. Ask with `need_help(kind="question", what=…, choices=[…], page_url=…)`, offering up to 4 likely answers, and use the `reply` exactly. **Never guess experience.**
+- **Everything else, decide yourself and mark it `guess: true`** in `page_done`:
+  - Easy picks: Prefix, "How did you hear about us?" (the job's source, e.g. LinkedIn), the preferred contact method.
+  - Pay: the user's saved desired salary from the profile, else the middle of the posting's range. Leave an optional pay box blank when neither exists.
+  - Start date or notice period (two weeks), relocation, "OK to text you?" (No), anything similar.
+  - Self-identification (gender, race, veteran, disability): the user's saved answer, else "I don't wish to answer" or "Decline to self-identify". Mark it `guess: true` unless it's their saved answer.
+- **Short questions** ("Years with Windows Server?"): answer from the profile (a fact, not a guess). **Essay questions** ("Why do you want to work here?"): write 3–6 honest sentences from the profile and the job (`claude: true`).
+- **Agreements:** tick an agreement only when the page needs it to go on (a privacy notice, "I certify this information is true", the site's application terms), and mark it `agreement: true`. The user sees every one at the review before anything is sent. Leave optional ones unticked (marketing, texts, "join our talent community"). Never agree to anything that costs money.
 - On EVERY page of the application:
-  1. Call `fill_page(page_url)`. Job Catcher fills what it knows (profile, saved answers, this job's résumé file) and tells you what's left.
-  2. Check every box it filled. Fill everything that's left yourself, from the master profile and the user's answers.
-     - **Short questions** ("Years with Windows Server?"): answer from the profile.
-     - **Essay questions** ("Why do you want to work here?"): write 3–6 honest sentences from the profile and the job.
-     - **Self-identification** (gender, race, veteran, disability): use the user's saved answer if the profile has one, else choose "I don't wish to answer" or "Decline to self-identify".
-     - **Anything you can't answer truthfully** from the profile (expected pay, a start date, "OK to text you?"): call `need_help(kind="question", what=…, choices=[…], page_url=…)` with up to 4 likely answers (for pay: the posting's range and the user's saved number). Use the `reply` exactly.
-     - **Agreements** (terms, privacy consent, SMS or background-check consent): never tick them for the user on your own. Ask with `need_help(kind="question", choices=["Yes, agree", "No"])` and do what they say.
+  1. Call `fill_page(page_url)`. Job Catcher fills what it knows (profile, saved answers, this job's résumé file) and tells you what's left, plus `resume` (whether the résumé went on).
+  2. Check every box it filled. Fill everything that's left yourself, as above.
   3. Call `page_done(page_url, page_title, answers)` BEFORE you press Next or Continue.
      - `answers` lists every question on the page and what's in it, as `{q, a}`.
-     - Mark anything you wrote yourself with `claude: true`.
+     - Mark what you wrote with `claude: true`, your picks with `guess: true`, and ticked agreements with `agreement: true`.
      - Job Catcher takes photos of the whole page. Wait for the tool to return before you move on: it scrolls the page.
-  4. Press Next or Continue.
+  4. Post one line with `message_user` ("Page 2 of 4 done: My Experience"), then press Next or Continue.
 
 ## 5. Stop before Submit
 
 - On the LAST page (the one with the final Submit), fill it, then call `ready_for_review(page_url, page_title, answers)`. Do NOT press Submit.
-- Tell the user: "It's ready for your review in the app. Check the photos, then press Submit, Fix something, or I'll submit it myself. Or tell me here."
+- Tell the user: "It's ready for your review in the app. Check your answers (my guesses come first), then press Submit, or change any answer and send me the fixes."
 - Call `wait_for_you` until it returns a decision. It waits about 45 seconds each time, so keep calling it for up to 30 minutes. If it's still waiting after that, post with `message_user` that you'll pick it up when they say "carry on" here, and stop.
 - If the user tells you their decision here in the chat (or in the Claude app on the phone, which writes to the same run), record it with `user_said(decision=…, note=…, user_words="their exact words")` first.
 - The decisions:
   - **submit**: press the final Submit. When the confirmation page shows, call `finish_apply(sent=true, page_url=…)`.
-  - **fix**: do what the note says (go back to that page if needed), call `page_done` for each page you change, then `ready_for_review` again.
+  - **fix**: the result has the user's `note`, and usually `fixes`, one per answer they tapped:
+    - `to`: change that answer to exactly `to`.
+    - `ask`: their question about that answer. Answer it in one or two lines with `message_user`; change the answer only if they asked you to.
+    - Then call `page_done` for each page you changed (go back to it if needed), and `ready_for_review` again. They review again.
   - **self**: don't press Submit, and don't call finish_apply. Tell the user it's ready and stop. The app finishes the run when they submit.
 
 ## 6. Finish

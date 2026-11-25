@@ -1,12 +1,45 @@
 import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
-import { AlertTriangle, Camera, Check, CheckCircle2, Copy, Hand, Loader2, Monitor, Send } from "lucide-react";
+import { AlertTriangle, Camera, Check, CheckCircle2, Copy, Download, Hand, Loader2, Monitor, Send } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { Photo } from "@/components/apply/Pages";
 import { useHelpDone, useMarkSent, useNotSent, usePeek, usePostMessage } from "@/hooks/useApply";
+import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
 import { CARRY_ON_LINE, type ApplyRun, HELP_TITLES } from "@/lib/apply";
+
+/** Save the run's résumé to the computer, to attach it by hand (spec 026). */
+function DownloadResume({ file }: { file: { id: string; filename: string } }) {
+  const [state, setState] = useState<"idle" | "busy" | "failed">("idle");
+  const save = async () => {
+    setState("busy");
+    try {
+      const blob = await api.getBlob(`/v1/ai/resumes/${file.id}/file`);
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = file.filename;
+      document.body.append(a);
+      a.click();
+      a.remove();
+      setTimeout(() => URL.revokeObjectURL(url), 60_000);
+      setState("idle");
+    } catch {
+      setState("failed");
+    }
+  };
+  return (
+    <div className="space-y-1">
+      <Button variant="outline" className="gap-1.5" disabled={state === "busy"} onClick={save}>
+        {state === "busy" ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Download className="h-4 w-4" aria-hidden />}
+        Download your résumé for this job
+      </Button>
+      <p className="text-xs text-muted-foreground">{file.filename}</p>
+      {state === "failed" && <p className="text-xs text-destructive">Couldn't download it. Try again.</p>}
+    </div>
+  );
+}
 
 // The application page as a remote control (spec 023): answer Claude, talk to
 // it, see the screen, know when it stopped, and be sure it was sent, from the
@@ -98,7 +131,8 @@ export function HelpCard({ run }: { run: ApplyRun }) {
   const [text, setText] = useState("");
   const help = run.help;
   if (run.status !== "needs_you" || !help || help.done_at) return null;
-  const atComputer = help.kind === "captcha" || help.kind === "sign_in" || help.kind === "sign_up";
+  const atComputer =
+    help.kind === "captcha" || help.kind === "sign_in" || help.kind === "sign_up" || help.kind === "file";
   const send = (reply?: string) => done.mutate({ runId: run.id, reply });
   return (
     <section className="space-y-3 rounded-lg border border-primary/50 bg-primary/5 p-4">
@@ -119,6 +153,7 @@ export function HelpCard({ run }: { run: ApplyRun }) {
           or stores your passwords.
         </p>
       )}
+      {help.kind === "file" && run.resume_file && <DownloadResume file={run.resume_file} />}
       <LatestLook run={run} since={help.peek_request ? help.at : undefined} />
       <ScreenButton run={run} label="Show me the screen again" />
       {!!help.choices?.length && (

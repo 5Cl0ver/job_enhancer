@@ -28,6 +28,7 @@ from app.schemas.apply import (
     FactIn,
     FactOut,
     HelpDoneIn,
+    LiveIn,
     MessageIn,
     RequestResult,
     ResumeDecisionIn,
@@ -154,7 +155,14 @@ async def decision(
 ):
     run = await _run(db, user, run_id, lock=True)
     try:
-        await svc.decide(db, run, data.decision, data.note, by="app")
+        await svc.decide(
+            db,
+            run,
+            data.decision,
+            data.note,
+            by="app",
+            fixes=[f.model_dump() for f in data.fixes or []],
+        )
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()
@@ -347,6 +355,26 @@ async def request_result(
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     await db.commit()
     return {"id": str(req.id), "status": req.status}
+
+
+@router.post("/runs/{run_id}/live", status_code=204)
+async def live(
+    run_id: uuid.UUID,
+    data: LiveIn,
+    user: User = Depends(get_user_or_pass),
+    db: AsyncSession = Depends(get_db),
+):
+    """Job Catcher: every box on the page being filled and what's in it, for
+    the app's live view (spec 026). 409 once the run isn't filling."""
+    await _run(db, user, run_id)
+    try:
+        await svc.save_live(db, user.id, run_id, data.model_dump())
+    except svc.NotFilling as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise _bad(exc) from exc
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/runs/{run_id}/event")
