@@ -415,7 +415,7 @@ async def record_answers(
     for q in questions:
         new = q.pop("_update_fact", None)
         if new is not None:
-            await db.execute(
+            res = await db.execute(
                 update(ProfileFact)
                 .where(
                     ProfileFact.id == uuid.UUID(q["fact_id"]),
@@ -423,6 +423,9 @@ async def record_answers(
                 )
                 .values(answer=new, updated_at=_now())
             )
+            if not res.rowcount:  # deleted in Settings since: keep it again
+                q.pop("fact_id", None)
+                _remember(run, db, q, new)
     run.questions = questions
     if done:
         run.answers_done = True

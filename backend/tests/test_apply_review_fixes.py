@@ -168,3 +168,29 @@ async def test_the_database_holds_one_open_run(engine, monkeypatch):
         )
         with pytest.raises(IntegrityError):
             await db.flush()
+
+
+@pytest.mark.asyncio
+async def test_a_reanswer_after_deleting_the_fact_keeps_it_again(engine, monkeypatch):
+    from sqlalchemy import delete
+
+    maker, user, run_id, _ = await _setup(engine, monkeypatch)
+    rid = str(run_id)
+    await mcp_mod.get_apply_brief(rid)
+    await mcp_mod.ask_questions(rid, [{"question": "Used Okta?"}])
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        qid = run.questions[0]["id"]
+        await svc.record_answers(
+            db, run, [{"id": qid, "answer": "Yes"}], done=False, source="app"
+        )
+        await db.commit()
+        await db.execute(delete(ProfileFact))  # deleted in Settings
+        await db.commit()
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        await svc.record_answers(
+            db, run, [{"id": qid, "answer": "Yes, SSO"}], done=False, source="app"
+        )
+        await db.commit()
+        facts = (await db.scalars(select(ProfileFact))).all()
+        assert [f.answer for f in facts] == ["Yes, SSO"]
