@@ -23,6 +23,11 @@ function effect(ev: DetectedEvent): string | null {
       : `You moved this job to ${ev.target_stage}`;
   }
   if (ev.status === "pending") return "Waiting for you on Email updates";
+  if (ev.status === "noted") {
+    return ev.target_stage
+      ? `No change needed: already in ${ev.target_stage} or further`
+      : "No change needed";
+  }
   return null;
 }
 
@@ -36,13 +41,19 @@ export function JobEmails({
   /** With no emails, say so (the job's own page) instead of showing nothing. */
   sayWhenNone?: boolean;
 }) {
-  const { data: emails, isError, refetch, isFetching } = useJobEmails(jobListingId);
+  const {
+    data: emails,
+    isError,
+    refetch,
+    isFetching,
+  } = useJobEmails(jobListingId);
   const [open, setOpen] = useState<string | null>(null);
   if (!emails) {
     // Where the job's emails are expected (its page and pop-up), say what's
     // happening instead of leaving a gap that looks like "no emails".
     if (!sayWhenNone) return null;
-    if (!isError) return <Skeleton className={cn("h-11 rounded-lg", className)} />;
+    if (!isError)
+      return <Skeleton className={cn("h-11 rounded-lg", className)} />;
     return (
       <p
         role="alert"

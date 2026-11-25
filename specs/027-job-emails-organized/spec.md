@@ -16,15 +16,15 @@
 - **Bug 1 (7 of 10): "already at that stage" emails are thrown away.**
   - When a card is already at or past the stage an email points to, the email isn't stored anywhere. It only appears once, in that scan's short "what I looked at" list.
   - This happened to:
-    - "Thank you for applying" emails after applying had moved the card (Relocity, Lattice, Affirm, The Home Depot, Tech Talent Link, Core Health);
-    - a second interview email while the card was already in Interview (Colas);
-    - a second rejection (DCI).
+    - "Thank you for applying" emails after applying had moved the card (six different companies);
+    - a second interview email while the card was already in Interview;
+    - a second rejection.
   - The rule was meant to stop cards moving backward. It also hides the email itself.
 - **Bug 2 (3 of 10): real emails are mistaken for job-alert digests.**
   - `looks_like_digest` calls an email a job alert when it names 3+ saved jobs. With 330 saved jobs, ordinary emails trip it:
     - **Titles inside titles.** "Endpoint Systems Administrator" contains "Systems Administrator", the title of 6 other saved jobs at different companies.
-    - **Generic company names.** Saved companies called "Oregon", "Cybersecurity", "City of Portland" or "The 20" match words in a signature or address.
-  - This happened to a real Colas interview email (Nov 25), a Tech Talent Link application email and a Core Health application email.
+    - **Generic company names.** Saved companies named only by a place or a kind of business (a city, a state, "Security") match words in a signature or address.
+  - This happened to a real interview email (Nov 25) and two application emails.
 - **The dry-run tool says "would create" for emails a real scan drops**, because it skips the stage check. That hid both bugs.
 
 ## User Scenarios & Testing *(mandatory)*
@@ -37,7 +37,7 @@ Every email the scan ties to one of your saved jobs is kept on that job, whether
 - A new interview, assessment or offer email always shows as new, even when the card is already at that stage. A second interview email usually means a new time or link.
 
 **Acceptance:**
-1. With the Colas card in Interview, a new Colas interview email shows on the Colas job as a new email, and on Email updates under "New emails on your jobs". The card stays put.
+1. With a card in Interview, a new interview email from that company shows on the job as a new email, and on Email updates under "New emails on your jobs". The card stays put.
 2. A "Thank you for applying" email after the card is already in Applied shows on that job under "Your application".
 3. Nothing about a matched saved job ends up in the "skipped" count.
 
@@ -51,7 +51,7 @@ An email is only treated as a job alert / digest when it really lists several di
   - a reply in a thread;
   - an exact company + title match.
 - **Titles count once.** A saved title found only inside another saved title doesn't count, and the same title at several companies counts as one title.
-- **Generic company names don't count.** A company name made only of common words or places ("Oregon", "Cybersecurity", "City of Portland", "The 20") never counts toward "names several companies".
+- **Generic company names don't count.** A company name made only of common words or places (a city, a state, "Security") never counts toward "names several companies".
 
 **Acceptance:** the three real misses (anonymized into test fixtures) are kept, and real job alerts are still recognized as digests:
 - LinkedIn "apply now to…";

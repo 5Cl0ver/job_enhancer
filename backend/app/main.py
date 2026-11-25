@@ -68,6 +68,17 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="purge_old_usage",
         replace_existing=True,
     )
+    from app.services.email_review import purge_looked_at_job
+
+    # "Looked at, not shown" keeps 30 days, at most 500 (spec 027).
+    scheduler.add_job(
+        purge_looked_at_job,
+        trigger="interval",
+        hours=24,
+        args=[AsyncSessionLocal],
+        id="purge_looked_at",
+        replace_existing=True,
+    )
     from app.services.apply_runs import sweep_job
 
     # Apply with Claude (spec 022): idle runs stop, photos go after 30 days.

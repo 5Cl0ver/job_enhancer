@@ -16,7 +16,7 @@ All findings come from read-only runs against the live inbox and database on 202
 - **Why the digest test fired:**
   - **Title inside title:** "Endpoint Systems Administrator" hit 7 saved jobs titled "Systems Administrator" across companies (≥ 3 jobs, ≥ 2 companies).
   - **Same title, many companies:** "Business Systems Analyst II" hit 4 saved "Business Systems Analyst" jobs.
-  - **Generic company names:** a 1,770-character interview email hit 3 "companies": "City of Portland" (from an address), the user's own saved company, and "The 20".
+  - **Generic company names:** a 1,770-character interview email hit 3 "companies": a city name (from an address), a staffing company with a generic name, and a two-word name made of a number.
 - **Decision:** two separate fixes (R2, R3). Each gets regression tests built from anonymized copies of these shapes.
 
 ## R2: Keeping emails that don't move a card

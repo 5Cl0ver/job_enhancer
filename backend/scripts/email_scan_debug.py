@@ -50,11 +50,14 @@ from app.services.email_classify import (  # noqa: E402
     UNKNOWN,
     classify,
     company_from_sender,
-    stage_for_event,
 )
-from app.services.email_match import match_job, sender_is_saved_company  # noqa: E402
+from app.services.email_match import sender_is_saved_company  # noqa: E402
 from app.services.email_prefilter import company_tokens  # noqa: E402
-from app.services.email_scan import EmailMessage, _candidate_jobs  # noqa: E402
+from app.services.email_scan import (  # noqa: E402
+    EmailMessage,
+    _candidate_jobs,
+    detect_events,
+)
 from app.utils import crypto  # noqa: E402
 from evals.email_export import (  # noqa: E402
     LABEL_HELP,
@@ -144,6 +147,7 @@ async def main(
         # Only the columns this read-only tool needs, so it also runs against a
         # database that hasn't had the latest migration applied.
         stmt = select(
+            EmailAccount.id,
             EmailAccount.user_id,
             EmailAccount.email_address,
             EmailAccount.provider,
@@ -270,84 +274,71 @@ async def main(
             )
         print()
 
-        # 4. Run each message through the real classify + match logic and explain.
-        would_create = 0
+        # 4. The REAL scan decision (detect_events), in a transaction that is
+        # always rolled back: what a scan would store, and why (spec 027). It
+        # skips emails already stored, exactly like a scan.
+        detected = await detect_events(db, account, messages)
+        stored = {}
+        for ev in [
+            *detected.created,
+            *detected.review,
+            *detected.hidden,
+            *detected.unsaved,
+            *detected.contacts,
+            *detected.noted,
+            *detected.looked_at,
+        ]:
+            stored[(ev.folder, ev.message_uid)] = ev
+        await db.rollback()
+        known = 0
         for i, msg in enumerate(messages, 1):
             tag = _c(" [DEMO]", CYAN) if msg.uid.startswith("demo-") else ""
-            event = classify(
-                msg.subject,
-                msg.classify_text,
-                msg.from_addr,
-                bulk=msg.list_mail,
-                job_sender=sender_is_saved_company(jobs, msg.from_addr, msg.reply_to),
-            ).event
-            hint = company_from_sender(msg.from_addr)
-            found = (
-                None
-                if event == UNKNOWN
-                else match_job(
-                    jobs,
-                    subject=msg.subject,
-                    from_addr=msg.from_addr,
-                    reply_to=msg.reply_to,
-                    text=msg.body,
-                    date=msg.date,
-                )
-            )
-            match = found.job if found else None
-            if found and found.status == "review":
-                print(
-                    f"     review    : {_c(found.evidence, YELLOW)} — could be "
-                    + "; ".join(
-                        f"{c['company']} / {c['title']}" for c in found.candidates[:3]
-                    )
-                )
-            elif found and found.matched:
-                print(f"     evidence  : {found.evidence}")
-
+            ev = stored.get((msg.folder, msg.uid))
             subj = (msg.subject or "(no subject)")[:70]
+            if ev is None:
+                event = classify(
+                    msg.subject,
+                    msg.classify_text,
+                    msg.from_addr,
+                    bulk=msg.list_mail,
+                    job_sender=sender_is_saved_company(
+                        jobs, msg.from_addr, msg.reply_to
+                    ),
+                ).event
+                if event == UNKNOWN:
+                    continue  # spam: a scan never stores it
+                known += 1
+                continue  # already stored by an earlier scan
             print(f"{_c(f'[{i}]', DIM)}{tag} {_c(subj, CYAN)}")
             print(f"     from      : {msg.from_addr[:70]}")
-            print(f"     sender co.: {hint or '(relay/unknown)'}")
-
-            if event == UNKNOWN:
-                print(f"     verdict   : {_c('UNKNOWN', DIM)} — no job signal, skipped")
-            elif not match:
-                print(
-                    f"     classify  : {_c(event.upper(), YELLOW)} "
-                    f"→ would move to {stage_for_event(event)}"
-                )
-                print(
-                    f"     match     : {_c('NONE', YELLOW)} "
-                    "— no saved job cleared the confidence bar, skipped"
-                )
-            elif stage_for_event(event) is None:
-                # Matched, but it's a RECRUITER contact — we don't surface these
-                # (no card move), so a real scan creates nothing.
-                print(
-                    f"     classify  : {_c(event.upper(), DIM)} "
-                    "— contact only, not surfaced (no card move)"
-                )
-                print(
-                    f"     match     : {_c(match['company'] + ' / ' + match['title'], DIM)}"
-                )
-            else:
-                would_create += 1
-                print(
-                    f"     classify  : {_c(event.upper(), GREEN)} "
-                    f"→ move to {stage_for_event(event)}"
-                )
-                print(
-                    f"     match     : {_c(match['company'] + ' / ' + match['title'], GREEN)}"
-                )
-                print(f"     result    : {_c('WOULD CREATE a pending update', GREEN)}")
+            print(
+                f"     sender co.: {company_from_sender(msg.from_addr) or '(relay/unknown)'}"
+            )
+            colour = GREEN if ev.status in ("pending", "noted") else YELLOW
+            what = {
+                "pending": f"waits for you: move to {ev.target_stage}",
+                "noted": f"kept on the job, no move needed ({ev.target_stage})",
+                "needs_review": "asks you which job",
+                "hidden": "kept, hidden (unclear)",
+                "unsaved": "important, but not one of your saved jobs",
+                "contact": "a recruiter reaching out",
+                "skipped": f"looked at, not shown ({ev.skip_reason})",
+            }.get(ev.status, ev.status)
+            print(f"     type      : {ev.event_type}  (evidence: {ev.match_evidence})")
+            print(f"     result    : {_c(what, colour)}")
             print()
 
         print(_c("=== SUMMARY ===", BOLD))
-        print(f"  messages scanned      : {len(messages)}")
+        print(f"  messages read         : {len(messages)}")
         print(f"  saved-job candidates  : {len(jobs)}")
-        print(f"  updates a real scan   : {_c(str(would_create), GREEN)} would create")
-        print(_c("  (dry run — nothing was written, no cards moved)\n", DIM))
+        print(f"  already stored        : {known}")
+        print(
+            f"  a real scan would store: {len(detected.created)} waiting, "
+            f"{len(detected.noted)} kept on jobs, {len(detected.review)} questions, "
+            f"{len(detected.looked_at)} looked at, {len(detected.hidden)} hidden, "
+            f"{len(detected.contacts)} contacts, {len(detected.unsaved)} unsaved"
+        )
+        print(_c("  (dry run — rolled back: nothing written, no cards moved)\n", DIM))
 
 
 if __name__ == "__main__":

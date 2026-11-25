@@ -19,8 +19,8 @@ New tests, with anonymized fixtures shaped like the real misses:
    - **Expected:** the 10 emails from Nov 23–25 show as noted or moved, none as dropped.
    - **Also expected:** LinkedIn, Glassdoor, Lensa, Indeed and Snagajob alerts show as "looked at: job alert".
 2. After deploy, press **Re-check the last 30 days** on Email updates.
-   - **Expected:** "found N", and the Colas, Relocity, Lattice, Affirm, Home Depot, DCI, Tech Talent Link, Core Health and state-interview emails are on their jobs.
+   - **Expected:** "found N", and the 10 emails from the investigation are on their jobs.
    - **Expected:** no card moved.
-3. Open the Colas job.
+3. Open the job with the second interview email.
    - **Expected:** Interviews & next steps lists both interview emails, the newest marked New.
    - **Expected:** opening the job clears the dot on its board card.

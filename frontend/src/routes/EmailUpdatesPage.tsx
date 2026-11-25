@@ -56,6 +56,7 @@ import { JobPicker } from "@/components/jobs/SameJob";
 import { useLinkEvent, useUnlinkEvent } from "@/hooks/useJobLinks";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { InboxBar } from "@/components/settings/EmailConnectCard";
+import { RecheckCard } from "@/components/email/RecheckCard";
 import { ErrorState } from "@/components/common/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -112,6 +113,7 @@ export default function EmailUpdatesPage() {
       </header>
 
       <InboxBar />
+      <RecheckCard />
 
       {isLoading && (
         <div className="space-y-3">

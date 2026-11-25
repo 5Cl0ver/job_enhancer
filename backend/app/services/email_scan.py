@@ -26,8 +26,10 @@ from app.models.detected_event import (
     APPROVED_STATUSES,
     STATUS_CONTACT,
     STATUS_HIDDEN,
+    STATUS_NOTED,
     STATUS_PENDING,
     STATUS_REVIEW,
+    STATUS_SKIPPED,
     STATUS_UNSAVED,
     DetectedEvent,
 )
@@ -52,6 +54,7 @@ from app.services.email_match import (
     LIKELY_JOB,
     NONE,
     REVIEW,
+    clearly_one_job,
     looks_like_digest,
     match_job,
     match_template,
@@ -141,7 +144,11 @@ class DetectResult:
     unsaved: list[DetectedEvent] = field(default_factory=list)
     # Recruiters reaching out (kept, out of the way).
     contacts: list[DetectedEvent] = field(default_factory=list)
-    # What was skipped without storing, by reason (job_alert, contact, …).
+    # About a saved job, no card move needed: kept on the job (spec 027).
+    noted: list[DetectedEvent] = field(default_factory=list)
+    # Job-looking emails not put on a job: "Looked at, not shown" (spec 027).
+    looked_at: list[DetectedEvent] = field(default_factory=list)
+    # What was skipped, by reason (job_alert, already_at_or_past_stage, …).
     skipped: dict[str, int] = field(default_factory=dict)
     considered: list[Considered] = field(default_factory=list)
     scanned: int = 0  # total messages read this scan
@@ -433,6 +440,35 @@ def _read(msg: EmailMessage, jobs: list[dict]):
     return tmpl, verdict
 
 
+def _looked_at(
+    account: EmailAccount,
+    msg: EmailMessage,
+    key: str | None,
+    event_type: str,
+    reason: str,
+    match=None,
+) -> DetectedEvent:
+    """A job-looking email not put on a job, kept 30 days under "Looked at,
+    not shown" so nothing disappears silently (spec 027)."""
+    return DetectedEvent(
+        id=uuid.uuid4(),
+        user_id=account.user_id,
+        email_account_id=account.id,
+        from_addr=(msg.from_addr or "")[:255],
+        subject=(msg.subject or "")[:500],
+        folder=msg.folder,
+        uidvalidity=msg.uidvalidity,
+        message_uid=msg.uid,
+        logical_key=key,
+        match_evidence=(match.evidence or None) if match is not None else None,
+        email_date=sent_at(msg.date),
+        saved_job_id=None,
+        event_type=event_type,
+        status=STATUS_SKIPPED,
+        skip_reason=reason,
+    )
+
+
 async def detect_events(
     db: AsyncSession,
     account: EmailAccount,
@@ -471,6 +507,7 @@ async def detect_events(
         if verdict is None:
             seen.add(msg, key)
             result.skipped["job_alert"] = result.skipped.get("job_alert", 0) + 1
+            result.looked_at.append(_looked_at(account, msg, key, UNKNOWN, "job_alert"))
             continue
         event_type = verdict.event
         if tmpl is not None and tmpl.event:
@@ -478,10 +515,6 @@ async def detect_events(
         if event_type == UNKNOWN:
             continue  # spam / no job signal — pure noise, not worth reporting
         seen.add(msg, key)
-        if tmpl is None and looks_like_digest(jobs, subject=msg.subject, text=msg.body):
-            # Names several saved jobs across companies: a job alert / digest.
-            result.skipped["job_alert"] = result.skipped.get("job_alert", 0) + 1
-            continue
 
         # Matching reads the FULL cleaned text (signatures, quoted job details),
         # plus the display name, sender/Reply-To domains and known senders.
@@ -496,6 +529,16 @@ async def detect_events(
                 date=msg.date,
                 known_senders=seen.senders,
             )
+        if (
+            tmpl is None
+            and not clearly_one_job(match, msg.from_addr, msg.reply_to)
+            and looks_like_digest(jobs, subject=msg.subject, text=msg.body)
+        ):
+            # Names several saved jobs across companies: a job alert / digest.
+            # Never one clearly from a single company (spec 027).
+            result.skipped["job_alert"] = result.skipped.get("job_alert", 0) + 1
+            result.looked_at.append(_looked_at(account, msg, key, event_type, "digest"))
+            continue
         job = match.job  # only set for a clear match
         target_stage = stage_for_event(event_type)
         propose, why = card_action(
@@ -628,12 +671,32 @@ async def detect_events(
                     status=STATUS_CONTACT,
                 )
             )
+        elif job and why in ("reminder", "already_at_or_past_stage"):
+            # Clearly about this saved job, no move needed: kept on the job,
+            # never thrown away (spec 027).
+            result.noted.append(
+                DetectedEvent(
+                    id=uuid.uuid4(),
+                    **common,
+                    saved_job_id=job["id"],
+                    event_type=event_type,
+                    target_stage=target_stage,
+                    status=STATUS_NOTED,
+                )
+            )
         else:
-            why_key = "no_saved_job"
-            if why in ("reminder", "already_at_or_past_stage"):
-                why_key = why
-            result.skipped[why_key] = result.skipped.get(why_key, 0) + 1
-        stored = (propose and job) or needs_choice or unsaved or low_value or contact
+            result.skipped["no_saved_job"] = result.skipped.get("no_saved_job", 0) + 1
+            result.looked_at.append(
+                _looked_at(account, msg, key, event_type, "no_saved_job", match)
+            )
+        stored = (
+            (propose and job)
+            or needs_choice
+            or unsaved
+            or low_value
+            or contact
+            or (job and why in ("reminder", "already_at_or_past_stage"))
+        )
         if not stored and len(result.considered) < _MAX_CONSIDERED:
             # Why it wasn't surfaced: a reminder, a move that would go backward,
             # a contact, or no confident job match.
@@ -673,6 +736,8 @@ async def detect_events(
             *result.hidden,
             *result.unsaved,
             *result.contacts,
+            *result.noted,
+            *result.looked_at,
         ]
     )
     await db.flush()

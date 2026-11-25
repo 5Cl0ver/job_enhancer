@@ -65,7 +65,11 @@ export interface DetectedEvent {
     | "contact"
     | "applied"
     | "auto_applied"
-    | "dismissed";
+    | "dismissed"
+    /** About a saved job, no move needed: kept on the job (spec 027). */
+    | "noted"
+    /** Job-looking, not put on a job: "Looked at, not shown" (spec 027). */
+    | "skipped";
   /** Where the Email Updates page shows it. */
   category?: EmailCategory;
   /** The chosen job's names, for a plain sentence. */
@@ -169,6 +173,10 @@ export interface ScanResult {
   window_days: number;
   /** Important updates about jobs you haven't saved. */
   unsaved?: number;
+  /** Emails about a saved job that needed no move: kept on the job (spec 027). */
+  noted?: number;
+  /** Job-looking emails not put on a job (spec 027). */
+  looked_at?: number;
   /** Per-folder progress: a folder is done when "complete" with nothing left. */
   folders?: { role: string; status: string; carried_over: number }[];
   carried_over?: number;
@@ -336,7 +344,7 @@ export function useFullScan() {
         ...s,
         passes: pass,
         read: s.read + r.scanned,
-        found: s.found + r.detected + (r.review?.length ?? 0) + (r.unsaved ?? 0),
+        found: s.found + r.detected + (r.review?.length ?? 0) + (r.unsaved ?? 0) + (r.noted ?? 0),
         moved: s.moved + (r.moved ?? 0),
         windowDays: r.window_days,
         done: scanIsDone(r),
@@ -351,6 +359,38 @@ export function useFullScan() {
   };
 
   return { ...state, run };
+}
+
+/** The re-check of the last weeks (spec 027): it runs on the server for a
+ * few minutes; this asks how it's going every few seconds while it runs. */
+export interface Recheck {
+  state: "idle" | "running" | "done" | "failed";
+  days?: number | null;
+  found?: number | null;
+  waiting?: number | null;
+  noted?: number | null;
+  looked_at?: number | null;
+  read?: number | null;
+}
+
+export function useRecheck() {
+  const qc = useQueryClient();
+  const status = useQuery({
+    queryKey: ["email-recheck"],
+    queryFn: () => api.get<Recheck>("/v1/email/recheck"),
+    refetchInterval: (q) => (q.state.data?.state === "running" ? 4000 : false),
+  });
+  const done = status.data?.state === "done";
+  useEffect(() => {
+    if (!done) return;
+    qc.invalidateQueries({ queryKey: ["email-events"] });
+    qc.invalidateQueries({ queryKey: ["job-emails"] });
+  }, [done, qc]);
+  const start = useMutation({
+    mutationFn: (days: number) => api.post<Recheck>("/v1/email/recheck", { days }),
+    onSuccess: (r) => qc.setQueryData(["email-recheck"], r),
+  });
+  return { status: status.data, start };
 }
 
 export function useScanInbox() {

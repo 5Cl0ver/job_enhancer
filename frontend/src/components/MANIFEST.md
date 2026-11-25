@@ -57,6 +57,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | File | Purpose |
 |---|---|
 | `JobEmails.tsx` | "Emails about this job": why a job is in its stage. Each email says what it was and what it did to the card, with **View email** (quick read here) and **Open in Yahoo Mail / Gmail** (the message itself). On the job page, the board's job dialog; says so when a job has none |
+| `email/RecheckCard.tsx` | "Missed an email?": re-check the last 30 days with today's rules (spec 027), progress and result; never moves a card |
 | `EmailViewer.tsx` | One email, fetched read-only when opened and shown as plain text, with the link to the message in the user's own mail and a search fallback |
 
 ## `jobs/`
