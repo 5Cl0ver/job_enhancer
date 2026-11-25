@@ -61,7 +61,12 @@ async def known_keys(
                 DetectedEvent.uidvalidity,
                 DetectedEvent.message_uid,
                 DetectedEvent.logical_key,
-            ).where(DetectedEvent.email_account_id == account_id)
+            ).where(
+                DetectedEvent.email_account_id == account_id,
+                # Looked-at emails are read again (spec 027): a job saved
+                # later can still claim them.
+                DetectedEvent.status != "skipped",
+            )
         )
     ).all()
     locations = {

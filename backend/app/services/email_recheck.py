@@ -74,6 +74,8 @@ async def _run(session_maker, account_id: uuid.UUID, days: int, lock) -> None:
                     opts,
                 )
                 detected = await detect_events(db, account, result.messages)
+                if result.interrupted in email_sync.BACKOFF_REASONS:
+                    email_sync_state.apply_backoff(account, datetime.now(tz=UTC))
                 await db.commit()
             _STATE[account_id] = {
                 "state": "done",
@@ -82,12 +84,21 @@ async def _run(session_maker, account_id: uuid.UUID, days: int, lock) -> None:
                 "read": sum(r.headers_read for r in result.reports),
                 "found": len(detected.created)
                 + len(detected.noted)
-                + len(detected.review),
+                + len(detected.review)
+                + len(detected.unsaved)
+                + len(detected.contacts)
+                + len(detected.hidden),
                 "waiting": len(detected.created) + len(detected.review),
                 "noted": len(detected.noted),
                 "looked_at": len(detected.looked_at),
                 "interrupted": result.interrupted,
             }
-        except Exception:  # noqa: BLE001 - the page says it failed, try again
+        except Exception as exc:  # noqa: BLE001 - the page says it failed
             logger.exception("email re-check failed")
+            if getattr(exc, "reason", None) in email_sync.BACKOFF_REASONS:
+                async with session_maker() as db:
+                    account = await db.get(EmailAccount, account_id)
+                    if account is not None:
+                        email_sync_state.apply_backoff(account, datetime.now(tz=UTC))
+                        await db.commit()
             _STATE[account_id] = {"state": "failed", "days": days}

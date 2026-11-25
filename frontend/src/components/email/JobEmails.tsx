@@ -24,9 +24,8 @@ function effect(ev: DetectedEvent): string | null {
   }
   if (ev.status === "pending") return "Waiting for you on Email updates";
   if (ev.status === "noted") {
-    return ev.target_stage
-      ? `No change needed: already in ${ev.target_stage} or further`
-      : "No change needed";
+    // Kept on the job; the card didn't need to move (spec 027).
+    return ev.current_stage ? `No change needed (job is in ${ev.current_stage})` : "No change needed";
   }
   return null;
 }

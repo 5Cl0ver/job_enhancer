@@ -157,7 +157,7 @@ class TestNotAJobAlert:
         assert kept.saved_job_id == job.id
 
     async def test_generic_company_names_in_a_signature(self, db_session, test_user):
-        for co in ("City of Seattle", "Washington", "Security", "The 30"):
+        for co in ("City of Springfield", "Washington", "Security", "The 30"):
             await _make_saved_job(db_session, test_user, co, "Help Desk Analyst")
         sid = await _stage(db_session, test_user, "Interview")
         job = await _make_saved_job(
@@ -168,7 +168,7 @@ class TestNotAJobAlert:
             "Sam Rivera - Marrow Paving Employment Interview",
             "Hi Sam, here is the link for your interview tomorrow.\n\n"
             "Dana Holt | Recruiter | Marrow Paving\n"
-            "1200 Industrial Way, City of Seattle, Washington\n"
+            "1200 Industrial Way, City of Springfield, Washington\n"
             "Security notice: never share passwords. The 30 best places to work.",
             "Dana Holt <dana@marrowpaving.example>",
         )
@@ -226,14 +226,87 @@ def test_digest_counts_mentions_not_saved_jobs():
 
 def test_digest_ignores_generic_company_names():
     jobs = _jobs(
-        ("City of Seattle", "Analyst"),
+        ("City of Springfield", "Analyst"),
         ("Washington", "Analyst I"),
         ("Security", "Analyst II"),
         ("Fennel Works", "Engineer"),
         ("Gullwing Labs", "Engineer I"),
         ("Hollow Pine", "Engineer II"),
     )
-    signature = "City of Seattle, Washington. Security tips inside."
+    signature = "City of Springfield, Washington. Security tips inside."
     assert not looks_like_digest(jobs, subject="", text=signature)
     named = "Openings at Fennel Works, Gullwing Labs and Hollow Pine this week."
     assert looks_like_digest(jobs, subject="", text=named)
+
+
+@pytest.mark.asyncio
+class TestReviewFindings:
+    async def test_a_hiring_system_repeating_one_title_is_not_an_alert(
+        self, db_session, test_user
+    ):
+        sid = await _stage(db_session, test_user, "Applied")
+        job = await _make_saved_job(
+            db_session, test_user, "Quarrystone Analytics", "Data Analyst", sid
+        )
+        await _make_saved_job(db_session, test_user, "Fennel Works", "Data Analyst")
+        acct = await _make_account(db_session, test_user)
+        msg = _mail(
+            "Interview invitation: Data Analyst",
+            "Hi Sam, thanks for applying for Data Analyst. We'd like to invite you "
+            "to interview for the Data Analyst position at Quarrystone Analytics.",
+            "Quarrystone Analytics <noreply@smartrecruiters.com>",
+        )
+        result = await detect_events(db_session, acct, [msg])
+        assert result.looked_at == [] and "job_alert" not in result.skipped
+        (row,) = [*result.created, *result.review]
+        assert row.event_type == "interview"
+        assert row.saved_job_id in (job.id, None)
+
+    async def test_a_job_saved_later_still_gets_its_email(self, db_session, test_user):
+        acct = await _make_account(db_session, test_user)
+        msg = _mail(
+            "Thank you for applying to Brightwave Relays",
+            "Thank you for applying for the IT Systems Engineer role at Brightwave "
+            "Relays. We have received your application.",
+            "Brightwave Relays <careers@brightwaverelays.example>",
+            uid="901",
+        )
+        first = await detect_events(db_session, acct, [msg])
+        (looked,) = first.looked_at
+        assert looked.skip_reason == "no_saved_job"
+
+        job = await _make_saved_job(
+            db_session, test_user, "Brightwave Relays", "IT Systems Engineer"
+        )
+        again = await detect_events(db_session, acct, [msg])
+        (row,) = [*again.created, *again.noted]
+        assert row.saved_job_id == job.id and row.id == looked.id  # same row
+        rows = await _rows(db_session, acct)
+        assert len(rows) == 1 and rows[0].status in ("pending", "noted")
+
+    async def test_looked_at_again_and_still_not_a_job_adds_nothing(
+        self, db_session, test_user
+    ):
+        acct = await _make_account(db_session, test_user)
+        msg = _mail(
+            "Thank you for applying to Brightwave Relays",
+            "We have received your application.",
+            "Brightwave Relays <careers@brightwaverelays.example>",
+            uid="902",
+        )
+        await detect_events(db_session, acct, [msg])
+        again = await detect_events(db_session, acct, [msg])
+        assert again.looked_at == []
+        assert len(await _rows(db_session, acct)) == 1
+
+
+def test_titles_side_by_side_still_count_apart():
+    jobs = _jobs(
+        ("Fennel Works", "Data Engineer"),
+        ("Gullwing Labs", "Cloud Engineer"),
+        ("Hollow Pine", "Network Engineer"),
+    )
+    text = "Data Engineer | Cloud Engineer | Network Engineer"
+    assert looks_like_digest(jobs, subject="", text=text)
+    repeated = "Data Engineer. Data Engineer. Data Engineer, Cloud Engineer."
+    assert not looks_like_digest(jobs, subject="", text=repeated)

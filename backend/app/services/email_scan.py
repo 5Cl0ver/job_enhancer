@@ -312,6 +312,19 @@ class _Seen:
     """What this account has already detected, for duplicate checks."""
 
     def __init__(self, rows: list[DetectedEvent]) -> None:
+        # Looked-at rows (spec 027) are read again: a job saved later, or a
+        # better rule, can still put the email on a job. Their row is reused.
+        self.skipped = {
+            (r.folder, r.uidvalidity, r.message_uid): r
+            for r in rows
+            if r.status == STATUS_SKIPPED
+        }
+        self.skipped_keys = {
+            r.logical_key: r
+            for r in rows
+            if r.status == STATUS_SKIPPED and r.logical_key
+        }
+        rows = [r for r in rows if r.status != STATUS_SKIPPED]
         # Includes NULL-UIDVALIDITY rows: the database's unique key treats NULLs
         # as distinct, so this check is what stops a repeat for such messages.
         self.locations = {(r.folder, r.uidvalidity, r.message_uid) for r in rows}
@@ -354,6 +367,12 @@ class _Seen:
         if (msg.folder, msg.uidvalidity, msg.uid) in self.locations:
             return True
         return bool(key) and key in self.keys
+
+    def looked_at_before(self, row: DetectedEvent) -> DetectedEvent | None:
+        """The stored looked-at row for the same email, if any."""
+        return self.skipped.get(
+            (row.folder, row.uidvalidity, row.message_uid)
+        ) or self.skipped_keys.get(row.logical_key or "")
 
     def add(self, msg: EmailMessage, key: str | None) -> None:
         self.locations.add((msg.folder, msg.uidvalidity, msg.uid))
@@ -729,15 +748,37 @@ async def detect_events(
                 )
             )
 
+    # An email looked at before: still not on a job, its row stays; now on a
+    # job (or asked about), its row becomes that (never a second row).
+    result.looked_at = [r for r in result.looked_at if not seen.looked_at_before(r)]
+    for kept in (
+        result.created,
+        result.review,
+        result.hidden,
+        result.unsaved,
+        result.contacts,
+        result.noted,
+    ):
+        for i, row in enumerate(kept):
+            old = seen.looked_at_before(row)
+            if old is not None:
+                for col in DetectedEvent.__table__.columns:
+                    if col.key not in ("id", "created_at"):
+                        setattr(old, col.key, getattr(row, col.key))
+                kept[i] = old
     db.add_all(
         [
-            *result.created,
-            *result.review,
-            *result.hidden,
-            *result.unsaved,
-            *result.contacts,
-            *result.noted,
-            *result.looked_at,
+            r
+            for r in (
+                *result.created,
+                *result.review,
+                *result.hidden,
+                *result.unsaved,
+                *result.contacts,
+                *result.noted,
+                *result.looked_at,
+            )
+            if r not in db
         ]
     )
     await db.flush()
