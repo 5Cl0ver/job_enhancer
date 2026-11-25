@@ -250,3 +250,85 @@ class TestPlacementByCompanyAlone:
 
     def test_old_email_naming_the_role_is_still_placed(self):
         assert _fits(self._ev(title="Analyst"), job("Vellacor", "Analyst", saved=NOW))
+
+
+class TestReviewFixes:
+    """Spec 028 review: the new company and job-id clues must not reach jobs
+    at other companies, nor drop real names."""
+
+    def test_a_job_board_link_is_not_the_companys_site(self):
+        j = job(
+            "Maple Ridge Health",
+            "IT Analyst",
+            url="https://www.jobhubnw.example/jobs/view/12345678",
+        )
+        assert not sender_is_saved_company([j], "alerts@jobhubnw.example")
+
+    def test_a_site_that_carries_the_name_still_counts(self):
+        j = job(
+            "Bramble Fen Staffing",
+            "IT Analyst",
+            url="https://www.bfstaffing.example/job/it-analyst",
+        )
+        assert sender_is_saved_company([j], "jo@bfstaffing.example")
+
+    def test_found_via_a_job_board_is_not_a_second_name(self):
+        j = job("Fernhill Dental (via Indeed)", "Office Manager")
+        t = TemplateRead("indeed", "Indeed", "Office Manager", "applied")
+        m = match_template([j], t, NOW)
+        assert m.job is None or m.evidence != TEMPLATE
+
+    def test_a_digit_inside_a_name_is_not_a_company_code(self):
+        j = job("Quill9, Inc.", "Front End Developer")
+        t = TemplateRead("workday", "Quill9", "Front End Developer", "applied")
+        m = match_template([j], t, NOW)
+        assert (m.status, m.evidence) == (MATCHED, TEMPLATE)
+
+    def test_a_short_requisition_number_from_another_company(self):
+        j = job(
+            "Kestrel Optics",
+            "Support Engineer",
+            url="https://kestrel.wd1.myworkdayjobs.com/en-US/ext/job/City/Support-Engineer_R10442",
+        )
+        m = match_job(
+            [j],
+            subject="Your application for R10442",
+            from_addr="harborlane@myworkday.example",
+            text="Thank you for applying to Harbor Lane Bank for R10442 Teller.",
+            date=NOW,
+        )
+        assert m.evidence != JOB_ID
+        m = match_job(
+            [j],
+            subject="Your application for R10442",
+            from_addr="kestrel@myworkday.example",
+            text="Thank you for applying to Kestrel Optics for R10442 Support Engineer.",
+            date=NOW,
+        )
+        assert (m.status, m.evidence) == (MATCHED, JOB_ID)
+
+    def test_template_requisition_number_must_agree_on_the_company(self):
+        kestrel = job(
+            "Kestrel Optics",
+            "Support Engineer",
+            url="https://kestrel.wd1.myworkdayjobs.com/en-US/ext/job/City/Support-Engineer_R10442",
+        )
+        harbor = job(
+            "Harbor Lane Bank",
+            "Teller",
+            url="https://harborlane.wd5.myworkdayjobs.com/en-US/ext/job/Salem/Teller_REQ-10442",
+        )
+        t = TemplateRead("workday", "Harbor Lane Bank", "Teller II", None, "R10442")
+        m = match_template([kestrel, harbor], t, NOW)
+        assert m.job is not None and m.job["id"] == harbor["id"]
+
+    def test_a_broken_saved_link_does_not_stop_the_scan(self):
+        j = job("Kestrel Optics", "Support Engineer", url="https://[broken/job/1")
+        m = match_job(
+            [j],
+            subject="Kestrel Optics - Support Engineer",
+            from_addr="careers@kestreloptics.example",
+            text="Thanks for applying to Kestrel Optics.",
+            date=NOW,
+        )
+        assert m.status == MATCHED

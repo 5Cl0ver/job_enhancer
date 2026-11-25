@@ -41,6 +41,17 @@ Scored offline from cached mail; no scan, no database writes.
 
 The three still missed are left unplaced (safe), not misplaced.
 
+## Review fixes
+
+An independent review kept the score above and closed these gaps:
+- A recruiter's "RE: Thank you for applying" reply with an invite stays an interview; a rejection whose subject is "Thank you for your application" stays a rejection (only a receipt that lists what each status means is held back).
+- A receipt that ends with a survey link, mentions "Apr 3", or is for a "Purchase Order" job is still a receipt.
+- A job board's link (or a search page) saved as the apply link is not the company's careers site; only a site whose name carries the company's counts. "(via Indeed)" is not a second company name.
+- "Quill9, Inc." keeps its name (a company code needs three digits and a real name after it).
+- A short requisition number ("R10442") counts only when the email also names the company; a hiring site's email that names another company never takes a job by its number.
+- A broken saved link can't stop a scan; the careers-site check is cached so scans stay as fast as before.
+- A placement whose "role" isn't one ("Your application") waits for a tap like any company-only placement.
+
 ## Not in this PR
 
 - **Folding repeats**: several emails about the same update shown as one line.

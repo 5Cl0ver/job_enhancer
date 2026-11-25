@@ -32,6 +32,7 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from email.utils import getaddresses, parseaddr
+from functools import lru_cache
 from urllib.parse import parse_qsl, urlsplit
 
 from rapidfuzz import fuzz
@@ -269,13 +270,15 @@ def _tokens(text: str) -> list[str]:
 def _drop_code(tokens: list[str]) -> list[str]:
     """Drop a leading company code that hiring systems put before the name
     ("C4410 Vellacor Group", "4100 Kestrel Optics USA", "300 Harbor Bank"): a
-    first word of three or more characters with a digit in it, when a real name
-    follows."""
+    first word with three or more digits in it, when a real name (not just
+    "Inc" or "Group") follows. "Web3 Labs" and "Quill9, Inc." keep their name."""
     if (
         len(tokens) >= 2
-        and len(tokens[0]) >= 3
-        and any(c.isdigit() for c in tokens[0])
-        and any(sum(c.isalpha() for c in t) >= 2 for t in tokens[1:])
+        and sum(c.isdigit() for c in tokens[0]) >= 3
+        and any(
+            sum(c.isalpha() for c in t) >= 2 and t not in _STOP and t not in _LEGAL
+            for t in tokens[1:]
+        )
     ):
         return tokens[1:]
     return tokens
@@ -329,15 +332,31 @@ def _domain_labels(addresses: list[str]) -> list[str]:
     return [label for label in labels if label]
 
 
+def _split(url: str):
+    """urlsplit that never raises: a malformed saved link ("https://[x") must
+    not stop a whole scan."""
+    try:
+        parts = urlsplit((url or "").strip())
+        _ = parts.hostname  # raises on a broken [IPv6] host
+        return parts
+    except ValueError:
+        return urlsplit("")
+
+
+def _host(url: str) -> str:
+    return (_split(url).hostname or "").lower()
+
+
 def _norm_url(url: str) -> tuple[str, dict[str, str]]:
-    parts = urlsplit(url.strip().rstrip(".,;"))
+    parts = _split(url.strip().rstrip(".,;"))
     host = (parts.hostname or "").removeprefix("www.")
     path = parts.path.rstrip("/").lower()
     return f"{host}{path}", {k.lower(): v for k, v in parse_qsl(parts.query)}
 
 
-def _job_ids(url: str) -> set[str]:
-    """Ids a job board puts in a job's URL (query ids, numeric/opaque path tail)."""
+def _job_ids(url: str, *, reqs: bool = True) -> set[str]:
+    """Ids a job board puts in a job's URL (query ids, numeric/opaque path
+    tail), plus, with ``reqs``, the requisition number at the end of its path."""
     if not url:
         return set()
     base, query = _norm_url(url)
@@ -348,8 +367,11 @@ def _job_ids(url: str) -> set[str]:
     if len(tail) >= 6 and re.search(r"\d", tail):
         ids.add(tail)
     # The requisition a careers site ends its job URLs with ("…_REQ-104422",
-    # "…_R10001"): emails quote it on its own ("REQ-104422").
-    ids.update(_REQ_IN_URL.findall(tail))
+    # "…_R10001"): emails quote it on its own ("REQ-104422"). Short and
+    # shaped alike at every company, so it is only trusted alongside the
+    # company (see _url_or_id and match_template).
+    if reqs:
+        ids.update(_REQ_IN_URL.findall(tail))
     return ids
 
 
@@ -447,25 +469,56 @@ def _aliases(company: str) -> list[str]:
     m = _VIA.match(company or "")
     if not m or not m.group(1).strip():
         return [company or ""]
-    return [m.group(1).strip(), m.group(2).strip()]
+    via = m.group(2).strip()
+    # "Acme (via Indeed)" names where it was found, not who is hiring: a job
+    # board's name would put every one of its emails on this job.
+    squashed = "".join(_tokens(via))
+    if _BOARD_WORDS.match(squashed) or is_platform_sender(f"x@{squashed}.com"):
+        return [m.group(1).strip()]
+    return [m.group(1).strip(), via]
 
 
 def _site_label(job: dict) -> str:
     """The company's own careers site, from the saved job's apply link
-    ("kestreloptics.com/careers/…" -> "kestreloptics"); "" for job boards and
-    hiring systems, which host every company."""
-    for one in [job, *job.get("_duplicates", ())]:
-        host = (urlsplit((one.get("apply_url") or "").strip()).hostname or "").lower()
-        host = host.removeprefix("www.")
+    ("go2kestrel.com/careers/…" -> "go2kestrel"); "" for job boards and
+    hiring systems, which host every company. A site whose name doesn't carry
+    the company's (a board like "jobhub.example", a search page) never counts."""
+    urls = tuple(
+        (one.get("apply_url") or "").strip()
+        for one in [job, *job.get("_duplicates", ())]
+    )
+    return _site_label_of(job.get("company") or "", urls)
+
+
+@lru_cache(maxsize=4096)
+def _site_label_of(company: str, urls: tuple[str, ...]) -> str:
+    # Cached: every email asks this of every saved job (spec 028 review).
+    names = [_company_terms(a) for a in _aliases(company)]
+    for url in urls:
+        host = _host(url).removeprefix("www.")
         parts = host.split(".")
         if len(parts) < 2 or is_platform_sender(f"x@{host}"):
             continue
         if _WEBMAIL.search(host + "."):
             continue
         label = re.sub(r"[^a-z0-9]", "", parts[-2])
-        if len(label) >= 4 and not _BOARD_WORDS.match(label):
+        if len(label) < 4 or _BOARD_WORDS.match(label):
+            continue
+        if any(_site_names(label, core, rare) for core, rare, _ in names):
             return label
     return ""
+
+
+def _site_names(label: str, core: list[str], rare: list[str]) -> bool:
+    """The site's name carries the company's: one of its distinctive words
+    ("go2kestrel" for "Kestrel Group") or its first letters then the rest
+    ("bfstaffing" for "Bramble Fen Staffing")."""
+    if any(len(w) >= 4 and w not in _KIND_WORDS and w in label for w in rare):
+        return True
+    return any(
+        label == "".join(t[0] for t in core[:k]) + "".join(core[k:])
+        for k in range(2, len(core))
+    )
 
 
 def _label_names(label: str, core: list[str], rare: list[str], squashed: str) -> bool:
@@ -585,23 +638,35 @@ def _title_words(job: dict) -> list[str]:
     return [t for t in _tokens(job.get("title") or "") if t not in {"the", "a", "an"}]
 
 
-def _url_or_id(job: dict, h: _Haystack) -> str:
+def _url_or_id(job: dict, h: _Haystack, labels: list[str] = ()) -> str:
     url = job.get("apply_url") or ""
     if url:
         base, _ = _norm_url(url)
         if base and "/" in base and base in h.urls:
             return JOB_URL
-    ids = _job_ids(url)
+    ids = _job_ids(url, reqs=False)
     ext = (job.get("external_id") or "").lower()
     if len(ext) >= 6 and re.search(r"\d", ext):
         ids.add(ext)
     for other in job.get("_duplicates", ()):  # the same job saved again
-        if other is not job and (label := _url_or_id(other, h)):
+        if other is not job and (label := _url_or_id(other, h, labels)):
             return label
     for jid in ids:
-        if re.search(rf"(?<![a-z0-9]){re.escape(jid)}(?![a-z0-9])", h.raw):
+        if _quotes(h, jid):
+            return JOB_ID
+    # A requisition number: a long one ("REQ-208801") is this job's; a short
+    # one ("R10442") may be another company's, so it counts only when the
+    # email names this company too.
+    for jid in _job_ids(url) - ids:
+        if _quotes(h, jid) and (
+            len(_id_digits(jid)) >= 6 or _company_hit(job, h, list(labels))
+        ):
             return JOB_ID
     return ""
+
+
+def _quotes(h: _Haystack, jid: str) -> bool:
+    return bool(re.search(rf"(?<![a-z0-9]){re.escape(jid)}(?![a-z0-9])", h.raw))
 
 
 # "your application for the Sales Engineer position", "interest in the Data
@@ -858,7 +923,7 @@ def match_job(
     ]
 
     for j in jobs:
-        if label := _url_or_id(j, h):
+        if label := _url_or_id(j, h, labels):
             offer(j, label)
     known_senders = known_senders or {}
     for addr in addrs:
@@ -983,8 +1048,7 @@ def _on_site(job: dict, source: str) -> bool:
     """The job was saved from this job site (or from nowhere we know): an
     Indeed receipt isn't about a job saved from a company's Workday page."""
     hosts = [
-        (urlsplit((one.get("apply_url") or "").strip()).hostname or "").lower()
-        for one in [job, *job.get("_duplicates", ())]
+        _host(one.get("apply_url") or "") for one in [job, *job.get("_duplicates", ())]
     ]
     if not any(hosts):
         return True
@@ -1031,16 +1095,36 @@ def match_template(
     title alone is clear at most (spec 028).
     """
     jobs, _ = collapse_duplicates(jobs)
+    from_sender = getattr(tmpl, "company_from", "subject") != "subject"
     if tmpl.job_id:
-        want = _id_digits(tmpl.job_id) or tmpl.job_id.lower()
+        exact = tmpl.job_id.lower()
+        digits = _id_digits(tmpl.job_id)
+        strong, loose = [], []
         for j in jobs:
+            ids, reqs = set(), set()
             for one in [j, *j.get("_duplicates", ())]:
-                ids = _job_ids(one.get("apply_url") or "") | {
+                url = one.get("apply_url") or ""
+                ids |= _job_ids(url, reqs=False) | {
                     (one.get("external_id") or "").lower()
                 }
-                if want in {_id_digits(i) or i for i in ids if i}:
-                    return JobMatch(MATCHED, j, JOB_ID)
-    from_sender = getattr(tmpl, "company_from", "subject") != "subject"
+                reqs |= _job_ids(url)
+            strong.append((j, ids - {""}))
+            loose.append((j, reqs | ids - {""}))
+        for j, ids in strong:
+            if exact in ids:
+                return JobMatch(MATCHED, j, JOB_ID)
+        # A requisition number, or the same number spelled another way
+        # ("REQ-104422" / "R104422"): a bare number may be another company's,
+        # so a company the email itself named must agree.
+        for j, ids in loose:
+            if (
+                exact in ids or (digits and digits in {_id_digits(i) for i in ids})
+            ) and (
+                not tmpl.company
+                or from_sender
+                or _same_company(tmpl.company, j.get("company") or "")
+            ):
+                return JobMatch(MATCHED, j, JOB_ID)
     if tmpl.company:
         at = [
             j

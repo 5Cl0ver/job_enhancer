@@ -105,6 +105,8 @@ export type MatchEvidence =
   | "company_only"
   | "conflicting_evidence"
   | "template"
+  | "template_company"
+  | "template_title"
   | "likely_job"
   | "user_link"
   | "not_this_job";

@@ -599,6 +599,25 @@ class TestPlacedAutomatically:
             sj.pipeline_stage_id == (await _stage(db_session, test_user, "Applied")).id
         )
 
+    async def test_a_scrap_that_is_not_a_role_still_waits(
+        self, client, db_session, test_user, enc_key, monkeypatch
+    ):
+        """Placement read no role from "Your application", so it placed by
+        company alone; it must not move the card by itself either."""
+        sj = await _applied_job(db_session, test_user, company="Vellacor")
+        _, ev = await self._leftover(
+            client,
+            db_session,
+            test_user,
+            monkeypatch,
+            company="Vellacor",
+            title="Your application",
+        )
+        body = await _scan(client, monkeypatch)
+        assert body["moved"] == 0
+        await db_session.refresh(ev)
+        assert ev.status == "pending" and ev.saved_job_id == sj.id
+
     async def test_without_auto_move_it_waits_for_a_tap(
         self, client, db_session, test_user, enc_key, monkeypatch
     ):

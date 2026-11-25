@@ -564,10 +564,14 @@ _ACCOUNT_SUBJECT = re.compile(
 # about credit, not a job.
 _CONSUMER = re.compile(
     r"\bcredit (?:card|limit|score|line|builder)|\bcard ?members?\b|\bcardholders?\b"
-    r"|\byour (?:new )?card\b|\bapr\b|\bannual percentage|\b(?:auto|car|home|personal|"
-    r"student|equity) loans?\b|\bmortgage|\bheloc\b|\bpre-?(?:approved|qualified)\b"
-    r"|\bcash ?back\b|\brewards? (?:points|members?|program)\b|\bcoupon\b|\bin store\b"
-    r"|\bfree shipping\b|\bpurchase\b",
+    # "APR" in capitals or after a rate: "Apr 12" is a date in a receipt.
+    r"|\byour (?:new )?card\b|(?-i:\bAPR\b)|%\s*apr\b|\bannual percentage"
+    r"|\b(?:auto|car|home|personal|student|equity) loans?\b|\bmortgage|\bheloc\b"
+    r"|\bpre-?(?:approved|qualified)\b|\bcash ?back\b|\brewards? (?:points|members?|"
+    r"program)\b|\bcoupon\b|\bin store\b|\bfree shipping\b"
+    # A shopper's purchase, not a "Purchase Order Specialist" job.
+    r"|\b(?:your|any|every|qualifying|minimum|first|next) purchase\b"
+    r"|\$\d+\+? purchase\b|\bwith purchase\b",
     re.I,
 )
 # Candidate-experience surveys and "did you hear back?" prompts.
@@ -588,6 +592,17 @@ _RECEIPT_SUBJECT = re.compile(
 )
 _OUTCOME_SUBJECT = re.compile(
     r"\b(?:interview|assessment|test|offer|invit\w*|schedul\w*|next round)\b", re.I
+)
+# "RE: Thank you for applying": a person answering on the receipt's thread
+# (often with an invite), not the receipt itself.
+_REPLY_SUBJECT = re.compile(r"^\s*(?:re|fwd?|aw|sv)\s*:", re.I)
+# A receipt that lists what each application status means ("Not Selected: we
+# will not be moving forward"), as opposed to a rejection that restates the
+# receipt.
+_STATUS_LEGEND = re.compile(
+    r"\bstatuses\b|\bwhat (?:does|do) (?:that|this|these|each(?: one)?|it) mean\b"
+    r"|\beach status\b",
+    re.I,
 )
 # Next-step wording in a receipt counts for little unless it is this strong.
 _RECEIPT_STEP_MAX = 5.0
@@ -700,7 +715,10 @@ def classify(
     not_hiring = None
     if _ACCOUNT_SUBJECT.search(subject):
         not_hiring = "account"  # sign-in codes, "verify your email"
-    elif _SURVEY.search(joined):
+    elif _SURVEY.search(subject) or (
+        # A receipt may end with "take a short survey": still a receipt.
+        _SURVEY.search(text) and scores.get(APPLIED, 0.0) < DECIDE_AT
+    ):
         not_hiring = "survey"  # "tell us about your application experience"
     elif looks_bulk and _CONSUMER.search(joined):
         not_hiring = "consumer"  # card, loan and shop offers
@@ -712,6 +730,7 @@ def classify(
     if (
         _RECEIPT_SUBJECT.search(subject)
         and not _OUTCOME_SUBJECT.search(subject)
+        and not _REPLY_SUBJECT.search(subject)
         and scores.get(REJECTED, 0.0) < DECIDE_AT
         and scores.get(OFFER, 0.0) < DECIDE_AT
         and step < _RECEIPT_STEP_MAX
@@ -728,9 +747,12 @@ def classify(
         scores.pop(RECRUITER, None)
     # A receipt ("We've received your application!") that explains what each
     # status means ("Not selected: we will not be moving forward") must not
-    # read as a rejection: with both, never guess (spec 028).
+    # read as a rejection: with both, never guess (spec 028). A rejection that
+    # just restates the receipt ("Your application was received and reviewed.
+    # Unfortunately…") has no such list of statuses and stays a rejection.
     receipt_with_no = (
         bool(_RECEIPT_SUBJECT.search(subject))
+        and bool(_STATUS_LEGEND.search(text))
         and scores.get(REJECTED, 0.0) >= DECIDE_AT
         and any(
             ev == APPLIED and w >= 2.4 and re.search(r"received|submitted", hit, re.I)

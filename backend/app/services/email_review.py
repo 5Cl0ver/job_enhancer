@@ -44,6 +44,7 @@ from app.services.email_classify import (
     UNSURE,
     stage_for_event,
 )
+from app.services.email_job_names import clean_role
 from app.services.email_match import JOB_ID, JOB_URL, LIKELY_JOB, TEMPLATE
 from app.services.email_scan import (
     IMPORTANT_EVENTS,
@@ -217,8 +218,13 @@ async def auto_apply(
         and ev.saved_job_id is not None
         and ev.match_evidence in SURE_EVIDENCE
         # A placement by company alone waits for a click (spec 028): only one
-        # that also named this job's role moves by itself.
-        and not (ev.match_evidence == LIKELY_JOB and not (ev.job_title or "").strip())
+        # that also named this job's role moves by itself. The role is read
+        # the way placement read it, so a scrap that isn't a title ("Your
+        # application") doesn't count as one.
+        and not (
+            ev.match_evidence == LIKELY_JOB
+            and not clean_role(ev.job_title, strict=False)
+        )
         and ev.event_type in AUTO_EVENTS
         and ev.target_stage in stages
     ]

@@ -170,6 +170,15 @@ describe("reason", () => {
     );
     expect(reason(ev({ match_evidence: null }))).toBeNull();
   });
+
+  it("explains a hiring site's email that named only the company or the title", () => {
+    expect(reason(ev({ match_evidence: "template_company" }))).toBe(
+      "The hiring site's email names only the company, and this is your only job there.",
+    );
+    expect(reason(ev({ match_evidence: "template_title" }))).toBe(
+      "The hiring site's email names only the job title, and this is your only job with that title.",
+    );
+  });
 });
 
 describe("scanIsDone", () => {

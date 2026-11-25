@@ -239,3 +239,56 @@ class TestTemplates:
             "",
         )
         assert (t.company, t.event) == ("Vellacor, Inc", APPLIED)
+
+
+class TestReceiptRulesStayNarrow:
+    """Spec 028 review: the receipt and not-hiring rules must not swallow real
+    news that shares their wording."""
+
+    def test_reply_on_a_receipt_thread_with_an_invite_is_an_interview(self):
+        text = (
+            "Hi Sam, thanks for applying. We'd like to invite you to an interview "
+            "for the Support Engineer role. Are you free Tuesday afternoon?\n\n"
+            "Jo Rivers\nTechnical Recruiter"
+        )
+        subject = "RE: Thank you for applying to Kestrel Optics"
+        assert kind(subject, text, "jo.rivers@kestreloptics.example") == INTERVIEW
+
+    def test_rejection_that_restates_the_receipt_is_a_rejection(self):
+        text = (
+            "Your application for the Support Engineer position has been received "
+            "and reviewed. Unfortunately, we will not be moving forward with your "
+            "application at this time."
+        )
+        assert kind("Thank you for your application", text) == REJECTED
+
+    def test_receipt_explaining_each_status_is_not_a_rejection(self):
+        text = (
+            "We have received your application for Analyst. Here is a quick "
+            "overview of the application statuses.\n\nReceived: your application "
+            "was successfully received.\n\nNot Selected: We will not be moving "
+            "forward with your application."
+        )
+        assert kind("We've received your application!", text) != REJECTED
+
+    def test_receipt_ending_with_a_survey_link_is_still_a_receipt(self):
+        text = (
+            "Thank you for applying to Kestrel Optics. Your application has been "
+            "received and our team will review your qualifications. We'd love your "
+            "feedback: take a short survey about your candidate experience."
+        )
+        assert kind("Application received - Support Engineer", text) == APPLIED
+
+    def test_a_date_in_april_is_not_a_card_rate(self):
+        text = (
+            "Thank you for applying to Kestrel Optics. Your application was "
+            "submitted on Apr 3, 2026 and our team will review your qualifications."
+        )
+        assert kind("Application received", text, bulk=True) == APPLIED
+
+    def test_a_purchasing_job_is_not_a_shopping_offer(self):
+        text = (
+            "Thank you for applying for the Purchase Order Specialist position. "
+            "Your application has been received."
+        )
+        assert kind("Application received", text, bulk=True) == APPLIED
