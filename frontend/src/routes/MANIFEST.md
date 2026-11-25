@@ -24,6 +24,7 @@ React Router **page components** (the app's screens), wired up in
 | `ForgotPasswordPage.tsx` | `/forgot-password` | Email a reset link; always the same neutral message | `lib/supabase/client` |
 | `ResetPasswordPage.tsx` | `/reset-password` | Choose a new password (8+ characters, twice) | `lib/supabase/client`, `lib/recovery` |
 | `WelcomePage.tsx` | `/welcome` | The Welcome (spec 019): hello → résumé (read with no AI, then checked) → Job Catcher → optional extras → done; Skip on every step; `?step=` | `hooks/useOnboarding`, `components/onboarding/*` |
+| `ApplyRunPage.tsx` | `/apply/:runId` | One application with Claude (spec 022), live: steps, start line, Claude needs you, questions, résumé for this job, pages with photos, your review, sent | `hooks/useApply`, `components/apply/*` |
 
 **How this folder connects:** pages compose `components/*` for UI, call
 `hooks/*` (TanStack Query) for data → which hit `lib/api.ts` → FastAPI `/v1`.

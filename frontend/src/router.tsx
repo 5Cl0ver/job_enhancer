@@ -6,6 +6,7 @@ import OAuthConsent from "@/routes/OAuthConsent";
 import { SearchPage } from "@/routes/SearchPage";
 import MyJobsPage from "@/routes/MyJobsPage";
 import { JobDetailPage } from "@/routes/JobDetailPage";
+import { ApplyRunPage } from "@/routes/ApplyRunPage";
 import MatchesPage from "@/routes/MatchesPage";
 import AnalyticsPage from "@/routes/AnalyticsPage";
 import AiApplyPage from "@/routes/AiApplyPage";
@@ -70,6 +71,7 @@ export const router = createBrowserRouter([
       // Saved + Tracker are one page now — same jobs, List/Board views.
       { path: "jobs", element: <MyJobsPage /> },
       { path: "jobs/:id", element: <JobDetailPage /> },
+      { path: "apply/:runId", element: <ApplyRunPage /> },
       { path: "saved", element: <Navigate to="/jobs" replace /> },
       { path: "tracker", element: <Navigate to="/jobs?view=board" replace /> },
       { path: "matches", element: <MatchesPage /> },

@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { RequireAuth } from "@/routes/RequireAuth";
 import { OfflineBanner } from "@/components/layout/OfflineBanner";
+import { ApplyBanner } from "@/components/apply/ApplyBanner";
 import { CountBadge, TabBar, TopBar } from "@/components/layout/PhoneNav";
 import { NAV, allowed, signOut } from "@/components/layout/nav";
 import { useAttention } from "@/hooks/useAttention";
@@ -34,6 +35,7 @@ function Frame() {
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
       <OfflineBanner />
+      <ApplyBanner />
       <div className="flex min-h-0 flex-1">
         {/* Desktop sidebar — hidden on phones in favour of the bars. */}
         <aside className="hidden w-56 shrink-0 flex-col border-r bg-card p-4 md:flex">

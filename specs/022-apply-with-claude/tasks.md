@@ -22,13 +22,13 @@
 
 ## Part C: the app (PR `022-apply-app`)
 
-- [ ] T020 [US2] Hooks frontend/src/hooks/useApply.ts and lib frontend/src/lib/apply.ts (steps, labels)
-- [ ] T021 [US2] Apply with Claude button in components/jobs/JobDetail.tsx (desktop and phone)
-- [ ] T022 [US2–US6] Application page routes/ApplyRunPage.tsx plus components/apply/* (Steps, StartStep, Questions, ResumeStep, Pages, PhotoViewer, Review, HelpCard)
-- [ ] T023 [US2] Top banner components/apply/ApplyBanner.tsx in DashboardLayout
-- [ ] T024 [US4] Settings › Résumés: components/settings/ResumesCard.tsx (master, delete, made for a job) and FactsCard.tsx
-- [ ] T025 [US8] What you sent on the job page: components/apply/WhatYouSent.tsx
-- [ ] T026 [P] Tests in frontend/tests/components/apply/*.test.tsx and tests/lib/apply.test.ts
+- [X] T020 [US2] Hooks frontend/src/hooks/useApply.ts and lib frontend/src/lib/apply.ts (steps, labels)
+- [X] T021 [US2] Apply with Claude button in components/jobs/JobDetail.tsx (desktop and phone)
+- [X] T022 [US2–US6] Application page routes/ApplyRunPage.tsx plus components/apply/* (Steps, StartStep, Questions, ResumeStep, Pages, PhotoViewer, Review, HelpCard)
+- [X] T023 [US2] Top banner components/apply/ApplyBanner.tsx in DashboardLayout
+- [X] T024 [US4] Settings › Résumés: components/settings/ResumesCard.tsx (master, delete, made for a job) and FactsCard.tsx
+- [X] T025 [US8] What you sent on the job page: components/apply/WhatYouSent.tsx
+- [X] T026 [P] Tests in frontend/tests/components/apply/*.test.tsx and tests/lib/apply.test.ts
 
 ## Part D: Job Catcher apply mode (PR `022-apply-job-catcher`)
 

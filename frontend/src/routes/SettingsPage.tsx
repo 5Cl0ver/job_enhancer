@@ -21,6 +21,7 @@ import { Label } from "@/components/ui/label";
 import { api, getAccessToken, API_BASE } from "@/lib/api";
 import { AppearanceCard } from "@/components/settings/AppearanceCard";
 import { EmailConnectCard } from "@/components/settings/EmailConnectCard";
+import { ResumesCard } from "@/components/settings/ResumesCard";
 import { InfoBubble } from "@/components/common/InfoBubble";
 import { Switch } from "@/components/ui/switch";
 import { useOnboarding, useUpdateOnboarding } from "@/hooks/useOnboarding";
@@ -40,6 +41,9 @@ export default function SettingsPage() {
       <Section id="appearance" title="Appearance">
         <AppearanceCard />
         <GettingStartedCard />
+      </Section>
+      <Section id="resumes" title="Résumés">
+        <ResumesCard />
       </Section>
       <Section id="profile" title="Application profile & saved answers">
         <AutofillMemoryLink />
