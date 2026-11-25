@@ -11,7 +11,9 @@ listings. A company the user said never to check is never handed out.
 A company is handed out (and counted as checked) the moment the app says to
 visit it. Claude then says what was there with ``checked``. One handed out but
 not reported yet (the chat ran out) is handed out again to the next chat on
-the same run, without counting twice; one reported is never visited twice.
+the same run, without counting twice; one reported is never visited twice. One
+Claude couldn't check (the site didn't load, or wanted cookies or a sign-in)
+still counts toward the run's limit, and is due again on the next run.
 
 Functions Claude reaches through the connector raise ``ValueError`` with a
 message Claude can act on; the page's REST functions raise ``HTTPException``.
@@ -28,6 +30,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scout import (
     COMPANY_NO_CAREERS,
+    COMPANY_NOT_CHECKED,
     COMPANY_OPENINGS,
     COMPANY_RESULTS,
     LOCAL,
@@ -207,12 +210,13 @@ async def rechecks(db: AsyncSession, user_id: uuid.UUID, run: ScoutRun) -> list[
                 | (ScoutCompany.last_checked_at <= cutoff),
             )
             .order_by(
-                # "Check next run" first, then ones that had openings, then
-                # the longest since a look.
+                # "Check next run" first, then ones a run couldn't check, then
+                # ones that had openings, then the longest since a look.
                 case(
+                    (ScoutCompany.last_result == COMPANY_NOT_CHECKED, 1),
                     (ScoutCompany.last_checked_at.is_(None), 0),
-                    (ScoutCompany.last_result == COMPANY_OPENINGS, 1),
-                    else_=2,
+                    (ScoutCompany.last_result == COMPANY_OPENINGS, 2),
+                    else_=3,
                 ),
                 ScoutCompany.last_checked_at,
             )
@@ -367,6 +371,15 @@ async def checked(
         opened.discard(key)  # a corrected report
     stats["_openings"] = sorted(opened)
     stats["companies_with_openings"] = len(opened)
+    missed = set(stats.get("_not_checked", []))
+    if result == COMPANY_NOT_CHECKED:
+        company.last_checked_at = None  # due again on the next run
+        missed.add(key)
+    elif key in missed:  # a corrected report: it was checked after all
+        company.last_checked_at = _now()
+        missed.discard(key)
+    stats["_not_checked"] = sorted(missed)
+    stats["companies_not_checked"] = len(missed)
     run.stats = stats
     await db.flush()
     # Full once every company the run may check has been reported (not just
@@ -424,7 +437,9 @@ def summary(stats: dict | None) -> str | None:
     if parts:
         head += f" ({', '.join(parts)})"
     hiring = stats.get("companies_with_openings", 0)
-    return f"{head}; {hiring} had openings."
+    missed = stats.get("companies_not_checked", 0)
+    tail = f"; {missed} couldn't be checked" if missed else ""
+    return f"{head}; {hiring} had openings{tail}."
 
 
 # --------------------------------------------------------------------------- #

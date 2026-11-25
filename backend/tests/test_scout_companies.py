@@ -15,7 +15,7 @@ from httpx import AsyncClient
 from sqlalchemy import select
 
 import app.mcp_server as mcp_mod
-from app.models.scout import ScoutCompany, ScoutRun
+from app.models.scout import COMPANY_RESULTS, ScoutCompany, ScoutRun
 from app.models.user import User
 from app.schemas.scout import CaptureIn, MissionCreate, TrackCreate
 from app.services import scout_runs, scout_tracks
@@ -34,7 +34,7 @@ POSTING = (
 )
 
 
-async def _setup(maker, email, *, source="local_companies", job_count=2):
+async def _setup(maker, email, *, source="local_companies", job_count=2, titles=None):
     async with maker() as db:
         user = await db.scalar(select(User).where(User.email == email))
         track = await scout_tracks.create_track(
@@ -42,7 +42,8 @@ async def _setup(maker, email, *, source="local_companies", job_count=2):
             user.id,
             TrackCreate(
                 name="IT Admin",
-                target_titles=["IT Systems Administrator", "Help Desk Technician"],
+                target_titles=titles
+                or ["IT Systems Administrator", "Help Desk Technician"],
                 key_skills=["Microsoft 365"],
             ),
         )
@@ -130,13 +131,81 @@ class TestStartUrls:
         assert all("-indeed -linkedin -glassdoor -ziprecruiter" in q for q in queries)
         assert queries[0].startswith("IT Admin companies")
 
-    def test_each_run_moves_on_to_different_searches(self):
-        first, second = self._queries(round=0), self._queries(round=1)
-        assert not set(first) & set(second)
-        assert second[0].startswith("companies that hire IT Systems Administrator")
+    def _track(self, titles, **over):
+        return {"name": "IT Admin", "titles": titles, **over}
 
-    def test_a_radius_reads_as_miles(self):
-        assert "within 25 miles of Springfield, IL" in self._queries(radius_miles=25)[0]
+    def _asks(self, **over):
+        """What each search asks for, without the place and the boards."""
+        return [q.split(" near ")[0] for q in self._queries(**over)]
+
+    def test_every_search_comes_from_the_titles(self):
+        titles = ["IT Systems Administrator", "Help Desk Technician"]
+        assert self._asks(track=self._track(titles)) == [
+            "IT Admin companies",
+            "companies that hire IT Systems Administrator",
+            "companies that hire Help Desk Technician",
+        ]
+        # Related titles count too.
+        asks = self._asks(track=self._track(titles[:1], related=["Help Desk Tech"]))
+        assert asks[2] == "companies that hire Help Desk Tech"
+
+    def test_broad_runs_search_the_titles_claude_chose(self):
+        chosen = ["Desktop Support", "Network Technician", "Help Desk Analyst"]
+        asks = self._asks(broad=True, search_titles=chosen)
+        assert asks == [f"companies that hire {t}" for t in chosen]
+
+    def test_each_run_moves_on_to_different_searches(self):
+        titles = [f"Title {i}" for i in range(6)]
+        track = self._track(titles)
+        first, second = self._asks(track=track), self._asks(track=track, round=1)
+        assert first == [
+            "IT Admin companies",
+            "companies that hire Title 0",
+            "companies that hire Title 1",
+        ]
+        assert second == [f"companies that hire Title {i}" for i in (2, 3, 4)]
+        # Then round the list again.
+        third = self._asks(track=track, round=2)
+        assert third[:2] == ["companies that hire Title 5", "IT Admin companies"]
+
+    def test_the_same_title_twice_is_one_search(self):
+        asks = self._asks(track=self._track(["Help Desk", "help desk", "Help Desk"]))
+        assert asks[:2] == ["IT Admin companies", "companies that hire Help Desk"]
+        assert asks[2] in scout_runs.EMPLOYER_KINDS
+
+    def test_kinds_of_employer_fill_in_when_titles_are_few(self):
+        asks = self._asks(track=self._track([]))
+        assert asks[0] == "IT Admin companies"
+        assert set(asks[1:]) <= set(scout_runs.EMPLOYER_KINDS)
+        # A broad run before Claude chose titles: kinds only, new ones a run.
+        first = self._asks(broad=True, search_titles=[])
+        second = self._asks(broad=True, search_titles=[], round=1)
+        assert set(first) <= set(scout_runs.EMPLOYER_KINDS) and len(set(first)) == 3
+        assert not set(first) & set(second)
+        # Enough titles: no kinds at all.
+        many = self._asks(track=self._track(["A", "B", "C"]), round=3)
+        assert not set(many) & set(scout_runs.EMPLOYER_KINDS)
+
+    def test_only_kinds_that_hire_it_staff(self):
+        kinds = " ".join(scout_runs.EMPLOYER_KINDS)
+        for gone in ("logistics", "insurance", "law", "accounting", "construction"):
+            assert gone not in kinds
+        assert "software and IT companies" in scout_runs.EMPLOYER_KINDS
+
+    def test_near_the_place_even_with_a_radius(self):
+        queries = self._queries(radius_miles=25)
+        assert all(" near Springfield, IL -indeed" in q for q in queries)
+        assert not any("miles" in q for q in queries)
+        # The place with its state, when the search has one.
+        where = self._queries(location="Beaverton", where="Beaverton, OR")
+        assert all(" near Beaverton, OR " in q for q in where)
+
+    def test_no_place_says_no_near(self):
+        queries = self._queries(location=None)
+        assert all(" near" not in q for q in queries)
+        assert queries[0] == (
+            "IT Admin companies -indeed -linkedin -glassdoor -ziprecruiter"
+        )
 
     def test_google_jobs_opens_googles_job_results(self):
         (url,) = scout_runs.start_urls(self._criteria(source="google_jobs"))
@@ -402,10 +471,105 @@ class TestCompanyChecked:
         maker = await _connected_user(engine, monkeypatch, email="cc3@test.dev")
         _, _, run_id = await _setup(maker, "cc3@test.dev")
         await mcp_mod.get_scout_brief()
-        with pytest.raises(ValueError, match="result must be one of"):
+        with pytest.raises(ValueError, match="result must be one of") as err:
             await mcp_mod.company_checked(str(run_id), "a.example", "maybe")
+        assert all(r in str(err.value) for r in COMPANY_RESULTS)
         with pytest.raises(ValueError, match="check_companies first"):
             await mcp_mod.company_checked(str(run_id), "nobody.example", "none")
+
+
+@pytest.mark.asyncio
+class TestNotChecked:
+    async def test_tried_again_next_run_and_counted(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="nc1@test.dev")
+        user_id, mission_id, run_id = await _setup(maker, "nc1@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_companies(
+            str(run_id),
+            [
+                _co("Brambleworks", "brambleworks.example"),
+                _co("Vellacor", "vellacor.example"),
+            ],
+        )
+        await mcp_mod.company_checked(
+            str(run_id),
+            "brambleworks.example",
+            "not_checked",
+            careers_url="https://brambleworks.example/careers",
+        )
+        await mcp_mod.company_checked(str(run_id), "vellacor.example", "none")
+        async with maker() as db:
+            rows = {
+                c.key: c
+                for c in await db.scalars(
+                    select(ScoutCompany).where(ScoutCompany.user_id == user_id)
+                )
+            }
+            run = await db.get(ScoutRun, run_id)
+        missed = rows["brambleworks.example"]
+        assert missed.last_result == "not_checked"
+        assert missed.last_checked_at is None  # due again
+        assert missed.careers_url == "https://brambleworks.example/careers"
+        assert missed.last_openings == []
+        assert rows["vellacor.example"].last_checked_at is not None
+        # It used up one of this run's companies, and isn't handed out twice.
+        assert run.stats["companies"] == 2
+        assert run.stats["companies_not_checked"] == 1
+        assert run.stats["companies_with_openings"] == 0
+        assert summary(run.stats) == (
+            "Checked 2 local companies (2 new); 0 had openings; 1 couldn't be checked."
+        )
+        out = await mcp_mod.check_companies(
+            str(run_id), [_co("Brambleworks", "brambleworks.example")]
+        )
+        assert out["visit"] == [] and out["skipped"] == {"checked_this_run": 1}
+        # The next run hands it out again.
+        await mcp_mod.finish_scout_run(str(run_id))
+        async with maker() as db:
+            await scout_runs.queue_run(db, mission_id, user_id)
+            await db.commit()
+        brief = await mcp_mod.get_scout_brief()
+        assert [c["name"] for c in brief["recheck"]] == ["Brambleworks"]
+
+    async def test_rechecked_after_check_next_run_before_openings(
+        self, engine, monkeypatch
+    ):
+        maker = await _connected_user(engine, monkeypatch, email="nc2@test.dev")
+        user_id, _, _ = await _setup(maker, "nc2@test.dev")
+        await _company(
+            maker, user_id, "Hiring Co", "hiring.example", days_ago=8, result="openings"
+        )
+        await _company(
+            maker, user_id, "Missed", "missed.example", days_ago=1, result="not_checked"
+        )
+        await _company(maker, user_id, "Asked", "asked.example", days_ago=1)
+        async with maker() as db:
+            for co in await db.scalars(
+                select(ScoutCompany).where(
+                    ScoutCompany.key.in_(["missed.example", "asked.example"])
+                )
+            ):
+                co.last_checked_at = None
+            await db.commit()
+        brief = await mcp_mod.get_scout_brief()
+        names = [c["name"] for c in brief["recheck"]]
+        assert names == ["Asked", "Missed", "Hiring Co"]
+
+    async def test_a_corrected_report_is_checked_after_all(self, engine, monkeypatch):
+        maker = await _connected_user(engine, monkeypatch, email="nc3@test.dev")
+        user_id, _, run_id = await _setup(maker, "nc3@test.dev")
+        await mcp_mod.get_scout_brief()
+        await mcp_mod.check_companies(str(run_id), [_co("A", "a.example")])
+        await mcp_mod.company_checked(str(run_id), "a.example", "not_checked")
+        await mcp_mod.company_checked(str(run_id), "a.example", "none")
+        async with maker() as db:
+            company = await db.scalar(
+                select(ScoutCompany).where(ScoutCompany.user_id == user_id)
+            )
+            run = await db.get(ScoutRun, run_id)
+        assert company.last_checked_at is not None
+        assert run.stats["companies_not_checked"] == 0
+        assert summary(run.stats) == "Checked 1 local company (1 new); 0 had openings."
 
 
 @pytest.mark.asyncio
@@ -471,7 +635,8 @@ class TestRoundsMoveOn:
         self, engine, monkeypatch
     ):
         maker = await _connected_user(engine, monkeypatch, email="rd@test.dev")
-        user_id, mission_id, first = await _setup(maker, "rd@test.dev")
+        titles = [f"Title {i}" for i in range(6)]
+        user_id, mission_id, first = await _setup(maker, "rd@test.dev", titles=titles)
         async with maker() as db:
             second = await scout_runs.queue_run(db, mission_id, user_id)
             await db.commit()

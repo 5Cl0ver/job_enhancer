@@ -666,12 +666,14 @@ async def company_checked(
     openings: list[dict] | None = None,
 ) -> dict:
     """Local companies search only. After looking at a company's site, say
-    what it had: result "openings", "none" or "no_careers", with the careers
-    page's link when you found one. Send the same website you sent to
-    check_companies. With "openings", also send openings: the jobs the careers
-    page lists (up to 20), each {"title", "url", "fit"} with fit your 0-10
-    score or null when you didn't open it. Report the jobs that fit with
-    report_job as usual."""
+    what it had: result "openings", "none", "no_careers" or "not_checked",
+    with the careers page's link when you found one. Use "not_checked" when
+    the site didn't load, wanted cookies accepted or a sign-in, or its job
+    search seemed broken: the next run tries it again. Never accept extra
+    cookies or sign in. Send the same website you sent to check_companies.
+    With "openings", also send openings: the jobs the careers page lists (up
+    to 20), each {"title", "url", "fit"} with fit your 0-10 score or null when
+    you didn't open it. Report the jobs that fit with report_job as usual."""
     sent = {
         "website": website,
         "result": result,

@@ -813,7 +813,7 @@ export interface Company {
   careers_url: string | null;
   last_checked_at: string | null;
   times_checked: number;
-  last_result: "openings" | "none" | "no_careers" | null;
+  last_result: "openings" | "none" | "no_careers" | "not_checked" | null;
   never_check: boolean;
   /** Due for a check on the next run. */
   due: boolean;
@@ -830,8 +830,12 @@ export function companyStatus(c: Company): string {
         ? "No openings"
         : c.last_result === "no_careers"
           ? "No careers page"
-          : "Not reported";
+          : c.last_result === "not_checked"
+            ? "Couldn't check"
+            : "Not reported";
   if (c.never_check) return `${result} · you skipped it`;
+  if (!c.last_checked_at && c.last_result === "not_checked")
+    return `${result} · tried again next run`;
   if (!c.last_checked_at) return `${result} · checked next run`;
   const when = new Date(c.last_checked_at).toLocaleDateString(undefined, {
     month: "short",

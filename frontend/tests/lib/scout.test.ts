@@ -241,6 +241,13 @@ describe("local companies", () => {
     expect(
       companyStatus({ ...c, last_result: "no_careers", never_check: true }),
     ).toBe("No careers page · you skipped it");
+    expect(
+      companyStatus({
+        ...c,
+        last_result: "not_checked",
+        last_checked_at: null,
+      }),
+    ).toBe("Couldn't check · tried again next run");
   });
 });
 
