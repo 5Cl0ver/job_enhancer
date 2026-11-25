@@ -15,7 +15,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.database import get_db
+from app.database import AsyncSessionLocal, get_db
 from app.middleware.auth import get_current_user
 from app.models.detected_event import (
     STATUS_AUTO_APPLIED,
@@ -42,6 +42,8 @@ from app.schemas.email_account import (
     JobEmailLatestOut,
     MatchCandidateOut,
     ProviderInfoOut,
+    RecheckIn,
+    RecheckOut,
     ResolveEventRequest,
     ScanResult,
     TrackEventRequest,
@@ -49,6 +51,7 @@ from app.schemas.email_account import (
 from app.schemas.job_link import JobOption, LinkEventRequest
 from app.services import email_accounts as svc
 from app.services import (
+    email_recheck,
     email_review,
     email_sync,
     email_sync_state,
@@ -317,6 +320,8 @@ async def scan_inbox(
         moved=len(moved),
         unsaved=len(detected.unsaved),
         contacts=len(detected.contacts),
+        noted=len(detected.noted),
+        looked_at=len(detected.looked_at),
         skipped=detected.skipped,
         considered=[ConsideredOut.model_validate(c) for c in detected.considered],
         scanned=sum(r.headers_read for r in result.reports),
@@ -333,6 +338,46 @@ def _folder_out(report: email_sync.FolderReport) -> dict:
     d["role"] = d.pop("folder_role")
     d.pop("filter_reasons", None)
     return d
+
+
+@router.post("/recheck", response_model=RecheckOut, status_code=202)
+async def recheck(
+    data: RecheckIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RecheckOut:
+    """Re-read the last ``days`` days with today's rules, in the background.
+    Only adds emails not stored yet; never moves a card (spec 027)."""
+    account = await svc.get_account(db, user.id)
+    if account is None:
+        raise HTTPException(status_code=404, detail="No email account connected")
+    now = datetime.now(tz=UTC)
+    if until := email_sync_state.backoff_until(account, now):
+        raise HTTPException(
+            status_code=429,
+            detail=(
+                "The mail server asked us to slow down. "
+                f"Try again after {until:%H:%M} UTC."
+            ),
+        )
+    lock = _SCAN_LOCKS.setdefault(account.id, asyncio.Lock())
+    if lock.locked():
+        raise HTTPException(status_code=409, detail="A scan is already running.")
+    return RecheckOut(
+        **email_recheck.start(AsyncSessionLocal, account.id, data.days, lock)
+    )
+
+
+@router.get("/recheck", response_model=RecheckOut)
+async def recheck_status(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> RecheckOut:
+    """How the re-check is going (or how it went)."""
+    account = await svc.get_account(db, user.id)
+    if account is None:
+        return RecheckOut(state="idle")
+    return RecheckOut(**email_recheck.status(account.id))
 
 
 @router.get("/events", response_model=list[DetectedEventOut])

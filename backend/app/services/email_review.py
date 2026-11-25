@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import Row, and_, func, or_, select
+from sqlalchemy import Row, and_, delete, func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -27,6 +27,7 @@ from app.models.detected_event import (
     STATUS_HIDDEN,
     STATUS_PENDING,
     STATUS_REVIEW,
+    STATUS_SKIPPED,
     STATUS_UNSAVED,
     DetectedEvent,
 )
@@ -423,3 +424,56 @@ async def undo_event(
     ev.applied_at = None
     await db.flush()
     return ev
+
+
+# "Looked at, not shown" keeps 30 days, at most 500 per inbox (spec 027).
+LOOKED_AT_DAYS = 30
+LOOKED_AT_MAX = 500
+
+
+async def purge_looked_at(db: AsyncSession) -> int:
+    """Delete looked-at rows past 30 days, and past the newest 500 of an
+    inbox. Their emails are older than any scan re-reads, so they never come
+    back."""
+    cutoff = datetime.now(tz=UTC) - timedelta(days=LOOKED_AT_DAYS)
+    gone = (
+        await db.execute(
+            delete(DetectedEvent).where(
+                DetectedEvent.status == STATUS_SKIPPED,
+                DetectedEvent.created_at < cutoff,
+            )
+        )
+    ).rowcount or 0
+    accounts = await db.scalars(
+        select(DetectedEvent.email_account_id)
+        .where(DetectedEvent.status == STATUS_SKIPPED)
+        .group_by(DetectedEvent.email_account_id)
+        .having(func.count() > LOOKED_AT_MAX)
+    )
+    for account_id in list(accounts):
+        keep = (
+            select(DetectedEvent.id)
+            .where(
+                DetectedEvent.email_account_id == account_id,
+                DetectedEvent.status == STATUS_SKIPPED,
+            )
+            .order_by(DetectedEvent.created_at.desc())
+            .limit(LOOKED_AT_MAX)
+        )
+        gone += (
+            await db.execute(
+                delete(DetectedEvent).where(
+                    DetectedEvent.email_account_id == account_id,
+                    DetectedEvent.status == STATUS_SKIPPED,
+                    DetectedEvent.id.not_in(keep.scalar_subquery()),
+                )
+            )
+        ).rowcount or 0
+    await db.flush()
+    return gone
+
+
+async def purge_looked_at_job(session_maker) -> None:
+    async with session_maker() as db:
+        await purge_looked_at(db)
+        await db.commit()

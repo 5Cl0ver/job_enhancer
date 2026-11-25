@@ -559,17 +559,121 @@ def collapse_duplicates(jobs: list[dict]) -> tuple[list[dict], dict]:
 
 DIGEST_MIN_JOBS = 3
 
+# Evidence that ties an email to one saved job by its company (spec 027).
+_CLEAR = {JOB_URL, JOB_ID, KNOWN_SENDER, COMPANY_TITLE, COMPANY_DATE}
+
+
+# Job boards: they send lists of other companies' jobs. Applicant-tracking
+# systems (Workday, SmartRecruiters, Jobvite, Paylocity…) send one company's
+# own mail and are not boards (spec 027 review).
+_BOARD_WORDS = re.compile(
+    r"^(?:indeed|indeedemail|linkedin|ziprecruiter|glassdoor|monster|dice|"
+    r"careerbuilder|simplyhired|handshake|joinhandshake|wellfound|angellist|"
+    r"lensa|jobright|snagajob|governmentjobs|usajobs|jooble|talent|builtin|"
+    r"jobleads|learn4good|adzuna|jobcase|ladders|theladders|hired|otta)$"
+)
+
+
+def from_job_board(from_addr: str, reply_to: str = "") -> bool:
+    """Sent by a job board (its domain or its name), not by a company or the
+    hiring system it uses."""
+    name = parseaddr(from_addr or "")[0]
+    domains = [a.rsplit("@", 1)[-1] for a in _addresses(from_addr, reply_to)]
+    words = set(_tokens(name)) | {p for d in domains for p in d.split(".")}
+    return any(_BOARD_WORDS.match(w) for w in words)
+
+
+def clearly_one_job(match: JobMatch, from_addr: str, reply_to: str = "") -> bool:
+    """A clear match to one saved job, from the company rather than a job
+    board: such an email is never a job alert, whatever else it names."""
+    return (
+        match.status == MATCHED
+        and match.evidence in _CLEAR
+        and not from_job_board(from_addr, reply_to)
+    )
+
+
+# Words that name a place or a kind of business, never one company. A saved
+# company made only of these (a city, a state, "Security", "Global Talent
+# Group") turns up in addresses and signatures, so it can't tell
+# a job alert from a normal email (spec 027).
+_GENERIC_NAME = {
+    # places
+    "america", "american", "national", "international", "global", "north",
+    "south", "east", "west", "northwest", "pacific", "city", "county", "state",
+    "oregon", "washington", "california", "idaho", "nevada", "arizona", "texas",
+    "colorado", "utah", "york", "florida", "portland", "seattle", "vancouver",
+    "tacoma", "spokane", "boise", "francisco", "angeles", "diego", "chicago",
+    "boston", "houston", "miami", "detroit", "minneapolis", "philadelphia",
+    "springfield", "madison", "columbus", "jacksonville",
+    "austin", "denver", "phoenix", "atlanta", "dallas", "remote",
+    # kinds of business
+    "cybersecurity", "security", "health", "healthcare", "medical", "fitness",
+    "support", "talent", "link", "consulting", "consultants", "staffing",
+    "recruiting", "recruitment", "resources", "services", "service", "public",
+    "utilities", "university", "college", "school", "district", "department",
+    "administrative", "government", "agency", "bank", "financial", "insurance",
+    "construction", "engineering", "manufacturing", "logistics", "energy",
+    "digital", "data", "cloud", "network", "networks", "software", "technology",
+    "technologies", "tech", "it", "solutions", "systems", "partners", "group",
+    "enterprises", "industries", "company", "corporation", "holdings", "core",
+}  # fmt: skip
+
+
+def _digest_company_words(job: dict) -> list[str]:
+    _, rare, _ = _company_terms(job.get("company") or "")
+    return [t for t in rare if len(t) >= 4 and t not in _GENERIC_NAME]
+
+
+def _distinct_titles(h: _Haystack, titles: list[list[str]]) -> int:
+    """How many different saved titles the email names. The same title named
+    again (in the subject and the body, or by several saved jobs) counts once,
+    and a title only ever found inside a longer one ("Systems Administrator"
+    in "Endpoint Systems Administrator") isn't one of its own."""
+    found = {}
+    for words in titles:
+        needle = f" {' '.join(words)} "
+        spans, at = [], h.phrase.find(needle)
+        while at >= 0:
+            spans.append((at, at + len(needle)))
+            at = h.phrase.find(needle, at + 1)
+        if spans:
+            found[" ".join(words)] = spans
+    alone = 0
+    for title, spans in found.items():
+        inside = [
+            (a, b)
+            for other, outer in found.items()
+            if other != title and len(other) > len(title)
+            for a, b in outer
+        ]
+        if any(not any(a <= s and e <= b for a, b in inside) for s, e in spans):
+            alone += 1
+    return alone
+
 
 def looks_like_digest(jobs: list[dict], *, subject: str = "", text: str = "") -> bool:
-    """An email naming several different saved jobs (titles across two or more
-    companies), or several saved companies, is a job alert / digest."""
+    """An email naming several different saved titles (across two or more
+    companies), or several saved companies by their own distinctive names, is
+    a job alert / digest.
+
+    Generic company names never count, and one title counts once however
+    often it's named or however many saved jobs share it (spec 027: real
+    single-company emails were read as alerts)."""
     reps, _ = collapse_duplicates(jobs)
     h = _haystack(subject, "", text)
     titled = [j for j in reps if _has_phrase(h, _title_words(j))]
     titled_companies = {_job_key(j)[0] for j in titled}
-    if len(titled) >= DIGEST_MIN_JOBS and len(titled_companies) >= 2:
+    if (
+        len(titled_companies) >= 2
+        and _distinct_titles(h, [_title_words(j) for j in titled]) >= DIGEST_MIN_JOBS
+    ):
         return True
-    named = {_job_key(j)[0] for j in reps if _company_hit(j, h, [])}
+    named = set()
+    for j in reps:
+        words = _digest_company_words(j)
+        if words and all(w in h.words for w in words):
+            named.add(_job_key(j)[0])
     return len(named) >= DIGEST_MIN_JOBS
 
 

@@ -49,6 +49,13 @@ STATUS_HIDDEN = "hidden"
 STATUS_UNSAVED = "unsaved"
 # A recruiter reaching out. Kept, out of the way; never moves a card.
 STATUS_CONTACT = "contact"
+# Clearly about a saved job, but its card needs no move (already there or
+# further along, or a reminder). Kept on the job and shown as new (spec 027):
+# never thrown away. Never moves a card.
+STATUS_NOTED = "noted"
+# Job-looking but not put on a job (a job alert, no saved job, unclear): kept
+# 30 days under "Looked at, not shown", so nothing disappears silently.
+STATUS_SKIPPED = "skipped"
 OPEN_STATUSES = (
     STATUS_PENDING,
     STATUS_REVIEW,
@@ -114,6 +121,10 @@ class DetectedEvent(Base):
     # unsaved / contact: the company and role, read from the email itself.
     job_company: Mapped[str | None] = mapped_column(String(255))
     job_title: Mapped[str | None] = mapped_column(String(255))
+    # noted: when the user saw it (opened its job); null = new (spec 027).
+    seen_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # skipped: why it wasn't put on a job (job_alert, digest, no_saved_job).
+    skip_reason: Mapped[str | None] = mapped_column(String(30))
 
     status: Mapped[str] = mapped_column(
         String(20), nullable=False, default=STATUS_PENDING

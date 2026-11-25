@@ -200,6 +200,25 @@ class FolderSyncOut(BaseModel):
     uidvalidity_changed: bool = False
 
 
+class RecheckIn(BaseModel):
+    """Re-check this many days of email with today's rules (spec 027)."""
+
+    days: int = Field(30, ge=1, le=45)
+
+
+class RecheckOut(BaseModel):
+    state: str  # idle | running | done | failed
+    days: int | None = None
+    started_at: str | None = None
+    finished_at: str | None = None
+    read: int | None = None
+    found: int | None = None
+    waiting: int | None = None
+    noted: int | None = None
+    looked_at: int | None = None
+    interrupted: str | None = None
+
+
 class ScanResult(BaseModel):
     """Outcome of a scan: new updates plus the near-misses we didn't surface."""
 
@@ -213,6 +232,10 @@ class ScanResult(BaseModel):
     moved: int = 0  # cards the scan moved by itself (sure matches)
     unsaved: int = 0  # important updates about jobs not saved
     contacts: int = 0  # recruiter messages
+    # About a saved job, no move needed: kept on the job (spec 027).
+    noted: int = 0
+    # Job-looking but not on a job: "Looked at, not shown" (spec 027).
+    looked_at: int = 0
     skipped: dict[str, int] = {}
     considered: list[ConsideredOut] = []
     scanned: int = 0  # total emails read this scan

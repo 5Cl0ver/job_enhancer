@@ -335,8 +335,10 @@ class TestCardActions:
         )
         result = await detect_events(db_session, acct, [msg])
         assert result.created == []
-        assert result.considered[0].reason == "reminder"
-        assert result.considered[0].event_type == "interview"
+        # Never a move, but kept on the job (spec 027).
+        (kept,) = result.noted
+        assert (kept.status, kept.event_type) == ("noted", "interview")
+        assert kept.saved_job_id is not None
 
     async def test_old_confirmation_does_not_move_card_backward(
         self, db_session, test_user
@@ -348,7 +350,13 @@ class TestCardActions:
         )
         result = await detect_events(db_session, acct, [msg])
         assert result.created == []
-        assert result.considered[0].reason == "already_at_or_past_stage"
+        # The card stays, and the email stays on the job (spec 027).
+        (kept,) = result.noted
+        assert (kept.status, kept.event_type, kept.target_stage) == (
+            "noted",
+            "applied",
+            "Applied",
+        )
 
     async def test_unsure_is_shown_never_moved(self, db_session, test_user):
         acct = await self._job_at(db_session, test_user, "Applied")
