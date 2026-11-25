@@ -57,6 +57,7 @@ import { useLinkEvent, useUnlinkEvent } from "@/hooks/useJobLinks";
 import { EmailViewer } from "@/components/email/EmailViewer";
 import { InboxBar } from "@/components/settings/EmailConnectCard";
 import { RecheckCard } from "@/components/email/RecheckCard";
+import { LookedAtList, NewOnYourJobs } from "@/components/email/JobEmailLists";
 import { ErrorState } from "@/components/common/ErrorState";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
@@ -141,6 +142,8 @@ export default function EmailUpdatesPage() {
         </div>
       )}
 
+      <NewOnYourJobs />
+
       {g.questions.length > 0 && (
         <Section title="Needs your answer" count={g.questions.length}>
           {g.questions.map((ev) => (
@@ -199,6 +202,8 @@ export default function EmailUpdatesPage() {
           ))}
         </Collapsed>
       )}
+
+      <LookedAtList />
 
       {g.hidden.length > 0 && (
         <Collapsed

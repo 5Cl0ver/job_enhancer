@@ -96,6 +96,10 @@ class DetectedEventOut(BaseModel):
     # Where the saved job's card is now ("Interested"), so the page can say
     # what a click would change. None for unsaved jobs or a card with no stage.
     current_stage: str | None = None
+    # noted: when the user saw it (null = new); skipped: why it isn't on a job
+    # (spec 027).
+    seen_at: datetime | None = None
+    skip_reason: str | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
@@ -198,6 +202,25 @@ class FolderSyncOut(BaseModel):
     partial: list[str] = []
     view_limited: bool = False
     uidvalidity_changed: bool = False
+
+
+class JobEmailsSeenIn(BaseModel):
+    """The user opened this job: its new emails are seen (spec 027)."""
+
+    job_listing_id: uuid.UUID
+
+
+class KeepEventRequest(BaseModel):
+    """ "This is about my job": put a looked-at email on a saved job."""
+
+    saved_job_id: uuid.UUID
+
+
+class UnseenOut(BaseModel):
+    """A saved job with new emails, for the board's dot (spec 027)."""
+
+    saved_job_id: uuid.UUID
+    count: int
 
 
 class RecheckIn(BaseModel):

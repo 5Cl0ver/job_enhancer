@@ -58,6 +58,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `JobEmails.tsx` | "Emails about this job": why a job is in its stage. Each email says what it was and what it did to the card, with **View email** (quick read here) and **Open in Yahoo Mail / Gmail** (the message itself). On the job page, the board's job dialog; says so when a job has none |
 | `email/RecheckCard.tsx` | "Missed an email?": re-check the last 30 days with today's rules (spec 027), progress and result; never moves a card |
+| `email/JobEmailLists.tsx` | Email updates (spec 027): **New emails on your jobs** (kept on a job, not seen yet; opens the job) and **Looked at, not shown** (30 days, the reason, "This is about my job" puts it on a picked job). `JobEmails` shows a job's emails in sections (Interviews & next steps, Decisions, Your application, Messages from people, Other), "Latest: …", New, and marks them seen; board cards show "New email" |
 | `EmailViewer.tsx` | One email, fetched read-only when opened and shown as plain text, with the link to the message in the user's own mail and a search fallback |
 
 ## `jobs/`

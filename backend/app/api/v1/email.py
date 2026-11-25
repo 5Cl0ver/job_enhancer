@@ -11,7 +11,7 @@ import asyncio
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -40,6 +40,8 @@ from app.schemas.email_account import (
     EmailSettingsRequest,
     FolderSyncOut,
     JobEmailLatestOut,
+    JobEmailsSeenIn,
+    KeepEventRequest,
     MatchCandidateOut,
     ProviderInfoOut,
     RecheckIn,
@@ -47,6 +49,7 @@ from app.schemas.email_account import (
     ResolveEventRequest,
     ScanResult,
     TrackEventRequest,
+    UnseenOut,
 )
 from app.schemas.job_link import JobOption, LinkEventRequest
 from app.services import email_accounts as svc
@@ -592,6 +595,87 @@ async def job_emails(
     )
     account = await svc.get_account(db, user.id)
     return await _events_out(db, account.provider if account else "", rows)
+
+
+@router.post("/job-emails/seen", status_code=204)
+async def job_emails_seen(
+    data: JobEmailsSeenIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The user opened this job: its new emails are seen (spec 027)."""
+    await email_review.mark_seen(db, user.id, data.job_listing_id)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.get("/job-emails/unseen", response_model=list[UnseenOut])
+async def job_emails_unseen(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[UnseenOut]:
+    """Saved jobs with new emails, for the board's dot (spec 027)."""
+    return [
+        UnseenOut(saved_job_id=sid, count=n)
+        for sid, n in await email_review.unseen_by_job(db, user.id)
+    ]
+
+
+@router.get("/new", response_model=list[DetectedEventOut])
+async def new_on_your_jobs(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectedEventOut]:
+    """New emails on your jobs: kept on a job, not seen yet (14 days)."""
+    account = await svc.get_account(db, user.id)
+    rows = await email_review.list_new(db, user.id)
+    return await _events_out(db, account.provider if account else "", rows)
+
+
+@router.get("/looked-at", response_model=list[DetectedEventOut])
+async def looked_at(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[DetectedEventOut]:
+    """Job-looking emails not put on a job (30 days): nothing disappears
+    silently (spec 027)."""
+    account = await svc.get_account(db, user.id)
+    rows = await email_review.list_looked_at(db, user.id)
+    return await _events_out(db, account.provider if account else "", rows)
+
+
+@router.post("/events/{event_id}/keep", response_model=DetectedEventOut)
+async def keep_event(
+    event_id: uuid.UUID,
+    data: KeepEventRequest,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """ "This is about my job": put a looked-at email on that saved job. Not
+    while a scan or re-check runs (it could place the same email)."""
+    account = await svc.get_account(db, user.id)
+    if account is not None and _SCAN_LOCKS.get(account.id, asyncio.Lock()).locked():
+        raise HTTPException(
+            status_code=409, detail="A scan is running. Try again in a moment."
+        )
+    ev = await email_review.keep_on_job(db, user.id, event_id, data.saved_job_id)
+    await db.commit()
+    (out,) = await _events_out(db, account.provider if account else "", [ev])
+    return out
+
+
+@router.post("/events/{event_id}/unkeep", response_model=DetectedEventOut)
+async def unkeep_event(
+    event_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """Undo "This is about my job": back to Looked at, not shown."""
+    ev = await email_review.unkeep(db, user.id, event_id)
+    await db.commit()
+    account = await svc.get_account(db, user.id)
+    (out,) = await _events_out(db, account.provider if account else "", [ev])
+    return out
 
 
 @router.post("/events/{event_id}/dismiss", response_model=DetectedEventOut)

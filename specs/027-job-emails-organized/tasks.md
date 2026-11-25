@@ -19,14 +19,14 @@
 
 ## PR B: Organized
 
-- [ ] T011 [US3] `job-emails` adds `seen`/`effect`; `POST job-emails/seen`; `latest` adds `unseen`, in backend/app/api/v1/email.py and email_review.py, with tests
-- [ ] T012 [US3] frontend/src/lib/emailSections.ts (kind → section, the summary line) with tests
-- [ ] T013 [US3] `JobEmails` in sections, New badge, "Show N more", marks seen after showing, in frontend/src/components/email/JobEmails.tsx (job page and pop-up)
-- [ ] T014 [US4] `GET /v1/email/new` and the "New emails on your jobs" list on Email updates; a dot on board cards
-- [ ] T015 [US5] `GET /v1/email/looked-at` and the "Looked at, not shown" list with reasons; "This is about my job" makes a `skipped` row `noted` through `/events/{id}/link`
-- [ ] T016 Component tests (sections, New, looked-at recovery), `vite build`, and MANIFESTs
+- [X] T011 [US3] `job-emails` adds `seen`/`effect`; `POST job-emails/seen`; `latest` adds `unseen`, in backend/app/api/v1/email.py and email_review.py, with tests
+- [X] T012 [US3] frontend/src/lib/emailSections.ts (kind → section, the summary line) with tests
+- [X] T013 [US3] `JobEmails` in sections, New badge, "Show N more", marks seen after showing, in frontend/src/components/email/JobEmails.tsx (job page and pop-up)
+- [X] T014 [US4] `GET /v1/email/new` and the "New emails on your jobs" list on Email updates; a dot on board cards
+- [X] T015 [US5] `GET /v1/email/looked-at` and the "Looked at, not shown" list with reasons; "This is about my job" makes a `skipped` row `noted` through `/events/{id}/link`
+- [X] T016 Component tests (sections, New, looked-at recovery), `vite build`, and MANIFESTs
 
 ## Polish
 
-- [ ] T017 Pre-push privacy check: grep the diff for the owner's real company names (print file:line only)
-- [ ] T018 Full suites: backend, frontend, extension
+- [X] T017 Pre-push privacy check: grep the diff for the owner's real company names (print file:line only)
+- [X] T018 Full suites: backend, frontend, extension

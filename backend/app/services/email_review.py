@@ -15,7 +15,7 @@ import uuid
 from datetime import UTC, datetime, timedelta
 
 from fastapi import HTTPException
-from sqlalchemy import Row, and_, delete, func, or_, select
+from sqlalchemy import Row, and_, delete, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.detected_event import (
@@ -25,6 +25,7 @@ from app.models.detected_event import (
     STATUS_CONTACT,
     STATUS_DISMISSED,
     STATUS_HIDDEN,
+    STATUS_NOTED,
     STATUS_PENDING,
     STATUS_REVIEW,
     STATUS_SKIPPED,
@@ -477,3 +478,129 @@ async def purge_looked_at_job(session_maker) -> None:
     async with session_maker() as db:
         await purge_looked_at(db)
         await db.commit()
+
+
+# New emails on your jobs (spec 027): kept on a job, not seen yet, recent.
+NEW_SHOWN_DAYS = 14
+
+
+async def mark_seen(
+    db: AsyncSession, user_id: uuid.UUID, job_listing_id: uuid.UUID
+) -> int:
+    """The user opened this job: its new emails are seen."""
+    saved = select(SavedJob.id).where(
+        SavedJob.user_id == user_id, SavedJob.job_listing_id == job_listing_id
+    )
+    res = await db.execute(
+        update(DetectedEvent)
+        .where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.saved_job_id.in_(saved.scalar_subquery()),
+            DetectedEvent.status == STATUS_NOTED,
+            DetectedEvent.seen_at.is_(None),
+        )
+        .values(seen_at=datetime.now(tz=UTC))
+    )
+    return res.rowcount or 0
+
+
+def _new_rows(user_id: uuid.UUID):
+    since = datetime.now(tz=UTC) - timedelta(days=NEW_SHOWN_DAYS)
+    live_jobs = select(SavedJob.id).where(
+        SavedJob.user_id == user_id, SavedJob.is_archived.is_(False)
+    )
+    return (
+        DetectedEvent.user_id == user_id,
+        DetectedEvent.status == STATUS_NOTED,
+        DetectedEvent.seen_at.is_(None),
+        DetectedEvent.saved_job_id.in_(live_jobs.scalar_subquery()),
+        DetectedEvent.created_at >= since,
+    )
+
+
+async def list_new(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEvent]:
+    """Emails kept on a job that the user hasn't seen, newest first."""
+    sent = func.coalesce(DetectedEvent.email_date, DetectedEvent.created_at)
+    rows = await db.scalars(
+        select(DetectedEvent)
+        .where(*_new_rows(user_id))
+        .order_by(sent.desc())
+        .limit(100)
+    )
+    return list(rows)
+
+
+async def unseen_by_job(db: AsyncSession, user_id: uuid.UUID) -> list[tuple]:
+    """(saved job id, how many new emails) for every job with some."""
+    rows = await db.execute(
+        select(DetectedEvent.saved_job_id, func.count())
+        .where(*_new_rows(user_id))
+        .group_by(DetectedEvent.saved_job_id)
+    )
+    return [(r[0], r[1]) for r in rows]
+
+
+async def list_looked_at(db: AsyncSession, user_id: uuid.UUID) -> list[DetectedEvent]:
+    """Job-looking emails the scan didn't put on a job (30 days), newest
+    first: so nothing disappears silently."""
+    sent = func.coalesce(DetectedEvent.email_date, DetectedEvent.created_at)
+    rows = await db.scalars(
+        select(DetectedEvent)
+        .where(
+            DetectedEvent.user_id == user_id,
+            DetectedEvent.status == STATUS_SKIPPED,
+        )
+        .order_by(sent.desc())
+        .limit(LOOKED_AT_MAX)
+    )
+    return list(rows)
+
+
+async def keep_on_job(
+    db: AsyncSession, user_id: uuid.UUID, event_id: uuid.UUID, saved_job_id: uuid.UUID
+) -> DetectedEvent:
+    """ "This is about my job": a looked-at email goes on that saved job, as an
+    email to read (it never moves the card; the user moves it if they want)."""
+    ev = await db.scalar(
+        select(DetectedEvent).where(
+            DetectedEvent.id == event_id, DetectedEvent.user_id == user_id
+        )
+    )
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+    if ev.status != STATUS_SKIPPED:
+        raise HTTPException(status_code=409, detail="That email is already sorted")
+    job = await db.scalar(
+        select(SavedJob).where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
+    )
+    if job is None or job.is_archived:
+        raise HTTPException(status_code=404, detail="Saved job not found")
+    ev.saved_job_id = job.id
+    ev.status = STATUS_NOTED
+    ev.skip_reason = None
+    ev.match_evidence = "user_link"
+    ev.seen_at = datetime.now(tz=UTC)  # the user just put it there
+    await db.flush()
+    return ev
+
+
+async def unkeep(
+    db: AsyncSession, user_id: uuid.UUID, event_id: uuid.UUID
+) -> DetectedEvent:
+    """Undo "This is about my job": back to Looked at, not shown."""
+    ev = await db.scalar(
+        select(DetectedEvent).where(
+            DetectedEvent.id == event_id, DetectedEvent.user_id == user_id
+        )
+    )
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+    if ev.status != STATUS_NOTED or ev.match_evidence != "user_link":
+        raise HTTPException(status_code=409, detail="Nothing to undo")
+    ev.saved_job_id = None
+    ev.status = STATUS_SKIPPED
+    ev.skip_reason = "no_saved_job"
+    ev.match_evidence = None
+    ev.seen_at = None
+    await db.flush()
+    return ev

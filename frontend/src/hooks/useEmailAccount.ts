@@ -75,6 +75,9 @@ export interface DetectedEvent {
   /** The chosen job's names, for a plain sentence. */
   company?: string | null;
   title?: string | null;
+  /** noted: when you saw it (null = new); skipped: why it isn't on a job (spec 027). */
+  seen_at?: string | null;
+  skip_reason?: "job_alert" | "digest" | "no_saved_job" | null;
   /** Where the saved job's card is now ("Interested"); null if unsaved. */
   current_stage?: string | null;
   /** The email in the user's webmail: the message itself when it can be named,
@@ -123,11 +126,7 @@ export type EmailCategory =
 
 /** Update types the user can pick for an unsure email (ones that move a card). */
 export type ResolvableType =
-  | "applied"
-  | "interview"
-  | "assessment"
-  | "offer"
-  | "rejected";
+  "applied" | "interview" | "assessment" | "offer" | "rejected";
 
 export interface MatchCandidate {
   company: string;
@@ -298,6 +297,13 @@ const IDLE: FullScan = {
 
 /** One click reads the whole inbox: scan passes run back to back until every
  * folder is done, refreshing the page's updates after each pass. */
+/** After a scan or re-check: every list that shows emails (spec 027). */
+function refreshEmailLists(qc: ReturnType<typeof useQueryClient>) {
+  for (const key of ["email-events", "job-emails", "email-new", "email-unseen", "email-looked-at"]) {
+    qc.invalidateQueries({ queryKey: [key] });
+  }
+}
+
 export function useFullScan() {
   const qc = useQueryClient();
   const [state, setState] = useState<FullScan>(IDLE);
@@ -344,14 +350,18 @@ export function useFullScan() {
         ...s,
         passes: pass,
         read: s.read + r.scanned,
-        found: s.found + r.detected + (r.review?.length ?? 0) + (r.unsaved ?? 0) + (r.noted ?? 0),
+        found:
+          s.found +
+          r.detected +
+          (r.review?.length ?? 0) +
+          (r.unsaved ?? 0) +
+          (r.noted ?? 0),
         moved: s.moved + (r.moved ?? 0),
         windowDays: r.window_days,
         done: scanIsDone(r),
       };
       setState(s);
-      qc.invalidateQueries({ queryKey: ["email-events"] });
-      qc.invalidateQueries({ queryKey: ["job-emails"] });
+      refreshEmailLists(qc);
       if (s.done) break;
     }
     qc.invalidateQueries({ queryKey: ["email-account"] });
@@ -382,12 +392,11 @@ export function useRecheck() {
   });
   const done = status.data?.state === "done";
   useEffect(() => {
-    if (!done) return;
-    qc.invalidateQueries({ queryKey: ["email-events"] });
-    qc.invalidateQueries({ queryKey: ["job-emails"] });
+    if (done) refreshEmailLists(qc);
   }, [done, qc]);
   const start = useMutation({
-    mutationFn: (days: number) => api.post<Recheck>("/v1/email/recheck", { days }),
+    mutationFn: (days: number) =>
+      api.post<Recheck>("/v1/email/recheck", { days }),
     onSuccess: (r) => qc.setQueryData(["email-recheck"], r),
   });
   return { status: status.data, start };
@@ -398,7 +407,7 @@ export function useScanInbox() {
   return useMutation({
     mutationFn: () => api.post<ScanResult>("/v1/email/scan", {}),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["email-events"] });
+      refreshEmailLists(qc);
       qc.invalidateQueries({ queryKey: ["email-account"] });
     },
   });
@@ -478,6 +487,72 @@ function bySavedJob(rows: JobEmailLatest[]): Map<string, JobEmailLatest> {
   return new Map(rows.map((r) => [r.saved_job_id, r]));
 }
 
+/** The user opened this job: its new emails are seen (spec 027). */
+export function useMarkJobEmailsSeen() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (jobListingId: string) =>
+      api.post("/v1/email/job-emails/seen", { job_listing_id: jobListingId }),
+    onSuccess: (_r, jobListingId) => {
+      qc.invalidateQueries({ queryKey: ["email-new"] });
+      qc.invalidateQueries({ queryKey: ["email-unseen"] });
+      qc.invalidateQueries({ queryKey: ["job-emails", jobListingId] });
+    },
+  });
+}
+
+/** New emails on your jobs: kept on a job, not seen yet (spec 027). */
+export function useNewOnJobs() {
+  return useQuery<DetectedEvent[]>({
+    queryKey: ["email-new"],
+    queryFn: () => api.get<DetectedEvent[]>("/v1/email/new"),
+    staleTime: 60_000,
+  });
+}
+
+/** Saved jobs with new emails, for the board's dot (spec 027). */
+export function useUnseenByJob() {
+  return useQuery<{ saved_job_id: string; count: number }[]>({
+    queryKey: ["email-unseen"],
+    queryFn: () =>
+      api.get<{ saved_job_id: string; count: number }[]>(
+        "/v1/email/job-emails/unseen",
+      ),
+    staleTime: 60_000,
+  });
+}
+
+/** Job-looking emails not put on a job, 30 days (spec 027). */
+export function useLookedAt(enabled = true) {
+  return useQuery<DetectedEvent[]>({
+    queryKey: ["email-looked-at"],
+    queryFn: () => api.get<DetectedEvent[]>("/v1/email/looked-at"),
+    enabled,
+    staleTime: 60_000,
+  });
+}
+
+/** "This is about my job": a looked-at email goes on that saved job. */
+export function useKeepOnJob() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ id, savedJobId }: { id: string; savedJobId: string }) =>
+      api.post<DetectedEvent>(`/v1/email/events/${id}/keep`, {
+        saved_job_id: savedJobId,
+      }),
+    onSuccess: () => refreshEmailLists(qc),
+  });
+}
+
+/** Undo "Put it there": the email goes back to Looked at, not shown. */
+export function useUnkeep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<DetectedEvent>(`/v1/email/events/${id}/unkeep`, {}),
+    onSuccess: () => refreshEmailLists(qc),
+  });
+}
+
 /** Detected emails tied to one saved job (by its listing id). */
 export function useJobEmails(jobListingId: string) {
   return useQuery<DetectedEvent[]>({
@@ -496,7 +571,13 @@ export function useJobEmails(jobListingId: string) {
 export function useAnswerQuestion() {
   const qc = useQueryClient();
   return useMutation({
-    mutationFn: async ({ id, savedJobId }: { id: string; savedJobId: string }) => {
+    mutationFn: async ({
+      id,
+      savedJobId,
+    }: {
+      id: string;
+      savedJobId: string;
+    }) => {
       await api.post<DetectedEvent>(`/v1/email/events/${id}/resolve`, {
         saved_job_id: savedJobId,
       });
@@ -526,10 +607,13 @@ export function useTrackEvent() {
       company: string;
       title: string;
     }) => {
-      const done = await api.post<DetectedEvent>(`/v1/email/events/${lead.id}/track`, {
-        company,
-        title,
-      });
+      const done = await api.post<DetectedEvent>(
+        `/v1/email/events/${lead.id}/track`,
+        {
+          company,
+          title,
+        },
+      );
       for (const r of repeats) {
         await api.post<DetectedEvent>(`/v1/email/events/${r.id}/dismiss`, {});
       }
