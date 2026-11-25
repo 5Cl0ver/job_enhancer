@@ -1,4 +1,9 @@
-import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  focusManager,
+  onlineManager,
+  QueryClient,
+  QueryClientProvider,
+} from "@tanstack/react-query";
 import { render, screen, waitFor } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -127,6 +132,31 @@ describe("PdfViewer", () => {
     unmount();
     expect(destroy).toHaveBeenCalled();
   });
+
+  it("closed while the file is still being read: no worker is started", async () => {
+    let release!: (b: ArrayBuffer) => void;
+    const blob = new Blob(["%PDF-1.4"], { type: "application/pdf" });
+    blob.arrayBuffer = () => new Promise<ArrayBuffer>((r) => (release = r));
+    const { unmount } = render(<PdfViewer blob={blob} filename="Résumé.pdf" />);
+    await waitFor(() => expect(release).toBeDefined());
+    unmount();
+    release(new ArrayBuffer(8));
+    await new Promise((r) => setTimeout(r, 0));
+    expect(getDocument).not.toHaveBeenCalled();
+  });
+
+  it("closed while PDF.js is still reading it: the worker is freed", async () => {
+    let finish!: (d: unknown) => void;
+    getDocument.mockImplementation(() => ({
+      promise: new Promise((r) => (finish = r)),
+      destroy,
+    }));
+    const { unmount } = render(<PdfViewer {...pdf()} />);
+    await waitFor(() => expect(getDocument).toHaveBeenCalled());
+    unmount();
+    finish(pdfDoc(1));
+    await waitFor(() => expect(destroy).toHaveBeenCalled());
+  });
 });
 
 describe("FileViewerDialog", () => {
@@ -152,6 +182,32 @@ describe("FileViewerDialog", () => {
     renderDialog({ path: "/v1/ai/resumes/r1/file", filename: "Résumé.pdf" });
     expect(await screen.findByText("Couldn't open this file.")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /Try again/ })).toBeInTheDocument();
+  });
+
+  it("a file that wasn't kept says why, with no Try again", async () => {
+    getBlob.mockRejectedValue(
+      Object.assign(new Error("This resume's file wasn't kept. Upload it again to view it."), {
+        status: 404,
+      }),
+    );
+    renderDialog({ path: "/v1/ai/resumes/r1/file", filename: "Résumé.pdf" });
+    expect(
+      await screen.findByText("This resume's file wasn't kept. Upload it again to view it."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /Try again/ })).toBeNull();
+  });
+
+  it("coming back to the app doesn't reload the file", async () => {
+    getBlob.mockResolvedValue(pdf().blob);
+    renderDialog({ path: "/v1/ai/resumes/r1/file", filename: "Résumé.pdf" });
+    await screen.findByRole("img", { name: "Page 1 of 2" });
+    focusManager.setFocused(false);
+    focusManager.setFocused(true);
+    onlineManager.setOnline(false);
+    onlineManager.setOnline(true);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(getBlob).toHaveBeenCalledTimes(1);
+    focusManager.setFocused(undefined);
   });
 
   it("is closed with no file", () => {

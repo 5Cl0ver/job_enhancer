@@ -12,6 +12,7 @@ from app.services.resume_pdf import (
     BLUE,
     BOX,
     MARGIN_X,
+    MUTED,
     NAVY,
     _parse,
     render_pdf,
@@ -336,6 +337,8 @@ def test_cover_letter_gets_the_header():
         ("**Globex** | *Engineer*", "entry"),
         ("Engineer, Globex | 2019 – 2021", "entry"),
         ("A plain sentence | with a pipe", "para"),
+        ("I have worked with many teams from 2019 - 2024", "para"),
+        ("Worked across teams, Portland, 2019 - 2024", "para"),
         ("**Bold** start of a plain sentence.", "para"),
         ("- **Built** it | fast", "bullet"),
         ("### Group", "group"),
@@ -347,3 +350,85 @@ def test_cover_letter_gets_the_header():
 def test_parser_reads_each_line_kind(line, kind):
     blocks = _parse("## EXPERIENCE\n" + line)
     assert blocks[-1]["kind"] == kind
+
+
+LONG_HEADER = (
+    "**Acme Corporation** | Senior Full-Stack Software Engineer, Payments & "
+    "Billing Platform Team, San Francisco Bay Area, CA (Hybrid, 3 days on-site), "
+    "Jan 2020 – Present"
+)
+
+
+def test_a_long_part_before_the_dates_stays_on_the_left():
+    """Only the date range goes right; the long title wraps on the left in
+    its own colors (this crashed with "Not enough horizontal space")."""
+    with _open(f"# Jane Dev\n\n## EXPERIENCE\n{LONG_HEADER}\n- Did the work.\n") as doc:
+        words = _words(doc.pages[0])
+        text = doc.pages[0].extract_text()
+    present = next(w for w in words if w["text"] == "Present")
+    assert _near(present["x1"], RIGHT)
+    assert _rgb(present["non_stroking_color"]) == MUTED
+    senior = next(w for w in words if w["text"] == "Senior")
+    assert _rgb(senior["non_stroking_color"]) == BLUE  # the title, not date grey
+    jan = next(w for w in words if w["text"] == "Jan")
+    on_line = [
+        w for w in words if _near(w["top"], jan["top"], 3) and w["x1"] < jan["x0"]
+    ]
+    assert on_line and max(w["x1"] for w in on_line) < jan["x0"] - 4
+    assert "(Hybrid, 3 days on-site)" in text
+    assert "Did the work." in text
+
+
+def test_a_note_too_wide_for_the_dates_column_joins_the_left():
+    """On a narrow page, a right-hand note wider than 35% of the line is
+    written after the title instead of squeezing it."""
+    from fpdf import FPDF
+
+    from app.services.resume_pdf import _render_markdown
+
+    pdf = FPDF(format=(260, 792), unit="pt")
+    pdf.set_margins(20, 20, 20)
+    pdf.add_page()
+    _render_markdown(
+        pdf,
+        "## EXPERIENCE\n**Engineer** · Globex | A note of thirty-nine characters!\n",
+    )
+    with pdfplumber.open(io.BytesIO(bytes(pdf.output()))) as doc:
+        words = _words(doc.pages[0])
+    note = next(w for w in words if w["text"] == "note")
+    assert _rgb(note["non_stroking_color"]) == BLUE  # drawn with the left parts
+
+
+def test_the_template_never_fails_to_make_a_file(monkeypatch):
+    """If the template can't lay something out, the text still comes out."""
+    from fpdf.errors import FPDFException
+
+    from app.services import resume_pdf
+
+    def boom(pdf, text):
+        raise FPDFException("Not enough horizontal space to render a single character")
+
+    monkeypatch.setattr(resume_pdf, "_render_markdown", boom)
+    with _open("# Jane Dev\n\n## SUMMARY\nBackend engineer.\n- " + "x" * 600) as doc:
+        text = "\n".join(p.extract_text() for p in doc.pages)
+    assert "Jane Dev" in text and "Backend engineer." in text
+
+
+@pytest.mark.parametrize(
+    ("section", "big"),
+    [
+        ("EXPERIENCE", True),
+        ("WORK EXPERIENCE", True),
+        ("PROFESSIONAL EXPERIENCE", True),
+        ("PROJECTS", True),
+        ("WORK HISTORY", True),
+        ("LEADERSHIP & VOLUNTEERING", True),
+        ("RELEVANT COURSEWORK", False),
+        ("EDUCATION", False),
+        ("CERTIFICATIONS", False),
+    ],
+)
+def test_big_headers_only_in_job_and_project_sections(section, big):
+    blocks = _parse(f"## {section}\n**Thing** · Place | 2020 – 2021")
+    assert blocks[-1]["kind"] == "entry"
+    assert blocks[-1]["big"] is big

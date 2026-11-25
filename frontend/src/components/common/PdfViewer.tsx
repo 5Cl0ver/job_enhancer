@@ -122,10 +122,15 @@ export function PdfViewer({
       }
       const pdfjs = await loadPdfjs();
       if (cancelled) return;
-      const loadingTask = pdfjs.getDocument({ data: new Uint8Array(await blob.arrayBuffer()) });
+      const data = new Uint8Array(await blob.arrayBuffer());
+      if (cancelled) return; // closed while reading: never start a worker
+      const loadingTask = pdfjs.getDocument({ data });
       task = loadingTask;
       const loaded = await loadingTask.promise;
-      if (cancelled) return;
+      if (cancelled) {
+        void loadingTask.destroy(); // closed while parsing: free the worker
+        return;
+      }
       setDoc(loaded);
       setState("ready");
     })().catch(() => {

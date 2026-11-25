@@ -36,8 +36,13 @@ PDF file. Text stays real text in reading order, so applicant tracking systems
 can read it.
 """
 
+import logging
 import re
 from pathlib import Path
+
+from fpdf.errors import FPDFException
+
+logger = logging.getLogger(__name__)
 
 _FONT_DIR = Path(__file__).resolve().parents[1] / "assets" / "fonts"
 # A trailing employment date range on a job-header line — used to right-align it,
@@ -54,15 +59,14 @@ _LABEL_RE = re.compile(r"^\*\*([^*]+?):\*\*\s*(.*)$|^\*\*([^*]+?)\*\*:\s*(.*)$")
 # The parts of a header line: "a | b" (the older layout) or "a · b".
 _PART_SPLIT = re.compile(r"\s*\|\s*|\s+·\s+")
 # Sections whose entries are jobs or projects: the big header (title in 11 pt,
-# company in blue). Other sections (education, certifications) get a compact one.
-_BIG_SECTIONS = (
-    "EXPERIENCE",
-    "EMPLOYMENT",
-    "WORK",
-    "PROJECT",
-    "VOLUNTEER",
-    "LEADERSHIP",
+# company in blue). Other sections (education, certifications, coursework) get
+# a compact one. Matched on the whole name, so "RELEVANT COURSEWORK" isn't WORK.
+_BIG_SECTION = re.compile(
+    r"(?:[A-Z&/,\- ]+ )?(?:EXPERIENCE|EMPLOYMENT|PROJECTS?|VOLUNTEERING|LEADERSHIP)"
+    r"|(?:WORK|EMPLOYMENT|CAREER|PROFESSIONAL) HISTORY"
 )
+# The dates column never takes more than this share of the line.
+_RIGHT_MAX = 0.35
 
 # The template, measured from the owner's master résumé (sizes in points).
 NAVY = (30, 58, 138)  # #1E3A8A: name, header rule, section headings, labels
@@ -117,23 +121,27 @@ def _label_row(s: str) -> tuple[str, str] | None:
 def _split_header(s: str) -> tuple[list[str], str | None] | None:
     """A job/school/certification header → (left parts, right text), else None.
 
-    The right text is a trailing date range, or (after a "|") a short unmarked
-    note such as "In progress". Headers start bold, or end with a date range."""
+    The right text is only the trailing date range (whatever comes before it in
+    the same part stays on the left), or (after a "|") a short unmarked note
+    such as "In progress". A header starts bold, or has "|" / "·" parts and
+    ends with a date range; a plain sentence that ends in years is not one."""
     if _label_row(s) or s.startswith(("- ", "* ")):
         return None
-    pipe = re.split(r"\s*\|\s*", s)
-    right = None
-    if len(pipe) > 1:
-        last = pipe[-1].strip()
-        if _DATE_RE.search(last) or ("*" not in last and 0 < len(last) <= 40):
-            right, s = last, " | ".join(pipe[:-1])
-    elif m := _DATE_RE.search(s):
-        right, s = s[m.start() :].strip(), s[: m.start()].rstrip(" ,·–—-")
-    if right is None and len(pipe) == 1:
+    bold = s.startswith("**")
+    has_parts = bool(re.search(r"\|", s) or re.search(r"\s·\s", s))
+    if not bold and not has_parts:
         return None
-    if not s.startswith("**") and (
-        right is None or len(s) > 100 or not _DATE_RE.search(right)
-    ):
+    right = None
+    if m := _DATE_RE.search(s):
+        right, s = s[m.start() :].strip(), s[: m.start()].rstrip(" ,·|–—-")
+    else:
+        pipe = re.split(r"\s*\|\s*", s)
+        last = pipe[-1].strip()
+        if len(pipe) > 1 and "*" not in last and 0 < len(last) <= 40:
+            right, s = last, " | ".join(pipe[:-1])
+    if bold and right is None and not has_parts:
+        return None  # a bold sentence, not a header
+    if not bold and (right is None or len(s) > 100 or not _DATE_RE.search(right)):
         return None
     parts = [p.strip() for p in _PART_SPLIT.split(s) if p.strip()]
     return (parts, right) if parts else None
@@ -199,7 +207,7 @@ def _parse(text: str) -> list[dict]:
                 {"kind": "row", "label": _strip_md(row[0]), "text": _md_inline(row[1])}
             )
         elif head := _split_header(s):
-            big = any(k in section for k in _BIG_SECTIONS)
+            big = bool(_BIG_SECTION.fullmatch(section))
             blocks.append(
                 {"kind": "entry", "parts": head[0], "right": head[1], "big": big}
             )
@@ -237,6 +245,15 @@ def _render_markdown(pdf, text: str) -> None:
     # dot (so text readers see "•" as its own word).
     BULLET_W = max(u(7.5), pdf.get_string_width("•") + u(3.5))
     blocks = _parse(text)
+    # A right-hand note too wide for the dates column (35% of the line) joins
+    # the left text instead, so the title always has room and nothing overlaps.
+    for b in blocks:
+        if b["kind"] == "entry" and b.get("right"):
+            pdf.set_font(FONT, "", 9.6)
+            if pdf.get_string_width(b["right"]) + u(10) > pdf.epw * _RIGHT_MAX:
+                b["parts"].append(b["right"])
+                b["right"] = None
+    font()
 
     def lines_of(
         txt: str, w: float, style: str = "", size: float = BODY, md=True
@@ -569,14 +586,43 @@ def render_pdf(text: str) -> bytes:
             self.set_text_color(*MUTED)
             self.cell(0, 10, f"Page {self.page_no()} of {self.total}", align="R")
 
-    def build(total: int) -> "FPDF":
+    def build(total: int, draw=_render_markdown) -> "FPDF":
         pdf = _Doc(format="letter", unit="pt")
         pdf.total = total
         pdf.set_margins(MARGIN_X, MARGIN_Y, MARGIN_X)
         pdf.set_auto_page_break(auto=True, margin=MARGIN_Y)
         pdf.add_page()
-        _render_markdown(pdf, text or "")
+        draw(pdf, text or "")
         return pdf
 
-    pages = build(0).pages_count
-    return bytes(build(pages).output())
+    try:
+        pages = build(0).pages_count
+        return bytes(build(pages).output())
+    except FPDFException:
+        # Something the template can't lay out: never fail to make the file.
+        logger.warning("resume_pdf: template failed, drawing plain text", exc_info=True)
+        return bytes(build(0, _render_plain).output())
+
+
+def _render_plain(pdf, text: str) -> None:
+    """The fallback: every line as plain wrapped text, long words broken."""
+    from fpdf.enums import WrapMode, XPos, YPos
+
+    font = _register_fonts(pdf)
+    pdf.c_margin = 0
+    pdf.set_font(font, "", BODY)
+    pdf.set_text_color(*TEXT)
+    for raw in text.splitlines():
+        s = _strip_md(raw.strip()).lstrip("#> ").strip()
+        if not s:
+            pdf.ln(LH / 2)
+            continue
+        pdf.multi_cell(
+            0,
+            LH,
+            s,
+            align="L",
+            wrapmode=WrapMode.CHAR,
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
