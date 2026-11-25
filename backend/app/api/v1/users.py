@@ -24,6 +24,7 @@ from app.models.onboarding import UserOnboarding
 from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
+from app.models.skipped_site import SkippedSite
 from app.models.taught_field import TaughtField
 from app.models.usage import UsageCounter
 from app.models.user import User
@@ -345,6 +346,14 @@ async def export_data(
         .all()
     )
 
+    skipped_sites = (
+        await db.scalars(
+            select(SkippedSite)
+            .where(SkippedSite.user_id == user.id)
+            .order_by(SkippedSite.created_at)
+        )
+    ).all()
+
     onboarding_row = await db.get(UserOnboarding, user.id)
     # Free-service use, the last 90 days (spec 019 part C).
     since = allowance.period_for("live_search", datetime.now(UTC) - timedelta(days=90))
@@ -461,6 +470,10 @@ async def export_data(
                 "finished_at": _dt(r.finished_at),
             }
             for r in apply_runs
+        ],
+        # Sites to skip (spec 024).
+        "skipped_sites": [
+            {"host": s.host, "created_at": _dt(s.created_at)} for s in skipped_sites
         ],
         # Connected Job Catchers: never the passes themselves (or their hashes).
         "job_catcher_connections": [

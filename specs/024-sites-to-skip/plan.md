@@ -4,7 +4,7 @@
 
 **Input**: The feature specification from `specs/024-sites-to-skip/spec.md`.
 
-> **Status: research and plan only.** Nothing is built until the owner says go.
+> **Status: built.** The owner said go on 2026-11-25; see [tasks.md](tasks.md).
 
 ## Summary
 

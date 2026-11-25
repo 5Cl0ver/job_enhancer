@@ -51,6 +51,7 @@ export default function SettingsPage() {
       <Section id="claude" title="Claude" help="settingsClaude">
         <ConnectClaudeCard />
         <ClaudeProjectCard />
+        <SitesToSkipLink />
       </Section>
       <Section id="email" title="Email" help="settingsEmail">
         <EmailConnectCard />
@@ -320,6 +321,26 @@ function AutofillMemoryLink() {
         </p>
         <Link to="/autofill" className="text-sm font-medium text-primary underline underline-offset-2">
           Open Autofill memory
+        </Link>
+      </CardContent>
+    </Card>
+  );
+}
+
+/** The list itself lives with Claude Scout's Instructions (spec 024). */
+function SitesToSkipLink() {
+  return (
+    <Card>
+      <CardContent className="flex flex-wrap items-center justify-between gap-3 py-4">
+        <p className="text-sm text-muted-foreground">
+          <b className="text-foreground">Sites to skip</b>: Claude never brings jobs from them or
+          applies through them.
+        </p>
+        <Link
+          to="/search?tab=scout&view=instructions#sites-to-skip"
+          className="text-sm font-medium text-primary underline underline-offset-2 pointer-coarse:py-3"
+        >
+          Open Sites to skip
         </Link>
       </CardContent>
     </Card>

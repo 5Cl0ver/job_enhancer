@@ -15,6 +15,7 @@ read directly from ORM objects.
 | `saved_search.py` | `SavedSearchCreate`, `SavedSearchSchema`, new-matches feed shapes |
 | `resume.py` | `ResumeSchema`, `GeneratedDocumentCreate/Update/Schema` |
 | `scout.py` | `TrackCreate`, `TrackUpdate`, `TrackOut`, `SkipRules` (Claude Scout resume types; lists trimmed and de-duplicated); `MissionCreate/Update/Out`, `RunOut`, `FindingOut`, `CaptureIn` (description ≥ 200 chars) |
+| `skipped_site.py` | `SkippedSiteCreate` (`site`, `confirm`), `SkippedSiteOut`, `SkippedSiteAdded` (`already`), `SiteSuggestion` (spec 024) |
 | `onboarding.py` | `OnboardingOut` (welcome, checklist items with done/required, counts), `OnboardingPatch` |
 
 **How this folder connects:** imported by `api/v1/*` routers as request bodies

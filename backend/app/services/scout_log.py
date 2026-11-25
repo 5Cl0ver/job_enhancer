@@ -105,6 +105,7 @@ def summarize(tool: str, sent: dict, out: dict | None, error: str | None) -> str
             ("in_tracker", "already in My Jobs"),
             ("title_passed", "titles didn't fit"),
             ("excluded", "had a word you skip"),
+            ("skipped_site", "on sites you skip"),
         ):
             if skipped.get(key):
                 parts.append(f"{skipped[key]} {words}")

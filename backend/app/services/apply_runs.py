@@ -66,6 +66,7 @@ from app.models.saved_job import SavedJob
 from app.models.user import User
 from app.services import apply_resume, master_profile, releases
 from app.services import saved_jobs as sj_svc
+from app.services import skipped_sites as sites_svc
 from app.services import tracker as tracker_svc
 from app.services.match import match_resume
 
@@ -959,6 +960,11 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
     told = await master_profile.facts(db, user.id)
     told_text = " ".join(f"{f.question} {f.answer}" for f in told)
     description = sj.job_listing.description if sj.job_listing else ""
+    # A link on one of the user's sites to skip (spec 024): never apply there.
+    skipped = sites_svc.skipped_by(_apply_url(sj), await sites_svc.hosts(db, user.id))
+    nxt = _next(run)
+    if skipped and not run.pages:
+        nxt = f"{_skip_line(skipped)} {nxt}"
     await db.flush()
     return {
         "run_id": str(run.id),
@@ -989,8 +995,17 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
         "resume_text": await _resume_text(db, run),
         "pages_done": len(run.pages or []),
         "review": _public_review(run.review),
-        "next": _next(run),
+        **({"apply_url_skipped": True} if skipped else {}),
+        "next": nxt,
     }
+
+
+def _skip_line(site: str) -> str:
+    return (
+        f"The job's apply_url is on {site}, one of the user's sites to skip: "
+        "never apply there. Find the company's own posting (its careers page) "
+        "and apply there; if you can't find one, ask the user with need_help."
+    )
 
 
 async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:

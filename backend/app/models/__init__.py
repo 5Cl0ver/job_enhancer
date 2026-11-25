@@ -49,6 +49,7 @@ from app.models.scout import (  # noqa: E402, F401
     ScoutRunEvent,
     ScoutTitle,
 )
+from app.models.skipped_site import SkippedSite  # noqa: E402, F401
 from app.models.taught_field import TaughtField  # noqa: E402, F401
 from app.models.usage import AppSetting, UsageCounter  # noqa: E402, F401
 from app.models.user import User  # noqa: E402, F401
@@ -81,4 +82,5 @@ __all__ = [
     "ScoutRun",
     "ScoutRunEvent",
     "ScoutTitle",
+    "SkippedSite",
 ]

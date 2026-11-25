@@ -512,7 +512,8 @@ async def check_jobs(
     the list, where "fits" is false when the title alone doesn't fit the resume
     type (the app remembers those, so no later run weighs them again). Returns
     the positions (0-based) worth opening; the rest are already in the user's
-    tracker, were seen by an earlier run, hit an excluded word or didn't fit.
+    tracker, were seen by an earlier run, hit an excluded word, are on a site
+    the user skips (skipped_site) or didn't fit.
     Also returns next_page_url: open it next (the next page of this search, or
     the next search). With the first page of each search, send total_results
     (the result count the page shows) and page_url (the address you landed

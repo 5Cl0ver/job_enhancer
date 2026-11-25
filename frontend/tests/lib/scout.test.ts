@@ -164,6 +164,23 @@ describe("scout runs", () => {
     );
   });
 
+  it("counts rows on the sites you skip, and the numbers still add up", () => {
+    const counts = {
+      picked: 1,
+      saved: 0,
+      skipped: 0,
+      below_bar: 0,
+      duplicate: 0,
+      waiting_for_copy: 0,
+      no_copy: 0,
+    };
+    const looked_at = { rows: 10, skipped_site: 3, seen_before: 2 };
+    expect(lookedAt({ status: "done", counts, target: 3, looked_at })).toBe(
+      "Asked for 3, found 1. Looked at 10 postings: 2 seen in earlier searches · " +
+        "3 on sites you skip · 4 not opened.",
+    );
+  });
+
   it("ticks good fits by default and follows the user's changes", () => {
     const findings = [
       { id: "a", outcome: "picked" as const, can_save: true },

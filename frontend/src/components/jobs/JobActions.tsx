@@ -1,14 +1,31 @@
 /**
  * What you can do with a saved job, the same wherever the job is opened: the
  * board's pop-up, the list's pop-up and the job's full page. Write to the
- * company, research it with Claude, put it on Contact Further.
+ * company, research it with Claude, put it on Contact Further, never this
+ * site again (spec 024).
  */
 import { useState } from "react";
 import { Link } from "react-router-dom";
-import { Check, ExternalLink, Mail, MailCheck, Maximize2, Search, Sparkles } from "lucide-react";
+import {
+  Ban,
+  Check,
+  ExternalLink,
+  Mail,
+  MailCheck,
+  Maximize2,
+  Search,
+  Sparkles,
+} from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
 import { useProfile } from "@/hooks/useProfile";
+import {
+  NeedsConfirm,
+  onSite,
+  siteOf,
+  useAddSkippedSite,
+  useSkippedSites,
+} from "@/hooks/useSkippedSites";
 import { useToggleEmailed, useToggleResearchFlag } from "@/hooks/useTracker";
 import { buildResearchPrompt } from "@/lib/researchPrompt";
 import type { JobListing, SavedJob } from "@/types/api";
@@ -123,6 +140,8 @@ export function JobActions({
           <Search className="h-4 w-4" aria-hidden />
           {savedJob.flagged_for_research ? "Remove from Contact Further" : "Add to Contact Further"}
         </Button>
+        {/* A job made from an email has no site of its own (its link is the email). */}
+        {!fromEmail && <NeverThisSite url={listing.apply_url} />}
         {!page && (
           <Button asChild variant="outline" className="justify-start gap-2">
             <Link to={`/jobs/${savedJob.job_listing_id}`}>
@@ -143,5 +162,82 @@ export function JobActions({
         )}
       </div>
     </section>
+  );
+}
+
+/**
+ * Adds the job's site to Sites to skip, so Claude Scout never brings jobs from
+ * it and Apply with Claude never applies through it. The job itself stays.
+ */
+function NeverThisSite({ url }: { url: string | null | undefined }) {
+  const host = siteOf(url);
+  const { data: sites } = useSkippedSites();
+  const add = useAddSkippedSite();
+  // A site Scout searches asks first (`ask`); anything else just says so.
+  const [note, setNote] = useState<{ text: string; ask: boolean } | null>(null);
+  if (!host) return null;
+
+  const listed = Array.isArray(sites) && sites.some((s) => onSite(host, s.host));
+  if (listed)
+    return (
+      <p className="flex min-h-9 items-center gap-1.5 text-sm text-muted-foreground sm:col-span-2">
+        <Ban className="h-4 w-4 shrink-0" aria-hidden />
+        <span className="min-w-0 [overflow-wrap:anywhere]">
+          {host} is on your{" "}
+          <Link
+            to="/search?tab=scout&view=instructions#sites-to-skip"
+            className="font-medium text-primary underline underline-offset-2"
+          >
+            Sites to skip
+          </Link>
+          .
+        </span>
+      </p>
+    );
+
+  const skip = (confirm = false) =>
+    add.mutate(
+      { site: url ?? "", confirm },
+      {
+        onSuccess: () => setNote(null),
+        onError: (e) =>
+          setNote(
+            e instanceof NeedsConfirm
+              ? { text: e.why, ask: true }
+              : { text: "Couldn't add it. Try again.", ask: false },
+          ),
+      },
+    );
+  return (
+    <>
+      <Button
+        variant="outline"
+        className="min-w-0 justify-start gap-2"
+        disabled={add.isPending}
+        onClick={() => skip()}
+      >
+        <Ban className="h-4 w-4 shrink-0" aria-hidden />
+        Never this site
+        <span className="min-w-0 truncate text-xs font-normal text-muted-foreground">{host}</span>
+      </Button>
+      {note && (
+        <div
+          role="alert"
+          className="space-y-2 rounded-md border border-amber-500/40 bg-amber-500/10 p-2 text-sm sm:col-span-2"
+        >
+          <p>{note.text}</p>
+          {note.ask && (
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="outline" disabled={add.isPending} onClick={() => skip(true)}>
+                Skip it anyway
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => setNote(null)}>
+                Cancel
+              </Button>
+            </div>
+          )}
+        </div>
+      )}
+    </>
   );
 }

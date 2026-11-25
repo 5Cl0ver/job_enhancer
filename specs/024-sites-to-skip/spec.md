@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-25
 
-**Status**: Draft (research and plan only; nothing built)
+**Status**: Built (the owner said go, 2026-11-25)
 
 **Input**: The owner, 2026-11-25:
 > "Where in the app can I add links to websites to not go to? I hate these type of job boards, fucking annoying: https://www.learn4good.com/jobs/online_remote/engineering/5663701391/e/"
