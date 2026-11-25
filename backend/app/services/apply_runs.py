@@ -963,7 +963,7 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
     # A link on one of the user's sites to skip (spec 024): never apply there.
     skipped = sites_svc.skipped_by(_apply_url(sj), await sites_svc.hosts(db, user.id))
     nxt = _next(run)
-    if skipped and not run.pages:
+    if skipped:
         nxt = f"{_skip_line(skipped)} {nxt}"
     await db.flush()
     return {
@@ -998,6 +998,13 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
         **({"apply_url_skipped": True} if skipped else {}),
         "next": nxt,
     }
+
+
+async def _not_skipped(db: AsyncSession, user_id: uuid.UUID, url: str) -> None:
+    """Never a page on one of the user's sites to skip (spec 024)."""
+    site = sites_svc.skipped_by(url, await sites_svc.hosts(db, user_id))
+    if site:
+        raise ValueError(sites_svc.apply_refusal(site))
 
 
 def _skip_line(site: str) -> str:
@@ -1268,6 +1275,7 @@ async def page_done(
     run = await for_agent(db, user.id, run_id)
     if not (page_url or "").startswith(("http://", "https://")):
         raise ValueError("page_url must be the page's full address (https://…).")
+    await _not_skipped(db, user.id, page_url)
     if last and run.status not in (
         APPLY_FILLING,
         APPLY_NEEDS_YOU,
@@ -1302,6 +1310,7 @@ async def fill_request(
     run = await for_agent(db, user.id, run_id)
     if not (page_url or "").startswith(("http://", "https://")):
         raise ValueError("page_url must be the page's full address (https://…).")
+    await _not_skipped(db, user.id, page_url)
     if run.status in (APPLY_READING, APPLY_QUESTIONS, APPLY_WRITING):
         _set(run, APPLY_FILLING)
     _add_host(run, page_url)

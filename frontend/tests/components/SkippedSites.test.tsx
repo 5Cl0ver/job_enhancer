@@ -196,6 +196,29 @@ describe("Never this site", () => {
     expect(screen.queryByRole("button", { name: /Never this site/ })).not.toBeInTheDocument();
   });
 
+  it.each([
+    "https://boards.greenhouse.io/acme/jobs/1",
+    "https://jobs.lever.co/acme/123",
+    "https://acme.wd1.myworkdayjobs.com/en-US/careers/job/1",
+  ])("isn't offered on an application system many companies use (%s)", async (url) => {
+    serve([]);
+    renderWith(<JobActions page savedJob={savedJob} listing={{ ...listing, apply_url: url }} />);
+    await screen.findByRole("button", { name: /Research it with Claude/ });
+    expect(screen.queryByRole("button", { name: /Never this site/ })).not.toBeInTheDocument();
+  });
+
+  it("shows the server's own message when it can't be added", async () => {
+    serve([]);
+    post.mockRejectedValue(
+      new ApiError(400, "That's shared by many sites, so it can't be skipped. Paste the site itself."),
+    );
+    const user = userEvent.setup();
+    renderWith(<JobActions page savedJob={savedJob} listing={listing} />);
+    await user.click(await screen.findByRole("button", { name: /Never this site/ }));
+    expect(await screen.findByRole("alert")).toHaveTextContent("That's shared by many sites");
+    expect(screen.queryByRole("button", { name: "Skip it anyway" })).not.toBeInTheDocument();
+  });
+
   it("isn't offered for a job made from an email", async () => {
     serve([]);
     renderWith(

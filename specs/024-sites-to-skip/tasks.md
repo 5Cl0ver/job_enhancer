@@ -37,3 +37,11 @@ One PR (`024-sites-to-skip`): the server and the app ship together.
 - [X] T013 Data export lists the sites (backend/app/api/v1/users.py); account deletion removes them (cascade)
 - [X] T014 [P] Tests: backend/tests/test_skipped_sites.py, frontend/tests/components/SkippedSites.test.tsx, frontend/tests/lib/scout.test.ts
 - [X] T015 [P] MANIFESTs: models, services, api, schemas, components, hooks, routes
+
+## Review fixes
+
+- [X] T016 Application systems (Greenhouse, Lever, Workday…) can't be skipped (400); "Never this site" is hidden on them (shared list in frontend/src/hooks/useSkippedSites.ts)
+- [X] T017 Apply enforces it: `fill_request` and `page_done` / `ready_for_review` refuse a page on a skipped site; the brief's `next` line stays after pages exist
+- [X] T018 Two adds at once: the unique key's IntegrityError (savepoint) answers "already"
+- [X] T019 Normalizing: shared names ("co.uk", github.io…) refused, repeated "www." dropped, only a leading scheme counts, international names in xn-- form
+- [X] T020 "Never this site" shows the server's own message on an error

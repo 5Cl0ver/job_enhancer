@@ -18,9 +18,11 @@ import {
 } from "lucide-react";
 import { format } from "date-fns";
 import { Button } from "@/components/ui/button";
+import { errorText } from "@/components/scout/errorText";
 import { useProfile } from "@/hooks/useProfile";
 import {
   NeedsConfirm,
+  onApplicationSystem,
   onSite,
   siteOf,
   useAddSkippedSite,
@@ -175,7 +177,8 @@ function NeverThisSite({ url }: { url: string | null | undefined }) {
   const add = useAddSkippedSite();
   // A site Scout searches asks first (`ask`); anything else just says so.
   const [note, setNote] = useState<{ text: string; ask: boolean } | null>(null);
-  if (!host) return null;
+  // An application system (Greenhouse, Workday…) is many companies' site.
+  if (!host || onApplicationSystem(host)) return null;
 
   const listed = Array.isArray(sites) && sites.some((s) => onSite(host, s.host));
   if (listed)
@@ -204,7 +207,7 @@ function NeverThisSite({ url }: { url: string | null | undefined }) {
           setNote(
             e instanceof NeedsConfirm
               ? { text: e.why, ask: true }
-              : { text: "Couldn't add it. Try again.", ask: false },
+              : { text: errorText(e, "Couldn't add it. Try again."), ask: false },
           ),
       },
     );

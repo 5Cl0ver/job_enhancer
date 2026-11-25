@@ -34,15 +34,46 @@ export class NeedsConfirm extends Error {
 
 const KEY = ["skipped-sites"];
 
-/** A link's own site, the way the server keeps it: lowercase, no "www.". */
+/**
+ * Application systems many companies post on (Greenhouse, Workday…): skipping
+ * one would skip every company on it, so the server refuses them. The same
+ * list as `APPLICATION_SYSTEMS` in backend/app/services/skipped_sites.py.
+ */
+export const APPLICATION_SYSTEMS = [
+  "greenhouse.io",
+  "lever.co",
+  "ashbyhq.com",
+  "workable.com",
+  "smartrecruiters.com",
+  "myworkdayjobs.com",
+  "myworkdaysite.com",
+  "icims.com",
+  "jobvite.com",
+  "bamboohr.com",
+  "breezy.hr",
+  "taleo.net",
+  "recruitee.com",
+  "applytojob.com",
+  "teamtailor.com",
+];
+
+/**
+ * A link's own site, the way the server keeps it: lowercase, no "www.",
+ * international names in their xn-- form (as `URL` gives them).
+ */
 export function siteOf(url: string | null | undefined): string | null {
   try {
     const u = new URL(url ?? "");
     if (u.protocol !== "http:" && u.protocol !== "https:") return null;
-    return u.hostname.toLowerCase().replace(/^www\./, "") || null;
+    return u.hostname.toLowerCase().replace(/\.$/, "").replace(/^(?:www\.)+/, "") || null;
   } catch {
     return null;
   }
+}
+
+/** A site on an application system many companies use: never skippable. */
+export function onApplicationSystem(host: string): boolean {
+  return APPLICATION_SYSTEMS.some((s) => onSite(host, s));
 }
 
 /** The host is the site itself or one of its sub-sites (never a look-alike). */

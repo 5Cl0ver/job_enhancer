@@ -14,6 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 import app.mcp_server as mcp_mod
+from app.models.apply import ApplyRun
 from app.models.scout import ScoutFinding, ScoutRun
 from app.models.skipped_site import SkippedSite
 from app.models.user import User
@@ -43,6 +44,12 @@ class TestHostOf:
                 "talent.com",
             ),
             ("http://jobleads.com:8080/x", "jobleads.com"),
+            ("www.www.learn4good.com", "learn4good.com"),
+            # Only a scheme at the start counts: this is learn4good.com.
+            ("learn4good.com/jobs?next=https://acme.example/x", "learn4good.com"),
+            # International names are kept the way browsers give them.
+            ("https://bücher.de/jobs", "xn--bcher-kva.de"),
+            ("xn--bcher-kva.de", "xn--bcher-kva.de"),
         ],
     )
     def test_keeps_the_site(self, text, host):
@@ -86,6 +93,8 @@ class TestMatches:
         assert svc.skipped_by("https://acme.example/jobs/1", sites) is None
         assert svc.skipped_by("not a link", sites) is None
         assert svc.skipped_by(PASTED, []) is None
+        # A stored xn-- site matches the link's own international name.
+        assert svc.skipped_by("https://www.bücher.de/x", ["xn--bcher-kva.de"])
 
 
 # --------------------------------------------------------------------------- #
@@ -124,6 +133,62 @@ class TestRoutes:
         assert r.json()["detail"] == svc.NOT_A_SITE
         r = await client.post("/v1/skipped-sites", json={"site": ""})
         assert r.status_code == 422
+
+    @pytest.mark.parametrize(
+        "site",
+        [
+            "https://boards.greenhouse.io/acme/jobs/1",
+            "job-boards.greenhouse.io",
+            "https://jobs.lever.co/acme/123",
+            "jobs.ashbyhq.com",
+            "apply.workable.com",
+            "jobs.smartrecruiters.com",
+            "https://acme.wd1.myworkdayjobs.com/en-US/careers/job/1",
+            "careers-acme.icims.com",
+            "jobs.jobvite.com",
+            "acme.bamboohr.com",
+        ],
+    )
+    async def test_an_application_system_cant_be_skipped(
+        self, client: AsyncClient, site
+    ):
+        r = await client.post("/v1/skipped-sites", json={"site": site, "confirm": True})
+        assert r.status_code == 400
+        assert r.json()["detail"] == (
+            "That's an application system many companies use, so it can't be skipped."
+        )
+        assert (await client.get("/v1/skipped-sites")).json() == []
+
+    @pytest.mark.parametrize(
+        "site", ["co.uk", "com.au", "github.io", "www.herokuapp.com", "pages.dev"]
+    )
+    async def test_a_shared_name_cant_be_skipped(self, client: AsyncClient, site):
+        r = await client.post("/v1/skipped-sites", json={"site": site})
+        assert r.status_code == 400
+        assert r.json()["detail"] == svc.SHARED_HOST
+        # One site on it can.
+        r = await client.post("/v1/skipped-sites", json={"site": f"spam.{site}"})
+        assert r.status_code == 201
+
+    async def test_two_adds_at_once_give_already(
+        self, client: AsyncClient, monkeypatch
+    ):
+        """A double tap: the other add's row lands between the check and the
+        insert. The unique key holds, and the answer is "already"."""
+        real = svc.list_sites
+
+        async def racing(db, user_id):
+            rows = await real(db, user_id)
+            async with db.begin_nested():
+                db.add(SkippedSite(user_id=user_id, host="learn4good.com"))
+            return rows
+
+        monkeypatch.setattr(svc, "list_sites", racing)
+        r = await client.post("/v1/skipped-sites", json={"site": "learn4good.com"})
+        monkeypatch.undo()
+        assert r.status_code == 200
+        assert r.json()["already"] is True
+        assert len((await client.get("/v1/skipped-sites")).json()) == 1
 
     @pytest.mark.parametrize(
         "site", ["linkedin.com", "www.indeed.com", "ziprecruiter.com", "google.com"]
@@ -335,3 +400,34 @@ class TestApply:
         out = await mcp_mod.get_apply_brief()
         assert "apply_url_skipped" not in out
         assert "sites to skip" not in out["next"]
+
+    async def test_pages_on_a_skipped_site_are_refused(self, engine, monkeypatch):
+        """Enforced on the server, not only said in the brief."""
+        maker = await self._run(engine, monkeypatch, PASTED)
+        await _skip(maker, "claude@test.dev", "learn4good.com")
+        out = await mcp_mod.get_apply_brief()
+        run_id = out["run_id"]
+        page = "https://uk.learn4good.com/apply/5663701391"
+        refused = "learn4good.com is on the user's sites to skip"
+        with pytest.raises(ValueError, match=refused) as err:
+            await mcp_mod.fill_page(run_id, page)
+        assert "need_help" in str(err.value)
+        with pytest.raises(ValueError, match=refused):
+            await mcp_mod.page_done(run_id, page, "Apply", [])
+        with pytest.raises(ValueError, match=refused):
+            await mcp_mod.ready_for_review(run_id, page, "Review", [])
+        async with maker() as db:
+            run = await db.get(ApplyRun, uuid.UUID(run_id))
+            assert run.pages == [] and "uk.learn4good.com" not in run.apply_hosts
+
+        # The company's own posting is fine, and the brief still says why.
+        async with maker() as db:
+            user = await db.scalar(select(User).where(User.email == "claude@test.dev"))
+            await apply_runs.page_done(
+                db, user, run_id, "https://acme.example/careers/apply", "Apply", []
+            )
+            await db.commit()
+        out = await mcp_mod.get_apply_brief()
+        assert out["pages_done"] == 1
+        assert out["apply_url_skipped"] is True
+        assert "company's own posting" in out["next"]

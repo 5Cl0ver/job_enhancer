@@ -18,6 +18,7 @@ from urllib.parse import urlsplit
 
 from fastapi import HTTPException
 from sqlalchemy import or_, select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scout import ScoutFinding
@@ -49,19 +50,65 @@ REPOSTING_SITES = (
     "bebee.com",
 )
 MAX_SUGGESTIONS = 5
+# Application systems many companies post on: skipping one would skip every
+# company that uses it, so they can't be added. The app hides "Never this
+# site" on them too (frontend/src/hooks/useSkippedSites.ts keeps the same list).
+APPLICATION_SYSTEMS = (
+    "greenhouse.io",
+    "lever.co",
+    "ashbyhq.com",
+    "workable.com",
+    "smartrecruiters.com",
+    "myworkdayjobs.com",
+    "myworkdaysite.com",
+    "icims.com",
+    "jobvite.com",
+    "bamboohr.com",
+    "breezy.hr",
+    "taleo.net",
+    "recruitee.com",
+    "applytojob.com",
+    "teamtailor.com",
+)
+# Names that are many people's sites, not one site (a small list, no new
+# dependency): "co.uk", "com.au" and the like, and free hosting.
+SHARED_HOSTS = (
+    "github.io",
+    "herokuapp.com",
+    "vercel.app",
+    "netlify.app",
+    "blogspot.com",
+    "pages.dev",
+)
+_COUNTRY_SUFFIX = re.compile(r"^(?:co|com|org|net|gov|ac)\.[a-z]{2}$")
 _HOST = re.compile(
     r"^(?:[a-z0-9](?:[a-z0-9-]*[a-z0-9])?\.)+[a-z](?:[a-z0-9-]*[a-z0-9])?$"
 )
+_SCHEME = re.compile(r"^[a-z][a-z0-9+.-]*://", re.IGNORECASE)
+_WWW = re.compile(r"^(?:www\.)+")
 NOT_A_SITE = "That isn't a site. Paste a link, or a site like learn4good.com."
+APPLICATION_SYSTEM = (
+    "That's an application system many companies use, so it can't be skipped."
+)
+SHARED_HOST = (
+    "That's shared by many sites, so it can't be skipped. Paste the site itself."
+)
 
 
 def link_host(url: str | None) -> str:
-    """A link's own site: lowercase, no "www.". Empty for anything else."""
+    """A link's own site: lowercase, no "www.", international names in their
+    xn-- form (as browsers give them). Empty for anything else."""
     try:
         host = urlsplit((url or "").strip()).hostname or ""
     except ValueError:
         return ""
-    return host.lower().rstrip(".").removeprefix("www.")
+    host = _WWW.sub("", host.lower().rstrip("."))
+    if host.isascii():
+        return host
+    try:
+        return host.encode("idna").decode("ascii")
+    except UnicodeError:
+        return ""
 
 
 def host_of(text: str | None) -> str | None:
@@ -70,7 +117,8 @@ def host_of(text: str | None) -> str | None:
     raw = (text or "").strip()
     if not raw or len(raw) > 2000 or any(c.isspace() for c in raw):
         return None
-    if "://" not in raw:
+    # Only a scheme at the start is one: "a.com/?next=https://b.com" is a.com.
+    if not _SCHEME.match(raw):
         raw = f"https://{raw}"
     try:
         parts = urlsplit(raw)
@@ -83,6 +131,15 @@ def host_of(text: str | None) -> str | None:
     if len(host) > MAX_HOST or not _HOST.match(host):
         return None
     return host
+
+
+def application_system(host: str) -> bool:
+    """An application system many companies post on (Greenhouse, Workday…)."""
+    return any(matches(host, s) for s in APPLICATION_SYSTEMS)
+
+
+def _shared(host: str) -> bool:
+    return host in SHARED_HOSTS or bool(_COUNTRY_SUFFIX.match(host))
 
 
 def matches(host: str, site: str) -> bool:
@@ -134,6 +191,10 @@ async def add(
     host = host_of(text)
     if host is None:
         raise HTTPException(status_code=400, detail=NOT_A_SITE)
+    if application_system(host):
+        raise HTTPException(status_code=400, detail=APPLICATION_SYSTEM)
+    if _shared(host):
+        raise HTTPException(status_code=400, detail=SHARED_HOST)
     rows = await list_sites(db, user_id)
     covering = next((r for r in rows if matches(host, r.host)), None)
     if covering is not None:
@@ -156,8 +217,19 @@ async def add(
             detail=f"You can skip up to {MAX_SITES} sites. Remove one first.",
         )
     site = SkippedSite(id=uuid.uuid4(), user_id=user_id, host=host)
-    db.add(site)
-    await db.flush()
+    try:
+        # Two adds at once (a double tap): the second finds the first's row.
+        async with db.begin_nested():
+            db.add(site)
+    except IntegrityError:
+        existing = await db.scalar(
+            select(SkippedSite).where(
+                SkippedSite.user_id == user_id, SkippedSite.host == host
+            )
+        )
+        if existing is None:
+            raise
+        return existing, False
     await db.refresh(site)
     return site, True
 
@@ -195,4 +267,12 @@ def refusal(site: str) -> str:
     return (
         f"{site} is on the user's sites to skip. Use the company's own posting, "
         "or another 'Apply on' link."
+    )
+
+
+def apply_refusal(site: str) -> str:
+    """What Apply with Claude's page tools tell Claude about a skipped site."""
+    return (
+        f"{site} is on the user's sites to skip: never apply there. Find the "
+        "company's own posting and apply there, or ask the user with need_help."
     )
