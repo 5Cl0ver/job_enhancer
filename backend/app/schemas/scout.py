@@ -628,7 +628,8 @@ class CompanyOut(BaseModel):
     careers_url: str | None
     last_checked_at: datetime | None
     times_checked: int
-    # "openings", "none", "no_careers" from the latest report; null until one.
+    # "openings", "none", "no_careers", "not_checked" from the latest report;
+    # null until one.
     last_result: str | None
     never_check: bool
     # Due for a check on the next run.

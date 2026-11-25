@@ -96,7 +96,7 @@ from app.services.scout_results import band, status_of
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.11"
+PLAYBOOK_VERSION = "2026.11.12"
 # What Claude is told lives in app/scout/*.md and scout_instructions (the user
 # can edit most of it; a run uses its own snapshot).
 SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
@@ -626,55 +626,65 @@ def run_tip(run: ScoutRun, counts: dict[str, int]) -> str | None:
     return None
 
 
-# Kinds of local employers a "Local companies" search looks through, a couple
-# per run, so runs reach different businesses.
+# Kinds of local employers that hire IT staff. A "Local companies" search uses
+# them only when the user's titles give fewer than three searches.
 EMPLOYER_KINDS = (
-    "largest employers",
+    "software and IT companies",
     "hospitals and clinics",
-    "manufacturing companies",
     "banks and credit unions",
     "school districts and colleges",
-    "law firms",
+    "manufacturing companies",
     "engineering firms",
-    "software and IT companies",
-    "logistics and distribution companies",
-    "insurance companies",
     "city and county government offices",
-    "nonprofit organizations",
-    "accounting firms",
-    "construction companies",
     "company headquarters",
+    "largest employers",
 )
+# Google searches a "Local companies" run makes.
+COMPANY_SEARCHES = 3
 # Keeps job boards out of the plain results.
 _NOT_BOARDS = "-indeed -linkedin -glassdoor -ziprecruiter"
 
 
 def company_searches(c: dict) -> list[str]:
-    """Google searches for businesses near the user: one from the resume type
-    (its name or one of its titles, in turn) and two kinds of employer. Each run
-    (``round``) moves on to the next ones."""
+    """Google searches for businesses near the user that hire for their titles:
+    three a run, taken in turn (``round``) so runs reach different ones. Kinds
+    of employer fill in when the titles give fewer than three."""
     track = c["track"]
-    titles = track.get("titles") or []
-    location = c.get("location") or ""
-    radius = c.get("radius_miles")
-    near = f"within {radius} miles of {location}" if radius else f"near {location}"
-    n = int(c.get("round") or 0)
     if c.get("broad"):  # the titles Claude chose for this run
-        roles = [f"companies that hire {t}" for t in search_titles(c)] or [
-            "largest employers"
-        ]
+        roles = [f"companies that hire {t}" for t in search_titles(c)]
     else:
         roles = [f"{track['name']} companies"] + [
-            f"companies that hire {t}" for t in titles
+            f"companies that hire {t}"
+            for t in list(track.get("titles") or []) + list(track.get("related") or [])
         ]
+    queries: list[str] = []
+    for r in roles:
+        if r.lower() not in {q.lower() for q in queries}:
+            queries.append(r)
+    n = int(c.get("round") or 0)
+    if c.get("broad"):  # Claude chooses new titles each run
+        queries = queries[:COMPANY_SEARCHES]
+    elif len(queries) > COMPANY_SEARCHES:
+        first = (COMPANY_SEARCHES * n) % len(queries)
+        queries = (queries[first:] + queries[:first])[:COMPANY_SEARCHES]
+    else:
+        # Few titles: they take turns in all but one search, and kinds of
+        # employer fill the rest, so each run still reaches new businesses.
+        take = min(len(queries), COMPANY_SEARCHES - 1)
+        first = (take * n) % len(queries) if queries else 0
+        queries = (queries[first:] + queries[:first])[:take]
+    need = COMPANY_SEARCHES - len(queries)
     kinds = len(EMPLOYER_KINDS)
-    queries = [
-        roles[n % len(roles)],
-        EMPLOYER_KINDS[(2 * n) % kinds],
-        EMPLOYER_KINDS[(2 * n + 1) % kinds],
-    ]
+    queries += [EMPLOYER_KINDS[(need * n + i) % kinds] for i in range(need)]
+    return _google(queries, c)
+
+
+def _google(queries: list[str], c: dict) -> list[str]:
+    """Each query as a Google search near the user's place, job boards left out."""
+    place = search_place(c)
+    near = f" near {place}" if place else ""
     return [
-        f"https://www.google.com/search?{urlencode({'q': f'{q} {near} {_NOT_BOARDS}'})}"
+        f"https://www.google.com/search?{urlencode({'q': f'{q}{near} {_NOT_BOARDS}'})}"
         for q in queries
     ]
 
@@ -1273,7 +1283,7 @@ async def _brief_body(
         extra.update(
             broad=True,
             broad_steps=instr.text_for(c, "broad"),
-            max_titles=instr.limit(c, "titles"),
+            max_titles=titles_svc.max_titles(c),
             titles_tried=await titles_svc.for_brief(db, run),
             always=ov["always"],
             never=ov["never"],
@@ -1311,7 +1321,7 @@ async def _brief_body(
     elif choosing:
         first = (
             "Call get_master_profile, choose up to "
-            f"{instr.limit(c, 'titles')} job titles the user would be good at (see "
+            f"{titles_svc.max_titles(c)} job titles the user would be good at (see "
             "broad_steps), then call set_search_titles: it gives you the start URLs."
         )
     elif ready and not done_searching:
@@ -1713,7 +1723,7 @@ async def check_jobs(
         link_done = (
             ran_out
             or link_pages >= per_search
-            or (total is not None and link_pages * per_page >= total)
+            or (total is not None and (link_pages + _skip(c, link)) * per_page >= total)
         )
         widened_to = _widen_to(c, link, info) if link_done else None
         if widened_to:

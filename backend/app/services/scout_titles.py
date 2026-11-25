@@ -59,6 +59,19 @@ async def _rows(db: AsyncSession, mission_id: uuid.UUID | None) -> list[ScoutTit
     )
 
 
+# A Local companies run makes this many Google searches, one per title.
+LOCAL_TITLES = 3
+
+
+def max_titles(criteria: dict) -> int:
+    """How many titles Claude may choose for this run: a Local companies run
+    searches only three, so more would count as tried without being searched."""
+    most = instr.limit(criteria, "titles")
+    if (criteria or {}).get("source") == "local_companies":
+        return min(most, LOCAL_TITLES)
+    return most
+
+
 async def choose(
     db: AsyncSession, run: ScoutRun, titles: list
 ) -> tuple[list[str], list[dict]]:
@@ -88,7 +101,7 @@ async def choose(
             else "resting"
             if k in resting
             else "over_the_limit"
-            if len(kept) >= instr.limit(run.criteria, "titles")
+            if len(kept) >= max_titles(run.criteria)
             else None
         )
         if why:

@@ -7,7 +7,10 @@ a. If the brief lists "recheck" companies, visit those first: open the
 b. Open each start URL (a Google search for businesses near the user). Read
    the companies it lists, the map list and the plain results, as
    {"name", "website"}. Send them in ONE call to check_companies. Leave out
-   job boards, directories and review sites.
+   job boards, directories and review sites. Leave out national companies
+   that only have a branch, store or sales office nearby: their jobs are on
+   the job boards. Keep big employers based in the area or with a large site
+   there (a headquarters or a major campus).
 c. For each company check_companies returns in "visit": open its website and
    find its Careers / Jobs / Join us / Employment page (often in the menu or
    the footer). It may run on a hiring system (Workday, Greenhouse, Paylocity,
@@ -17,6 +20,9 @@ d. Read its openings as rows ({"company", "title", "url", "fits"}), send them
    while the posting is open.
 e. Then call company_checked with the company's website and what you found:
    "openings", "none", or "no_careers" (plus the careers page link, if any).
+   Use "not_checked" when the site didn't load, wanted cookies accepted or a
+   sign-in, or its job search seemed broken: the next run tries it again.
+   Never accept extra cookies or sign in.
    With "openings", send openings too: every job the careers page lists (up
    to 20) as {"title", "url", "fit"}, fit null for the ones you didn't open.
    Jobs at offices outside the brief's area are in_area false.

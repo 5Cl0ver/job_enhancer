@@ -73,7 +73,15 @@ TOO_FAR = "too_far"
 COMPANY_OPENINGS = "openings"
 COMPANY_NONE = "none"
 COMPANY_NO_CAREERS = "no_careers"
-COMPANY_RESULTS = (COMPANY_OPENINGS, COMPANY_NONE, COMPANY_NO_CAREERS)
+# The site didn't load, wanted cookies accepted or a sign-in, or its job search
+# was broken: looked at again on the next run.
+COMPANY_NOT_CHECKED = "not_checked"
+COMPANY_RESULTS = (
+    COMPANY_OPENINGS,
+    COMPANY_NONE,
+    COMPANY_NO_CAREERS,
+    COMPANY_NOT_CHECKED,
+)
 
 # How long a row Claude passed over by its title stays passed over.
 PASS_DAYS = 30

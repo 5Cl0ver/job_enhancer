@@ -285,7 +285,7 @@ class TestClaudeChoosesTheTitles:
         out = await mcp_mod.set_search_titles(str(run_id), TITLES)
         first = parse_qs(urlsplit(out["start_urls"][0]).query)["q"][0]
         assert first.startswith(
-            "companies that hire IT Systems Administrator within 25"
+            "companies that hire IT Systems Administrator near Springfield, IL"
         )
         assert "check_companies" in out["next"]
 
