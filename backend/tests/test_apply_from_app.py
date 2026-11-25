@@ -236,3 +236,148 @@ async def test_routes(client, db_session, test_user):
     assert (
         await client.post(f"/v1/apply/runs/{other}/messages", json={"text": "x"})
     ).status_code == 404
+
+
+async def _pressed(engine, monkeypatch):
+    """Claude pressed Submit after the user's OK; no confirmation yet."""
+    maker, user, run_id, rid = await _filling(engine, monkeypatch)
+    _job_catcher(monkeypatch, maker, user.id, photos=1)
+    await mcp_mod.ready_for_review(rid, "https://acme.example/apply/9", "Review", [])
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        await svc.decide(db, run, "submit", None, by="app")
+        await db.commit()
+    await mcp_mod.wait_for_you(rid)  # → submitting
+    async with maker() as db:
+        await svc.extension_event(
+            db, user.id, run_id, "submit_pressed", "https://acme.example/apply/9"
+        )
+        await db.commit()
+    return maker, user, run_id, rid
+
+
+@pytest.mark.asyncio
+async def test_never_press_submit_twice(engine, monkeypatch):
+    maker, user, run_id, rid = await _pressed(engine, monkeypatch)
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        run.claude_at = svc._now() - timedelta(minutes=10)
+        await db.commit()
+        assert svc.claude_stopped(run) is False  # the user is asked instead
+        assert (await svc.extension_state(db, user.id))["guard"] is True
+    brief = await mcp_mod.get_apply_brief(rid)  # a new chat
+    assert "ALREADY pressed" in brief["next"]
+    assert "ALREADY pressed" in (await mcp_mod.wait_for_you(rid))["next"]
+
+
+@pytest.mark.asyncio
+async def test_a_stuck_screen_photo_never_blocks_the_next(engine, monkeypatch):
+    maker, user, run_id, rid = await _filling(engine, monkeypatch)
+    async with maker() as db:
+        stuck = await svc.peek(db, user.id, run_id)
+        await db.commit()
+        stuck.created_at = svc._now() - timedelta(minutes=1)
+        await db.commit()
+        fresh = await svc.peek(db, user.id, run_id)
+        await db.commit()
+        assert (await db.get(ApplyRequest, stuck.id)).status == "failed"
+    # need_help asks for this page's screen, replacing an older one waiting.
+    await mcp_mod.need_help(
+        rid, "question", "Pay?", page_url="https://acme.example/apply/2"
+    )
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        assert run.help["peek_request"] != str(fresh.id)
+        assert (await db.get(ApplyRequest, fresh.id)).status == "failed"
+        newest = await db.get(ApplyRequest, uuid.UUID(run.help["peek_request"]))
+        assert newest.url == "https://acme.example/apply/2"
+
+
+@pytest.mark.asyncio
+async def test_fills_and_page_photos_still_replace_each_other(engine, monkeypatch):
+    maker, user, run_id, rid = await _filling(engine, monkeypatch)
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        fill = await svc._request(db, run, "fill", "https://acme.example/apply/2", 2)
+        await svc._request(db, run, "photo", "https://acme.example/apply/2", 2)
+        await db.commit()
+        assert (await db.get(ApplyRequest, fill.id)).status == "failed"
+
+
+@pytest.mark.asyncio
+async def test_messages_dont_hide_that_claude_stopped(engine, monkeypatch):
+    maker, user, run_id, rid = await _filling(engine, monkeypatch)
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        run.claude_at = svc._now() - timedelta(minutes=5)
+        run.events = []
+        await db.commit()
+        await svc.post_message(db, user.id, run_id, "are you there?")
+        await db.commit()
+        assert svc.claude_stopped(await db.get(ApplyRun, run_id)) is True
+
+
+@pytest.mark.asyncio
+async def test_the_reply_reaches_claude_once(engine, monkeypatch):
+    maker, user, run_id, rid = await _filling(engine, monkeypatch)
+    await mcp_mod.need_help(rid, "question", "SMS?", choices=["Yes", "No"])
+    async with maker() as db:
+        await svc.help_done(db, user.id, run_id, "No")
+        await db.commit()
+    got = await mcp_mod.wait_for_you(rid)
+    assert got["reply"] == "No" and "from_user" not in got
+
+
+@pytest.mark.asyncio
+async def test_confirmations_count_only_on_the_run_s_sites(engine, monkeypatch):
+    maker, user, run_id, rid = await _pressed(engine, monkeypatch)
+    async with maker() as db:
+        await svc.extension_event(
+            db,
+            user.id,
+            run_id,
+            "confirmation_seen",
+            "https://news.example/",
+            "Thanks for applying",
+        )
+        await db.commit()
+        assert (await db.get(ApplyRun, run_id)).status == "submitting"
+    # A CAPTCHA right after Submit, then the thank-you page: still confirmed.
+    await mcp_mod.need_help(rid, "captcha", "Solve the robot check.")
+    async with maker() as db:
+        await svc.extension_event(
+            db,
+            user.id,
+            run_id,
+            "confirmation_seen",
+            "https://acme.example/thanks",
+            "Thanks for applying",
+        )
+        await db.commit()
+        assert (await db.get(ApplyRun, run_id)).status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_a_pressed_run_waits_a_day_for_the_user(engine, monkeypatch):
+    maker, user, run_id, rid = await _pressed(engine, monkeypatch)
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        run.last_activity_at = svc._now() - timedelta(hours=5)
+        await db.commit()
+        assert await svc.open_run(db, user.id) is not None
+        run = await db.get(ApplyRun, run_id)
+        run.last_activity_at = svc._now() - timedelta(hours=25)
+        await db.commit()
+        assert await svc.open_run(db, user.id) is None
+        await db.commit()
+        run = await db.get(ApplyRun, run_id)
+        assert run.status == "stopped" and "never confirmed" in run.note
+
+
+@pytest.mark.asyncio
+async def test_an_odd_job_catcher_version_is_never_ready(engine, monkeypatch):
+    maker, user, _, _ = await _setup(engine, monkeypatch)
+    async with maker() as db:
+        db.add(ExtensionInstall(user_id=user.id, install_id="x", version="dev"))
+        await db.commit()
+        assert (await svc.job_catcher_status(db, user.id))["ready"] is False

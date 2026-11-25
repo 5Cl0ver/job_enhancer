@@ -82,7 +82,7 @@ When no confirmation is seen, the page shows the last photo and asks "Did it go 
 
 ### User Story 6 - Know Job Catcher is ready (Priority: P2)
 
-The application page shows whether Job Catcher is ready on the computer: its version, and whether it was seen in the last hour. When it's out of date (older than 0.41.0) or not seen, it says so first, with the steps to update. That's what made the first runs fail. A request that got no answer says the same.
+The application page shows whether Job Catcher is ready on the computer: its version, and whether it was seen in the last 2 hours. When it's out of date (older than 0.41.0) or not seen, it says so first, with the steps to update. That's what made the first runs fail. A request that got no answer says the same.
 
 ### User Story 7 - Any AI with the connector (Priority: P2)
 
@@ -108,7 +108,7 @@ The Start step still recommends Claude in Chrome. It also says "Using another AI
 - **FR-003:** A "screen now" request (one screen, no scrolling) from the app or `need_help`. The newest 5 are kept.
 - **FR-004:** Tool waits are up to 50 s. The run records Claude's last call; "stopped" is shown after 3 minutes with no call while it's Claude's turn.
 - **FR-005:** Job Catcher reports a confirmation (its words and a photo) after a Submit in the run's tab. The server ends a run as sent on a confirmation only while it's submitting, or at the review with submit/self. The user can end a submitting run as sent or not sent.
-- **FR-006:** The page shows Job Catcher's newest version and last seen time, and warns when it's older than 0.41.0 or unseen for over an hour.
+- **FR-006:** The page shows Job Catcher's newest version and last seen time, and warns when it's older than 0.41.0 or unseen for over 2 hours (it says hello hourly).
 - **FR-007:** Titles, companies and places are HTML-unescaped on every save; the stored ones are fixed by a migration.
 - **FR-008:** No change to the safety rules: no Submit without the user's OK, no passwords, Submit locked by Job Catcher.
 

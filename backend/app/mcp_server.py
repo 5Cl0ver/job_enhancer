@@ -721,7 +721,7 @@ async def save_resume(run_id: str, content: str) -> dict:
 @mcp.tool
 async def fill_page(run_id: str, page_url: str) -> dict:
     """Ask Job Catcher to fill this application page with what it knows
-    (profile, saved answers, this job's résumé file). Waits up to ~25 s and
+    (profile, saved answers, this job's résumé file). Waits up to ~45 s and
     returns what it filled and what still needs an answer. page_url is the
     page's full address."""
     async with _session_user() as (db, user):

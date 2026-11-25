@@ -70,6 +70,7 @@ from app.services import tracker as tracker_svc
 from app.services.match import match_resume
 
 STALE_AFTER = timedelta(hours=3)
+PRESSED_WAIT = timedelta(hours=24)
 PHOTOS_KEPT = timedelta(days=30)
 # How long a tool waits for Job Catcher or the user: under the MCP client's
 # ~60 s request timeout, and long enough that waiting costs Claude few steps.
@@ -85,6 +86,7 @@ HELP_KINDS = ("sign_in", "sign_up", "captcha", "question", "site", "other")
 MAX_CHOICES = 4
 MAX_MESSAGES = 200
 MAX_PEEKS = 5
+PEEK_EXPIRES = timedelta(seconds=30)
 STOPPED_AFTER = timedelta(minutes=3)
 ASK_IF_SENT_AFTER = timedelta(minutes=2)
 PRESSED_GRACE = timedelta(seconds=30)
@@ -203,18 +205,34 @@ def _answers(raw: Any, limit: int = MAX_ANSWERS) -> list[dict[str, Any]]:
 # --------------------------------------------------------------------------- #
 
 
+def _is_stale(run: ApplyRun) -> bool:
+    """Idle 3 h. A run whose Submit was pressed waits a day for the user's
+    "Did it go through?" (it may really have been sent)."""
+    idle = _aware(run.last_activity_at)
+    if idle is None:
+        return False
+    wait = PRESSED_WAIT if (run.review or {}).get("pressed_at") else STALE_AFTER
+    return idle < _now() - wait
+
+
+def _stop_stale(run: ApplyRun) -> None:
+    _set(run, APPLY_STOPPED)
+    run.finished_at = _now()
+    if (run.review or {}).get("pressed_at"):
+        run.note = "Submit was pressed, but it was never confirmed. Check your email."
+    else:
+        run.note = "No activity for 3 hours."
+    _event(run, "stopped", f"Stopped: {run.note}")
+
+
 async def _expire_stale(db: AsyncSession, user_id: uuid.UUID) -> None:
-    cutoff = _now() - STALE_AFTER
     for run in await db.scalars(
         select(ApplyRun).where(
             ApplyRun.user_id == user_id, ApplyRun.status.in_(APPLY_OPEN)
         )
     ):
-        if _aware(run.last_activity_at) and _aware(run.last_activity_at) < cutoff:
-            _set(run, APPLY_STOPPED)
-            run.finished_at = _now()
-            run.note = "No activity for 3 hours."
-            _event(run, "stopped", "Stopped: no activity for 3 hours.")
+        if _is_stale(run):
+            _stop_stale(run)
     await db.flush()
 
 
@@ -247,7 +265,7 @@ async def get_run(
 
 async def _locked(db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID) -> ApplyRun:
     run = await get_run(db, user_id, run_id, lock=True)
-    if run.status in APPLY_OPEN and _aware(run.last_activity_at) < _now() - STALE_AFTER:
+    if run.status in APPLY_OPEN and _is_stale(run):
         await _expire_stale(db, user_id)
     return run
 
@@ -305,10 +323,8 @@ async def sweep(db: AsyncSession) -> int:
         )
     )
     for run in stale:
-        _set(run, APPLY_STOPPED)
-        run.finished_at = _now()
-        run.note = "No activity for 3 hours."
-        _event(run, "stopped", "Stopped: no activity for 3 hours.")
+        if _is_stale(run):
+            _stop_stale(run)
     await db.flush()
     return await purge_old_photos(db)
 
@@ -474,7 +490,8 @@ async def help_done(
     reply = _text(reply, 1000) or None
     run.help = {**run.help, "done_at": _iso(_now()), "reply": reply}
     if reply:
-        _message(run, "you", reply, read=False)
+        # In the conversation for the user; Claude gets it as `reply`.
+        _message(run, "you", reply, read=True)
         _event(run, "help_done", f"You answered: {reply}")
     else:
         _event(run, "help_done", "You said keep going.")
@@ -566,12 +583,46 @@ async def message_user(
 
 
 async def peek(
-    db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID, *, url: str | None = None
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run_id: uuid.UUID,
+    *,
+    url: str | None = None,
+    replace: bool = False,
 ) -> ApplyRequest:
     """Ask Job Catcher for the application's screen as it is now."""
     run = await _locked(db, user_id, run_id)
-    if run.status not in APPLY_OPEN and run.status != APPLY_SENT:
+    just_sent = run.status == APPLY_SENT and (
+        _aware(run.finished_at) or _now()
+    ) > _now() - timedelta(minutes=2)
+    if run.status not in APPLY_OPEN and not just_sent:
         raise ValueError("This application has ended.")
+    # One nobody took (no tab, Job Catcher off) never blocks the next.
+    await db.execute(
+        update(ApplyRequest)
+        .where(
+            ApplyRequest.run_id == run.id,
+            ApplyRequest.kind == REQUEST_PEEK,
+            ApplyRequest.status.in_((REQUEST_PENDING, REQUEST_WORKING)),
+            ApplyRequest.created_at < _now() - PEEK_EXPIRES,
+        )
+        .values(status=REQUEST_FAILED, result={"reason": "no_answer"}, done_at=_now())
+        # A plain UPDATE: nothing in this session needs syncing (and SQLite's
+        # times have no zone to compare in Python).
+        .execution_options(synchronize_session=False)
+    )
+    if replace:
+        await db.execute(
+            update(ApplyRequest)
+            .where(
+                ApplyRequest.run_id == run.id,
+                ApplyRequest.kind == REQUEST_PEEK,
+                ApplyRequest.status == REQUEST_PENDING,
+            )
+            .values(
+                status=REQUEST_FAILED, result={"reason": "replaced"}, done_at=_now()
+            )
+        )
     waiting = await db.scalar(
         select(ApplyRequest.id).where(
             ApplyRequest.run_id == run.id,
@@ -757,6 +808,10 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
 
 def _claudes_turn(run: ApplyRun) -> bool:
     s = run.status
+    if (run.review or {}).get("pressed_at"):
+        # Submit was pressed: the user says whether it went ("Did it go
+        # through?"), never a new chat pressing it again.
+        return False
     if s in (APPLY_READING, APPLY_WRITING, APPLY_FILLING, APPLY_SUBMITTING):
         return True
     if s == APPLY_QUESTIONS:
@@ -776,9 +831,15 @@ def claude_stopped(run: ApplyRun) -> bool:
     last = _aware(run.claude_at) or _aware(run.started_at)
     if last is None:
         return False
-    # The user's own last move (an answer, keep going) restarts the clock.
-    moved = _aware(run.last_activity_at)
-    since = max(last, moved) if moved else last
+    # The user's last answer (questions, keep going, a decision) restarts the
+    # clock; their messages and Job Catcher's notes don't.
+    answered = [
+        datetime.fromisoformat(e["at"])
+        for e in run.events or []
+        if e.get("kind") in ("answers", "help_done", "decision", "not_sent")
+        and e.get("at")
+    ]
+    since = max([last, *answered])
     return _now() - since > STOPPED_AFTER
 
 
@@ -818,7 +879,9 @@ async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, 
         }
     version, seen = row
     fresh = _aware(seen) and _now() - _aware(seen) < JOB_CATCHER_SEEN
-    new_enough = not releases.is_older(version, JOB_CATCHER_READY)
+    new_enough = bool(releases.version_tuple(version)) and not releases.is_older(
+        version, JOB_CATCHER_READY
+    )
     return {
         "version": version,
         "last_seen_at": _iso(seen),
@@ -921,6 +984,14 @@ async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
     return doc.edited_content or doc.content
 
 
+_ALREADY_PRESSED = (
+    "Submit was ALREADY pressed. Never press it again (that would apply twice). "
+    "Look at the page: if it shows a confirmation, call finish_apply(sent=true, "
+    "page_url=…); if not, tell the user with message_user and stop: the app "
+    "asks them whether it went through."
+)
+
+
 def _next(run: ApplyRun) -> str:
     """What Claude should do from where the run is (also after a new chat)."""
     s = run.status
@@ -929,6 +1000,8 @@ def _next(run: ApplyRun) -> str:
     if s == APPLY_NEEDS_YOU:
         return "Call wait_for_you: you asked the user for help."
     if s == APPLY_SUBMITTING:
+        if (run.review or {}).get("pressed_at"):
+            return _ALREADY_PRESSED
         return "The user said submit: press the final Submit, then call finish_apply."
     if run.resume_id:
         return "The résumé is saved. Go on filling the application (playbook step 4)."
@@ -1063,10 +1136,12 @@ async def need_help(
     _set(run, APPLY_NEEDS_YOU)
     _event(run, "help", f"Claude needs you: {what}")
     await db.flush()
-    # A photo of the screen for the app (nobody waits for it).
+    # A photo of the screen for the app (nobody waits for it): this page's,
+    # never an older one still waiting.
     try:
         async with db.begin_nested():
-            await peek(db, user.id, run.id, url=page_url)
+            shot = await peek(db, user.id, run.id, url=page_url, replace=True)
+            run.help = {**run.help, "peek_request": str(shot.id)}
     except ValueError:
         pass
     await db.flush()
@@ -1127,7 +1202,9 @@ async def _request(
         .where(
             ApplyRequest.run_id == run.id,
             ApplyRequest.status == REQUEST_PENDING,
-            ApplyRequest.kind == kind,
+            ApplyRequest.kind == kind
+            if kind == REQUEST_PEEK
+            else ApplyRequest.kind != REQUEST_PEEK,
         )
         .values(status=REQUEST_FAILED, result={"reason": "replaced"}, done_at=_now())
     )
@@ -1454,7 +1531,9 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
             **base,
             "waiting_on": None,
             "ready": True,
-            "next": "Press the final Submit, then call finish_apply.",
+            "next": _ALREADY_PRESSED
+            if (run.review or {}).get("pressed_at")
+            else "Press the final Submit, then call finish_apply.",
         }
     return {**base, "waiting_on": None, "ready": True, "next": _next(run)}
 
@@ -1566,7 +1645,8 @@ def _guarded(run: ApplyRun) -> bool:
     if run.status not in APPLY_OPEN:
         return False
     if run.status == APPLY_SUBMITTING:
-        return False
+        # Once pressed, locked again: a second press would apply twice.
+        return bool((run.review or {}).get("pressed_at"))
     return not (
         run.status == APPLY_REVIEW
         and (run.review or {}).get("decision") in ("submit", "self")
@@ -1721,8 +1801,17 @@ async def extension_event(
         return run
     host = _host(url)
     decision = (run.review or {}).get("decision")
-    approved = run.status == APPLY_SUBMITTING or (
-        run.status == APPLY_REVIEW and decision in ("self", "submit")
+    approved = (
+        run.status == APPLY_SUBMITTING
+        or (run.status == APPLY_REVIEW and decision in ("self", "submit"))
+        # A CAPTCHA or sign-in right after Submit, then the thank-you page.
+        or (
+            run.status == APPLY_NEEDS_YOU
+            and (run.help or {}).get("from") == APPLY_SUBMITTING
+        )
+    )
+    on_site = not host or any(
+        host == h or host.endswith(f".{h}") for h in run.apply_hosts or []
     )
     if kind == "blocked_submit":
         _event(
@@ -1738,7 +1827,7 @@ async def extension_event(
         _event(run, "submit_pressed", f"Submit was pressed on {host or 'the page'}.")
     elif kind == "confirmation_seen":
         seen = _text(words, 300) or "a confirmation"
-        if approved:
+        if approved and on_site:
             run.review = {
                 **(run.review or {}),
                 "confirmed": {"words": seen, "at": _iso(_now())},

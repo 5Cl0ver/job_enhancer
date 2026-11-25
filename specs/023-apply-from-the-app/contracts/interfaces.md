@@ -25,7 +25,7 @@
 - `POST /runs/{id}/event {kind: "confirmation_seen", url, words}`: ends a submitting (or submit/self review) run as sent, confirmed.
 
 **Run view:**
-- adds `messages`, `peeks: [{id, at}]`, `claude_at`, `claude_stopped` (bool), `ask_if_sent` (bool), `job_catcher {version, last_seen_at, ready, latest}`, `help.choices`, `help.reply`, `review.confirmed`.
+- adds `messages`, `peeks: [{id, at}]`, `claude_at`, `claude_stopped` (bool), `ask_if_sent` (bool), `job_catcher {version, last_seen_at, ready, needs}`, `help.choices`, `help.reply`, `review.confirmed`.
 
 ## Job Catcher (0.41.0)
 

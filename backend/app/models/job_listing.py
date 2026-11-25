@@ -1,7 +1,5 @@
 """JobListing ORM model — shared across all users, deduplicated at insert."""
 
-import html
-import re
 import uuid
 from datetime import datetime
 
@@ -16,19 +14,7 @@ from sqlalchemy.orm import (
 )
 
 from app.models import Base
-
-_ENTITY = re.compile(r"&(#\d+|#x[0-9a-fA-F]+|[a-zA-Z]+);")
-
-
-def unescape(value):
-    """'&amp;amp;' → '&': unescaped until no entity is left (at most 3 times)."""
-    if not isinstance(value, str):
-        return value
-    for _ in range(3):
-        if not _ENTITY.search(value):
-            break
-        value = html.unescape(value)
-    return value.replace("\xa0", " ")
+from app.utils.text import unescape
 
 
 class JobListing(Base):
