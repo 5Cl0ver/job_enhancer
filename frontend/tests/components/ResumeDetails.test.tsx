@@ -14,6 +14,7 @@ vi.mock("@/lib/api", () => ({
     put: (...args: unknown[]) => put(...args),
     patch: vi.fn(),
     delete: vi.fn(),
+    getBlob: vi.fn().mockResolvedValue(new Blob(["%PDF"], { type: "application/pdf" })),
   },
   ApiError: class ApiError extends Error {},
   getAccessToken: vi.fn().mockResolvedValue("token"),
@@ -95,6 +96,24 @@ describe("Résumé for this job", () => {
     const pick = await screen.findByLabelText("Résumé for this job");
     await userEvent.selectOptions(pick, "r2");
     expect(put).toHaveBeenCalledWith("/v1/saved-jobs/sj1/resume", { resume_id: "r2", usual: false });
+  });
+
+  it("views the résumé for this job right there: the picked one, else your usual one", async () => {
+    let chosen: string | null = null;
+    get.mockImplementation((url: string) =>
+      Promise.resolve(
+        url === "/v1/ai/resumes"
+          ? RESUMES
+          : [{ id: "sj1", job_listing_id: "l1", resume_id: chosen, job_listing: { title: "Analyst", company: "Kelso" } }],
+      ),
+    );
+    const { unmount } = wrap(<JobResumePicker jobListingId="l1" />);
+    expect(await screen.findByRole("button", { name: "View wren.pdf" })).toBeInTheDocument();
+    unmount();
+    chosen = "r2";
+    wrap(<JobResumePicker jobListingId="l1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "View wren-data.pdf" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("wren-data.pdf");
   });
 });
 

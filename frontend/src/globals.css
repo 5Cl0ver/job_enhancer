@@ -135,6 +135,18 @@
   html {
     @apply font-sans;
   }
+  /* Built-in controls (a dropdown's open list, date pickers) follow the
+     theme: without this, a dark page opens a white list with faint text. */
+  :root {
+    color-scheme: light;
+  }
+  .dark {
+    color-scheme: dark;
+  }
+  option {
+    background-color: var(--popover, var(--background));
+    color: var(--popover-foreground, var(--foreground));
+  }
 }
 
 /* The card a board search jumps to flashes a ring, so the eye finds it. */
