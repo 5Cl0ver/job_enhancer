@@ -162,7 +162,15 @@ async def test_did_it_go_through(engine, monkeypatch):
         run.last_activity_at = svc._now() - timedelta(minutes=3)
         assert svc.ask_if_sent(run) is True
         await db.commit()
-        # "It wasn't sent": back to the review.
+        # "It wasn't sent" while Claude was pressing it: Claude fixes and
+        # presses once more (the user's OK is that answer).
+        run = await svc.not_sent(db, user.id, run_id)
+        await db.commit()
+        assert run.status == "submitting" and run.review["retry"] is True
+        # From the review ("I'll submit it myself"), back to the review.
+        run.status = "review"
+        run.review = {**run.review, "decision": "self"}
+        await db.commit()
         run = await svc.not_sent(db, user.id, run_id)
         await db.commit()
         assert run.status == "review" and run.review["decision"] is None
@@ -381,3 +389,21 @@ async def test_an_odd_job_catcher_version_is_never_ready(engine, monkeypatch):
         db.add(ExtensionInstall(user_id=user.id, install_id="x", version="dev"))
         await db.commit()
         assert (await svc.job_catcher_status(db, user.id))["ready"] is False
+
+
+@pytest.mark.asyncio
+async def test_a_site_error_after_submit_is_fixed_with_the_users_ok(
+    engine, monkeypatch
+):
+    maker, user, run_id, rid = await _pressed(engine, monkeypatch)
+    # Claude waits for the user's answer, never presses again on its own.
+    out = await mcp_mod.wait_for_you(rid)
+    assert out["ready"] is False and "ALREADY pressed" in out["next"]
+    async with maker() as db:
+        await svc.not_sent(db, user.id, run_id)
+        await db.commit()
+        assert (await svc.extension_state(db, user.id))["guard"] is False
+    out = await mcp_mod.wait_for_you(rid)
+    assert out["ready"] is True and "press the final Submit once more" in out["next"]
+    run = await _run(maker, run_id)
+    assert svc._claudes_turn(run) is True

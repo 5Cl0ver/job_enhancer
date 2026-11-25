@@ -672,6 +672,8 @@ async def decide(
         raise ValueError("Say what to fix.")
     run.review = {
         **run.review,
+        "pressed_at": None,
+        "retry": False,
         "decision": decision,
         "note": note,
         "by": by,
@@ -712,9 +714,20 @@ async def not_sent(db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID) -> A
     run = await _locked(db, user_id, run_id)
     if run.status not in (APPLY_SUBMITTING, APPLY_REVIEW) or not run.review:
         raise ValueError("This application isn't being sent.")
-    run.review = {**run.review, "decision": None, "read": False, "pressed_at": None}
-    _set(run, APPLY_REVIEW)
-    _event(run, "not_sent", "You said it wasn't sent. Back to the review.")
+    if run.status == APPLY_SUBMITTING:
+        # Claude pressed it and the site said no (a missing box): Claude fixes
+        # it and presses once more, with the user's OK given here.
+        run.review = {**run.review, "pressed_at": None, "retry": True}
+        run.last_activity_at = _now()
+        _event(
+            run,
+            "not_sent",
+            "You said it wasn't sent. Claude fixes it and presses Submit again.",
+        )
+    else:
+        run.review = {**run.review, "decision": None, "read": False, "pressed_at": None}
+        _set(run, APPLY_REVIEW)
+        _event(run, "not_sent", "You said it wasn't sent. Back to the review.")
     await db.flush()
     return run
 
@@ -985,10 +998,13 @@ async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
 
 
 _ALREADY_PRESSED = (
-    "Submit was ALREADY pressed. Never press it again (that would apply twice). "
-    "Look at the page: if it shows a confirmation, call finish_apply(sent=true, "
-    "page_url=…); if not, tell the user with message_user and stop: the app "
-    "asks them whether it went through."
+    "Submit was ALREADY pressed. Never press it again on your own (that could "
+    "apply twice). Look at the page: if it shows a confirmation, call "
+    "finish_apply(sent=true, page_url=…). If it shows an error instead (a box "
+    "the site says is missing or wrong), tell the user exactly what it says "
+    "with message_user, then keep calling wait_for_you: the app asks them "
+    "whether it went through, and if it didn't you'll be told to fix it and "
+    "press Submit once more."
 )
 
 
@@ -1527,13 +1543,30 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
             ),
         }
     if run.status == APPLY_SUBMITTING:
+        if (run.review or {}).get("pressed_at"):
+            # The user says whether it went; until then, keep waiting.
+            return {
+                **base,
+                "waiting_on": "sent",
+                "ready": False,
+                "next": _ALREADY_PRESSED,
+            }
+        if (run.review or {}).get("retry"):
+            return {
+                **base,
+                "waiting_on": "sent",
+                "ready": True,
+                "next": (
+                    "The user says it wasn't sent. Fix what the page says is "
+                    "missing or wrong, then press the final Submit once more and "
+                    "call finish_apply."
+                ),
+            }
         return {
             **base,
             "waiting_on": None,
             "ready": True,
-            "next": _ALREADY_PRESSED
-            if (run.review or {}).get("pressed_at")
-            else "Press the final Submit, then call finish_apply.",
+            "next": "Press the final Submit, then call finish_apply.",
         }
     return {**base, "waiting_on": None, "ready": True, "next": _next(run)}
 

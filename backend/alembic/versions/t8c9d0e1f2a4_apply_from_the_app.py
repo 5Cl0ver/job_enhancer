@@ -55,6 +55,17 @@ def _hash(title, company, location):
     return hashlib.sha256(raw.encode()).hexdigest()
 
 
+def _old_norm(text):
+    """normalize() as it was before this revision (no unescaping)."""
+    text = (text or "").lower()
+    return _WHITESPACE.sub(" ", _NON_ALPHA.sub(" ", text)).strip()
+
+
+def _old_hash(title, company, location):
+    raw = f"{_old_norm(title)}|{_old_norm(company)}|{_old_norm(location)}"
+    return hashlib.sha256(raw.encode()).hexdigest()
+
+
 def upgrade() -> None:
     with op.batch_alter_table("apply_runs") as batch:
         batch.add_column(
@@ -70,7 +81,7 @@ def upgrade() -> None:
         return
     rows = bind.execute(
         sa.text(
-            "SELECT id, title, company, location FROM job_listings "
+            "SELECT id, title, company, location, content_hash FROM job_listings "
             "WHERE title LIKE '%&%;%' OR company LIKE '%&%;%' "
             "OR location LIKE '%&%;%'"
         )
@@ -78,7 +89,10 @@ def upgrade() -> None:
     taken = {
         h for (h,) in bind.execute(sa.text("SELECT content_hash FROM job_listings"))
     }
-    for row_id, title, company, location in rows:
+    for row_id, title, company, location, stored in rows:
+        # Only the public key is recomputed: a user's own copy (an email-made
+        # job, keyed with "|own:…") keeps the key it has.
+        public = stored == _old_hash(title, company, location)
         title, company, location = (
             _unescape(title),
             _unescape(company),
@@ -93,7 +107,7 @@ def upgrade() -> None:
             "cn": _norm(company),
         }
         new_hash = _hash(title, company, location)
-        if new_hash not in taken:
+        if public and new_hash not in taken:
             taken.add(new_hash)
             values["hash"] = new_hash
             bind.execute(
