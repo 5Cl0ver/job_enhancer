@@ -3,7 +3,9 @@
 // and the background loop doing the app's requests once each.
 import { describe, it, expect, vi } from "vitest";
 import { Window } from "happy-dom";
-import { finalSubmitButton, finalSubmitOfForm, onRunHost, pageAnswers, shotPlan } from "../src/autofill/applyPage.js";
+import { confirmationIn, readableText, finalSubmitButton, finalSubmitOfForm, onRunHost, pageAnswers, shotPlan } from "../src/autofill/applyPage.js";
+import { clean } from "../src/extract/util.js";
+import { detectContext } from "../panel/src/lib/context.ts";
 import { startApplyMode } from "../src/autofill/applyMode.js";
 import { createApplyRun } from "../src/background/applyRun.js";
 
@@ -278,10 +280,10 @@ describe("the background loop", () => {
     });
     const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
     run.loop = vi.fn();
-    expect(await run.tick({ id: 7, url: `${URL1}?x` })).toEqual({ active: true, guard: true });
+    expect(await run.tick({ id: 7, url: `${URL1}?x` })).toMatchObject({ active: true, guard: true });
     // Before Claude's first request, any tab on the site is already locked.
-    expect(await run.tick({ id: 9, url: "https://acme.example/apply/other-job" })).toEqual({ active: true, guard: true });
-    expect(await run.tick({ id: 9, url: "https://news.example/" })).toEqual({ active: false, guard: false });
+    expect(await run.tick({ id: 9, url: "https://acme.example/apply/other-job" })).toMatchObject({ active: true, guard: true });
+    expect(await run.tick({ id: 9, url: "https://news.example/" })).toMatchObject({ active: false, guard: false });
     await run.event("submit_pressed", { id: 9, url: "https://acme.example/apply/other-job" });
     await run.event("blocked_submit", { id: 9, url: "https://acme.example/apply/other-job" });
     await run.event("submit_pressed", { id: 7, url: "https://news.example/" }); // run tab, gone elsewhere
@@ -313,7 +315,7 @@ describe("the background loop", () => {
     expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(true);
     signedIn = false; // really signed out
     await run.active(true);
-    expect(await run.tick({ id: 7, url: URL1 })).toEqual({ active: false, guard: false });
+    expect(await run.tick({ id: 7, url: URL1 })).toMatchObject({ active: false, guard: false });
   });
 
   it("a server that doesn't answer never lifts the lock", async () => {
@@ -336,5 +338,153 @@ describe("the background loop", () => {
     await run.active(true);
     vi.useRealTimers();
     expect((await run.tick({ id: 7, url: URL1 })).guard).toBe(false);
+  });
+});
+
+
+describe("spec 023: the screen now, the confirmation, the small fixes", () => {
+  const URL1 = "https://acme.example/apply/1";
+
+  function chromeWith(session = {}) {
+    return {
+      storage: {
+        session: {
+          get: vi.fn(async (k) => (typeof k === "string" ? { [k]: session[k] } : {})),
+          set: vi.fn(async (o) => Object.assign(session, o)),
+        },
+        local: { get: vi.fn(async () => ({ je_token: "t" })) },
+      },
+      tabs: {
+        query: vi.fn().mockResolvedValue([{ id: 7, windowId: 1, active: true, url: URL1 }]),
+        get: vi.fn(async () => ({ id: 7, windowId: 1, active: true, url: URL1 })),
+        sendMessage: vi.fn(),
+        captureVisibleTab: vi.fn().mockResolvedValue("data:image/jpeg;base64,/9j/4AAQ"),
+      },
+      windows: { getAll: vi.fn().mockResolvedValue([{ id: 1, focused: true }]) },
+      scripting: { executeScript: vi.fn().mockResolvedValue([]) },
+    };
+  }
+
+  it("a screen-now photo is one shot, never scrolled", async () => {
+    const c = chromeWith();
+    const calls = [];
+    let served = 0;
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push(`${init.method || "GET"} ${path}`);
+      if (path === "/v1/apply/active") {
+        served++;
+        return {
+          ok: true,
+          json: async () =>
+            served === 1 ? { run_id: "r1", guard: true, hosts: ["acme.example"], requests: [{ id: "k1", kind: "peek", url: URL1, page_n: 0 }] } : { run_id: null },
+        };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    const done = run.loop();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    expect(calls).toContain("POST /v1/apply/requests/k1/photo?part=0");
+    expect(calls.filter((x) => x.includes("/photo"))).toHaveLength(1);
+    expect(c.tabs.sendMessage).not.toHaveBeenCalled(); // no scrolling
+  });
+
+  it("after a Submit in the application's tab, that tab looks for the confirmation", async () => {
+    const c = chromeWith({ "je_apply_tabs:r1": [7] });
+    const sent = [];
+    const api = vi.fn(async (path, init = {}) => {
+      if (init.body) sent.push(JSON.parse(init.body));
+      return { ok: true, json: async () => ({ run_id: "r1", status: "review", guard: false, hosts: ["acme.example"], requests: [] }) };
+    });
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    run.loop = vi.fn();
+    expect((await run.tick({ id: 7, url: URL1 })).watch).toBe(false);
+    await run.event("submit_pressed", { id: 7, url: URL1 });
+    expect((await run.tick({ id: 7, url: "https://acme.example/thanks" })).watch).toBe(true);
+    await run.event("confirmation_seen", { id: 7, url: "https://acme.example/thanks" }, null, "Thank you for applying");
+    expect(sent.at(-1)).toEqual({ kind: "confirmation_seen", url: "https://acme.example/thanks", words: "Thank you for applying" });
+  });
+
+  it("while Claude is pressing Submit, its tab looks too", async () => {
+    const c = chromeWith({ "je_apply_tabs:r1": [7] });
+    const api = vi.fn(async () => ({ ok: true, json: async () => ({ run_id: "r1", status: "submitting", guard: false, hosts: ["acme.example"], requests: [] }) }));
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    run.loop = vi.fn();
+    expect((await run.tick({ id: 7, url: URL1 })).watch).toBe(true);
+    expect((await run.tick({ id: 9, url: URL1 + "?other" })).watch).toBe(false);
+  });
+
+  it("the page tells the background once it shows the confirmation", async () => {
+    const win = page(`<form><button id="go">Submit application</button></form><div id="msg"></div>`);
+    const sent = [];
+    const send = vi.fn(async (m) => {
+      sent.push(m);
+      return m.type === "applyTick" ? { active: true, guard: false, watch: false } : null;
+    });
+    win.document.querySelector("form").addEventListener("submit", (e) => e.preventDefault());
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+    const m = startApplyMode({ send, isCurrent: () => true, scan: () => [], readField: () => "", doc: win.document, win });
+    await vi.advanceTimersByTimeAsync(10);
+    win.document.getElementById("go").click();
+    win.document.getElementById("msg").textContent = "Thank you for applying! We'll be in touch.";
+    await vi.advanceTimersByTimeAsync(2100);
+    await vi.advanceTimersByTimeAsync(4000);
+    vi.useRealTimers();
+    expect(sent.filter((x) => x.type === "applyConfirmed")).toEqual([
+      expect.objectContaining({ words: "Thank you for applying" }),
+    ]);
+    m.stop();
+  });
+
+  it("knows a confirmation from other pages", () => {
+    expect(confirmationIn("Thanks for applying to Acme!")).toBe("Thanks for applying");
+    expect(confirmationIn("Your application has been submitted.")).toBe("Your application has been submitted");
+    expect(confirmationIn("We've received your application")).toBe("We've received your application");
+    expect(confirmationIn("Review your application before you submit it")).toBe("");
+    expect(confirmationIn("Apply now")).toBe("");
+    expect(confirmationIn("Thank you for your interest in Acme")).toBe("");
+    expect(confirmationIn("Submit application Sent: 1")).toBe("");
+    expect(confirmationIn("Application submitted!")).toBe("Application submitted");
+  });
+
+  it("reads the page's words, never its buttons or labels", () => {
+    const d = page(`<main><h1>Thanks for applying</h1><button>Submit application</button><label>Application sent</label></main>`).document;
+    const text = readableText(d.body);
+    expect(text).toContain("Thanks for applying");
+    expect(text).not.toContain("Submit application");
+    expect(text).not.toContain("Application sent");
+  });
+
+  it("words already on the page before Submit never count", async () => {
+    const win = page(`<p>Thank you for applying to more jobs like this one</p><form><button id="go">Submit application</button></form>`);
+    const sent = [];
+    const send = vi.fn(async (m) => {
+      sent.push(m);
+      return m.type === "applyTick" ? { active: true, guard: false, watch: false } : null;
+    });
+    win.document.querySelector("form").addEventListener("submit", (e) => e.preventDefault());
+    vi.useFakeTimers({ toFake: ["setTimeout", "setInterval"] });
+    const m = startApplyMode({ send, isCurrent: () => true, scan: () => [], readField: () => "", doc: win.document, win });
+    await vi.advanceTimersByTimeAsync(10);
+    win.document.getElementById("go").click();
+    await vi.advanceTimersByTimeAsync(6000);
+    vi.useRealTimers();
+    expect(sent.filter((x) => x.type === "applyConfirmed")).toHaveLength(0);
+    m.stop();
+  });
+
+  it("titles never keep HTML entities", () => {
+    expect(clean("Microsoft 365 &amp; Copilot Administrator")).toBe("Microsoft 365 & Copilot Administrator");
+    expect(clean("Ben &amp;amp; Jerry&#39;s")).toBe("Ben & Jerry's");
+    expect(clean("AT&T")).toBe("AT&T");
+  });
+
+  it("the panel never calls Job Enhancer's own pages an application", () => {
+    const app = "https://job-enhancer-xxj1.vercel.app";
+    expect(detectContext(`${app}/apply/r1`, app)).toEqual({ kind: "none" });
+    expect(detectContext("https://acme.example/apply/1", app).kind).toBe("application");
   });
 });

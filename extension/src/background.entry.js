@@ -1218,6 +1218,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
+      } else if (msg.type === "applyConfirmed") {
+        // "Thank you for applying" on the application's tab (spec 023).
+        await applyRun.event("confirmation_seen", sender.tab, msg.url, String(msg.words || "").slice(0, 200));
+        sendResponse({ ok: true });
       } else if (msg.type === "scoutCapture") {
         sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });
       } else if (msg.type === "backfillJob") {

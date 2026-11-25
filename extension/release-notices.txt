@@ -2,3 +2,4 @@
 # Format: <version>: <text>. Only the line for the version being released is used.
 0.35.0: New in 0.35.0: remove the old Job Catcher first, then load the new folder and press Connect. You'll need to connect once; later updates keep you signed in.
 0.40.0: New in 0.40.0: Apply with Claude. Job Catcher takes a photo of every application page and keeps Submit locked until you say so. Chrome may ask you to allow Job Catcher on all sites again.
+0.41.0: New in 0.41.0: follow Apply with Claude from the app. "Show me the screen" photos, and Job Catcher spots the thank-you page so you know an application was really sent.

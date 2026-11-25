@@ -26,7 +26,7 @@
 
 ## Part C: Job Catcher 0.41.0 (PR `023-apply-from-the-app-jc`)
 
-- [ ] T030 [US3] Peek requests: one shot, the same tab checks
-- [ ] T031 [US5] Confirmation watch after a Submit press; photo + confirmation_seen event
-- [ ] T032 [US8] The panel never treats the app as an application; clean() decodes entities
-- [ ] T033 [P] Unit + browser tests; version 0.41.0 + release notice
+- [X] T030 [US3] Peek requests: one shot, the same tab checks
+- [X] T031 [US5] Confirmation watch after a Submit press; photo + confirmation_seen event
+- [X] T032 [US8] The panel never treats the app as an application; clean() decodes entities
+- [X] T033 [P] Unit + browser tests; version 0.41.0 + release notice

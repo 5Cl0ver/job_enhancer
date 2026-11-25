@@ -13,9 +13,26 @@ function asText(s) {
   return "";
 }
 
-/** Collapse whitespace and trim. */
+// Pages and job data hand titles over HTML-escaped ("Microsoft 365 &amp;
+// Copilot"): decoded, twice at most for "&amp;amp;" (spec 023).
+const NAMED = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
+function decodeEntities(s) {
+  let out = s;
+  for (let i = 0; i < 2 && /&(#\d+|#x[0-9a-f]+|amp|lt|gt|quot|apos|nbsp);/i.test(out); i++) {
+    out = out.replace(/&(#\d+|#x[0-9a-f]+|amp|lt|gt|quot|apos|nbsp);/gi, (m, e) => {
+      if (e[0] === "#") {
+        const code = e[1] === "x" || e[1] === "X" ? parseInt(e.slice(2), 16) : parseInt(e.slice(1), 10);
+        return Number.isFinite(code) && code > 0 && code < 0x110000 ? String.fromCodePoint(code) : m;
+      }
+      return NAMED[e.toLowerCase()] ?? m;
+    });
+  }
+  return out;
+}
+
+/** Collapse whitespace and trim (HTML entities decoded). */
 export function clean(s) {
-  return asText(s).replace(/\s+/g, " ").trim();
+  return decodeEntities(asText(s)).replace(/\s+/g, " ").trim();
 }
 
 /**

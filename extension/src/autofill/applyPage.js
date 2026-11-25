@@ -111,3 +111,37 @@ export function scrollerOf(doc, win) {
   }
   return best;
 }
+
+// The page an application shows once it was really sent (spec 023).
+// Tight on purpose: never "thank you for your interest" (on many forms before
+// anything is sent), never a bare "application … sent" (a "Submit application"
+// button next to other words).
+const CONFIRM =
+  /thank(?:s| you)(?: so much)? for (?:applying|your (?:application|submission))|(?:your )?application (?:has been|was) (?:successfully )?(?:submitted|received|sent|completed?)|\bapplication (?:successfully )?(?:submitted|received)\b|we(?:'ve| have) received your application|successfully (?:submitted|applied)|you(?:'ve| have) (?:successfully )?applied/i;
+
+/** The confirmation's own words in a text, or "". */
+export function confirmationIn(text) {
+  const m = (text || "").replace(/\s+/g, " ").match(CONFIRM);
+  return m ? m[0].slice(0, 200) : "";
+}
+
+const NOT_READ = "button, [role='button'], input, select, option, textarea, label, nav, header, footer, script, style, noscript";
+
+/** The page's own words, without its buttons, boxes and labels: what a
+ * confirmation message is written in. */
+export function readableText(root) {
+  if (!root) return "";
+  const parts = [];
+  const walk = (node) => {
+    if (parts.length > 5000) return;
+    if (node.nodeType === 3) {
+      parts.push(node.nodeValue);
+      return;
+    }
+    if (node.nodeType !== 1 || node.matches?.(NOT_READ)) return;
+    for (const child of node.childNodes) walk(child);
+  };
+  walk(root);
+  return parts.join(" ");
+}
+

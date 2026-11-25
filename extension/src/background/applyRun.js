@@ -123,21 +123,29 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   async function tick(tab) {
     const data = await active();
     if (data.run_id && !looping) loop();
-    if (!data.run_id || tab?.id == null) return { active: false, guard: false };
+    if (!data.run_id || tab?.id == null) return { active: false, guard: false, watch: false };
     const onSite = onRunHost(hostOf(tab.url || ""), data.hosts);
-    return { active: onSite, guard: onSite && !!data.guard };
+    // Look for the confirmation: Claude is pressing Submit, or one was just
+    // pressed in this tab (the confirmation may be the next page).
+    const watch =
+      onSite && (await isRunTab(data, tab)) && (data.status === "submitting" || (watchUntil.get(tab.id) || 0) > Date.now());
+    return { active: onSite, guard: onSite && !!data.guard, watch };
   }
 
-  async function event(kind, tab, url) {
+  const watchUntil = new Map(); // tab id → until when it looks for the confirmation
+  const WATCH_AFTER_PRESS_MS = 30_000;
+
+  async function event(kind, tab, url, words) {
     const data = await active();
     if (!data.run_id || tab?.id == null) return;
     // A blocked press anywhere on the site is worth telling Claude; a press
     // that ends the run as sent must come from the application's own tab.
     const ok = kind === "blocked_submit" ? onRunHost(hostOf(tab.url || ""), data.hosts) : await isRunTab(data, tab);
     if (!ok) return;
+    if (kind === "submit_pressed") watchUntil.set(tab.id, Date.now() + WATCH_AFTER_PRESS_MS);
     await api(`/v1/apply/runs/${data.run_id}/event`, {
       method: "POST",
-      body: JSON.stringify({ kind, url: url || tab.url }),
+      body: JSON.stringify({ kind, url: url || tab.url, ...(words ? { words } : {}) }),
     }).catch(() => null);
     state.at = 0; // a press can end the run: ask again next time
   }
@@ -176,6 +184,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     await addRunTab(data.run_id, tab.id);
     try {
       if (req.kind === "fill") return await finish(req, await fill(tab));
+      if (req.kind === "peek") return await finish(req, await peekShot(req, tab));
       return await finish(req, await photos(req, tab));
     } catch {
       return finish(req, { ok: false, reason: "error" });
@@ -257,6 +266,20 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // The page changed under us: never read the new page's answers.
     const answers = changed ? [] : await readAnswers(tab.id);
     return part ? { ok: true, answers } : { ok: false, reason: "not_visible", answers };
+  }
+
+  /** The screen as it is now: one photo, never scrolled (spec 023). */
+  async function peekShot(req, tab) {
+    const key = pageKey(tab.url || "");
+    if (!(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    const shot = await capture(tab.windowId);
+    if (!shot || !(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    const up = await api(`/v1/apply/requests/${req.id}/photo?part=0`, {
+      method: "POST",
+      headers: { "Content-Type": "image/jpeg" },
+      body: shot,
+    }).catch(() => null);
+    return up?.ok ? { ok: true } : { ok: false, reason: "error" };
   }
 
   async function capture(windowId) {
