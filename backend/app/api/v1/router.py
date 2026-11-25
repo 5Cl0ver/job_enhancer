@@ -6,6 +6,7 @@ from app.api.v1 import (
     admin,
     ai,
     analytics,
+    apply,
     attention,
     autofill,
     collections,
@@ -43,3 +44,7 @@ api_router.include_router(autofill.router, prefix="/autofill", tags=["Autofill"]
 api_router.include_router(extension.router, prefix="/extension", tags=["Job Catcher"])
 api_router.include_router(onboarding.router, tags=["Onboarding"])
 api_router.include_router(usage.router, tags=["Usage"])
+api_router.include_router(apply.router, prefix="/apply", tags=["Apply with Claude"])
+api_router.include_router(
+    apply.facts_router, prefix="/profile-facts", tags=["Apply with Claude"]
+)

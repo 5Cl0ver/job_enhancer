@@ -47,7 +47,7 @@ class GeneratedDocument(Base):
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="generated_documents")  # type: ignore[name-defined]
     resume: Mapped["Resume | None"] = relationship(
-        "Resume", back_populates="generated_documents"
+        "Resume", back_populates="generated_documents", foreign_keys=[resume_id]
     )  # type: ignore[name-defined]
     job_listing: Mapped["JobListing | None"] = relationship("JobListing")  # type: ignore[name-defined]
 

@@ -57,6 +57,23 @@ class Resume(Base):
     read_attempts: Mapped[int] = mapped_column(
         Integer, nullable=False, default=0, server_default="0"
     )
+    # The big "everything I've done" résumé Claude tailors from (spec 022).
+    # One per user; none chosen = the usual (active) one is the master.
+    is_master: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
+    # A résumé made for one job: its PDF is this document rendered, remade
+    # whenever the document is edited (spec 022).
+    document_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        # Documents point at résumés too: added after both tables exist.
+        ForeignKey(
+            "generated_documents.id",
+            ondelete="SET NULL",
+            use_alter=True,
+            name="fk_resumes_document_id",
+        ),
+    )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), nullable=False, server_default=func.now()
     )
@@ -64,7 +81,9 @@ class Resume(Base):
     # Relationships
     user: Mapped["User"] = relationship("User", back_populates="resumes")  # type: ignore[name-defined]
     generated_documents: Mapped[list["GeneratedDocument"]] = relationship(  # type: ignore[name-defined]
-        "GeneratedDocument", back_populates="resume"
+        "GeneratedDocument",
+        back_populates="resume",
+        foreign_keys="GeneratedDocument.resume_id",
     )
 
     def __repr__(self) -> str:

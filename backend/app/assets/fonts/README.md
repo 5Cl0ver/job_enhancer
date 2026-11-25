@@ -13,5 +13,5 @@ deploy target (Calibri itself is proprietary and can't be redistributed).
 - Author: Łukasz Dziedzic (tyPoland), commissioned by Google
 - Source: https://github.com/google/fonts/tree/main/ofl/carlito
 
-Used by `app/api/v1/ai.py` (`_register_fonts`) when rendering generated
+Used by `app/services/resume_pdf.py` (`_register_fonts`) when rendering generated
 resumes/cover letters to PDF via `fpdf2`.

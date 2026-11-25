@@ -14,6 +14,12 @@ class Base(DeclarativeBase):
 
 # Import all models so Alembic can discover them
 from app.models.application_profile import ApplicationProfile  # noqa: E402, F401
+from app.models.apply import (  # noqa: E402, F401
+    ApplyPhoto,
+    ApplyRequest,
+    ApplyRun,
+    ProfileFact,
+)
 from app.models.collection import Collection  # noqa: E402, F401
 from app.models.custom_answer import CustomAnswer  # noqa: E402, F401
 from app.models.detected_event import DetectedEvent  # noqa: E402, F401

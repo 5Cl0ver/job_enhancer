@@ -14,6 +14,10 @@ class ResumeSchema(BaseModel):
     mime_type: str
     file_size_bytes: int
     is_active: bool
+    # The big "everything" résumé Claude tailors from (spec 022).
+    is_master: bool = False
+    # Set on a résumé made for one job: the document it's rendered from.
+    document_id: uuid.UUID | None = None
     created_at: datetime
 
     model_config = {"from_attributes": True}
