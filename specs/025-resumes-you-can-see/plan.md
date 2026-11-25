@@ -69,8 +69,11 @@ frontend/src/components/settings/ResumesCard.tsx   # view instead of open-in-tab
 - **A:** the template and the viewer, used everywhere. This is safe on its own.
 - **B:** the review step and the playbook rules.
 
-## Open decisions for the owner
+## Decisions (owner, 2026-11-25)
 
-1. **Job résumé length:** "every job kept, trimmed to 2 pages at most" (proposed), or 1 page?
-2. **Review step:** on by default, with a setting to turn it off (proposed)?
-3. **Core areas boxes:** keep them on job résumés too (proposed: only when they fit the job), or master only?
+1. **Job résumé length:** 2 pages at most. Every job, school and certification is kept; the skills and bullets that don't fit the job are cut.
+2. **Review step:** on every time, with a setting to turn it off.
+3. **Core areas boxes:** master only, never on job résumés.
+   - **Why:** reading the owner's master with a PDF text reader mixed the four boxes' words across columns ("Entra ID, AD, SSO, RBAC, Windows 10/11 imaging, Exchange, SharePoint, PowerShell, Python…"). Applicant tracking systems read side-by-side boxes the same way and get garbled text.
+   - The boxes also repeat the skills table and cost space against the 2-page limit.
+   - The template still draws them for a résumé that has them (the master's style); the playbook tells Claude not to write them for a job.

@@ -80,7 +80,7 @@ A setting, **Review résumés before Claude applies**, is on by default. Turned 
 - The answers are kept as things you told Claude (exists), so the master grows without editing the PDF.
 
 **Acceptance:**
-1. A job résumé from a 3-page master is 2 pages or fewer, has every employer and school, and has no section the job doesn't need (the Core areas boxes are optional).
+1. A job résumé from a 3-page master is 2 pages or fewer, has every employer and school, and has no section the job doesn't need, and has no Core areas boxes.
 2. Nothing in it is missing from the master or from your answers.
 
 ### Edge Cases
