@@ -56,6 +56,9 @@ export async function startFakeApi() {
     email: PERSON.email,
     answers: [],
     scoutRun: { run_id: null, any_site: false },
+    // Apply with Claude (spec 022): what GET /v1/apply/active answers.
+    applyRun: { run_id: null },
+    photoTypes: [], // the content-type of each photo Job Catcher sent
     saved: [], // [{title, company, url}] — what /saved-jobs/check knows
     // The saved-jobs list the panel shows (GET /v1/saved-jobs/summary).
     jobs: [],
@@ -365,6 +368,14 @@ export async function startFakeApi() {
     },
     "GET /v1/scout/runs/active": () => ({ body: state.scoutRun }),
     "POST /v1/scout/captures": () => ({ body: { stored: !!state.scoutRun.run_id } }),
+    "GET /v1/apply/active": () => ({ body: state.applyRun }),
+    "POST /v1/apply/requests/:id/claim": () => ({ body: { ok: true } }),
+    "POST /v1/apply/requests/:id/photo": (_body, req) => {
+      state.photoTypes.push(req.headers["content-type"]);
+      return { status: 201, body: { id: `p${state.photoTypes.length}` } };
+    },
+    "POST /v1/apply/requests/:id/result": () => ({ body: { status: "done" } }),
+    "POST /v1/apply/runs/:id/event": () => ({ body: { status: "review" } }),
   };
 
   const server = createServer(async (req, res) => {
@@ -373,6 +384,8 @@ export async function startFakeApi() {
     log.push({ method: req.method, path, body, at: Date.now() });
     let key = `${req.method} ${path}`;
     if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
+    const apply = key.match(/^POST \/v1\/apply\/(requests|runs)\/[^/]+\/(claim|photo|result|event)$/);
+    if (apply) key = `POST /v1/apply/${apply[1]}/:id/${apply[2]}`;
     if (/^DELETE \/v1\/autofill\/taught\/[^/]+$/.test(key)) key = "DELETE /v1/autofill/taught/:id";
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/file$/.test(key)) key = "GET /v1/autofill/resumes/:id/file";
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/details$/.test(key)) key = "GET /v1/autofill/resumes/:id/details";

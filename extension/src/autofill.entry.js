@@ -25,6 +25,8 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
+import { startApplyMode } from "./autofill/applyMode.js";
+import { pageAnswers } from "./autofill/applyPage.js";
 import { editKey, fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
 
 // This copy owns the page (see orphan.js): drop what older copies drew.
@@ -628,6 +630,9 @@ async function fillPickedNow({ fieldId: id, profile_key, answer }) {
 globalThis.__jecAutofill = {
   alive: () => isCurrent() && !runtimeGone(),
   report: () => (isCurrent() ? scanReportNow() : null),
+  // Apply with Claude (spec 022): every question here with its answer, for
+  // the photos' review. Read by the background in every frame.
+  answers: () => (isCurrent() ? pageAnswers(session.scan(), readField) : []),
 };
 
 // ---- Start ----------------------------------------------------------------
@@ -681,3 +686,20 @@ function start() {
 // A copy injected while the page is still loading waits for its body.
 if (document.body) start();
 else document.addEventListener("DOMContentLoaded", start, { once: true });
+
+// Apply with Claude (spec 022): idle until the background says an application
+// is open on this site; then Submit presses wait for the user's OK, and the
+// top frame scrolls for the photos.
+let applyMode = null;
+try {
+  applyMode = startApplyMode({ send, isCurrent, scan: () => session.scan(), readField });
+  chrome.runtime.onMessage.addListener((msg, _sender, reply) => {
+    if (msg?.type !== "applyPage" || !isCurrent() || window.top !== window) return;
+    Promise.resolve(applyMode.answer(msg))
+      .then(reply)
+      .catch(() => reply(null));
+    return true;
+  });
+} catch {
+  /* orphaned */
+}

@@ -14,6 +14,7 @@ import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
+import { createApplyRun } from "./background/applyRun.js";
 import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
 import { pageId, siteKey } from "./autofill/hosts.js";
@@ -431,6 +432,25 @@ function storeFillSession(tabId, frameId, session) {
 // Does each tab have a form, and what is Autofill doing there (spec 016).
 const presence = createFillPresence({
   notify: (tabId) => chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {}),
+});
+
+// Apply with Claude (spec 022): photos, fill on request, the Submit block.
+const applyRun = createApplyRun({
+  api: async (path, init = {}) => {
+    const token = await getValidToken();
+    if (!token) return null;
+    const json = typeof init.body === "string";
+    return fetchWithTimeout(`${cfg.API_BASE}${path}`, {
+      ...init,
+      headers: {
+        Authorization: `Bearer ${token}`,
+        ...(json ? { "Content-Type": "application/json" } : {}),
+        ...(init.headers || {}),
+      },
+    });
+  },
+  press: (tabId) => presence.press(tabId),
+  fillSession: (tabId) => getFillSession(tabId),
 });
 
 async function getFillSession(tabId) {
@@ -1188,6 +1208,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true, ...(await checkSaved(msg.job)) });
       } else if (msg.type === "scoutAnySite") {
         sendResponse({ ok: true, ...(await scoutAnySite()) });
+      } else if (msg.type === "applyTick") {
+        // The tab decides (every frame in it, a form embedded from another
+        // site included); the frame's own address only goes in the log.
+        sendResponse(await applyRun.tick(sender.tab));
+      } else if (msg.type === "applyBlocked") {
+        await applyRun.event("blocked_submit", sender.tab, msg.url);
+        sendResponse({ ok: true });
+      } else if (msg.type === "applySubmitPressed") {
+        await applyRun.event("submit_pressed", sender.tab, msg.url);
+        sendResponse({ ok: true });
       } else if (msg.type === "scoutCapture") {
         sendResponse({ ok: true, ...(await scoutCapture(msg.job)) });
       } else if (msg.type === "backfillJob") {

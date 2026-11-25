@@ -96,6 +96,7 @@ Vite + React 19 + Tailwind v4 + lucide, the same stack and tokens as `frontend/`
 | `e2e/support/` | `launch.js` (test copy of the built extension + test `config.js`, never the repo's), `fake-api.js` (fake app server, invented applicant, recorded calls), `lab-server.js` (serves `test/lab/` + `test/fixtures/` on two origins) |
 | `e2e/*.spec.js` | Playwright in real Chromium against the fake server: the panel in every context + WCAG AA in both themes (`panel.spec.js`), the on-page Save button, bridge, Scout copies, a real 0.27 → current upgrade (`reinject.spec.js`). `npm run test:e2e`; CI runs them under xvfb |
 | `test/theme-drift.spec.js` | Fails if the panel's color tokens drift from the app's |
+| `src/background/applyRun.js` · `src/autofill/applyMode.js` · `src/autofill/applyPage.js` | Apply with Claude (spec 022): the background finds the open application (`GET /v1/apply/active`, 2 s while open, 60 s otherwise), claims each request once, takes photos screen by screen (`captureVisibleTab`, shrunk to JPEG under 400 KB, at most 8, scroll put back) with every question and answer, or fills like the panel's press; pages block an application's final Submit until the user's OK and report a press once allowed. Needs the `<all_urls>` host permission (Chrome's rule for tab photos) |
 
 **How it connects:** the **background** worker is the single API caller (Supabase Auth
 with token refresh → `POST /v1/saved-jobs/manual`, Bearer). The content script and side

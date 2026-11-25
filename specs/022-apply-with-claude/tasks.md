@@ -32,7 +32,7 @@
 
 ## Part D: Job Catcher apply mode (PR `022-apply-job-catcher`)
 
-- [ ] T030 [US5] Background apply loop extension/src/background/applyRun.js: find the run, claim, fill (presence.press), photos (scroll + captureVisibleTab + shrink), results
-- [ ] T031 [US5] Page side in extension/src/autofill.entry.js: tick, scroll steps, answers list, Submit block, Submit notice
-- [ ] T032 [US6] Final-submit matcher extension/src/autofill/submitGuard.js (pure) with tests
-- [ ] T033 [P] Tests: unit (applyRun, submitGuard) + e2e with the fake API; bump the manifest to 0.40.0 plus the release notice
+- [X] T030 [US5] Background apply loop extension/src/background/applyRun.js: find the run, claim, fill (presence.press), photos (scroll + captureVisibleTab + shrink), results
+- [X] T031 [US5] Page side in extension/src/autofill.entry.js: tick, scroll steps, answers list, Submit block, Submit notice
+- [X] T032 [US6] Final-submit matcher extension/src/autofill/applyPage.js (pure) with tests
+- [X] T033 [P] Tests: unit (applyRun, submitGuard) + e2e with the fake API; bump the manifest to 0.40.0 plus the release notice
