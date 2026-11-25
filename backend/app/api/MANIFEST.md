@@ -20,6 +20,7 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}` — requires `role=admin` |
 | `v1/auth.py` | — | auth helpers/routes (see file) |
 | `v1/router.py` | — | aggregates all routers under `/v1` |
+| `v1/apply.py` | `/v1/apply/*` (the app: start, open, runs for a job, one run, answers, help-done, decision, sent, stop, photos; Job Catcher with its pass: active, claim, photo, result, event) and `/v1/profile-facts` (list, edit, delete) — spec 022 |
 
 ## Auth pattern (`middleware/auth.py`)
 - **`CurrentUser`** — verifies the Supabase **ES256** token via the project **JWKS**; lazy-creates the User on first login.

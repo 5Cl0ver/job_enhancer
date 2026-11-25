@@ -54,6 +54,11 @@ PASS_ROUTES = {
     ("GET", "/v1/ai/documents/{doc_id}/pdf"),
     ("GET", "/v1/scout/runs/active"),
     ("POST", "/v1/scout/captures"),
+    ("GET", "/v1/apply/active"),
+    ("POST", "/v1/apply/requests/{request_id}/claim"),
+    ("POST", "/v1/apply/requests/{request_id}/photo"),
+    ("POST", "/v1/apply/requests/{request_id}/result"),
+    ("POST", "/v1/apply/runs/{run_id}/event"),
     ("POST", "/v1/extension/hello"),
     ("DELETE", "/v1/extension/tokens/current"),
 }

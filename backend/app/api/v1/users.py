@@ -14,6 +14,7 @@ from app.config import settings
 from app.database import get_db
 from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.application_profile import ApplicationProfile
+from app.models.apply import ApplyRun, ProfileFact
 from app.models.collection import Collection
 from app.models.custom_answer import CustomAnswer
 from app.models.extension import ExtensionInstall, ExtensionToken
@@ -314,6 +315,17 @@ async def export_data(
         .all()
     )
 
+    told_claude = (
+        (await db.execute(select(ProfileFact).where(ProfileFact.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+    apply_runs = (
+        (await db.execute(select(ApplyRun).where(ApplyRun.user_id == user.id)))
+        .scalars()
+        .all()
+    )
+
     ext_tokens = (
         (
             await db.execute(
@@ -424,6 +436,31 @@ async def export_data(
                 "created_at": _dt(t.created_at),
             }
             for t in taught_fields
+        ],
+        # Apply with Claude (spec 022): what the user told Claude, and each
+        # application's steps and answers (photos are images: not exported).
+        "told_claude": [
+            {
+                "question": f.question,
+                "answer": f.answer,
+                "updated_at": _dt(f.updated_at),
+            }
+            for f in told_claude
+        ],
+        "apply_runs": [
+            {
+                "id": str(r.id),
+                "saved_job_id": str(r.saved_job_id),
+                "status": r.status,
+                "questions": r.questions,
+                "pages": [
+                    {k: p.get(k) for k in ("n", "title", "url", "answers", "at")}
+                    for p in r.pages or []
+                ],
+                "created_at": _dt(r.created_at),
+                "finished_at": _dt(r.finished_at),
+            }
+            for r in apply_runs
         ],
         # Connected Job Catchers: never the passes themselves (or their hashes).
         "job_catcher_connections": [

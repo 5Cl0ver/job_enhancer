@@ -49,6 +49,7 @@ async def test_export_data(client: AsyncClient, test_user: User):
     # Seeded defaults are included
     assert len(data["collections"]) == 1
     assert len(data["pipeline_stages"]) == 8
+    assert data["told_claude"] == [] and data["apply_runs"] == []
 
 
 @pytest.mark.asyncio

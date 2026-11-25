@@ -10,15 +10,15 @@
 
 ## Part B: apply runs on the server (PR `022-apply-runs`)
 
-- [ ] T010 Migration s7b8c9d0e1f3_apply_runs (apply_runs, apply_requests, apply_photos, profile_facts, resumes.is_master, resumes.document_id) plus a migration test
-- [ ] T011 Models in backend/app/models/apply.py and resume.py
-- [ ] T012 [US2] Service backend/app/services/apply_runs.py: create, open run, expiry, lock, status, events, brief, questions, answers, help, review, finish, requests, photos, cleanup
-- [ ] T013 [US4] Résumé save in backend/app/services/apply_resume.py: layout check, document + PDF résumé, set the job's résumé, re-render on edit (PDF code moved to app/services/resume_pdf.py)
-- [ ] T014 [US3] Facts service + routes (backend/app/api/v1/profile_facts.py); add the facts and the master résumé to `_master_profile_text`
-- [ ] T015 [US4] Résumé master/delete routes plus the list fields in backend/app/api/v1/ai.py
-- [ ] T016 [US2] REST routes in backend/app/api/v1/apply.py (app and Job Catcher); update the pass allowlist test
-- [ ] T017 [US2] Connector tools in backend/app/mcp_server.py; playbook and rules in backend/app/apply/*.md
-- [ ] T018 [P] Tests: tests/test_apply_runs.py, tests/test_mcp_apply.py, tests/api/test_apply_api.py, tests/test_apply_resume.py, tests/api/test_profile_facts.py
+- [X] T010 Migration s7b8c9d0e1f3_apply_runs (apply_runs, apply_requests, apply_photos, profile_facts, resumes.is_master, resumes.document_id) plus a migration test
+- [X] T011 Models in backend/app/models/apply.py and resume.py
+- [X] T012 [US2] Service backend/app/services/apply_runs.py: create, open run, expiry, lock, status, events, brief, questions, answers, help, review, finish, requests, photos, cleanup
+- [X] T013 [US4] Résumé save in backend/app/services/apply_resume.py: layout check, document + PDF résumé, set the job's résumé, re-render on edit (PDF code moved to app/services/resume_pdf.py)
+- [X] T014 [US3] Facts service + routes (backend/app/api/v1/profile_facts.py); add the facts and the master résumé to `_master_profile_text`
+- [X] T015 [US4] Résumé master/delete routes plus the list fields in backend/app/api/v1/ai.py
+- [X] T016 [US2] REST routes in backend/app/api/v1/apply.py (app and Job Catcher); update the pass allowlist test
+- [X] T017 [US2] Connector tools in backend/app/mcp_server.py; playbook and rules in backend/app/apply/*.md
+- [X] T018 [P] Tests: tests/test_apply_runs.py, tests/test_mcp_apply.py, tests/api/test_apply_api.py, tests/test_apply_resume.py, tests/api/test_profile_facts.py
 
 ## Part C: the app (PR `022-apply-app`)
 

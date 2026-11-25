@@ -68,6 +68,17 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="purge_old_usage",
         replace_existing=True,
     )
+    from app.services.apply_runs import sweep_job
+
+    # Apply with Claude (spec 022): idle runs stop, photos go after 30 days.
+    scheduler.add_job(
+        sweep_job,
+        trigger="interval",
+        hours=6,
+        args=[AsyncSessionLocal],
+        id="apply_sweep",
+        replace_existing=True,
+    )
     from app.services.saved_searches import refresh_saved_searches
 
     scheduler.add_job(
