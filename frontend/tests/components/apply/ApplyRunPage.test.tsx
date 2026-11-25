@@ -104,6 +104,10 @@ describe("the application page", () => {
     post.mockResolvedValue({ ...RUN, status: "writing" });
     renderPage();
     await screen.findByText("1. Have you used Okta?");
+    // What Claude waits for comes first: before the chat, and no empty screen card.
+    const headings = screen.getAllByRole("heading").map((h) => h.textContent);
+    expect(headings.indexOf("Questions")).toBeLessThan(headings.indexOf("Talk to Claude"));
+    expect(headings).not.toContain("The screen");
     expect(screen.getByText("The listing says: “Okta experience”")).toBeInTheDocument();
     const [yes] = screen.getAllByRole("button", { name: "Yes" });
     await userEvent.click(yes);
