@@ -105,7 +105,31 @@ export const useAnswerQuestions = () =>
     (v) => ({ answers: v.answers, done: v.done }),
   );
 
-export const useHelpDone = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/help-done`);
+/** Keep going, with the user's answer when Claude asked (spec 023). */
+export const useHelpDone = () =>
+  useRunAction<{ runId: string; reply?: string }>(
+    (v) => `/v1/apply/runs/${v.runId}/help-done`,
+    (v) => ({ reply: v.reply ?? null }),
+  );
+
+/** Write to Claude: it gets it on its next connector call. */
+export const usePostMessage = () =>
+  useRunAction<{ runId: string; text: string }>(
+    (v) => `/v1/apply/runs/${v.runId}/messages`,
+    (v) => ({ text: v.text }),
+  );
+
+/** "It wasn't sent": back to the review. */
+export const useNotSent = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/not-sent`);
+
+/** A photo of the application's screen as it is now. */
+export function usePeek() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (runId: string) => api.post<{ request_id: string }>(`/v1/apply/runs/${runId}/peek`, {}),
+    onSuccess: (_r, runId) => qc.invalidateQueries({ queryKey: ["apply-run", runId] }),
+  });
+}
 
 export const useDecide = () =>
   useRunAction<{ runId: string; decision: "submit" | "fix" | "self"; note?: string }>(

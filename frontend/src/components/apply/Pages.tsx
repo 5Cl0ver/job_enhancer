@@ -7,7 +7,7 @@ import { cn } from "@/lib/utils";
 import { usePhoto } from "@/hooks/useApply";
 import { type ApplyPage, latestPages, pageAnswers } from "@/lib/apply";
 
-function Photo({ id, alt, className }: { id: string; alt: string; className?: string }) {
+export function Photo({ id, alt, className }: { id: string; alt: string; className?: string }) {
   const { data: src, isError } = usePhoto(id);
   if (isError) return <div className={cn("flex items-center justify-center bg-muted", className)}><ImageOff className="h-4 w-4" aria-label="Couldn't load" /></div>;
   if (!src) return <Skeleton className={className} />;

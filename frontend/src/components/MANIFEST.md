@@ -128,6 +128,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 ## `admin/`
 | `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users with setup dots, Job Catcher version (old ones marked), last active and today's use · `AllowancesCard.tsx` the daily free allowances and the JSearch reserve · `SignupTrendChart.tsx` recharts line chart |
 | `apply/*` (spec 022) | `ApplyWithClaudeButton` (job page), `ApplySteps`, `Questions` (Yes/No + details), `ResumeForJob` (view, edit text → PDF remade, change), `Pages` (photos + answers, full-size viewer), `Review` (Submit / Fix / I'll submit it myself), `ApplyBanner` (every screen while Claude waits for you), `WhatYouSent`; `settings/ResumesCard.tsx` (master résumé, made for a job, things you've told Claude) |
+| `apply/Remote.tsx` (spec 023) | The application page as a remote control: `HelpCard` (Claude's question, a photo of the screen, quick answers, your own words; CAPTCHA/sign-in "needs you at the computer"), `Conversation` (Claude's updates and your messages, Read by Claude), `ScreenNow` (Show me the screen), `Stopped` (Claude went quiet + the carry-on line), `DidItGo` (It was sent / It wasn't), `Readiness` (Job Catcher 0.41.0+ seen lately), `SentCard` (Sent, confirmed: what Job Catcher saw) |
 
 **How this folder connects:** components are composed by `routes/*`; they get
 data via `hooks/*` → `lib/api.ts` → FastAPI.

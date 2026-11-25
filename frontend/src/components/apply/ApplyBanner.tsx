@@ -1,3 +1,4 @@
+import { useEffect } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Hand } from "lucide-react";
 import { useOpenApply } from "@/hooks/useApply";
@@ -10,7 +11,14 @@ import { bannerLine, needsYou } from "@/lib/apply";
 export function ApplyBanner() {
   const { data: run } = useOpenApply();
   const { pathname } = useLocation();
-  if (!run || !needsYou(run) || pathname === `/apply/${run.id}`) return null;
+  const waiting = !!run && needsYou(run);
+  // "(!)" in the browser tab's title while Claude waits for you (spec 023).
+  useEffect(() => {
+    const mark = "(!) ";
+    const clean = document.title.startsWith(mark) ? document.title.slice(mark.length) : document.title;
+    document.title = waiting ? mark + clean : clean;
+  }, [waiting, pathname]);
+  if (!run || !waiting || pathname === `/apply/${run.id}`) return null;
   return (
     <Link
       to={`/apply/${run.id}`}

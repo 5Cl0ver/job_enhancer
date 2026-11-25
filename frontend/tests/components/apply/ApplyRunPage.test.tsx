@@ -132,7 +132,7 @@ describe("the application page", () => {
     expect(await screen.findByText("Make a Workday account with your email.")).toBeInTheDocument();
     expect(screen.getByText(/never sees or stores your passwords/)).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "Done, keep going" }));
-    await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/help-done", {}));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/help-done", { reply: null }));
   });
 
   it("the review: photos and answers, then Submit or a fix", async () => {
