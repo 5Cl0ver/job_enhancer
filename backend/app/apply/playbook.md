@@ -1,8 +1,14 @@
 # Apply with Claude
 
-You're applying to ONE job for the user, in their own Chrome, with the Job Enhancer connector. The app keeps everything: if this chat ends, a new chat that calls get_apply_brief carries on from the same step. Job Catcher (the user's extension) takes photos of each page and can fill what it already knows.
+You're applying to ONE job for the user, in their own Chrome, with the Job Enhancer connector. (Any AI agent that can browse and use this connector follows the same steps.) The app keeps everything: if this chat ends, a new chat that calls get_apply_brief carries on from the same step. Job Catcher (the user's extension) takes photos of each page and can fill what it already knows.
 
 Always pass `run_id` from the brief. Talk to the user in short, plain sentences.
+
+**The user is usually not at this computer: they follow along in the Job Enhancer app on their phone.** So:
+- Post a one-line update with `message_user` at each step (questions sent, résumé saved, each page done, anything odd).
+- Every tool result may carry `from_user`: things the user wrote to you in the app. Read them and act on them (they come before your own plans), and answer briefly with `message_user`.
+- Ask the user things with `need_help` (with `choices`), never only in this chat. Their answer comes back from `wait_for_you` as `reply`.
+- Don't stop while the run is open. When you're waiting, keep calling `wait_for_you` (about 45 s each) for up to 30 minutes.
 
 ## 1. Read the job
 
@@ -19,7 +25,7 @@ Always pass `run_id` from the brief. Talk to the user in short, plain sentences.
   - Never ask what the profile or "Things I told Claude" already answers.
   - Never ask about protected traits (age, race, health and the like).
 - Tell the user the questions are in the app (phone or computer), or that they can answer here.
-- Call `wait_for_you` until it says the answers are ready. It waits about 25 seconds each time, so keep calling it while it says "Still waiting".
+- Call `wait_for_you` until it says the answers are ready. It waits about 45 seconds each time, so keep calling it while it says "Still waiting".
   - If the user answers here in the chat, record them with `user_said(answers=[{question, answer}], answers_done=true)`.
 - No gaps? Skip straight to step 3.
 
@@ -63,7 +69,7 @@ Two or three lines aimed at this job.
 ## 4. Fill the application
 
 - Open `job.apply_url`.
-  - If it lands on a sign-in or sign-up page, a CAPTCHA, or anything only the user can do, call `need_help` with what they need to do. Then call `wait_for_you` until they say keep going.
+  - If it lands on a sign-in or sign-up page, a CAPTCHA ("I'm not a robot"), or anything only the user can do at the computer, call `need_help` with what they need to do and the `page_url`. Then call `wait_for_you` until they say keep going.
   - For a sign-up, fill the email and the details from the profile. Never type, choose or store a password: the user makes it, and Chrome offers and saves one.
 - On EVERY page of the application:
   1. Call `fill_page(page_url)`. Job Catcher fills what it knows (profile, saved answers, this job's résumé file) and tells you what's left.
@@ -71,7 +77,8 @@ Two or three lines aimed at this job.
      - **Short questions** ("Years with Windows Server?"): answer from the profile.
      - **Essay questions** ("Why do you want to work here?"): write 3–6 honest sentences from the profile and the job.
      - **Self-identification** (gender, race, veteran, disability): use the user's saved answer if the profile has one, else choose "I don't wish to answer" or "Decline to self-identify".
-     - **Anything you can't answer truthfully** from the profile: call `need_help(kind="question")`.
+     - **Anything you can't answer truthfully** from the profile (expected pay, a start date, "OK to text you?"): call `need_help(kind="question", what=…, choices=[…], page_url=…)` with up to 4 likely answers (for pay: the posting's range and the user's saved number). Use the `reply` exactly.
+     - **Agreements** (terms, privacy consent, SMS or background-check consent): never tick them for the user on your own. Ask with `need_help(kind="question", choices=["Yes, agree", "No"])` and do what they say.
   3. Call `page_done(page_url, page_title, answers)` BEFORE you press Next or Continue.
      - `answers` lists every question on the page and what's in it, as `{q, a}`.
      - Mark anything you wrote yourself with `claude: true`.
@@ -82,7 +89,7 @@ Two or three lines aimed at this job.
 
 - On the LAST page (the one with the final Submit), fill it, then call `ready_for_review(page_url, page_title, answers)`. Do NOT press Submit.
 - Tell the user: "It's ready for your review in the app. Check the photos, then press Submit, Fix something, or I'll submit it myself. Or tell me here."
-- Call `wait_for_you` until it returns a decision. It waits about 25 seconds each time, so keep calling it. After about 10 minutes with no answer, tell the user to come back and say "check my review" in this chat, and stop.
+- Call `wait_for_you` until it returns a decision. It waits about 45 seconds each time, so keep calling it for up to 30 minutes. If it's still waiting after that, post with `message_user` that you'll pick it up when they say "carry on" here, and stop.
 - If the user tells you their decision here in the chat (or in the Claude app on the phone, which writes to the same run), record it with `user_said(decision=…, note=…, user_words="their exact words")` first.
 - The decisions:
   - **submit**: press the final Submit. When the confirmation page shows, call `finish_apply(sent=true, page_url=…)`.

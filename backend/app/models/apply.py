@@ -67,6 +67,7 @@ OPEN_SQL = "status IN (" + ", ".join(f"'{s}'" for s in APPLY_OPEN) + ")"
 
 REQUEST_PHOTO = "photo"
 REQUEST_FILL = "fill"
+REQUEST_PEEK = "peek"  # the screen as it is now, one shot (spec 023)
 REQUEST_PENDING = "pending"
 REQUEST_WORKING = "working"
 REQUEST_DONE = "done"
@@ -126,6 +127,8 @@ class ApplyRun(Base):
     # {round, decision: None|"submit"|"fix"|"self", note, by, at}
     review: Mapped[dict | None] = mapped_column(JSON)
     events: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # The conversation (spec 023): [{id, by: "you"|"claude", text, at, read}].
+    messages: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
     # Hosts Job Catcher's Submit safety net covers (the apply link's, and every
     # page Claude marked done).
     apply_hosts: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
@@ -140,6 +143,8 @@ class ApplyRun(Base):
     created_at: Mapped[datetime] = _now_col()
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_activity_at: Mapped[datetime] = _now_col()
+    # Claude's last connector call: "Claude seems to have stopped" (spec 023).
+    claude_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 

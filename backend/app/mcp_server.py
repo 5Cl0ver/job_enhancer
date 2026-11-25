@@ -673,13 +673,15 @@ async def finish_scout_run(run_id: str, note: str = "") -> dict:
 # --------------------------------------------------------------------------- #
 
 
-async def _apply(call):
+async def _apply(call, run_id=None):
     async with _session_user() as (db, user):
         try:
             out = await call(db, user)
         except ValueError:
             await db.rollback()
             raise
+        # What the user wrote in the app since Claude's last call (spec 023).
+        out = await apply_svc.with_inbox(db, user, run_id, out)
         await db.commit()
         return out
 
@@ -691,7 +693,7 @@ async def get_apply_brief(run_id: str | None = None) -> dict:
     ONLY source of facts about them), skills the listing names that the
     profile doesn't show, and what to do next. Call this first, in every new
     chat."""
-    return await _apply(lambda db, user: apply_svc.brief(db, user, run_id))
+    return await _apply(lambda db, user: apply_svc.brief(db, user, run_id), run_id)
 
 
 @mcp.tool
@@ -701,7 +703,7 @@ async def ask_questions(run_id: str, questions: list[dict]) -> dict:
     At most 12 in all. The user answers in the app or the chat; then call
     wait_for_you."""
     return await _apply(
-        lambda db, user: apply_svc.ask_questions(db, user, run_id, questions)
+        lambda db, user: apply_svc.ask_questions(db, user, run_id, questions), run_id
     )
 
 
@@ -712,14 +714,14 @@ async def save_resume(run_id: str, content: str) -> dict:
     résumé: a PDF Job Catcher uploads on the application. Calling it again in
     the same run replaces it."""
     return await _apply(
-        lambda db, user: apply_svc.save_resume(db, user, run_id, content)
+        lambda db, user: apply_svc.save_resume(db, user, run_id, content), run_id
     )
 
 
 @mcp.tool
 async def fill_page(run_id: str, page_url: str) -> dict:
     """Ask Job Catcher to fill this application page with what it knows
-    (profile, saved answers, this job's résumé file). Waits up to ~25 s and
+    (profile, saved answers, this job's résumé file). Waits up to ~45 s and
     returns what it filled and what still needs an answer. page_url is the
     page's full address."""
     async with _session_user() as (db, user):
@@ -728,8 +730,12 @@ async def fill_page(run_id: str, page_url: str) -> dict:
         except ValueError:
             await db.rollback()
             raise
+        rid = run.id
         res = await apply_svc.wait_request(db, req.id)
-        return {"run_id": str(run.id), **apply_svc.fill_result(res)}
+        out = {"run_id": str(rid), **apply_svc.fill_result(res)}
+        out = await apply_svc.with_inbox(db, user, rid, out)
+        await db.commit()
+        return out
 
 
 async def _page(run_id, page_url, page_title, answers, last: bool) -> dict:
@@ -744,6 +750,7 @@ async def _page(run_id, page_url, page_title, answers, last: bool) -> dict:
         rid, n = run.id, page["n"]
         res = await apply_svc.wait_request(db, req.id)
         out = await apply_svc.photo_result(db, user, rid, n, res)
+        out = await apply_svc.with_inbox(db, user, rid, out)
         await db.commit()
         return out
 
@@ -771,21 +778,49 @@ async def ready_for_review(
 
 
 @mcp.tool
-async def need_help(run_id: str, kind: str, what: str) -> dict:
-    """Ask the user to do something only they can: kind is sign_in, sign_up,
-    captcha, question, site or other; what says exactly what to do. The app
-    shows it; then call wait_for_you until they say keep going."""
+async def need_help(
+    run_id: str,
+    kind: str,
+    what: str,
+    choices: list[str] | None = None,
+    page_url: str | None = None,
+) -> dict:
+    """Ask the user for something only they can give or do: kind is sign_in,
+    sign_up, captcha, question, site or other; what says exactly what you need.
+    For a question, offer up to 4 short `choices` (e.g. ["Yes", "No"] or
+    ["$120,000", "$130,000"]); they can also type any answer. page_url: the
+    page you're on (the app shows the user a photo of it). The user answers in
+    the app on their phone or computer; then call wait_for_you, which returns
+    their answer as `reply`."""
     return await _apply(
-        lambda db, user: apply_svc.need_help(db, user, run_id, kind, what)
+        lambda db, user: apply_svc.need_help(
+            db, user, run_id, kind, what, choices, page_url
+        ),
+        run_id,
     )
 
 
 @mcp.tool
 async def wait_for_you(run_id: str) -> dict:
-    """Wait (about 25 s) for the user: their answers, "keep going", or their
-    review decision (submit / fix + note / self). Returns ready: false while
-    still waiting; call it again. next says what to do."""
-    return await _apply(lambda db, user: apply_svc.wait_for_you(db, user, run_id))
+    """Wait (about 45 s) for the user: their answers, their reply to need_help,
+    or their review decision (submit / fix + note / self). Returns ready: false
+    while still waiting: call it again, for up to 30 minutes. It also returns
+    early with from_user when the user writes to you in the app. next says what
+    to do."""
+    return await _apply(
+        lambda db, user: apply_svc.wait_for_you(db, user, run_id), run_id
+    )
+
+
+@mcp.tool
+async def message_user(run_id: str, text: str) -> dict:
+    """A short update for the user, shown in the app's conversation on their
+    phone or computer (e.g. "Page 2 of 4 done", "The site wants a 10-digit phone
+    number; I used 503…"). Use it to answer what they wrote you (from_user) and
+    whenever something is worth knowing. Never ask for passwords here."""
+    return await _apply(
+        lambda db, user: apply_svc.message_user(db, user, run_id, text), run_id
+    )
 
 
 @mcp.tool
@@ -815,7 +850,8 @@ async def user_said(
             keep_going=keep_going,
             answers_done=answers_done,
             user_words=user_words,
-        )
+        ),
+        run_id,
     )
 
 

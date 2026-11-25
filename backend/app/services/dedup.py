@@ -15,6 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.job_listing import JobListing
+from app.utils.text import unescape
 
 _NON_ALPHA = re.compile(r"[^a-z0-9\s]")
 _WHITESPACE = re.compile(r"\s+")
@@ -27,8 +28,9 @@ _FUZZY_CANDIDATE_LIMIT = 50
 
 
 def normalize(text: str) -> str:
-    """Lowercase, strip punctuation, collapse whitespace."""
-    text = text.lower()
+    """Lowercase, strip punctuation, collapse whitespace. HTML entities are
+    decoded first, so "&amp;" and "&" key the same job (spec 023)."""
+    text = unescape(text).lower()
     text = _NON_ALPHA.sub(" ", text)
     text = _WHITESPACE.sub(" ", text).strip()
     return text

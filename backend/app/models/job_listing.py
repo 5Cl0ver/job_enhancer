@@ -5,13 +5,26 @@ from datetime import datetime
 
 from sqlalchemy import Boolean, DateTime, Index, Integer, String, Text, func
 from sqlalchemy.dialects.postgresql import UUID
-from sqlalchemy.orm import Mapped, mapped_column, query_expression, relationship
+from sqlalchemy.orm import (
+    Mapped,
+    mapped_column,
+    query_expression,
+    relationship,
+    validates,
+)
 
 from app.models import Base
+from app.utils.text import unescape
 
 
 class JobListing(Base):
     __tablename__ = "job_listings"
+
+    # Pages and job APIs hand titles over HTML-escaped ("Microsoft 365 &amp;
+    # Copilot"): every save, from any source, keeps the plain words (spec 023).
+    @validates("title", "company", "location")
+    def _plain(self, _key, value):
+        return unescape(value)
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
