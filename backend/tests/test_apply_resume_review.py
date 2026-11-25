@@ -79,6 +79,21 @@ async def test_claude_waits_for_your_look_at_the_resume(engine, monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_a_change_is_looked_at_again_even_after_turning_it_off(
+    engine, monkeypatch
+):
+    maker, user, run_id, rid, saved = await _written(engine, monkeypatch)
+    async with maker() as db:
+        (await db.get(User, user.id)).review_resumes = False  # "Don't ask me next time"
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        await svc.resume_decide(db, run, "change", "Shorter summary", by="app")
+        await db.commit()
+    await mcp_mod.wait_for_you(rid)
+    await mcp_mod.save_resume(rid, RESUME)
+    assert (await _run(maker, run_id)).status == "resume_review"
+
+
+@pytest.mark.asyncio
 async def test_review_turned_off_goes_straight_on(engine, monkeypatch):
     maker, user, run_id, job_id = await _setup(engine, monkeypatch)
     async with maker() as db:
@@ -113,10 +128,20 @@ async def test_a_picked_resume_skips_questions_writing_and_the_look(
     assert "picked their résumé" in brief["next"]
     filled = await mcp_mod.fill_page(rid, "https://acme.example/apply/1")
     assert filled["run_id"] == rid
-    # A résumé saved anyway (the user asked in the chat) isn't held for a look.
-    await mcp_mod.save_resume(rid, RESUME)
+    # A résumé saved anyway (the user asked in the chat) isn't held for a look,
+    # and never writes over the résumé the user picked.
     async with maker() as db:
-        assert (await svc.get_run(db, user.id, uuid.UUID(rid))).status == "filling"
+        before = await db.get(Resume, picked_id)
+        kept = (before.file_data, before.extracted_text, before.document_id)
+    saved = await mcp_mod.save_resume(rid, RESUME)
+    assert saved["resume_id"] != str(picked_id)
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, uuid.UUID(rid))
+        assert run.status == "filling"
+        assert str(run.resume_id) == saved["resume_id"] and not run.resume_picked
+        mine = await db.get(Resume, picked_id)
+        assert (mine.file_data, mine.extracted_text, mine.document_id) == kept
+        assert str((await db.get(SavedJob, job_id)).resume_id) == saved["resume_id"]
 
 
 @pytest.mark.asyncio

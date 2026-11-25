@@ -880,7 +880,8 @@ def claude_stopped(run: ApplyRun) -> bool:
     answered = [
         datetime.fromisoformat(e["at"])
         for e in run.events or []
-        if e.get("kind") in ("answers", "help_done", "decision", "not_sent")
+        if e.get("kind")
+        in ("answers", "help_done", "decision", "resume_decision", "not_sent")
         and e.get("at")
     ]
     since = max([last, *answered])
@@ -1172,12 +1173,18 @@ async def save_resume(
     sj = await _saved_job(db, run)
     # Before the application is filled, the user looks the résumé over
     # (spec 025), unless they turned that off or picked their own.
+    # A look already going in this run carries on (a change is looked at
+    # again even if the user just turned the setting off).
     check = (
         run.status
         in (APPLY_READING, APPLY_QUESTIONS, APPLY_WRITING, APPLY_RESUME_REVIEW)
-        and user.review_resumes
+        and (user.review_resumes or run.resume_check is not None)
         and not run.resume_picked
     )
+    if run.resume_picked:
+        # The user's own résumé is never written over: Claude's is a new one
+        # for this job (and becomes the run's and the job's).
+        run.resume_id, run.document_id, run.resume_picked = None, None, False
     _set(run, APPLY_WRITING)
     resume, doc = await apply_resume.save_for_job(db, user, sj, content, run)
     _event(run, "resume", f"Claude saved the résumé for this job ({resume.filename}).")
