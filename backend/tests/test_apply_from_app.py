@@ -407,3 +407,49 @@ async def test_a_site_error_after_submit_is_fixed_with_the_users_ok(
     assert out["ready"] is True and "press the final Submit once more" in out["next"]
     run = await _run(maker, run_id)
     assert svc._claudes_turn(run) is True
+
+
+@pytest.mark.asyncio
+async def test_no_confirmation_counts_before_a_press(engine, monkeypatch):
+    maker, user, run_id, rid = await _filling(engine, monkeypatch)
+    _job_catcher(monkeypatch, maker, user.id, photos=1)
+    await mcp_mod.ready_for_review(rid, "https://acme.example/apply/9", "Review", [])
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        await svc.decide(db, run, "submit", None, by="app")
+        await db.commit()
+    await mcp_mod.wait_for_you(rid)  # → submitting, nothing pressed yet
+    async with maker() as db:
+        # "Once your application has been submitted…" on the review page
+        await svc.extension_event(
+            db,
+            user.id,
+            run_id,
+            "confirmation_seen",
+            "https://acme.example/apply/9",
+            "application has been submitted",
+        )
+        await db.commit()
+        run = await db.get(ApplyRun, run_id)
+        assert run.status == "submitting"
+        assert (await svc.extension_state(db, user.id))["watch"] is False
+        await svc.extension_event(
+            db, user.id, run_id, "submit_pressed", "https://acme.example/apply/9"
+        )
+        await db.commit()
+        assert (await svc.extension_state(db, user.id))["watch"] is True
+
+
+@pytest.mark.asyncio
+async def test_the_banner_knows_to_ask_and_stopped_stays_quiet(engine, monkeypatch):
+    maker, user, run_id, rid = await _pressed(engine, monkeypatch)
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        run.review = {
+            **run.review,
+            "pressed_at": svc._iso(svc._now() - timedelta(minutes=1)),
+        }
+        run.claude_at = svc._now() - timedelta(minutes=10)
+        await db.commit()
+        short = await svc.view(db, run, full=False)
+        assert short["ask_if_sent"] is True and short["claude_stopped"] is False

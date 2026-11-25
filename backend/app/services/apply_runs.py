@@ -773,6 +773,7 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         "review": _public_review(run.review),
         "note": run.note,
         "claude_stopped": claude_stopped(run),
+        "ask_if_sent": ask_if_sent(run),
     }
     if not full:
         return out
@@ -838,8 +839,10 @@ def _claudes_turn(run: ApplyRun) -> bool:
 
 
 def claude_stopped(run: ApplyRun) -> bool:
-    """Claude's turn, and no word from it for 3 minutes (spec 023)."""
-    if run.status not in APPLY_OPEN or not _claudes_turn(run):
+    """Claude's turn, and no word from it for 3 minutes (spec 023). Never
+    while the user is asked "Did it go through?" (a new chat might press
+    Submit a second time)."""
+    if run.status not in APPLY_OPEN or not _claudes_turn(run) or ask_if_sent(run):
         return False
     last = _aware(run.claude_at) or _aware(run.started_at)
     if last is None:
@@ -899,6 +902,8 @@ async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, 
         "version": version,
         "last_seen_at": _iso(seen),
         "ready": bool(fresh and new_enough),
+        "new_enough": new_enough,
+        "seen_lately": bool(fresh),
         "needs": JOB_CATCHER_READY,
     }
 
@@ -1018,7 +1023,12 @@ def _next(run: ApplyRun) -> str:
     if s == APPLY_SUBMITTING:
         if (run.review or {}).get("pressed_at"):
             return _ALREADY_PRESSED
-        return "The user said submit: press the final Submit, then call finish_apply."
+        return (
+            "The user said submit: press the final Submit ONCE, then call "
+            "finish_apply. If it was already pressed (a confirmation or an error "
+            "shows), never press it again: see the page and say what it shows "
+            "with message_user."
+        )
     if run.resume_id:
         return "The résumé is saved. Go on filling the application (playbook step 4)."
     if run.questions and not run.answers_done:
@@ -1673,6 +1683,13 @@ async def _just_sent(db: AsyncSession, user_id: uuid.UUID) -> ApplyRun | None:
     return run if pending else None
 
 
+def _watching(run: ApplyRun) -> bool:
+    pressed = (run.review or {}).get("pressed_at")
+    if not pressed or (run.review or {}).get("confirmed"):
+        return False
+    return _now() - datetime.fromisoformat(pressed) < timedelta(minutes=5)
+
+
 def _guarded(run: ApplyRun) -> bool:
     """Submit buttons are blocked until the user's OK."""
     if run.status not in APPLY_OPEN:
@@ -1704,6 +1721,8 @@ async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
         "run_id": str(run.id),
         "status": run.status,
         "guard": _guarded(run),
+        # Look for the thank-you page for 5 minutes after a press.
+        "watch": _watching(run),
         "hosts": run.apply_hosts or [],
         "saved_job_id": str(run.saved_job_id),
         "requests": [
@@ -1860,7 +1879,11 @@ async def extension_event(
         _event(run, "submit_pressed", f"Submit was pressed on {host or 'the page'}.")
     elif kind == "confirmation_seen":
         seen = _text(words, 300) or "a confirmation"
-        if approved and on_site:
+        # Only after a Submit press Job Catcher saw: words that were on the page
+        # before (a review page's "once your application has been submitted")
+        # never end a run.
+        pressed = (run.review or {}).get("pressed_at")
+        if approved and on_site and pressed:
             run.review = {
                 **(run.review or {}),
                 "confirmed": {"words": seen, "at": _iso(_now())},
