@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight, Eye, Lock } from "lucide-react";
 
 import { InstructionEditor } from "@/components/scout/InstructionEditor";
 import { ScoutPreview } from "@/components/scout/ScoutPreview";
+import { SkippedSites } from "@/components/scout/SkippedSites";
 import { useInstructions } from "@/hooks/useScout";
 import { INSTRUCTION_HINT, type InstructionSection } from "@/lib/scout";
 import { Badge } from "@/components/ui/badge";
@@ -32,6 +33,8 @@ export function ScoutInstructions() {
         are only for your account and apply to searches you start after
         saving. A search already going keeps what it started with.
       </p>
+
+      <SkippedSites />
 
       <Group title="What you can change">
         {data.sections.map((s) => (

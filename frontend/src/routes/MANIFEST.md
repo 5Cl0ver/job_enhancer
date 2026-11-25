@@ -16,7 +16,7 @@ React Router **page components** (the app's screens), wired up in
 | `MatchesPage.tsx` | `/matches` | New-matches feed (saved searches) | `hooks/useSavedSearches` |
 | `AnalyticsPage.tsx` | `/analytics` | Personal stats + chart | `hooks/useAnalytics`, `components/analytics` |
 | `AiApplyPage.tsx` | `/ai-apply` | AI resume/cover letter (final phase) | `hooks/useAI`, `components/ai` |
-| `SettingsPage.tsx` | `/settings` | Data export + account delete | `hooks/useProfile`, `lib/api` |
+| `SettingsPage.tsx` | `/settings` | Data export + account delete; a link to Sites to skip (Claude) | `hooks/useProfile`, `lib/api` |
 | `AdminPage.tsx` | `/admin` | Owner-only dashboard (role-guarded) | `hooks/useAdmin`, `components/admin` |
 | `Placeholder.tsx` | — | Dev stub for un-ported pages (none currently) | — |
 | `JobCatcherPage.tsx` | `/job-catcher` | Get Job Catcher: download, 6-step guide, version and update note, connected computers (spec 019) | `hooks/useJobCatcher`, `components/jobcatcher` |

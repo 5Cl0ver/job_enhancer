@@ -84,6 +84,7 @@ from app.services import scout_instructions as instr
 from app.services import scout_levels as levels_svc
 from app.services import scout_review as review
 from app.services import scout_titles as titles_svc
+from app.services import skipped_sites as sites_svc
 from app.services.scout_dedupe import (
     BOARD_HOSTS,
     company_key,
@@ -96,7 +97,7 @@ from app.services.scout_results import band, status_of
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.12"
+PLAYBOOK_VERSION = "2026.11.13"
 # What Claude is told lives in app/scout/*.md and scout_instructions (the user
 # can edit most of it; a run uses its own snapshot).
 SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
@@ -1330,6 +1331,10 @@ async def _brief_body(
             f"Then {first[0].lower()}{first[1:]}"
         )
     rubric = instr.rubric_for(c)
+    # The user's sites to skip (spec 024), read live: one line, only when set.
+    skip_sites = await sites_svc.hosts(db, user_id)
+    if skip_sites:
+        extra["skip_sites"] = skip_sites
     return {
         "run_id": str(run.id) if run.id else None,
         "playbook": instr.assemble_playbook(instr.text_for(c, "playbook"), rubric),
@@ -1556,6 +1561,8 @@ async def check_jobs(
     )
     # Rows passed over by title before (an earlier run, or an earlier page).
     passed = await _passed(db, user_id, run.track_id, pairs, urls)
+    # The user's sites to skip (spec 024): never offered, whatever else.
+    skip_sites = await sites_svc.hosts(db, user_id)
 
     # Why each row isn't opened, or None for a row worth opening.
     reasons: list[str | None] = []
@@ -1567,12 +1574,16 @@ async def check_jobs(
             why = "title_passed"
         if not why and _excluded(str(row.get("title", "")), exclude):
             why = "excluded"
+        if not why and sites_svc.skipped_by(str(row.get("url") or ""), skip_sites):
+            why = "skipped_site"
         if not why and not _fits(row):
             why = "title_passed"
         reasons.append(why)
         passed_before.append(before)
     open_rows = [i for i, why in enumerate(reasons) if why is None]
     skipped = {"in_tracker": 0, "seen_before": 0, "excluded": 0, "title_passed": 0}
+    if skip_sites:
+        skipped["skipped_site"] = 0
     for why in reasons:
         if why:
             skipped[why] += 1
@@ -2057,6 +2068,10 @@ async def report_job(
             "This search only uses the companies' own sites. Skip jobs that "
             "are only on a job board."
         )
+    if not problem:
+        site = sites_svc.skipped_by(url, await sites_svc.hosts(db, user_id))
+        if site:
+            problem = sites_svc.refusal(site)
     if problem:
         return {
             "outcome": "rejected_link",

@@ -760,6 +760,8 @@ export function lookedAt(
   };
   const seen = run.looked_at?.seen_before ?? 0;
   const excluded = run.looked_at?.excluded ?? 0;
+  // On one of the user's sites to skip (spec 024).
+  const offSite = run.looked_at?.skipped_site ?? 0;
   // Titles Claude said don't fit the resume type (remembered for next time).
   const unfit = run.looked_at?.title_passed ?? 0;
   const tracked = run.looked_at?.in_tracker ?? 0;
@@ -767,6 +769,7 @@ export function lookedAt(
   add(seen, "seen in earlier searches");
   add(unfit, "titles didn't fit");
   add(excluded, "had a word you skip");
+  add(offSite, "on sites you skip");
   add(tracked, "already in My Jobs");
   add(c.below_bar, "below your bar");
   add(c.duplicate, "you already had");
@@ -777,9 +780,9 @@ export function lookedAt(
   // A job reported without going through the results-page check still counts.
   const rows = Math.max(
     run.looked_at.rows ?? 0,
-    seen + unfit + excluded + tracked + opened,
+    seen + unfit + excluded + offSite + tracked + opened,
   );
-  add(rows - seen - unfit - excluded - tracked - opened, "not opened");
+  add(rows - seen - unfit - excluded - offSite - tracked - opened, "not opened");
   const looked = `Looked at ${rows} ${rows === 1 ? "posting" : "postings"}`;
   return parts.length
     ? `${head} ${looked}: ${parts.join(" · ")}.`

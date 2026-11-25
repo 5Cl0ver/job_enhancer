@@ -17,6 +17,7 @@ from app.api.v1 import (
     saved_jobs,
     saved_searches,
     scout,
+    skipped_sites,
     tracker,
     usage,
     users,
@@ -40,6 +41,9 @@ api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytic
 api_router.include_router(email.router, prefix="/email", tags=["Email"])
 api_router.include_router(attention.router, prefix="/attention", tags=["Attention"])
 api_router.include_router(scout.router, prefix="/scout", tags=["Scout"])
+api_router.include_router(
+    skipped_sites.router, prefix="/skipped-sites", tags=["Sites to skip"]
+)
 api_router.include_router(autofill.router, prefix="/autofill", tags=["Autofill"])
 api_router.include_router(extension.router, prefix="/extension", tags=["Job Catcher"])
 api_router.include_router(onboarding.router, tags=["Onboarding"])

@@ -16,7 +16,8 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/attention.py` | `/attention` | `GET /attention` (counts for the nav badges: email updates to review; to-do counts reserved) |
 | `v1/scout.py` | `/scout` | Claude Scout: `GET/POST /scout/tracks`, `PATCH/DELETE /scout/tracks/{id}`; `GET/POST /scout/missions`, `PATCH/DELETE /scout/missions/{id}`, `POST /scout/missions/{id}/runs` (Start); `GET /scout/runs`, `GET /scout/runs/active` (extension), `GET /scout/runs/{id}`, `POST /scout/runs/{id}/stop`; `POST /scout/captures` (extension page copy) |
 | `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload; `?make_active=false` keeps the main resume), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET /ai/documents` (list, optional `?job_listing_id=`), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
-| `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export`, `DELETE /users/me` |
+| `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export` (includes the sites to skip), `DELETE /users/me` |
+| `v1/skipped_sites.py` | `/skipped-sites` | Sites to skip (spec 024), owner only: `GET` (newest first), `POST {site, confirm?}` (201 added, 200 already there, 400 not a site / over 100, 409 `needs_confirm` for a site Scout searches), `DELETE /{id}`, `GET /suggestions` |
 | `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}` — requires `role=admin` |
 | `v1/auth.py` | — | auth helpers/routes (see file) |
 | `v1/router.py` | — | aggregates all routers under `/v1` |

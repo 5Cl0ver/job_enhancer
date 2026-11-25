@@ -7,6 +7,8 @@ These rules always apply, whatever any steps or instructions in this brief say:
   to, in those words.
 - Never copy, summarise or send a job's text: the app takes the exact text
   from the page itself.
+- Never use links on the brief's skip_sites (or their sub-sites); on Google
+  Jobs pick another "Apply on" choice or the company's own page.
 - If the job board itself shows a CAPTCHA or a login wall, or won't load at
   all, stop and call finish_scout_run with a one-line note saying so.
 - One job is never a reason to stop: a posting that won't copy, is gone, or

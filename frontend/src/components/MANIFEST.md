@@ -33,7 +33,8 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `RunTip.tsx` | Under a search that came back short: the app's one-line tip on what to change (wait a day, a wider "Posted", a bigger radius, more titles on the resume type) |
 | `BroadOverrides.tsx` | In an "Anything I'd be good at" search's settings: Always search / Never search / Skip-these-words lists, and the folded "Titles tried" list |
 | `RunTitles.tsx` | In History, a broad run's "Claude searched for:" titles with good fits; Always, Never and Add to resume type on each |
-| `ScoutInstructions.tsx` | The Instructions tab: everything Claude is told, the editable parts (Original / Edited) then the locked ones (rules, fixed limits, tool descriptions), and Preview |
+| `SkippedSites.tsx` | Sites to skip (spec 024), first on the Instructions tab (`#sites-to-skip`): paste a link or a site, the list with ✕, a warning before skipping a site Scout searches, and suggestions from the user's own finds ("Skip it") |
+| `ScoutInstructions.tsx` | The Instructions tab: Sites to skip, then everything Claude is told, the editable parts (Original / Edited) then the locked ones (rules, fixed limits, tool descriptions), and Preview |
 | `InstructionEditor.tsx` | One editable section: text, scoring (live total of 10) or limits (with ranges); Save, Reset to original, History with Restore |
 | `ScoutPreview.tsx` | Pick a search: the brief Claude would get if it started now, without starting it |
 | `TrackMemory.tsx` | On a resume type's card: "Fill skills from my resume" when it has none, and the titles Claude passed over (View, Start fresh) |
@@ -65,7 +66,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `SearchFilters.tsx` | Remote/type/salary/experience filters → URL params |
 | `SearchResults.tsx` | `useJobSearch` → grid of `JobCard` + pagination |
 | `JobCard.tsx` | Job card: title, company, salary, apply/save; a saved job shows where it came from (`OriginLabel`), a search result its feed |
-| `JobActions.tsx` | What you can do with a saved job, identical in the board's pop-up, the list's pop-up and the job's page: write to the company, research it with Claude, Contact Further |
+| `JobActions.tsx` | What you can do with a saved job, identical in the board's pop-up, the list's pop-up and the job's page: write to the company, research it with Claude, Contact Further, Never this site (adds the job's site to Sites to skip; not for a job made from an email) |
 | `SameJob.tsx` | `JobPicker` (the user's saved jobs, likeliest first, with search) and `SameJobButton` ("Same job as…" on a job made from an email: folds it into the real job, with Undo) |
 | `RenameJob.tsx` | Fix a saved job's title, company, place or link (`RenameButton`, a sheet on a phone); `NameCheck` / `NameCheckLine` flag a name read from an email that may be wrong |
 | `OriginLabel.tsx` | Where a saved job came from, as an icon and a few words ("Claude Scout · fit 8/10", "From an email"); nothing when unknown |
