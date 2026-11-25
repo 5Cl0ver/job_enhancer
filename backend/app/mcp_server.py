@@ -836,20 +836,20 @@ async def finish_apply(
             await db.rollback()
             raise
         await db.commit()
+        status = run.status
         if req is not None:
-            # The run stays open until the confirmation's photo is in (or not).
+            # Already sent; now the confirmation's photo (or not).
             rid, n = run.id, len(run.pages)
             res = await apply_svc.wait_request(db, req.id, 15)
             await apply_svc.photo_result(db, user, rid, n, res)
-            run = await apply_svc.end_sent(db, user, rid)
             await db.commit()
         tell = (
             "Tell the user: sent! It's in Applied in the app, with photos of "
             "every page."
-            if sent
+            if status == "sent"
             else "Tell the user why it wasn't sent, in one line."
         )
-        return {"run_id": str(run.id), "status": run.status, "tell_user": tell}
+        return {"run_id": str(run.id), "status": status, "tell_user": tell}
 
 
 def build_mcp_app():

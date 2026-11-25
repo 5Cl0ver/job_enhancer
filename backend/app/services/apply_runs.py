@@ -804,14 +804,21 @@ async def need_help(
 
 
 def _new_page(
-    run: ApplyRun, url: str, title: str, answers: Any, *, last: bool
+    run: ApplyRun,
+    url: str,
+    title: str,
+    answers: Any,
+    *,
+    last: bool,
+    rnd: int | None = None,
 ) -> dict[str, Any]:
     pages = list(run.pages or [])
     if len(pages) >= MAX_PAGES:
         raise ValueError("That's a lot of pages; ask the user for help with need_help.")
     # Pages after a review decision (a fix) belong to the next round.
     review = run.review or {}
-    rnd = review["round"] + (1 if review.get("decision") else 0) if review else 1
+    if rnd is None:
+        rnd = review["round"] + (1 if review.get("decision") else 0) if review else 1
     page = {
         "n": len(pages) + 1,
         "url": _text(url, 2000),
@@ -1186,8 +1193,9 @@ async def finish(
 ) -> tuple[ApplyRun, ApplyRequest | None]:
     """End the run. Sent only after the user said submit and Claude pressed it
     (a "self" run ends when the user presses Submit, never through Claude).
-    With a confirmation page, the run stays open for its photo: the caller
-    waits for it, then calls ``end_sent``."""
+    It ends at once, so a cut-off chat can never leave a sent application
+    looking unsent; the confirmation's photo is taken just after (Job Catcher
+    is still served it for a couple of minutes: ``extension_state``)."""
     run = await for_agent(db, user.id, run_id)
     note = _text(note, 500) or None
     req = None
@@ -1201,15 +1209,11 @@ async def finish(
             )
         run.note = note
         if page_url and page_url.startswith(("http://", "https://")):
-            page = _new_page(run, page_url, "Confirmation", [], last=False)
-            req = await _request(db, run, REQUEST_PHOTO, page_url, page["n"])
-            _event(
-                run,
-                "confirmation",
-                "Claude pressed Submit; taking a photo of the confirmation.",
+            page = _new_page(
+                run, page_url, "Confirmation", [], last=False, rnd=run.review["round"]
             )
-        else:
-            await _end_sent(db, run, "Sent. Your job is in Applied.")
+            req = await _request(db, run, REQUEST_PHOTO, page_url, page["n"])
+        await _end_sent(db, run, "Sent. Your job is in Applied.")
     else:
         _set(run, APPLY_NOT_SENT)
         run.finished_at = _now()
@@ -1219,17 +1223,32 @@ async def finish(
     return run, req
 
 
-async def end_sent(db: AsyncSession, user: User, run_id: uuid.UUID) -> ApplyRun:
-    """After the confirmation photo (taken or not): the run is sent."""
-    run = await _locked(db, user.id, run_id)
-    if run.status == APPLY_SUBMITTING:
-        await _end_sent(db, run, "Sent. Your job is in Applied.")
-    return run
-
-
 # --------------------------------------------------------------------------- #
 # Job Catcher's side
 # --------------------------------------------------------------------------- #
+
+
+async def _just_sent(db: AsyncSession, user_id: uuid.UUID) -> ApplyRun | None:
+    """A run sent in the last 2 minutes with its confirmation photo still to
+    take: Job Catcher is served that one request (with no Submit block)."""
+    run = await db.scalar(
+        select(ApplyRun)
+        .where(
+            ApplyRun.user_id == user_id,
+            ApplyRun.status == APPLY_SENT,
+            ApplyRun.finished_at > _now() - timedelta(minutes=2),
+        )
+        .order_by(ApplyRun.finished_at.desc())
+        .limit(1)
+    )
+    if run is None:
+        return None
+    pending = await db.scalar(
+        select(ApplyRequest.id).where(
+            ApplyRequest.run_id == run.id, ApplyRequest.status == REQUEST_PENDING
+        )
+    )
+    return run if pending else None
 
 
 def _guarded(run: ApplyRun) -> bool:
@@ -1245,7 +1264,7 @@ def _guarded(run: ApplyRun) -> bool:
 
 
 async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
-    run = await open_run(db, user_id)
+    run = await open_run(db, user_id) or await _just_sent(db, user_id)
     if run is None:
         return {"run_id": None}
     reqs = list(
