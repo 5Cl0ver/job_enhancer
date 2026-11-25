@@ -135,6 +135,7 @@ export function ApplyRunPage() {
   const open = isOpenApply(run);
   const job = [run.job.title, run.job.company].filter(Boolean).join(" at ");
   const reviewing = run.status === "review";
+  const asking = run.status === "questions" && !run.answers_done;
 
   return (
     <div className="container mx-auto max-w-3xl space-y-4 md:px-4 md:py-6">
@@ -185,6 +186,13 @@ export function ApplyRunPage() {
       <HelpCard key={run.help?.at ?? "none"} run={run} />
       <DidItGo run={run} />
 
+      {/* Claude's open questions are what it's waiting for: first. */}
+      {asking && (
+        <Card title="Questions" tone="you">
+          <Questions run={run} />
+        </Card>
+      )}
+
       {reviewing && (
         <Card title="Your review" tone={run.review?.decision ? undefined : "you"}>
           <Review run={run} />
@@ -195,8 +203,8 @@ export function ApplyRunPage() {
       <Conversation run={run} open={open} />
       <ScreenNow run={run} open={open} />
 
-      {run.questions.length > 0 && (
-        <Card title="Questions" tone={run.status === "questions" && !run.answers_done ? "you" : undefined}>
+      {!asking && run.questions.length > 0 && (
+        <Card title="Questions">
           <Questions run={run} />
         </Card>
       )}
