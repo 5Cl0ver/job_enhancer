@@ -37,9 +37,18 @@ function CopyLine({ line }: { line: string }) {
   );
 }
 
-/** The newest "screen now" photo, with when it was taken. */
-function LatestLook({ run }: { run: ApplyRun }) {
+/** The newest "screen now" photo, with when it was taken. With `since`
+ * (server time), an older photo is not shown as if it were this screen. */
+function LatestLook({ run, since }: { run: ApplyRun; since?: string }) {
   const latest = run.peeks?.[0];
+  const stale = !!since && (!latest || new Date(latest.at).getTime() < new Date(since).getTime());
+  if (stale) {
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
+        <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> Taking a photo of this screen…
+      </p>
+    );
+  }
   if (!latest) return null;
   return (
     <figure className="space-y-1">
@@ -52,10 +61,12 @@ function LatestLook({ run }: { run: ApplyRun }) {
 /** Ask Job Catcher for the screen now; says so until the new photo is in. */
 function ScreenButton({ run, label = "Show me the screen" }: { run: ApplyRun; label?: string }) {
   const peek = usePeek();
-  const [askedAt, setAskedAt] = useState<number | null>(null);
-  const newest = run.peeks?.[0] ? new Date(run.peeks[0].at).getTime() : 0;
-  const waiting = askedAt !== null && newest < askedAt && Date.now() - askedAt < 30_000;
-  const late = askedAt !== null && newest < askedAt && Date.now() - askedAt >= 30_000;
+  // What was newest when asked, and when (by this phone's own clock only).
+  const [asked, setAsked] = useState<{ newest: string | null; at: number } | null>(null);
+  const newest = run.peeks?.[0]?.id ?? null;
+  const arrived = asked !== null && newest !== asked.newest;
+  const waiting = asked !== null && !arrived && Date.now() - asked.at < 30_000;
+  const late = asked !== null && !arrived && Date.now() - asked.at >= 30_000;
   return (
     <div className="space-y-1">
       <Button
@@ -63,7 +74,10 @@ function ScreenButton({ run, label = "Show me the screen" }: { run: ApplyRun; la
         size="sm"
         className="gap-1.5"
         disabled={peek.isPending || waiting}
-        onClick={() => peek.mutate(run.id, { onSuccess: () => setAskedAt(Date.now() - 2000) })}
+        onClick={() => {
+          const before = newest;
+          peek.mutate(run.id, { onSuccess: () => setAsked({ newest: before, at: Date.now() }) });
+        }}
       >
         {waiting ? <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden /> : <Camera className="h-3.5 w-3.5" aria-hidden />}
         {waiting ? "Asking Job Catcher…" : label}
@@ -105,12 +119,18 @@ export function HelpCard({ run }: { run: ApplyRun }) {
           or stores your passwords.
         </p>
       )}
-      <LatestLook run={run} />
+      <LatestLook run={run} since={help.peek_request ? help.at : undefined} />
       <ScreenButton run={run} label="Show me the screen again" />
       {!!help.choices?.length && (
         <div className="flex flex-wrap gap-2" role="group" aria-label="Quick answers">
           {help.choices.map((c) => (
-            <Button key={c} variant="secondary" disabled={done.isPending} onClick={() => send(c)}>
+            <Button
+              key={c}
+              variant="secondary"
+              className="h-auto min-h-9 whitespace-normal text-left"
+              disabled={done.isPending}
+              onClick={() => send(c)}
+            >
               {c}
             </Button>
           ))}
@@ -131,7 +151,11 @@ export function HelpCard({ run }: { run: ApplyRun }) {
           </Button>
         </div>
       )}
-      <Button variant={atComputer ? "default" : "ghost"} disabled={done.isPending} onClick={() => send()}>
+      <Button
+        variant={atComputer ? "default" : "ghost"}
+        disabled={done.isPending}
+        onClick={() => send(text.trim() || undefined)}
+      >
         Done, keep going
       </Button>
       {done.isError && <p className="text-sm text-destructive">{(done.error as Error).message}</p>}
@@ -143,10 +167,11 @@ export function HelpCard({ run }: { run: ApplyRun }) {
 export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
   const post = usePostMessage();
   const [text, setText] = useState("");
-  const end = useRef<HTMLLIElement>(null);
+  const list = useRef<HTMLOListElement>(null);
   const messages = run.messages ?? [];
+  // The newest message in view, inside the box only (the page never jumps).
   useEffect(() => {
-    end.current?.scrollIntoView?.({ block: "nearest" });
+    if (list.current) list.current.scrollTop = list.current.scrollHeight;
   }, [messages.length]);
   if (!open && !messages.length) return null;
   const send = () =>
@@ -155,7 +180,7 @@ export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
     <section className="space-y-3 rounded-lg border p-4">
       <h2 className="text-base font-semibold">Talk to Claude</h2>
       {messages.length ? (
-        <ol className="max-h-80 space-y-2 overflow-y-auto" aria-live="polite">
+        <ol ref={list} className="max-h-80 space-y-2 overflow-y-auto" aria-live="polite">
           {messages.map((m) => (
             <li key={m.id} className={cn("flex", m.by === "you" ? "justify-end" : "justify-start")}>
               <div
@@ -172,7 +197,6 @@ export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
               </div>
             </li>
           ))}
-          <li ref={end} aria-hidden />
         </ol>
       ) : (
         <p className="text-sm text-muted-foreground">Claude's updates show here. Anything you write reaches it on its next step.</p>
@@ -200,7 +224,8 @@ export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
 
 /** See the application's screen as it is now. */
 export function ScreenNow({ run, open }: { run: ApplyRun; open: boolean }) {
-  if (!open || run.status === "waiting" || (run.status === "needs_you" && !run.help?.done_at)) return null;
+  if (!open || run.status === "waiting" || run.ask_if_sent) return null;
+  if (run.status === "needs_you" && !run.help?.done_at) return null;
   return (
     <section className="space-y-3 rounded-lg border p-4">
       <h2 className="text-base font-semibold">The screen</h2>
@@ -212,7 +237,7 @@ export function ScreenNow({ run, open }: { run: ApplyRun; open: boolean }) {
 
 /** Claude went quiet on its turn: say so, and how to get it going again. */
 export function Stopped({ run }: { run: ApplyRun }) {
-  if (!run.claude_stopped) return null;
+  if (!run.claude_stopped || run.ask_if_sent) return null;
   return (
     <section className="space-y-3 rounded-lg border border-amber-500/50 bg-amber-500/5 p-4" role="status">
       <h2 className="flex items-center gap-2 text-base font-semibold">
@@ -246,9 +271,12 @@ export function DidItGo({ run }: { run: ApplyRun }) {
           <CheckCircle2 className="h-4 w-4" aria-hidden /> It was sent
         </Button>
         <Button variant="outline" disabled={notSent.isPending} onClick={() => notSent.mutate(run.id)}>
-          It wasn't
+          {run.status === "submitting" ? "It wasn't: Claude fixes it and tries once more" : "It wasn't"}
         </Button>
       </div>
+      {(sent.isError || notSent.isError) && (
+        <p className="text-sm text-destructive">{((sent.error || notSent.error) as Error).message}</p>
+      )}
     </section>
   );
 }
@@ -262,6 +290,14 @@ export function Readiness({ run, open }: { run: ApplyRun; open: boolean }) {
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">
         <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600" aria-hidden /> Job Catcher {jc.version} is ready on your
         computer
+      </p>
+    );
+  }
+  if (jc.new_enough) {
+    return (
+      <p className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
+        <AlertTriangle className="h-3.5 w-3.5 text-amber-600" aria-hidden /> Job Catcher {jc.version} hasn't checked in
+        lately: open Chrome on your computer.
       </p>
     );
   }

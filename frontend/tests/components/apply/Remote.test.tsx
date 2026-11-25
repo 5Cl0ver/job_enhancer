@@ -173,7 +173,7 @@ describe("knowing where it stands", () => {
     renderPage();
     await userEvent.click(await screen.findByRole("button", { name: /It was sent/ }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/sent", {}));
-    await userEvent.click(screen.getByRole("button", { name: "It wasn't" }));
+    await userEvent.click(screen.getByRole("button", { name: /It wasn't: Claude fixes it/ }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/not-sent", {}));
   });
 
@@ -207,5 +207,53 @@ describe("knowing where it stands", () => {
     renderPage();
     expect(await screen.findByText(APPLY_LINE)).toBeInTheDocument();
     expect(screen.getByText("https://api.example.com/mcp")).toBeInTheDocument();
+  });
+});
+
+
+describe("after the review fixes", () => {
+  it("never shows an older page's photo as the screen Claude asks about", async () => {
+    serve({
+      ...RUN,
+      status: "needs_you",
+      help: { kind: "question", what: "Pay?", at: "2026-11-25T10:05:00Z", done_at: null, choices: [], peek_request: "k1" },
+      peeks: [{ id: "p-old", at: "2026-11-25T10:01:00Z" }],
+    });
+    renderPage();
+    expect(await screen.findByText("Taking a photo of this screen…")).toBeInTheDocument();
+    expect(screen.queryByAltText("The application's screen")).toBeNull();
+  });
+
+  it("long quick answers wrap instead of pushing the page sideways", async () => {
+    const long = "Yes, I'm authorized to work in the US without sponsorship";
+    serve({
+      ...RUN,
+      status: "needs_you",
+      help: { kind: "question", what: "Work authorization?", at: "", done_at: null, choices: [long] },
+    });
+    renderPage();
+    expect((await screen.findByRole("button", { name: long })).className).toContain("whitespace-normal");
+  });
+
+  it("an up-to-date Job Catcher that's asleep isn't told to update", async () => {
+    serve({ ...RUN, job_catcher: { version: "0.41.0", last_seen_at: "", ready: false, new_enough: true, needs: "0.41.0" } });
+    renderPage();
+    expect(await screen.findByText(/hasn't checked in lately/)).toBeInTheDocument();
+    expect(screen.queryByText("Update Job Catcher for photos and filling")).toBeNull();
+  });
+
+  it("never both 'stopped' and 'did it go through?'", async () => {
+    serve({ ...RUN, status: "submitting", ask_if_sent: true, claude_stopped: true });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Did it go through?" })).toBeInTheDocument();
+    expect(screen.queryByText("Claude seems to have stopped")).toBeNull();
+  });
+
+  it("the screen button waits for a NEW photo, whatever the clocks say", async () => {
+    serve({ ...RUN, peeks: [{ id: "p1", at: "2030-01-01T00:00:00Z" }] }); // a server clock far ahead
+    post.mockResolvedValue({ request_id: "q1" });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Show me the screen/ }));
+    expect(await screen.findByText("Asking Job Catcher…")).toBeInTheDocument();
   });
 });

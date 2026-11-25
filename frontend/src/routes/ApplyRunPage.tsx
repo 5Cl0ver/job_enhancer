@@ -182,7 +182,7 @@ export function ApplyRunPage() {
 
       <Stopped run={run} />
       <StartCard run={run} />
-      <HelpCard run={run} />
+      <HelpCard key={run.help?.at ?? "none"} run={run} />
       <DidItGo run={run} />
 
       {reviewing && (

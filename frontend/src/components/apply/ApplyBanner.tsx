@@ -15,8 +15,11 @@ export function ApplyBanner() {
   // "(!)" in the browser tab's title while Claude waits for you (spec 023).
   useEffect(() => {
     const mark = "(!) ";
-    const clean = document.title.startsWith(mark) ? document.title.slice(mark.length) : document.title;
-    document.title = waiting ? mark + clean : clean;
+    const plain = () => (document.title.startsWith(mark) ? document.title.slice(mark.length) : document.title);
+    document.title = waiting ? mark + plain() : plain();
+    return () => {
+      document.title = plain();
+    };
   }, [waiting, pathname]);
   if (!run || !waiting || pathname === `/apply/${run.id}`) return null;
   return (

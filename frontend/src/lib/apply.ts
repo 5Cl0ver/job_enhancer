@@ -54,6 +54,8 @@ export interface ApplyHelp {
   choices?: string[];
   /** What the user answered from the app. */
   reply?: string | null;
+  /** The photo of this screen asked for with the question. */
+  peek_request?: string | null;
 }
 
 export interface ApplyReview {
@@ -82,6 +84,9 @@ export interface JobCatcherStatus {
   version: string | null;
   last_seen_at: string | null;
   ready: boolean;
+  /** Its version is new enough (it may just be asleep). */
+  new_enough?: boolean;
+  seen_lately?: boolean;
   needs: string;
 }
 
@@ -104,6 +109,8 @@ export interface ApplyRunShort {
   note: string | null;
   /** Claude's turn, and no word from it for 3 minutes (spec 023). */
   claude_stopped?: boolean;
+  /** Submit was pressed but nothing confirmed it: ask the user. */
+  ask_if_sent?: boolean;
 }
 
 export interface ApplyRun extends ApplyRunShort {
@@ -118,8 +125,6 @@ export interface ApplyRun extends ApplyRunShort {
   /** "Screen now" photos, newest first. */
   peeks?: { id: string; at: string }[];
   claude_at?: string | null;
-  /** Submit was pressed but nothing confirmed it: ask the user. */
-  ask_if_sent?: boolean;
   job_catcher?: JobCatcherStatus;
 }
 
@@ -204,7 +209,7 @@ export function statusLine(run: ApplyRunShort): string {
     case "review":
       return run.review?.decision ? "Claude is acting on your answer…" : "Ready for your review";
     case "submitting":
-      return "Claude is pressing Submit…";
+      return run.ask_if_sent ? "Did it go through?" : "Claude is pressing Submit…";
     case "sent":
       return run.review?.confirmed ? "Sent, confirmed" : "Sent";
     case "not_sent":
@@ -215,7 +220,7 @@ export function statusLine(run: ApplyRunShort): string {
 }
 
 /** Is the run waiting for the user right now (the top banner)? */
-export function needsYou(run: ApplyRunShort & { ask_if_sent?: boolean }): boolean {
+export function needsYou(run: ApplyRunShort): boolean {
   if (run.ask_if_sent) return true;
   if (run.status === "questions") return run.questions_open > 0;
   if (run.status === "needs_you") return !run.help?.done_at;
@@ -228,7 +233,7 @@ export function bannerLine(run: ApplyRunShort): string {
   const job = [run.job.title, run.job.company].filter(Boolean).join(" at ");
   if (run.status === "questions") return `${statusLine(run)}: ${job}`;
   if (run.status === "needs_you") return `Claude needs you: ${run.help?.what ?? job}`;
-  if (run.status === "submitting") return `Did it go through? ${job}`;
+  if (run.ask_if_sent) return `Did it go through? ${job}`;
   return `Ready for your review: ${job}`;
 }
 
