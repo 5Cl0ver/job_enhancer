@@ -25,6 +25,8 @@ interface JobDetailProps {
   stage?: React.ReactNode;
   /** The saved job, when it is one: says where it came from by the title. */
   savedJob?: SavedJob | null;
+  /** "Apply with Claude" (spec 022), in the actions row on phone and computer. */
+  applyWithClaude?: React.ReactNode;
 }
 
 /** Descriptions longer than this start folded on a phone. */
@@ -69,6 +71,7 @@ export function JobDetail({
   aside,
   stage,
   savedJob,
+  applyWithClaude,
 }: JobDetailProps) {
   const phone = useIsPhone();
   // Made from an email: its link is that email, not a posting to apply on.
@@ -172,6 +175,7 @@ export function JobDetail({
               Save Job
             </Button>
           ))}
+        {applyWithClaude}
         {onGenerateDocuments && (
           <Button variant="outline" onClick={onGenerateDocuments}>
             Generate Documents

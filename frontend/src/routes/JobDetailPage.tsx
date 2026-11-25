@@ -10,6 +10,8 @@ import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { JobResumeType } from "@/components/scout/JobResumeType";
 import { JobResumePicker } from "@/components/jobs/JobResumePicker";
 import { StagePicker } from "@/components/jobs/StagePicker";
+import { ApplyWithClaudeButton } from "@/components/apply/ApplyWithClaudeButton";
+import { WhatYouSent } from "@/components/apply/WhatYouSent";
 import { Skeleton } from "@/components/ui/skeleton";
 import { usePipelineStages } from "@/hooks/useTracker";
 import type { SavedJob } from "@/types/api";
@@ -71,6 +73,7 @@ export function JobDetailPage() {
               <>
                 {/* First: where this job stands, and the emails that explain it. */}
                 {savedJob && <NameCheck savedJob={savedJob} />}
+                {savedJob && <WhatYouSent savedJobId={savedJob.id} />}
                 {savedJob && (
                   <div className="flex flex-wrap items-center justify-between gap-2">
                     <StageSince savedJob={savedJob} />
@@ -95,6 +98,12 @@ export function JobDetailPage() {
           }
           stage={savedJob ? <StagePicker savedJob={savedJob} /> : null}
           savedJob={savedJob}
+          applyWithClaude={
+            // A job made from an email has no posting to apply on (its link is the email).
+            savedJob && savedJob.origin !== "email" && job.apply_url ? (
+              <ApplyWithClaudeButton savedJobId={savedJob.id} />
+            ) : null
+          }
         />
       )}
     </div>

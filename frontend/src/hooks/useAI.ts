@@ -6,21 +6,28 @@ import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type { GeneratedDocument } from "@/types/api";
 
-interface ResumeRecord {
+export interface ResumeRecord {
   id: string;
   user_id: string;
   filename: string;
   mime_type: string;
   file_size_bytes: number;
   is_active: boolean;
+  /** The big "everything" résumé Claude tailors from (spec 022). */
+  is_master?: boolean;
+  /** Set on a résumé made for one job (spec 022). */
+  document_id?: string | null;
   created_at: string;
 }
 
-export function useResumes() {
-  return useQuery<ResumeRecord[]>({
+/** Your résumés. Ones Claude made for one job (spec 022) are left out unless
+ * `withMade`: they belong to that job, not to every picker. */
+export function useResumes({ withMade = false }: { withMade?: boolean } = {}) {
+  return useQuery<ResumeRecord[], Error, ResumeRecord[]>({
     queryKey: ["resumes"],
     queryFn: () => api.get<ResumeRecord[]>("/v1/ai/resumes"),
     staleTime: 5 * 60_000,
+    select: withMade ? undefined : (list) => list.filter((r) => !r.document_id),
   });
 }
 

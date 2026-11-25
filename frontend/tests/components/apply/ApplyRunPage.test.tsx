@@ -1,0 +1,293 @@
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { render, screen, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { MemoryRouter, Route, Routes } from "react-router-dom";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+const get = vi.fn();
+const post = vi.fn();
+
+vi.mock("@/lib/api", () => ({
+  api: {
+    get: (...args: unknown[]) => get(...args),
+    post: (...args: unknown[]) => post(...args),
+    patch: vi.fn(),
+    put: vi.fn(),
+    delete: vi.fn(),
+    getBlob: vi.fn().mockResolvedValue(new Blob(["x"], { type: "image/jpeg" })),
+  },
+  ApiError: class ApiError extends Error {
+    constructor(
+      public status: number,
+      message: string,
+    ) {
+      super(message);
+    }
+  },
+  getAccessToken: vi.fn().mockResolvedValue("token"),
+  API_BASE: "http://localhost:8000",
+}));
+
+import { ApplyRunPage } from "@/routes/ApplyRunPage";
+import { ApplyWithClaudeButton } from "@/components/apply/ApplyWithClaudeButton";
+import { ApiError } from "@/lib/api";
+import { APPLY_LINE, type ApplyRun } from "@/lib/apply";
+
+const RUN: ApplyRun = {
+  id: "r1",
+  status: "waiting",
+  job: { job_id: "s1", listing_id: "l1", title: "IT Engineer", company: "Acme", location: "" },
+  apply_url: "https://acme.example/apply",
+  created_at: "2026-11-24T10:00:00Z",
+  finished_at: null,
+  questions_open: 0,
+  help: null,
+  review: null,
+  note: null,
+  questions: [],
+  answers_done: false,
+  pages: [],
+  resume_id: null,
+  document_id: null,
+  events: [{ at: "2026-11-24T10:00:00Z", kind: "pressed", text: "You pressed Apply with Claude." }],
+  started_at: null,
+};
+
+function serve(run: ApplyRun) {
+  get.mockImplementation((path: string) => {
+    if (path === "/v1/apply/runs/r1") return Promise.resolve(run);
+    if (path.startsWith("/v1/ai/resumes")) return Promise.resolve([]);
+    if (path.startsWith("/v1/saved-jobs")) return Promise.resolve([]);
+    return Promise.resolve(null);
+  });
+}
+
+function renderPage() {
+  const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+  return render(
+    <QueryClientProvider client={qc}>
+      <MemoryRouter initialEntries={["/apply/r1"]}>
+        <Routes>
+          <Route path="/apply/:runId" element={<ApplyRunPage />} />
+          <Route path="/jobs/:id" element={<p>job page</p>} />
+        </Routes>
+      </MemoryRouter>
+    </QueryClientProvider>,
+  );
+}
+
+beforeEach(() => {
+  get.mockReset();
+  post.mockReset();
+});
+
+describe("the application page", () => {
+  it("starts with the line to paste into Claude", async () => {
+    serve(RUN);
+    renderPage();
+    expect(await screen.findByText(APPLY_LINE)).toBeInTheDocument();
+    expect(screen.getByText("Waiting for Claude…")).toBeInTheDocument();
+    expect(screen.getByText(/Nothing is sent until you check the photos/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: /Back to the job/ })).toHaveAttribute("href", "/jobs/l1");
+  });
+
+  it("answers Claude's questions with Yes/No and details", async () => {
+    serve({
+      ...RUN,
+      status: "questions",
+      questions_open: 2,
+      questions: [
+        { id: "q1", question: "Have you used Okta?", why: "Okta experience", answer: null, skipped: false },
+        { id: "q2", question: "Have you used Jamf?", why: null, answer: null, skipped: false },
+      ],
+    });
+    post.mockResolvedValue({ ...RUN, status: "writing" });
+    renderPage();
+    await screen.findByText("1. Have you used Okta?");
+    expect(screen.getByText("The listing says: “Okta experience”")).toBeInTheDocument();
+    const [yes] = screen.getAllByRole("button", { name: "Yes" });
+    await userEvent.click(yes);
+    await userEvent.type(screen.getByLabelText("Details for: Have you used Okta?"), "SSO for 40 apps");
+    await userEvent.click(screen.getAllByRole("button", { name: "Skip" })[1]);
+    await userEvent.click(screen.getByRole("button", { name: "Done, make my résumé" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/answers", {
+        done: true,
+        answers: [
+          { id: "q1", answer: "Yes. SSO for 40 apps" },
+          { id: "q2", skipped: true },
+        ],
+      }),
+    );
+  });
+
+  it("asks for help and goes on when the user is done", async () => {
+    serve({
+      ...RUN,
+      status: "needs_you",
+      help: { kind: "sign_up", what: "Make a Workday account with your email.", at: "", done_at: null },
+    });
+    post.mockResolvedValue({ ...RUN, status: "filling" });
+    renderPage();
+    expect(await screen.findByText("Make a Workday account with your email.")).toBeInTheDocument();
+    expect(screen.getByText(/never sees or stores your passwords/)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Done, keep going" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/help-done", {}));
+  });
+
+  it("the review: photos and answers, then Submit or a fix", async () => {
+    serve({
+      ...RUN,
+      status: "review",
+      review: { round: 1, decision: null, note: null, by: null, at: null },
+      pages: [
+        {
+          n: 1,
+          url: "https://acme.example/apply/1",
+          title: "My Information",
+          answers: [{ q: "Why Acme?", a: "I like it", claude: true }],
+          jc_answers: [],
+          photo_ids: ["p1", "p2"],
+          photo: "taken",
+          reason: null,
+          at: "",
+          round: 1,
+          last: false,
+        },
+        {
+          n: 2,
+          url: "https://acme.example/apply/2",
+          title: "Review",
+          answers: [{ q: "Start date", a: "" }],
+          jc_answers: [],
+          photo_ids: [],
+          photo: "missing",
+          reason: "The tab wasn't showing",
+          at: "",
+          round: 1,
+          last: true,
+        },
+      ],
+    });
+    post.mockResolvedValue({ ...RUN, status: "review" });
+    renderPage();
+    expect(await screen.findByText("Page 1: My Information")).toBeInTheDocument();
+    expect(screen.getByText("Claude wrote this")).toBeInTheDocument();
+    expect(screen.getByText("Left empty")).toBeInTheDocument();
+    expect(screen.getByText(/No photo: The tab wasn't showing/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Open photo 1 of page 1" })).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole("button", { name: /Fix something/ }));
+    await userEvent.type(screen.getByLabelText("What should Claude fix?"), "Start date is January");
+    await userEvent.click(screen.getByRole("button", { name: "Send to Claude" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/decision", {
+        decision: "fix",
+        note: "Start date is January",
+      }),
+    );
+  });
+
+  it("Submit tells Claude to press it", async () => {
+    serve({ ...RUN, status: "review", review: { round: 1, decision: null, note: null, by: null, at: null } });
+    post.mockResolvedValue({ ...RUN, status: "review" });
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: "Submit" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/decision", { decision: "submit", note: undefined }),
+    );
+  });
+});
+
+describe("Apply with Claude button", () => {
+  function renderButton() {
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+    return render(
+      <QueryClientProvider client={qc}>
+        <MemoryRouter initialEntries={["/jobs/l1"]}>
+          <Routes>
+            <Route path="/jobs/:id" element={<ApplyWithClaudeButton savedJobId="s1" />} />
+            <Route path="/apply/:runId" element={<p>application page</p>} />
+          </Routes>
+        </MemoryRouter>
+      </QueryClientProvider>,
+    );
+  }
+
+  it("starts a run and opens its page", async () => {
+    get.mockResolvedValue([]);
+    post.mockResolvedValue(RUN);
+    renderButton();
+    await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    expect(await screen.findByText("application page")).toBeInTheDocument();
+    expect(post).toHaveBeenCalledWith("/v1/apply/runs", { saved_job_id: "s1" });
+  });
+
+  it("offers the open one when another is going", async () => {
+    get.mockImplementation((path: string) =>
+      Promise.resolve(path === "/v1/apply/runs/open" ? { ...RUN, id: "r9" } : []),
+    );
+    post.mockRejectedValue(new ApiError(409, "Another application is already going."));
+    renderButton();
+    await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    expect(await screen.findByRole("link", { name: "Open it" })).toHaveAttribute("href", "/apply/r9");
+  });
+
+  it("a job with an application going opens it", async () => {
+    get.mockResolvedValue([{ ...RUN, status: "filling" }]);
+    renderButton();
+    expect(await screen.findByRole("button", { name: /Open application/ })).toBeInTheDocument();
+  });
+});
+
+
+describe("after the review fixes", () => {
+  it("an answer given in the chat shows, and isn't sent back as skipped", async () => {
+    serve({
+      ...RUN,
+      status: "questions",
+      questions_open: 1,
+      questions: [
+        { id: "q1", question: "Have you used Okta?", why: null, answer: "No. Never used it", skipped: false, source: "chat" },
+        { id: "q2", question: "Have you used Jamf?", why: null, answer: null, skipped: false },
+      ],
+    });
+    post.mockResolvedValue({ ...RUN, status: "writing" });
+    renderPage();
+    expect(await screen.findByDisplayValue("Never used it")).toBeInTheDocument();
+    expect(screen.getByText("1 unanswered will be skipped.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Done, make my résumé" }));
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/answers", { done: true, answers: [{ id: "q2", skipped: true }] }),
+    );
+  });
+
+  it("a stopped run never looks sent", async () => {
+    serve({ ...RUN, status: "stopped", note: "You stopped it." });
+    renderPage();
+    expect(await screen.findByText("Stopped: You stopped it.")).toBeInTheDocument();
+    expect(screen.getByLabelText("Stopped here")).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Sent" })).not.toBeInTheDocument();
+  });
+
+  it("shows what the user told Claude, and the answer can still be changed", async () => {
+    serve({
+      ...RUN,
+      status: "review",
+      review: { round: 1, decision: "submit", note: null, by: "chat", words: "looks good, submit", at: "" },
+    });
+    renderPage();
+    expect(await screen.findByText("looks good, submit")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Change my answer" }));
+    expect(screen.getByRole("button", { name: "Submit" })).toBeInTheDocument();
+  });
+
+  it("Stop asks first", async () => {
+    serve(RUN);
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(false);
+    renderPage();
+    await userEvent.click(await screen.findByRole("button", { name: /Stop/ }));
+    expect(confirm).toHaveBeenCalled();
+    expect(post).not.toHaveBeenCalled();
+  });
+});

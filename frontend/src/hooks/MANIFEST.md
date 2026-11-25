@@ -23,6 +23,7 @@ optimistic updates where useful.
 | `useUsage.ts` | `useUsage` (spec 019 part C: what's left of today's free allowances; `on` per kind) | `/v1/usage` |
 | `useOnboarding.ts` | `useOnboarding(pollMs?)`, `useUpdateOnboarding` (spec 019 part B: Welcome progress and the Getting started ticks) | `/v1/onboarding` |
 | `useResumeDetails.ts` | `useResumeDetails`, `useSaveResumeDetails`, `useReadResume`, `useSetJobResume` (spec 020: each résumé's jobs, schools, skills, read without AI; the résumé for one saved job) | `/v1/autofill/resumes/{id}/*`, `PUT /v1/saved-jobs/{id}/resume` |
+| `useApply.ts` | Apply with Claude (spec 022): `useApplyRun` (live every 3 s while open), `useOpenApply` (banner), `useJobApplyRuns`, `useStartApply` (409 → `BusyError`), answers / help-done / decision / sent / stop, facts, master / delete résumé, `usePhoto` (authed blob URL) |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every
 request flows through `lib/api.ts` (which attaches the Supabase Bearer token).

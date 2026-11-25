@@ -2,6 +2,7 @@ import { NavLink, Outlet } from "react-router-dom";
 import { LogOut } from "lucide-react";
 import { RequireAuth } from "@/routes/RequireAuth";
 import { OfflineBanner } from "@/components/layout/OfflineBanner";
+import { ApplyBanner } from "@/components/apply/ApplyBanner";
 import { CountBadge, TabBar, TopBar } from "@/components/layout/PhoneNav";
 import { NAV, allowed, signOut } from "@/components/layout/nav";
 import { useAttention } from "@/hooks/useAttention";
@@ -75,6 +76,7 @@ function Frame() {
 
         <div className="flex min-w-0 flex-1 flex-col">
           <TopBar />
+          <ApplyBanner />
           {/* On a phone: one 16px gutter (pages add none of their own), and
               bottom padding that clears the fixed tab bar. */}
           <main className="min-w-0 flex-1 px-4 pb-24 pt-3 md:p-8">
