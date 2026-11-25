@@ -10,7 +10,7 @@
   </head>
   <body>
     <h1>Network Technician</h1>
-    <form id="application" onsubmit="event.preventDefault(); document.getElementById('sent').textContent = String(Number(document.getElementById('sent').textContent) + 1);">
+    <form id="application" onsubmit="event.preventDefault(); document.getElementById('sent').textContent = String(Number(document.getElementById('sent').textContent) + 1); document.getElementById('thanks').textContent = 'Thank you for applying! We will be in touch.';">
       <label for="first">First name</label>
       <input id="first" name="first_name" autocomplete="given-name" value="Wren" />
       <div style="height: 1400px"></div>
@@ -20,5 +20,6 @@
       <button type="submit" id="go">Submit application</button>
     </form>
     <p>Sent: <span id="sent">0</span></p>
+    <p id="thanks"></p>
   </body>
 </html>

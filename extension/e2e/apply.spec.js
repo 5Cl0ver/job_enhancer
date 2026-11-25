@@ -92,6 +92,19 @@ test("an open application: photos cover the page, Submit waits for the OK, then 
   await page.click("#go");
   await expect.poll(() => page.textContent("#sent")).toBe("1");
   await expect.poll(() => events("submit_pressed").length).toBe(1);
+  // The thank-you page: Job Catcher tells the app it really went (spec 023).
+  await expect.poll(() => events("confirmation_seen").length, { timeout: 10000 }).toBe(1);
+  expect(events("confirmation_seen")[0].body.words).toBe("Thank you for applying");
+
+  // Show me the screen: one photo of the tab as it is, never scrolled.
+  const before = await page.evaluate(() => Math.round(window.scrollY));
+  api.state.photoTypes = [];
+  api.state.applyRun = { ...api.state.applyRun, requests: [{ id: "k1", kind: "peek", url, page_n: 0 }] };
+  await expect.poll(() => api.calls("/v1/apply/requests/k1/result").length, { timeout: 15000 }).toBe(1);
+  api.state.applyRun = { ...api.state.applyRun, requests: [] };
+  expect(api.calls("/v1/apply/requests/k1/photo")).toHaveLength(1);
+  expect(api.state.photoTypes).toEqual(["image/jpeg"]);
+  expect(await page.evaluate(() => Math.round(window.scrollY))).toBe(before);
   await page.close();
   await other.close();
 });

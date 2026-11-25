@@ -123,21 +123,28 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   async function tick(tab) {
     const data = await active();
     if (data.run_id && !looping) loop();
-    if (!data.run_id || tab?.id == null) return { active: false, guard: false };
+    if (!data.run_id || tab?.id == null) return { active: false, guard: false, watch: false };
     const onSite = onRunHost(hostOf(tab.url || ""), data.hosts);
-    return { active: onSite, guard: onSite && !!data.guard };
+    // Look for the thank-you page: the app says so for a few minutes after a
+    // Submit press (it survives this worker sleeping or restarting), only in
+    // the application's own tab.
+    const watch = onSite && !!data.watch && (await isRunTab(data, tab));
+    return { active: onSite, guard: onSite && !!data.guard, watch };
   }
 
-  async function event(kind, tab, url) {
+  async function event(kind, tab, url, words) {
     const data = await active();
     if (!data.run_id || tab?.id == null) return;
     // A blocked press anywhere on the site is worth telling Claude; a press
     // that ends the run as sent must come from the application's own tab.
     const ok = kind === "blocked_submit" ? onRunHost(hostOf(tab.url || ""), data.hosts) : await isRunTab(data, tab);
     if (!ok) return;
+    if (kind === "submit_pressed") state.at = 0; // hear the app's "watch" at once
     await api(`/v1/apply/runs/${data.run_id}/event`, {
       method: "POST",
-      body: JSON.stringify({ kind, url: url || tab.url }),
+      // A confirmation is the tab's (a form embedded from another site says
+      // it inside a frame of the application's page).
+      body: JSON.stringify({ kind, url: kind === "confirmation_seen" ? tab.url : url || tab.url, ...(words ? { words } : {}) }),
     }).catch(() => null);
     state.at = 0; // a press can end the run: ask again next time
   }
@@ -167,7 +174,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
 
   async function handle(req, data) {
     // Only the computer with the application's tab takes it.
-    const tab = await findTab(req.url, data.run_id);
+    const tab = await findTab(req.url, data.run_id, { ownFirst: req.kind === "peek" });
     if (!tab) return;
     const claimed = await api(`/v1/apply/requests/${req.id}/claim`, { method: "POST", body: "{}" }).catch(() => null);
     if (!claimed) return; // network: try again next turn
@@ -176,6 +183,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     await addRunTab(data.run_id, tab.id);
     try {
       if (req.kind === "fill") return await finish(req, await fill(tab));
+      if (req.kind === "peek") return await finish(req, await peekShot(req, tab));
       return await finish(req, await photos(req, tab));
     } catch {
       return finish(req, { ok: false, reason: "error" });
@@ -183,9 +191,16 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   }
 
   /** The application's tab: the same page, else the run's own tab, else the
-   * focused window's showing tab on that exact host. */
-  async function findTab(url, runId) {
+   * focused window's showing tab on that exact host. A screen-now photo asks
+   * for the run's own tab first (two tabs can share a page's address). */
+  async function findTab(url, runId, { ownFirst = false } = {}) {
     const tabs = await c.tabs.query({});
+    if (ownFirst) {
+      const mine = await runTabs(runId);
+      const host = hostOf(url);
+      const own = tabs.find((t) => mine.has(t.id) && t.url && hostOf(t.url) === host);
+      if (own) return own;
+    }
     const key = pageKey(url);
     const same = tabs.filter((t) => t.url && pageKey(t.url) === key);
     const pick = same.find((t) => t.active) || same[0];
@@ -257,6 +272,20 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // The page changed under us: never read the new page's answers.
     const answers = changed ? [] : await readAnswers(tab.id);
     return part ? { ok: true, answers } : { ok: false, reason: "not_visible", answers };
+  }
+
+  /** The screen as it is now: one photo, never scrolled (spec 023). */
+  async function peekShot(req, tab) {
+    const key = pageKey(tab.url || "");
+    if (!(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    const shot = await capture(tab.windowId);
+    if (!shot || !(await stillShowing(tab, key))) return { ok: false, reason: "not_visible" };
+    const up = await api(`/v1/apply/requests/${req.id}/photo?part=0`, {
+      method: "POST",
+      headers: { "Content-Type": "image/jpeg" },
+      body: shot,
+    }).catch(() => null);
+    return up?.ok ? { ok: true } : { ok: false, reason: "error" };
   }
 
   async function capture(windowId) {

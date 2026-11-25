@@ -13,11 +13,20 @@
 //   long page screen by screen (the page, or its main scrolling box), then
 //   puts the scroll back.
 // A copy left behind by an extension update or reload lets go of everything.
-import { finalSubmitButton, finalSubmitOfForm, pageAnswers, scrollerOf } from "./applyPage.js";
+import {
+  confirmationIn,
+  finalSubmitButton,
+  finalSubmitOfForm,
+  pageAnswers,
+  readableText,
+  scrollerOf,
+} from "./applyPage.js";
 
 const TICK_MS = 3000;
 const HIDDEN_TICK_MS = 10_000;
 const SETTLE_REPORT_MS = 2000;
+const WATCH_MS = 20_000; // after a Submit, how long to look for the confirmation
+const WATCH_EVERY_MS = 2000;
 
 export function startApplyMode({ send, isCurrent, scan, readField, doc = document, win = window }) {
   let guard = false; // lock final Submit presses on this page
@@ -35,6 +44,42 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (!live()) return stop();
     guard = !!r?.guard;
     active = !!r?.active;
+    // A Submit was just pressed in this tab (maybe on the page before this
+    // one): look for the confirmation. A page that was already showing when
+    // the watch began counts only what appears after.
+    if (r?.watch) {
+      if (before === undefined) before = shownNow();
+      lookForConfirmation();
+    }
+  };
+
+  // "Thank you for applying": tell the background once, with its words. Words
+  // already on the page before the Submit press never count.
+  let confirmed = false;
+  let watching = null;
+  // What the page said before (undefined = a new page: nothing to compare).
+  let before;
+  const shownNow = () => confirmationIn(readableText(doc.body)) || null;
+  const lookForConfirmation = async () => {
+    if (confirmed) return;
+    const words = shownNow();
+    if (words && words !== before) {
+      confirmed = true;
+      const r = await send({ type: "applyConfirmed", url: win.location.href, words });
+      if (!r?.ok) confirmed = false; // try again next time
+    }
+  };
+  const watchAfterSubmit = () => {
+    if (watching) return;
+    const until = Date.now() + WATCH_MS;
+    watching = setInterval(() => {
+      if (!live() || confirmed || Date.now() > until) {
+        clearInterval(watching);
+        watching = null;
+        return;
+      }
+      lookForConfirmation();
+    }, WATCH_EVERY_MS);
   };
 
   // One report per kind per press (a press is a click and maybe a submit).
@@ -44,6 +89,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (now - (lastSent[type] || 0) < 1500) return;
     lastSent[type] = now;
     send({ type, url: win.location.href });
+    if (type === "applySubmitPressed") watchAfterSubmit();
   };
 
   /** Sent, really: its form was sent, or the page changed or the button went. */
@@ -59,6 +105,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (!live() || !active) return;
     const button = finalSubmitButton(event.composedPath?.()[0] || event.target);
     if (!button) return;
+    if (!guard && before === undefined) before = shownNow();
     if (guard) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -71,6 +118,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (!live() || !active) return;
     const button = finalSubmitOfForm(event);
     if (!button) return;
+    if (!guard && before === undefined) before = shownNow();
     if (guard) {
       event.preventDefault();
       event.stopImmediatePropagation();
@@ -94,6 +142,8 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
   function stop() {
     if (timer) clearInterval(timer);
     timer = null;
+    if (watching) clearInterval(watching);
+    watching = null;
     guard = false;
     active = false;
     win.removeEventListener("click", onClick, true);

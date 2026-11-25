@@ -31,7 +31,7 @@ export function siteLabel(host: string): string {
   return name.charAt(0).toUpperCase() + name.slice(1);
 }
 
-export function detectContext(url: string): PageContext {
+export function detectContext(url: string, appUrl = ""): PageContext {
   let u: URL;
   try {
     u = new URL(url);
@@ -39,6 +39,13 @@ export function detectContext(url: string): PageContext {
     return { kind: "none" };
   }
   if (!/^https?:$/.test(u.protocol)) return { kind: "none" };
+  // Job Enhancer's own pages (its /apply/… page included) are never a job
+  // application or a posting (spec 023).
+  try {
+    if (appUrl && u.origin === new URL(appUrl).origin) return { kind: "none" };
+  } catch {
+    /* no app address set */
+  }
   const host = u.hostname;
   const path = u.pathname;
   // Indeed "My jobs": a whole list of applications to sync.

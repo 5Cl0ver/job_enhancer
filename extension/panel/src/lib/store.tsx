@@ -3,7 +3,7 @@
 import * as React from "react";
 import { createSavedSync, MIN_INTERVAL_MS } from "../../../src/savedSync.js";
 import { detectContext, type PageContext, type SavedJob } from "./context";
-import { send, targetTab } from "./chrome";
+import { appUrl, send, targetTab } from "./chrome";
 import { useClaudeUrlState } from "./claudeUrl";
 
 // `latest`: the newest Job Catcher release, when this one is older (spec 019).
@@ -247,7 +247,7 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
     setTab((prev) =>
       prev.id === (t?.id ?? null) && prev.url === url && prev.title === title
         ? prev
-        : { id: t?.id ?? null, url, title, ctx: detectContext(url) },
+        : { id: t?.id ?? null, url, title, ctx: detectContext(url, appUrl()) },
     );
   }, []);
 
