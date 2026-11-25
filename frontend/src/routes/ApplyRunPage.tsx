@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { Link, useParams } from "react-router-dom";
-import { ArrowLeft, Check, CheckCircle2, ChevronDown, Copy, Hand, Loader2, Square } from "lucide-react";
+import { ArrowLeft, CheckCircle2, ChevronDown, Loader2, Square } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApplySteps } from "@/components/apply/ApplySteps";
@@ -8,14 +8,24 @@ import { Pages } from "@/components/apply/Pages";
 import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
 import { Review } from "@/components/apply/Review";
-import { useApplyRun, useHelpDone, useStopApply } from "@/hooks/useApply";
+import {
+  Conversation,
+  CopyLine,
+  DidItGo,
+  HelpCard,
+  Readiness,
+  ScreenNow,
+  SentCard,
+  Stopped,
+} from "@/components/apply/Remote";
+import { useApplyRun, useStopApply } from "@/hooks/useApply";
+import { API_BASE } from "@/lib/api";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import { cn } from "@/lib/utils";
 import {
   APPLY_LINE,
   type ApplyRun,
   currentStep,
-  HELP_TITLES,
   isOpenApply,
   needsYou,
   statusLine,
@@ -45,17 +55,7 @@ function Card({
 }
 
 function StartCard({ run }: { run: ApplyRun }) {
-  const [copied, setCopied] = useState(false);
   const phone = useIsPhone();
-  const copy = async () => {
-    try {
-      await navigator.clipboard.writeText(APPLY_LINE);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Clipboard blocked: the line is on screen to copy by hand.
-    }
-  };
   if (run.status !== "waiting") return null;
   return (
     <Card title="Start Claude" tone="you">
@@ -65,41 +65,17 @@ function StartCard({ run }: { run: ApplyRun }) {
         </p>
       )}
       <p className="text-sm">Open the Claude side panel in Chrome and say:</p>
-      <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
-        <code className="flex-1 rounded-md border bg-background px-3 py-2 text-sm">{APPLY_LINE}</code>
-        <Button variant="secondary" className="gap-1.5" onClick={copy}>
-          {copied ? <Check className="h-4 w-4" aria-hidden /> : <Copy className="h-4 w-4" aria-hidden />}
-          {copied ? "Copied" : "Copy"}
-        </Button>
-      </div>
+      <CopyLine line={APPLY_LINE} />
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>Keep Job Catcher on and signed in: it takes a photo of every page and fills what it knows.</li>
         <li>Claude asks you a few questions, writes a full résumé for this job, and fills the application.</li>
+        <li>Then follow along here, on your phone if you like: answer Claude, message it, see the screen.</li>
         <li>Nothing is sent until you check the photos and say Submit.</li>
       </ul>
-    </Card>
-  );
-}
-
-function HelpCard({ run }: { run: ApplyRun }) {
-  const done = useHelpDone();
-  if (run.status !== "needs_you" || !run.help || run.help.done_at) return null;
-  return (
-    <Card title={HELP_TITLES[run.help.kind] ?? "Claude needs you"} tone="you">
-      <p className="flex gap-2 text-sm">
-        <Hand className="mt-0.5 h-4 w-4 shrink-0 text-primary" aria-hidden />
-        {run.help.what}
+      <p className="text-xs text-muted-foreground">
+        Using another AI that can browse and use connectors? Connect it to{" "}
+        <code className="break-all">{`${API_BASE.replace(/\/+$/, "")}/mcp`}</code> and say the same line.
       </p>
-      {(run.help.kind === "sign_up" || run.help.kind === "sign_in") && (
-        <p className="text-xs text-muted-foreground">
-          Make or type the password yourself: Chrome offers a strong one and saves it for you. Job Enhancer
-          never sees or stores your passwords.
-        </p>
-      )}
-      <Button onClick={() => done.mutate(run.id)} disabled={done.isPending}>
-        Done, keep going
-      </Button>
-      {done.isError && <p className="text-sm text-destructive">{(done.error as Error).message}</p>}
     </Card>
   );
 }
@@ -202,9 +178,12 @@ export function ApplyRunPage() {
       )}
 
       <ApplySteps step={step} ended={!open} sent={run.status === "sent"} />
+      <Readiness run={run} open={open} />
 
+      <Stopped run={run} />
       <StartCard run={run} />
-      <HelpCard run={run} />
+      <HelpCard key={run.help?.at ?? "none"} run={run} />
+      <DidItGo run={run} />
 
       {reviewing && (
         <Card title="Your review" tone={run.review?.decision ? undefined : "you"}>
@@ -212,6 +191,9 @@ export function ApplyRunPage() {
           <Pages pages={run.pages} openAll />
         </Card>
       )}
+
+      <Conversation run={run} open={open} />
+      <ScreenNow run={run} open={open} />
 
       {run.questions.length > 0 && (
         <Card title="Questions" tone={run.status === "questions" && !run.answers_done ? "you" : undefined}>
@@ -231,11 +213,7 @@ export function ApplyRunPage() {
         </Card>
       )}
 
-      {run.status === "sent" && (
-        <Card title="Sent" tone="done">
-          <p className="text-sm">Your job is in Applied. The photos stay here for 30 days; the answers stay with the job.</p>
-        </Card>
-      )}
+      <SentCard run={run} />
 
       <Activity run={run} />
     </div>

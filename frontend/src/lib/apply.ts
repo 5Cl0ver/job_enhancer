@@ -50,6 +50,12 @@ export interface ApplyHelp {
   what: string;
   at: string;
   done_at: string | null;
+  /** Up to 4 quick answers Claude offers (spec 023). */
+  choices?: string[];
+  /** What the user answered from the app. */
+  reply?: string | null;
+  /** The photo of this screen asked for with the question. */
+  peek_request?: string | null;
 }
 
 export interface ApplyReview {
@@ -60,6 +66,28 @@ export interface ApplyReview {
   /** What the user typed to Claude, for a decision made in a chat. */
   words?: string | null;
   at: string | null;
+  /** Submit was pressed in the application's tab (not yet sure it went). */
+  pressed_at?: string | null;
+  /** Job Catcher saw the confirmation page (spec 023). */
+  confirmed?: { words: string; at: string } | null;
+}
+
+export interface ApplyMessage {
+  id: string;
+  by: "you" | "claude";
+  text: string;
+  at: string;
+  read: boolean;
+}
+
+export interface JobCatcherStatus {
+  version: string | null;
+  last_seen_at: string | null;
+  ready: boolean;
+  /** Its version is new enough (it may just be asleep). */
+  new_enough?: boolean;
+  seen_lately?: boolean;
+  needs: string;
 }
 
 export interface ApplyEvent {
@@ -79,6 +107,10 @@ export interface ApplyRunShort {
   help: ApplyHelp | null;
   review: ApplyReview | null;
   note: string | null;
+  /** Claude's turn, and no word from it for 3 minutes (spec 023). */
+  claude_stopped?: boolean;
+  /** Submit was pressed but nothing confirmed it: ask the user. */
+  ask_if_sent?: boolean;
 }
 
 export interface ApplyRun extends ApplyRunShort {
@@ -89,9 +121,16 @@ export interface ApplyRun extends ApplyRunShort {
   document_id: string | null;
   events: ApplyEvent[];
   started_at: string | null;
+  messages?: ApplyMessage[];
+  /** "Screen now" photos, newest first. */
+  peeks?: { id: string; at: string }[];
+  claude_at?: string | null;
+  job_catcher?: JobCatcherStatus;
 }
 
 export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";
+/** Said in a new Claude chat when the last one stopped: it picks up the run. */
+export const CARRY_ON_LINE = "Carry on with my application with the Job Enhancer connector.";
 
 const OPEN: ApplyStatus[] = [
   "waiting",
@@ -170,9 +209,9 @@ export function statusLine(run: ApplyRunShort): string {
     case "review":
       return run.review?.decision ? "Claude is acting on your answer…" : "Ready for your review";
     case "submitting":
-      return "Claude is pressing Submit…";
+      return run.ask_if_sent ? "Did it go through?" : "Claude is pressing Submit…";
     case "sent":
-      return "Sent";
+      return run.review?.confirmed ? "Sent, confirmed" : "Sent";
     case "not_sent":
       return run.note ? `Not sent: ${run.note}` : "Not sent";
     case "stopped":
@@ -182,6 +221,7 @@ export function statusLine(run: ApplyRunShort): string {
 
 /** Is the run waiting for the user right now (the top banner)? */
 export function needsYou(run: ApplyRunShort): boolean {
+  if (run.ask_if_sent) return true;
   if (run.status === "questions") return run.questions_open > 0;
   if (run.status === "needs_you") return !run.help?.done_at;
   if (run.status === "review") return !run.review?.decision;
@@ -193,6 +233,7 @@ export function bannerLine(run: ApplyRunShort): string {
   const job = [run.job.title, run.job.company].filter(Boolean).join(" at ");
   if (run.status === "questions") return `${statusLine(run)}: ${job}`;
   if (run.status === "needs_you") return `Claude needs you: ${run.help?.what ?? job}`;
+  if (run.ask_if_sent) return `Did it go through? ${job}`;
   return `Ready for your review: ${job}`;
 }
 

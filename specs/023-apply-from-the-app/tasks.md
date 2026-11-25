@@ -15,14 +15,14 @@
 
 ## Part B: app (PR `023-apply-from-the-app-ui`)
 
-- [ ] T020 [US2] Conversation + Message Claude box
-- [ ] T021 [US1] Help card: photo of the screen, quick answers, reply box, at-the-computer wording
-- [ ] T022 [US3] Show me the screen (latest photo + time)
-- [ ] T023 [US4] Claude stopped notice with the carry-on line
-- [ ] T024 [US5] Sent, confirmed / Did it go through?
-- [ ] T025 [US6] Job Catcher readiness line
-- [ ] T026 [US7][US8] Start card: any AI with the connector address; "(!)" tab title
-- [ ] T027 [P] Tests in frontend/tests/components/apply
+- [X] T020 [US2] Conversation + Message Claude box
+- [X] T021 [US1] Help card: photo of the screen, quick answers, reply box, at-the-computer wording
+- [X] T022 [US3] Show me the screen (latest photo + time)
+- [X] T023 [US4] Claude stopped notice with the carry-on line
+- [X] T024 [US5] Sent, confirmed / Did it go through?
+- [X] T025 [US6] Job Catcher readiness line
+- [X] T026 [US7][US8] Start card: any AI with the connector address; "(!)" tab title
+- [X] T027 [P] Tests in frontend/tests/components/apply
 
 ## Part C: Job Catcher 0.41.0 (PR `023-apply-from-the-app-jc`)
 
