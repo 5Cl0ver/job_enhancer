@@ -16,7 +16,8 @@ Product context: [docs/FEATURES.md](../docs/FEATURES.md); install/use/test: [REA
 | `src/bridge.entry.js` → `dist/bridge.js` | **MAIN-world** content script (Indeed) — mirrors `window._initialData`/`window.mosaic` onto `<html data-je-embedded>` so the isolated extractor can read the page's own JS data |
 | `src/extract/indeed.js` / `linkedin.js` / `ziprecruiter.js` | Per-site selector fallbacks (ZipRecruiter: the open job in the search page's right pane) |
 | `src/extract/generic.js` | Universal `og:title` / `h1` fallback; refuses page chrome (search/home titles) |
-| `src/extract/util.js` | `clean`, `stripHtml`, `textFrom`, `mergeJob`, remote detection |
+| `src/extract/util.js` | `clean`, `stripHtml`, `textFrom`, `mergeJob`, remote detection; `cleanTitle` (drops "- Indeed.com" and the tab's place), `cleanDescription` (drops "… more" button text), `isBoardName`, `tidyJob` (the same tidy-up for the panel's reads) |
+| `src/extract/expand.js` | `expandMore(document)` — presses a description's own "See more" / "Read more" button before a Save (self-contained: the panel injects it too) |
 
 ## Runtime files
 
