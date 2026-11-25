@@ -8,6 +8,8 @@ import { send } from "@/lib/chrome";
 import { usePageJob } from "@/lib/pageJob";
 import { usePanel } from "@/lib/store";
 import { extractJobFromPage } from "@/lib/extractPage.js";
+import { expandMore } from "../../../src/extract/expand.js";
+import { tidyJob } from "../../../src/extract/util.js";
 import { Apply, JobLinks } from "@/views/Apply";
 import { Trouble } from "@/views/Trouble";
 import { Point, startPointing } from "@/views/Point";
@@ -113,8 +115,12 @@ async function readPage(tabId: number): Promise<ReadJob | null> {
     /* no content script here: read the page directly */
   }
   try {
+    // Open a description hidden behind "See more" first, then read the page.
+    const [opened] = await chrome.scripting.executeScript({ target: { tabId }, func: expandMore });
+    if (opened?.result) await new Promise((r) => setTimeout(r, 500));
     const [result] = await chrome.scripting.executeScript({ target: { tabId }, func: extractJobFromPage });
-    return (result?.result as ReadJob) ?? null;
+    const job = (result?.result as ReadJob) ?? null;
+    return job ? (tidyJob(job) as ReadJob) : null;
   } catch {
     return null;
   }

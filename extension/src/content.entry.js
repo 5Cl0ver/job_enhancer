@@ -11,6 +11,7 @@
 // Extraction itself is the shared, tested extractJob() (Indeed embedded JSON →
 // JSON-LD → selectors), which identifies the open job strictly by ?vjk=.
 import { extractJob } from "./extract/index.js";
+import { expandMore } from "./extract/expand.js";
 import { shouldBackfill } from "./backfill.js";
 import { SCOUT_MAX_FAILS, scoutDone, scoutPayload } from "./scoutCapture.js";
 import { isIndeedApplyUrl, isSubmitted, submittedCompany, scrapeApplyHeader } from "./indeed-apply.js";
@@ -258,15 +259,16 @@ if ((IS_INDEED && !ON_INDEED_APPLY && !ON_INDEED_MYJOBS) || IS_LINKEDIN || IS_ZI
   try {
     chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       if (msg?.type !== "extractJob") return;
-      try {
-        const job = extractJob(document, location.href);
-        // Same escape hatch as the panel's inline reader: highlighted text wins.
-        const sel = (window.getSelection?.().toString() || "").trim();
-        if (sel.length > 40) job.description = sel;
-        sendResponse({ ok: true, job });
-      } catch (e) {
-        sendResponse({ ok: false, error: String((e && e.message) || e) });
-      }
+      // Same escape hatch as the panel's inline reader: highlighted text wins
+      // (read before anything is pressed; expandMore leaves a highlight alone).
+      const sel = (window.getSelection?.().toString() || "").trim();
+      readWhole()
+        .then((job) => {
+          if (sel.length > 40) job.description = sel;
+          sendResponse({ ok: true, job });
+        })
+        .catch((e) => sendResponse({ ok: false, error: String((e && e.message) || e) }));
+      return true;
     });
   } catch {
     /* orphaned */
@@ -403,20 +405,31 @@ function placeButton() {
   if (btn.parentNode !== ui()) ui().appendChild(btn);
 }
 
+// The job as it is now, after opening a description hidden behind "See more".
+async function readWhole() {
+  if (expandMore(document)) await new Promise((r) => setTimeout(r, 500));
+  return extractJob(document, location.href);
+}
+
 async function onSave() {
   if (!btn || btn.dataset.state === "busy" || btn.dataset.state === "saved") return;
   if (orphaned()) {
     setState(btn, "stale", STALE_LABEL);
     return;
   }
-  const job = extractJob(document, location.href); // re-read fresh at click time
-  btn._job = job;
-  if (!job.title) {
-    setState(btn, "error", "Can't read here → use panel Capture");
+  setState(btn, "busy", "Saving…");
+  let job = null;
+  try {
+    job = await readWhole(); // re-read fresh at click time, the whole description
+  } catch {
+    /* a page we can't read: same as no title below */
+  }
+  if (btn) btn._job = job;
+  if (!job?.title || !job.company) {
+    setState(btn, "error", job?.title ? "No company here → save from the panel" : "Can't read here → use panel Capture");
     setTimeout(() => btn && setState(btn, "idle", LABEL), 3500);
     return;
   }
-  setState(btn, "busy", "Saving…");
   // Never hang on "Saving…" — bail after 12s so the button stays usable.
   const res = await Promise.race([
     safeSend({ type: "saveJob", job }),

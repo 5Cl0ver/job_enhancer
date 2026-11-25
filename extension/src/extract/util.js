@@ -184,10 +184,66 @@ export function parseJobTypes(text) {
   return found.join(", ").slice(0, 50);
 }
 
+// The job boards' own names: not a company when a page's own text says so (a
+// page with no employer name otherwise saves "ZipRecruiter" as the company).
+// Structured posting data (JSON-LD, Indeed's own data) is trusted: LinkedIn
+// and Indeed hire people too.
+const BOARD_NAME = /^(indeed(\.com)?|linkedin|ziprecruiter|glassdoor|dice|monster|simplyhired|built ?in|careerbuilder)$/i;
+const TRUSTED = new Set(["jsonld", "indeed-embedded"]);
+const BOARD_TAIL = /\s*[-–—|·]\s*(indeed(\.com)?|linkedin|ziprecruiter|glassdoor|dice(\.com)?|monster|simplyhired|built ?in|careerbuilder)\s*$/i;
+// "Systems Engineer - Clackamas, OR 97015" / "… - Remote": the tab title's place.
+const PLACE_TAIL = /\s+[-–—|]\s+([Rr]emote|[A-Z][A-Za-z.'-]*(?:\s+[A-Z][A-Za-z.'-]*){0,3},\s*[A-Z]{2}(?:\s+\d{5})?)\s*$/;
+// The expand/collapse buttons' own words that land at the end of a description.
+const BUTTON_LINE = /^(?:…|\.\.\.)?\s*(?:(?:see|show|read|view)\s+(?:more|less)(?:\s+details)?|(?:…|\.\.\.)\s*more|more|less|show all)\s*$/i;
+const BUTTON_TAIL = /\s*(?:…|\.\.\.)\s*(?:see |show |read )?more\s*$/i;
+
+/** A board's name, or nothing that could be a company. */
+export function isBoardName(s) {
+  return BOARD_NAME.test(clean(s));
+}
+
+/**
+ * A job title without the site's name or the tab's place: "Systems Engineer -
+ * Clackamas, OR 97015 - Indeed.com" → "Systems Engineer". The place is only
+ * cut when a board's name was there too (a real title may name a town).
+ */
+export function cleanTitle(s) {
+  let t = clean(s);
+  if (!BOARD_TAIL.test(t)) return t;
+  t = t.replace(BOARD_TAIL, "");
+  for (let i = 0; i < 2 && PLACE_TAIL.test(t); i++) t = t.replace(PLACE_TAIL, "");
+  return t.trim();
+}
+
+/** A description without the "… more" / "Show less" button text at its end. */
+export function cleanDescription(s) {
+  const lines = cleanMultiline(s).split("\n");
+  while (lines.length && BUTTON_LINE.test(lines[lines.length - 1].trim())) lines.pop();
+  if (lines.length) lines[lines.length - 1] = lines[lines.length - 1].replace(BUTTON_TAIL, "");
+  return cleanMultiline(lines.join("\n"));
+}
+
+/** "careers-nscglobal" (a hiring site's address) → "nscglobal". */
+function siteless(company) {
+  return clean(company).replace(/^(careers?|jobs?)-(?=\w)/i, "").replace(/-careers?$/i, "");
+}
+
+/** The same tidy-up on a whole job, for readers outside mergeJob (the panel). */
+export function tidyJob(job) {
+  if (!job) return job;
+  const out = { ...job };
+  out.title = cleanTitle(out.title);
+  if (isBoardName(out.company)) out.company = "";
+  out.company = siteless(out.company);
+  out.description = cleanDescription(out.description);
+  return out;
+}
+
 /**
  * Merge partial jobs by field priority (first non-empty wins per field).
  * `is_remote` is OR-ed across all sources. Records which source supplied the
- * title in `_via` for debugging/telemetry.
+ * title in `_via` for debugging/telemetry. A board's name is never the
+ * company, and a title that is just the company's name yields to a real one.
  * @param {Array<{via:string, data:object}>} candidates ordered high→low priority
  */
 export function mergeJob(candidates, url) {
@@ -196,9 +252,18 @@ export function mergeJob(candidates, url) {
     description: "", job_type: "", salary_min: null, salary_max: null,
     salary_period: null, _via: "",
   };
-  for (const field of ["title", "company", "location", "job_type", "url"]) {
+  let companyTitle = null;
+  for (const field of ["company", "title", "location", "job_type", "url"]) {
     for (const c of candidates) {
-      const v = clean(c.data?.[field]);
+      let v = clean(c.data?.[field]);
+      if (field === "company") v = TRUSTED.has(c.via) ? v : isBoardName(v) ? "" : siteless(v);
+      if (field === "title") {
+        v = cleanTitle(v);
+        if (v && out.company && v.toLowerCase() === out.company.toLowerCase()) {
+          companyTitle ??= c;
+          v = "";
+        }
+      }
       if (v) {
         out[field] = v;
         if (field === "title" && !out._via) out._via = c.via;
@@ -206,10 +271,16 @@ export function mergeJob(candidates, url) {
       }
     }
   }
+  // Only the company's name was offered as a title: keep it rather than nothing
+  // (the user can fix it), but any real title above wins.
+  if (!out.title && companyTitle) {
+    out.title = out.company;
+    out._via = companyTitle.via;
+  }
   // Description: pick the FULLEST one (a card snippet is short; the page's own
   // description text is the whole thing), preserving paragraph breaks.
   for (const c of candidates) {
-    const v = cleanMultiline(c.data?.description || "");
+    const v = cleanDescription(c.data?.description || "");
     if (v.length > out.description.length) out.description = v;
   }
   for (const field of ["salary_min", "salary_max"]) {
