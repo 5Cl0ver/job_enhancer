@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-25
 
-**Status**: Draft (plan only; the owner decides before anything is built)
+**Status**: Approved to build (owner: "all 13 … do everything", 2026-11-25)
 
 **Input**: The owner, 2026-11-25, with their master résumé (Luis_Fabian_Montufar_Master_Resume.pdf, 3 pages):
 > "I need to be able to view résumés without having to download them. Download is fine, but it should be an option. I wanna review, and then when applying also, and if I review it I want to change things or be able to talk to Claude through the app on what I should change, before it adds it to the résumé."
@@ -83,6 +83,22 @@ A setting, **Review résumés before Claude applies**, is on by default. Turned 
 1. A job résumé from a 3-page master is 2 pages or fewer, has every employer and school, and has no section the job doesn't need, and has no Core areas boxes.
 2. Nothing in it is missing from the master or from your answers.
 
+### User Story 5 - Pick a résumé before starting (Priority: P1)
+
+The owner, 2026-11-25: "can I choose beforehand, like use a résumé, before starting the Claude thing, so it doesn't have to make a new one if I don't need it?"
+
+Pressing **Apply with Claude** first asks **Which résumé?**:
+- **Make one for this job** (Claude asks about gaps, writes it, and you review it). This is the default when the job has no résumé yet.
+- **Use the one on this job** (its file name). This is the default when the job already has one.
+- **Use another résumé** (pick from your résumés).
+
+A picked résumé becomes the job's résumé. Claude skips the questions and the writing and goes straight to the application, and Job Catcher attaches that file. Nothing is reviewed again, since you just chose it.
+
+**Acceptance:**
+1. Picking "Use the one on this job" starts a run whose brief says the résumé is chosen; Claude's next step is filling, with no questions and no `save_resume`.
+2. Picking another résumé sets it on the job, and the run's résumé is that file.
+3. "Make one for this job" works as today, plus the review step (Story 3).
+
 ### Edge Cases
 
 - **Uploaded résumés:** the master and any uploaded résumé are shown exactly as they are, never re-drawn.
@@ -105,10 +121,12 @@ A setting, **Review résumés before Claude applies**, is on by default. Turned 
   - the template layout above;
   - never invent anything.
 - **FR-005:** No AI in the app; Claude writes. The viewer and template are code.
+- **FR-006:** Apply with Claude starts with a résumé choice (make one / the job's / another). A picked résumé skips the questions, the writing and the review.
 
 ## Success Criteria *(mandatory)*
 
 - **SC-001:** The owner views the master and a job résumé on their phone without a download.
 - **SC-002:** A job résumé made after this looks like the master (owner's judgment, side by side).
 - **SC-003:** On the next Apply with Claude, the owner reviews and changes the résumé from the app before Claude applies.
+- **SC-005:** The owner starts an application with an existing résumé in two taps, and Claude goes straight to the application.
 - **SC-004:** All existing tests pass. New tests cover the template (layout pieces, page count, old Markdown), the viewer, and the review step.
