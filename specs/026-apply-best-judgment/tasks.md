@@ -6,42 +6,42 @@
 
 ## Phase 1: Setup
 
-- [ ] T001 Add the migration `w1f2a3b4c5d7_apply_live` (after 025's `v0e1f2a3b4c6`), plus `ApplyRun.live` (JSON, nullable), in backend/alembic/versions/w1f2a3b4c5d7_apply_live.py and backend/app/models/apply.py
-- [ ] T002 [P] Add a migration SQL test in backend/tests/test_migration_apply_live.py
+- [X] T001 Add the migration `w1f2a3b4c5d7_apply_live` (after 025's `v0e1f2a3b4c6`), plus `ApplyRun.live` (JSON, nullable), in backend/alembic/versions/w1f2a3b4c5d7_apply_live.py and backend/app/models/apply.py
+- [X] T002 [P] Add a migration SQL test in backend/tests/test_migration_apply_live.py
 
 ## Phase 2: Foundational (server)
 
-- [ ] T003 `_answers` keeps `guess`, `agreement` and `by`, and drops card/CVV questions, in backend/app/services/apply_runs.py
-- [ ] T004 Plain-word problem lines from fill and photo results (`_problem_text`), and `problems` in the run view, in backend/app/services/apply_runs.py
+- [X] T003 `_answers` keeps `guess`, `agreement` and `by`, and drops card/CVV questions, in backend/app/services/apply_runs.py
+- [X] T004 Plain-word problem lines from fill and photo results (`_problem_text`), and `problems` in the run view, in backend/app/services/apply_runs.py
 
 ## Phase 3: US1 + US3, the résumé is attached and problems are plain (server)
 
-- [ ] T005 [US1] `extension_state` adds `resume_id` (the run's, else the job's) and `live` in backend/app/services/apply_runs.py
-- [ ] T006 [US3] `fill_result` reports `resume` with a `tell` line; `need_help` accepts kind `file`; the run view gives `resume_file` in backend/app/services/apply_runs.py and backend/app/mcp_server.py
-- [ ] T007 [US3] `photo_result` explains the reason codes in backend/app/services/apply_runs.py
-- [ ] T008 [P] [US1] [US3] Tests in backend/tests/test_apply_best_judgment.py
+- [X] T005 [US1] `extension_state` adds `resume_id` (the run's, else the job's) and `live` in backend/app/services/apply_runs.py
+- [X] T006 [US3] `fill_result` reports `resume` with a `tell` line; `need_help` accepts kind `file`; the run view gives `resume_file` in backend/app/services/apply_runs.py and backend/app/mcp_server.py
+- [X] T007 [US3] `photo_result` explains the reason codes in backend/app/services/apply_runs.py
+- [X] T008 [P] [US1] [US3] Tests in backend/tests/test_apply_best_judgment.py
 
 ## Phase 4: US4, the live view (server + app)
 
-- [ ] T009 [US4] `save_live(run, payload)`: checks, caps, sensitive filter, status gate; cleared on status change in `_set`, in backend/app/services/apply_runs.py
-- [ ] T010 [US4] `POST /v1/apply/runs/{id}/live` in backend/app/api/v1/apply.py
-- [ ] T011 [P] [US4] Tests for the live route and service in backend/tests/test_apply_best_judgment.py
-- [ ] T012 [US4] `LiveFill` component and types in frontend/src/components/apply/LiveFill.tsx and frontend/src/lib/apply.ts; shown on frontend/src/routes/ApplyRunPage.tsx while filling
-- [ ] T013 [P] [US4] Test frontend/src/components/apply/LiveFill.test.tsx
+- [X] T009 [US4] `save_live(run, payload)`: checks, caps, sensitive filter, status gate; cleared on status change in `_set`, in backend/app/services/apply_runs.py
+- [X] T010 [US4] `POST /v1/apply/runs/{id}/live` in backend/app/api/v1/apply.py
+- [X] T011 [P] [US4] Tests for the live route and service in backend/tests/test_apply_best_judgment.py
+- [X] T012 [US4] `LiveFill` component and types in frontend/src/components/apply/LiveFill.tsx and frontend/src/lib/apply.ts; shown on frontend/src/routes/ApplyRunPage.tsx while filling
+- [X] T013 [P] [US4] Test frontend/src/components/apply/LiveFill.test.tsx
 
 ## Phase 5: US5, best judgment (connector)
 
-- [ ] T014 [US5] Playbook step 4 rewritten for best judgment; rules.md version 2026.11.27 with the locked stop list, in backend/app/apply/playbook.md and backend/app/apply/rules.md
-- [ ] T015 [US5] Tool docstrings: `page_done`/`ready_for_review` answers with `guess`/`agreement`; `need_help` kind `file`, in backend/app/mcp_server.py
-- [ ] T016 [P] [US5] Playbook tests (the stop list, never guess experience) in backend/tests/test_apply_best_judgment.py
+- [X] T014 [US5] Playbook step 4 rewritten for best judgment; rules.md version 2026.11.28 with the locked stop list, in backend/app/apply/playbook.md and backend/app/apply/rules.md
+- [X] T015 [US5] Tool docstrings: `page_done`/`ready_for_review` answers with `guess`/`agreement`; `need_help` kind `file`, in backend/app/mcp_server.py
+- [X] T016 [P] [US5] Playbook tests (the stop list, never guess experience) in backend/tests/test_apply_best_judgment.py
 
 ## Phase 6: US6, bubbles and batched fixes
 
-- [ ] T017 [US6] `decide` accepts `fixes` (≤ 30, trimmed); `wait_for_you` returns them; the route takes them, in backend/app/services/apply_runs.py and backend/app/api/v1/apply.py
-- [ ] T018 [US6] `bubbleOrder`, `sourceOf` and `fixNote` in frontend/src/lib/apply.ts
-- [ ] T019 [US6] `Bubbles` (check-first list, page bubbles, edit sheet, fix tray) in frontend/src/components/apply/Bubbles.tsx; used by frontend/src/components/apply/Review.tsx
-- [ ] T020 [US6] Pages show plain problem lines and source chips in frontend/src/components/apply/Pages.tsx; the file help card with Download in frontend/src/components/apply/Remote.tsx
-- [ ] T021 [P] [US6] Tests: frontend/src/components/apply/Bubbles.test.tsx, frontend/src/lib/apply.test.ts; backend fixes tests
+- [X] T017 [US6] `decide` accepts `fixes` (≤ 30, trimmed); `wait_for_you` returns them; the route takes them, in backend/app/services/apply_runs.py and backend/app/api/v1/apply.py
+- [X] T018 [US6] `bubbleOrder`, `sourceOf` and `fixNote` in frontend/src/lib/apply.ts
+- [X] T019 [US6] `Bubbles` (check-first list, page bubbles, edit sheet, fix tray) in frontend/src/components/apply/Bubbles.tsx; used by frontend/src/components/apply/Review.tsx
+- [X] T020 [US6] Pages show plain problem lines and source chips in frontend/src/components/apply/Pages.tsx; the file help card with Download in frontend/src/components/apply/Remote.tsx
+- [X] T021 [P] [US6] Tests: frontend/src/components/apply/Bubbles.test.tsx, frontend/src/lib/apply.test.ts; backend fixes tests
 
 **Checkpoint: PR 026 A (server + app).**
 

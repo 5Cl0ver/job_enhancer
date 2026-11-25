@@ -4,7 +4,7 @@
 
 **Created**: 2026-11-25
 
-**Status**: Approved to build (owner: "all 13 … do everything", 2026-11-25)
+**Status**: Built (2026-11-25): PR A server + app, PR B Job Catcher 0.42.0
 
 **Input**: The owner, after the first real Apply with Claude runs (spec 022/023):
 > "why can't it attach a file?? should have my résumé it made for this job!??"

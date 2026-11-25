@@ -18,7 +18,7 @@
 | `page_done`, `ready_for_review` | `answers[]` items accept `guess` and `agreement`; the result says in plain words why there are no photos |
 | `need_help` | `kind` accepts `file` |
 | `wait_for_you` | A fix decision returns `fixes` |
-| `get_apply_brief` | The playbook and rules: best judgment (version 2026.11.27) |
+| `get_apply_brief` | The playbook and rules: best judgment (version 2026.11.28) |
 
 ## App UI
 
