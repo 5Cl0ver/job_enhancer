@@ -281,6 +281,15 @@ class TestReviewFindings:
         again = await detect_events(db_session, acct, [msg])
         (row,) = [*again.created, *again.noted]
         assert row.saved_job_id == job.id and row.id == looked.id  # same row
+        # New from when it was placed, so it shows as new on Email updates.
+        from datetime import UTC, datetime, timedelta
+
+        created = (
+            row.created_at
+            if row.created_at.tzinfo
+            else row.created_at.replace(tzinfo=UTC)
+        )
+        assert datetime.now(tz=UTC) - created < timedelta(minutes=1)
         rows = await _rows(db_session, acct)
         assert len(rows) == 1 and rows[0].status in ("pending", "noted")
 

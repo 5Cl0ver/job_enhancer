@@ -506,11 +506,14 @@ async def mark_seen(
 
 def _new_rows(user_id: uuid.UUID):
     since = datetime.now(tz=UTC) - timedelta(days=NEW_SHOWN_DAYS)
+    live_jobs = select(SavedJob.id).where(
+        SavedJob.user_id == user_id, SavedJob.is_archived.is_(False)
+    )
     return (
         DetectedEvent.user_id == user_id,
         DetectedEvent.status == STATUS_NOTED,
         DetectedEvent.seen_at.is_(None),
-        DetectedEvent.saved_job_id.is_not(None),
+        DetectedEvent.saved_job_id.in_(live_jobs.scalar_subquery()),
         DetectedEvent.created_at >= since,
     )
 
@@ -577,5 +580,27 @@ async def keep_on_job(
     ev.skip_reason = None
     ev.match_evidence = "user_link"
     ev.seen_at = datetime.now(tz=UTC)  # the user just put it there
+    await db.flush()
+    return ev
+
+
+async def unkeep(
+    db: AsyncSession, user_id: uuid.UUID, event_id: uuid.UUID
+) -> DetectedEvent:
+    """Undo "This is about my job": back to Looked at, not shown."""
+    ev = await db.scalar(
+        select(DetectedEvent).where(
+            DetectedEvent.id == event_id, DetectedEvent.user_id == user_id
+        )
+    )
+    if ev is None:
+        raise HTTPException(status_code=404, detail="Email not found")
+    if ev.status != STATUS_NOTED or ev.match_evidence != "user_link":
+        raise HTTPException(status_code=409, detail="Nothing to undo")
+    ev.saved_job_id = None
+    ev.status = STATUS_SKIPPED
+    ev.skip_reason = "no_saved_job"
+    ev.match_evidence = None
+    ev.seen_at = None
     await db.flush()
     return ev

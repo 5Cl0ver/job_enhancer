@@ -297,6 +297,13 @@ const IDLE: FullScan = {
 
 /** One click reads the whole inbox: scan passes run back to back until every
  * folder is done, refreshing the page's updates after each pass. */
+/** After a scan or re-check: every list that shows emails (spec 027). */
+function refreshEmailLists(qc: ReturnType<typeof useQueryClient>) {
+  for (const key of ["email-events", "job-emails", "email-new", "email-unseen", "email-looked-at"]) {
+    qc.invalidateQueries({ queryKey: [key] });
+  }
+}
+
 export function useFullScan() {
   const qc = useQueryClient();
   const [state, setState] = useState<FullScan>(IDLE);
@@ -354,8 +361,7 @@ export function useFullScan() {
         done: scanIsDone(r),
       };
       setState(s);
-      qc.invalidateQueries({ queryKey: ["email-events"] });
-      qc.invalidateQueries({ queryKey: ["job-emails"] });
+      refreshEmailLists(qc);
       if (s.done) break;
     }
     qc.invalidateQueries({ queryKey: ["email-account"] });
@@ -386,9 +392,7 @@ export function useRecheck() {
   });
   const done = status.data?.state === "done";
   useEffect(() => {
-    if (!done) return;
-    qc.invalidateQueries({ queryKey: ["email-events"] });
-    qc.invalidateQueries({ queryKey: ["job-emails"] });
+    if (done) refreshEmailLists(qc);
   }, [done, qc]);
   const start = useMutation({
     mutationFn: (days: number) =>
@@ -403,7 +407,7 @@ export function useScanInbox() {
   return useMutation({
     mutationFn: () => api.post<ScanResult>("/v1/email/scan", {}),
     onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["email-events"] });
+      refreshEmailLists(qc);
       qc.invalidateQueries({ queryKey: ["email-account"] });
     },
   });
@@ -489,9 +493,10 @@ export function useMarkJobEmailsSeen() {
   return useMutation({
     mutationFn: (jobListingId: string) =>
       api.post("/v1/email/job-emails/seen", { job_listing_id: jobListingId }),
-    onSuccess: () => {
+    onSuccess: (_r, jobListingId) => {
       qc.invalidateQueries({ queryKey: ["email-new"] });
       qc.invalidateQueries({ queryKey: ["email-unseen"] });
+      qc.invalidateQueries({ queryKey: ["job-emails", jobListingId] });
     },
   });
 }
@@ -535,10 +540,16 @@ export function useKeepOnJob() {
       api.post<DetectedEvent>(`/v1/email/events/${id}/keep`, {
         saved_job_id: savedJobId,
       }),
-    onSuccess: () => {
-      qc.invalidateQueries({ queryKey: ["email-looked-at"] });
-      qc.invalidateQueries({ queryKey: ["job-emails"] });
-    },
+    onSuccess: () => refreshEmailLists(qc),
+  });
+}
+
+/** Undo "Put it there": the email goes back to Looked at, not shown. */
+export function useUnkeep() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<DetectedEvent>(`/v1/email/events/${id}/unkeep`, {}),
+    onSuccess: () => refreshEmailLists(qc),
   });
 }
 

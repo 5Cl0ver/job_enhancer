@@ -93,6 +93,14 @@ describe("the job's emails (spec 027)", () => {
     expect(post).toHaveBeenCalledTimes(1);
   });
 
+  it("a kept email can go back with Not this job", async () => {
+    get.mockResolvedValue([ev("k1", "applied", 20, { match_evidence: "user_link" })]);
+    post.mockResolvedValue(ev("k1", "applied", 20, { status: "skipped" }));
+    wrap(<JobEmails jobListingId="l1" />);
+    await userEvent.click(await screen.findByRole("button", { name: "Not this job" }));
+    await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/email/events/k1/unkeep", {}));
+  });
+
   it("doesn't call seen when nothing is new", async () => {
     get.mockResolvedValue([ev("i2", "interview", 20)]);
     wrap(<JobEmails jobListingId="l1" />);

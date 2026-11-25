@@ -765,6 +765,8 @@ async def detect_events(
                 for col in DetectedEvent.__table__.columns:
                     if col.key not in ("id", "created_at"):
                         setattr(old, col.key, getattr(row, col.key))
+                # Placed now: new from now (the "New" lists count 14 days).
+                old.created_at = datetime.now(tz=UTC)
                 kept[i] = old
     db.add_all(
         [

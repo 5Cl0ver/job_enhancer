@@ -10,6 +10,7 @@ import { ExternalLink, Mail } from "lucide-react";
 import {
   useJobEmails,
   useMarkJobEmailsSeen,
+  useUnkeep,
   type DetectedEvent,
 } from "@/hooks/useEmailAccount";
 import { groupBySection, isNew, latestLine } from "@/lib/emailSections";
@@ -30,7 +31,9 @@ function effect(ev: DetectedEvent): string | null {
   if (ev.status === "pending") return "Waiting for you on Email updates";
   if (ev.status === "noted") {
     // Kept on the job; the card didn't need to move (spec 027).
-    return ev.current_stage ? `No change needed (job is in ${ev.current_stage})` : "No change needed";
+    return ev.current_stage
+      ? `No change needed (job is in ${ev.current_stage})`
+      : "No change needed";
   }
   return null;
 }
@@ -53,20 +56,29 @@ export function JobEmails({
   } = useJobEmails(jobListingId);
   const [open, setOpen] = useState<string | null>(null);
   const [all, setAll] = useState<Record<string, boolean>>({});
-  // What was new when the page opened stays marked New for this visit, even
-  // after the app hears it was seen (spec 027).
-  const [fresh, setFresh] = useState<Set<string> | null>(null);
-  const markSeen = useMarkJobEmailsSeen();
-  const marked = useRef(false);
+  // What was new stays marked New for this visit, even after the app hears
+  // it was seen; read only from fresh data, and per job (spec 027).
+  const [fresh, setFresh] = useState<{ job: string; ids: Set<string> }>({
+    job: jobListingId,
+    ids: new Set(),
+  });
+  const { mutate: markSeen } = useMarkJobEmailsSeen();
+  const unkeep = useUnkeep();
+  const posted = useRef(new Set<string>());
   useEffect(() => {
-    if (!emails || fresh) return;
-    const ids = new Set(emails.filter(isNew).map((e) => e.id));
-    setFresh(ids);
-    if (ids.size && !marked.current) {
-      marked.current = true;
-      markSeen.mutate(jobListingId);
+    if (!emails || isFetching) return;
+    const unseen = emails.filter(isNew).map((e) => e.id);
+    if (!unseen.length) return;
+    setFresh((prev) => ({
+      job: jobListingId,
+      ids: new Set([...(prev.job === jobListingId ? prev.ids : []), ...unseen]),
+    }));
+    if (unseen.some((id) => !posted.current.has(id))) {
+      unseen.forEach((id) => posted.current.add(id));
+      markSeen(jobListingId);
     }
-  }, [emails, fresh, jobListingId, markSeen]);
+  }, [emails, isFetching, jobListingId, markSeen]);
+  const freshIds = fresh.job === jobListingId ? fresh.ids : new Set<string>();
   if (!emails) {
     // Where the job's emails are expected (its page and pop-up), say what's
     // happening instead of leaving a gap that looks like "no emails".
@@ -136,7 +148,7 @@ export function JobEmails({
               <ul className="space-y-2">
                 {shown.map((ev) => {
                   const did = effect(ev);
-                  const isFresh = fresh?.has(ev.id);
+                  const isFresh = freshIds.has(ev.id);
                   return (
                     <li
                       key={ev.id}
@@ -167,6 +179,17 @@ export function JobEmails({
                         >
                           View email
                         </Button>
+                        {ev.status === "noted" &&
+                          ev.match_evidence === "user_link" && (
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              disabled={unkeep.isPending}
+                              onClick={() => unkeep.mutate(ev.id)}
+                            >
+                              Not this job
+                            </Button>
+                          )}
                         {ev.mail_link && (
                           <Button
                             asChild

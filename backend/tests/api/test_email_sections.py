@@ -137,3 +137,48 @@ async def test_looked_at_and_this_is_about_my_job(
         )
     ).json()
     assert [e["subject"] for e in on_job] == ["Jobs picked for you"]
+
+
+@pytest.mark.asyncio
+async def test_put_it_there_can_be_undone_and_waits_for_a_scan(
+    client, db_session, test_user, enc_key
+):
+    import asyncio
+
+    from app.api.v1 import email as email_api
+
+    account, job = await _setup(client, db_session, test_user)
+    skipped = _row(account, test_user, "skipped", skip_reason="no_saved_job")
+    db_session.add(skipped)
+    await db_session.commit()
+    keep = f"/v1/email/events/{skipped.id}/keep"
+
+    lock = email_api._SCAN_LOCKS.setdefault(account.id, asyncio.Lock())
+    async with lock:
+        busy = await client.post(keep, json={"saved_job_id": str(job.id)})
+    assert busy.status_code == 409
+
+    assert (
+        await client.post(keep, json={"saved_job_id": str(job.id)})
+    ).status_code == 200
+    undo = await client.post(f"/v1/email/events/{skipped.id}/unkeep")
+    assert undo.status_code == 200
+    body = undo.json()
+    assert (body["status"], body["saved_job_id"]) == ("skipped", None)
+    assert [e["id"] for e in (await client.get("/v1/email/looked-at")).json()] == [
+        str(skipped.id)
+    ]
+    # Only the user's own placement can be undone this way.
+    assert (
+        await client.post(f"/v1/email/events/{skipped.id}/unkeep")
+    ).status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_archived_jobs_have_no_new_emails(client, db_session, test_user, enc_key):
+    account, job = await _setup(client, db_session, test_user)
+    db_session.add(_row(account, test_user, "noted", job=job))
+    job.is_archived = True
+    await db_session.commit()
+    assert (await client.get("/v1/email/new")).json() == []
+    assert (await client.get("/v1/email/job-emails/unseen")).json() == []

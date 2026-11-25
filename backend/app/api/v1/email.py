@@ -651,8 +651,27 @@ async def keep_event(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> DetectedEventOut:
-    """ "This is about my job": put a looked-at email on that saved job."""
+    """ "This is about my job": put a looked-at email on that saved job. Not
+    while a scan or re-check runs (it could place the same email)."""
+    account = await svc.get_account(db, user.id)
+    if account is not None and _SCAN_LOCKS.get(account.id, asyncio.Lock()).locked():
+        raise HTTPException(
+            status_code=409, detail="A scan is running. Try again in a moment."
+        )
     ev = await email_review.keep_on_job(db, user.id, event_id, data.saved_job_id)
+    await db.commit()
+    (out,) = await _events_out(db, account.provider if account else "", [ev])
+    return out
+
+
+@router.post("/events/{event_id}/unkeep", response_model=DetectedEventOut)
+async def unkeep_event(
+    event_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> DetectedEventOut:
+    """Undo "This is about my job": back to Looked at, not shown."""
+    ev = await email_review.unkeep(db, user.id, event_id)
     await db.commit()
     account = await svc.get_account(db, user.id)
     (out,) = await _events_out(db, account.provider if account else "", [ev])
