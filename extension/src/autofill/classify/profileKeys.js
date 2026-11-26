@@ -55,7 +55,7 @@ export const AGREEMENT_OPTION =
 const DECLARES = /\bi (am|identify|have|do not|don'?t|choose not|wish not)\b|\bprefer not\b|\bdecline\b|\bnot a (protected )?veteran\b|\bprotected veteran\b|\bwish to (answer|disclose|self)|^\s*(yes|no)\b/i;
 // The answers a self-ID question offers (gender, race, ethnicity).
 const SELF_ID_VALUE =
-  /^\s*(male|female|man|woman|non-?binary|transgender|hispanic or latino|not hispanic or latino|white|black or african american|asian|american indian or alaska native|native hawaiian or other pacific islander|two or more races)\b/i;
+  /^\s*(male|female|man|woman|non-?binary|transgender|hispanic or latino|not hispanic or latino|white|black or african american|asian|american indian or alaska native|native hawaiian or other pacific islander|two or more races|disabled|not disabled)\b/i;
 // A question that says nothing about what it asks ("Please select one").
 const VAGUE = /^\W*((please )?(select|choose|check|pick|mark)( one| an option| all that apply| one of the (boxes|options) below)?|)\W*$/i;
 
@@ -64,6 +64,14 @@ function selfIdOption(label, question) {
   const l = String(label || "");
   if (SELF_ID.test(l) && DECLARES.test(l)) return true;
   return SELF_ID_VALUE.test(l) && (VAGUE.test(question) || SELF_ID.test(question));
+}
+
+/** Choices that are self-ID answers by themselves ("Hispanic or Latino",
+ * "White", "Disabled"). Two or more in one list make it a self-ID list
+ * whatever its question says ("Which describes you?"). Words that only
+ * mention a topic ("Military.com", "Veteran job fair") don't count. */
+function selfIdList(labels) {
+  return labels.filter((l) => SELF_ID_VALUE.test(l)).length >= 2;
 }
 
 /**
@@ -102,7 +110,7 @@ export function guardReason(question, kind, options = []) {
   const q = String(question || "");
   if (SELF_ID.test(q) || PRIVATE.test(q)) return "sensitive";
   const labels = CHOICES.has(kind) ? (options || []).map((o) => String(o || "")) : [];
-  if (labels.some((l) => selfIdOption(l, q) || PRIVATE.test(l))) return "sensitive";
+  if (selfIdList(labels) || labels.some((l) => selfIdOption(l, q) || PRIVATE.test(l))) return "sensitive";
   if ((kind === "checkbox" || kind === "checkbox_list") && CONSENT.test(q)) return "consent";
   if (labels.some((l) => AGREEMENT_OPTION.test(l) || AGREEING.test(l))) return "consent";
   // Agreeing, in any form (a box, a Yes/No question, a dropdown).

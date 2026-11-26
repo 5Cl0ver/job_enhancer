@@ -129,3 +129,21 @@ describe("kinds of places are not companies", () => {
     expect(formerEmployerQuestion("Have you been employed with us previously?")).toEqual({ ours: true });
   });
 });
+
+describe("self-ID lists under a question that doesn't say so (final review)", () => {
+  const race = ["Hispanic or Latino", "White (Not Hispanic or Latino)", "Asian (Not Hispanic or Latino)", "I do not wish to answer"];
+  for (const question of ["Which describes you?", "Page 1 of 1", "Please make a selection", "Select from the list", "Form CC-305"]) {
+    it(`a race list under "${question}" is the user's`, () => {
+      expect(fieldGuard({ question, kind: "radio", options: race.map((label) => ({ label })) })).toBe("sensitive");
+      expect(fieldGuard({ question, kind: "select", options: race.map((label) => ({ label })) })).toBe("sensitive");
+    });
+  }
+  it("a plain-word disability list is the user's", () => {
+    const options = ["Disabled", "Not disabled", "Prefer not to say"].map((label) => ({ label }));
+    expect(fieldGuard({ question: "Which applies?", kind: "radio", options })).toBe("sensitive");
+  });
+  it("one stray topic word in an ordinary list stays fillable", () => {
+    const options = ["LinkedIn", "Military.com", "Veteran job fair", "Referral"].map((label) => ({ label }));
+    expect(fieldGuard({ question: "How did you hear about us?", kind: "radio", options })).toBeNull();
+  });
+});
