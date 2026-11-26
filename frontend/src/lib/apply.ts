@@ -309,6 +309,8 @@ export interface RunFix {
   at: string;
   /** Claude says it made the change; done once Job Catcher reads it. */
   claude_done?: string | null;
+  /** The box already held it when the fix was made. */
+  already?: boolean;
 }
 
 export const TAG_LABEL: Record<RowTag, string> = {
@@ -365,6 +367,7 @@ export function fixLine(fix: RunFix): string {
   if (fix.status === "gone") return "Couldn't apply: box gone";
   const what = fix.to ? `→ ${fix.to}` : "Asked Claude";
   if (fix.status === "sent" && fix.claude_done) return `${what} (Claude says done)`;
+  if (fix.status === "done" && fix.already) return `${what} (already that)`;
   return `${what} (${fix.status})`;
 }
 

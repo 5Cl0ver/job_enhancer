@@ -5,6 +5,7 @@ import {
   currentStep,
   latestPages,
   checkRows,
+  fixLine,
   needsYou,
   normQ,
   pageAnswers,
@@ -105,6 +106,15 @@ describe("where an application is", () => {
     expect(sheet.steps.map((s) => [s.title, s.rows.length])).toEqual([["Voluntary Disclosures", 1]]);
     expect(tagOf(sheet.steps[0].rows[0])).toBe(null);
     expect(normQ("Veteran Status *")).toBe(normQ("veteran status (Required)"));
+  });
+
+  it("says where each fix stands (spec 033)", () => {
+    const fix = { id: "f", step: "s", q: "City", k: 1, now: "Salem", to: "Portland", at: "" };
+    expect(fixLine({ ...fix, status: "waiting" })).toBe("→ Portland (waiting)");
+    expect(fixLine({ ...fix, status: "sent", claude_done: "t" })).toBe("→ Portland (Claude says done)");
+    expect(fixLine({ ...fix, status: "done" })).toBe("→ Portland (done)");
+    expect(fixLine({ ...fix, status: "done", already: true })).toBe("→ Portland (already that)");
+    expect(fixLine({ ...fix, status: "gone" })).toBe("Couldn't apply: box gone");
   });
 });
 

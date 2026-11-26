@@ -7,9 +7,9 @@ Create Date: 2026-11-26
 - apply_runs.sheet: one growing sheet of every box, by step ({} for runs
   from before: the app builds it from their pages).
 - apply_runs.fixes: the owner's changes, waiting for a checkpoint ([]).
-- apply_runs.mode: "page" (Page by page, the default) or "keep". Runs still
-  open at deploy get "keep": Claude in them never learned to pause, so they
-  carry on as before.
+- apply_runs.mode: "page" (Page by page, the default) or "keep". Runs Claude
+  already started get "keep": Claude in them never learned to pause, so they
+  carry on as before. Runs pressed but not started yet get the new default.
 - apply_runs.paused_step: the step the owner is looking over (null).
 - apply_runs.live_changed_at: Job Catcher last saw the page change (null).
 Additive.
@@ -44,7 +44,7 @@ def upgrade() -> None:
         )
     op.execute(
         "UPDATE apply_runs SET mode = 'keep' "
-        "WHERE status NOT IN ('sent', 'not_sent', 'stopped')"
+        "WHERE status NOT IN ('waiting', 'sent', 'not_sent', 'stopped')"
     )
 
 

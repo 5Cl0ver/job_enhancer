@@ -807,7 +807,8 @@ async def page_done(
     run_id: str, page_url: str, page_title: str, answers: list[dict]
 ) -> dict:
     """Call when you've filled a page, BEFORE pressing Next. answers lists every
-    question on the page and what's in it: [{"q", "a", "claude": true if you
+    question on the page and what's in it, with each "q" copied exactly as the
+    page shows its label (never shortened): [{"q", "a", "claude": true if you
     wrote it, "guess": true if it's your best-judgment pick rather than a fact
     from the profile, "agreement": true for an agreement box you ticked,
     "only_you": true for a box you left empty because only the user knows}].

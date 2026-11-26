@@ -123,23 +123,50 @@ def _keys(row: dict[str, Any]) -> set[str]:
 
 
 def _answers_of(rows: list[dict[str, Any]]) -> dict[str, str]:
-    return {norm(r.get("q")): norm(r.get("a")) for r in rows if norm(r.get("q"))}
+    out: dict[str, str] = {}
+    for r in rows:
+        for k in _keys(r):
+            out.setdefault(k, norm(r.get("a")))
+    return out
+
+
+def _compare(step: dict, rows: list[dict]) -> tuple[int, int, int]:
+    """(shared questions, the same answer, a different answer), counting only
+    answers filled on both sides."""
+    mine, theirs = _answers_of(step["rows"]), _answers_of(rows)
+    shared = set(mine) & set(theirs)
+    both = [q for q in shared if mine[q] and theirs[q]]
+    equal = sum(1 for q in both if mine[q] == theirs[q])
+    return len(shared), equal, len(both) - equal
+
+
+def _agrees(step: dict, rows: list[dict]) -> bool:
+    """The answers say it's the same page: none different, or one (the box
+    the owner fixed) with another the same."""
+    _shared, equal, differ = _compare(step, rows)
+    return differ == 0 or (differ <= 1 and equal >= 1)
 
 
 def _same_page(step: dict, rows: list[dict]) -> bool:
     """Near-total overlap (a page seen again, never a look-alike page): at
-    least 80% and 3 of its questions already in the step, and at most one
-    answer different (the one the owner fixed)."""
+    least 80% and 3 of its questions already in the step, and the answers
+    agreeing."""
     qs = _questions(rows)
-    have = _questions(step["rows"])
-    shared = qs & have
-    if len(shared) < SAME_SHARED or len(shared) / len(qs) < SAME_SHARE:
+    shared = len(qs & _questions(step["rows"]))
+    if shared < SAME_SHARED or shared / len(qs) < SAME_SHARE:
         return False
-    mine, theirs = _answers_of(step["rows"]), _answers_of(rows)
-    differ = sum(
-        1 for q in shared if q in mine and q in theirs and mine[q] != theirs[q]
-    )
-    return differ <= 1
+    return _agrees(step, rows)
+
+
+def _redone(step: dict, rows: list[dict]) -> bool:
+    """A finished page done again under another title: nothing new on it, at
+    least 3 of its questions, and at least one answer still the same (an
+    emergency contact's page shares the labels, never the answers)."""
+    qs = _questions(rows)
+    if len(qs) < SAME_SHARED or not qs <= _questions(step["rows"]):
+        return False
+    _shared, equal, _differ = _compare(step, rows)
+    return equal >= 1
 
 
 def _subset(step: dict, rows: list[dict]) -> bool:
@@ -186,6 +213,7 @@ def _new_step(steps: list[dict], key: str, title: str) -> dict:
 
 
 _DIGITS = re.compile(r"\d+")
+_HINT = re.compile(r"\([^)]*\)|\[[^\]]*\]")
 # Words that make a second box out of the same question.
 _TWIN = {
     "confirm",
@@ -197,56 +225,113 @@ _TWIN = {
     "again",
     "repeat",
 }
-# Words a site adds around a question without changing it.
-_FILLER = {
-    "please",
-    "select",
-    "choose",
-    "enter",
-    "your",
-    "the",
+# Words that carry no meaning of their own in a question.
+_STOP = {
     "a",
     "an",
-    "what",
-    "is",
+    "and",
+    "any",
     "are",
+    "at",
+    "be",
+    "been",
+    "can",
+    "choose",
+    "did",
+    "do",
+    "does",
+    "enter",
+    "for",
+    "had",
+    "has",
+    "have",
+    "how",
+    "i",
+    "if",
+    "in",
+    "is",
+    "it",
+    "of",
+    "on",
+    "or",
+    "our",
+    "please",
+    "provide",
+    "select",
+    "that",
+    "the",
+    "this",
+    "to",
+    "us",
+    "was",
+    "we",
+    "what",
+    "which",
+    "will",
+    "with",
+    "would",
     "you",
+    "your",
 }
 
 
+def _words(q: str) -> list[str]:
+    """A label's meaningful words, case and plurals folded; hints in
+    brackets ("(USD)", "(0-10)") left out."""
+    out = []
+    for w in norm(_HINT.sub(" ", q)).split():
+        if w in _STOP:
+            continue
+        out.append(
+            w[:-1] if len(w) > 3 and w.endswith("s") and not w.endswith("ss") else w
+        )
+    return out
+
+
 def _near(a: str, b: str) -> float:
-    """How surely two wordings are one question (0 when they can't be):
-    never boxes that differ by a number ("Address line 1" / "2") or by a
-    confirm / re-enter / verify word ("Email" / "Confirm email")."""
-    if _DIGITS.findall(a) != _DIGITS.findall(b):
+    """How surely two labels on one step are one question (0 when they
+    can't be). The shorter one's meaningful words (two or more) all in the
+    longer one: Claude shortening the page's label ("Phone type" for "Phone
+    Device Type", "LinkedIn URL" for "LinkedIn Profile URL"). Never boxes that
+    differ by a number ("Address line 1" / "2") or by a confirm / re-enter /
+    verify word ("Email" / "Confirm email")."""
+    ha, hb = norm(_HINT.sub(" ", a)), norm(_HINT.sub(" ", b))
+    da, db = _DIGITS.findall(ha), _DIGITS.findall(hb)
+    if da and db and da != db:
         return 0.0
-    wa, wb = set(a.split()), set(b.split())
+    wa, wb = set(norm(a).split()), set(norm(b).split())
     if (wa & _TWIN) != (wb & _TWIN):
         return 0.0
-    small, big = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
-    if small and small <= big and (big - small) <= _FILLER:
-        return 100.0  # "Veteran status" in "Please select your veteran status"
-    return fuzz.token_sort_ratio(a, b)
+    ma, mb = set(_words(a)), set(_words(b))
+    small, big = (ma, mb) if len(ma) <= len(mb) else (mb, ma)
+    if ma == mb and ma:
+        return 100.0  # the same words ("What is your gender?" / "Gender")
+    if len(small) >= 2 and small <= big:
+        return 95.0 + 5.0 * len(small) / len(big)
+    return fuzz.token_sort_ratio(ha, hb)
 
 
 def _match(rows: list[dict], q: str, k: int, src: str, used: set[int]) -> dict | None:
     """The row this question is: the k-th with the same question, else (once,
-    across Job Catcher's and Claude's wording) the closest near-identical one."""
+    across Job Catcher's and Claude's wording) the best near-identical one,
+    a row of the other's not yet claimed first."""
     nq = norm(q)
     same = [r for r in rows if nq in _keys(r)]
     if len(same) >= k:
         return same[k - 1]
-    if k != 1 or len(nq) < 8:
+    if k != 1:
         return None
-    best, score = None, 0.0
+    best, score = None, (False, 0.0)
     for r in rows:
-        other = norm(r.get("q"))
-        if id(r) in used or r.get("src") == src or len(other) < 8:
+        if id(r) in used or r.get("src") == src:
             continue
-        s = _near(nq, other)
-        if s > score:
-            best, score = r, s
-    return best if score >= NEAR else None
+        s = _near(q, str(r.get("q") or ""))
+        if s < NEAR:
+            continue
+        rank = (not r.get("aliases"), s)  # unclaimed first, then the best
+        if rank > score:
+            best, score = r, rank
+    return best
 
 
 def _apply(row: dict, item: dict, src: str) -> None:
@@ -311,27 +396,33 @@ def merge_live(
 ) -> tuple[dict, str | None]:
     """Job Catcher's reading of the page on screen. Never deletes a row.
 
-    With its step label, that step (a finished step whose questions it
-    doesn't share at all is a new step of the same name). Else: the step
-    already holding every one of these questions (a pop-up, a narrower
-    reading), the step being filled first; else the same page seen again;
-    else the step still being filled; else a new one."""
+    With its step label, that step (a pop-up over a revisited step included).
+    Else: the step being filled, when it already holds every one of these
+    questions (a pop-up, a narrower reading); the step just finished, the
+    same way, but only when the answers agree; the same page seen again
+    (near-total overlap, answers agreeing); the step still being filled; else
+    a new one. A look-alike page (an emergency contact's name after the
+    applicant's) never writes over a finished step."""
     steps = _steps(sheet)
     if not rows:
         return _done(sheet, steps, (sheet or {}).get("current")), None
     key = norm(label)
     open_ = steps[-1] if steps and not steps[-1]["done"] else None
     if key:
-        step = _named(steps, key)
-        if step and step["done"] and not (_questions(rows) & _questions(step["rows"])):
-            step = None  # the site reused a name for a new step
-        step = step or _new_step(steps, key, _text(label, 120))
+        step = _named(steps, key) or _new_step(steps, key, _text(label, 120))
     else:
         step = None
+        current = _by_key(steps, (sheet or {}).get("current") or "")
         if open_ is not None and _subset(open_, rows):
             step = open_
-        if step is None:
-            step = next((s for s in reversed(steps) if _subset(s, rows)), None)
+        if (
+            step is None
+            and current is not None
+            and current is not open_
+            and _subset(current, rows)
+            and _agrees(current, rows)
+        ):
+            step = current
         if step is None:
             step = next((s for s in reversed(steps) if _same_page(s, rows)), None)
         if step is None:
@@ -351,9 +442,10 @@ def merge_page(
 ) -> tuple[dict, str]:
     """A page Claude finished (``page_done``): its answers and marks, into the
     step it is. Job Catcher's label for the page on screen; else the same
-    page done again (the same title and only its questions, or a near-total
-    overlap; never a step the owner already checked under another name);
-    else the step being filled; else a new step named by Claude."""
+    page done again (the same title with nothing new on it; under another
+    title, nothing new and an answer still the same, or a near-total
+    overlap with the answers agreeing); else the step being filled; else a
+    new step named by Claude."""
     steps = _steps(sheet)
     title = _text(title, 120)
     key = norm(label)
@@ -377,11 +469,20 @@ def merge_page(
             (
                 s
                 for s in reversed(steps)
-                if _same_page(s, rows)
-                and not (s.get("checked") and norm(s["title"]) != norm(title))
+                if s["done"]
+                and (
+                    _redone(s, rows)
+                    # A look-alike with something new: never into a step the
+                    # owner checked under another name.
+                    or (
+                        _same_page(s, rows)
+                        and not (s.get("checked") and norm(s["title"]) != norm(title))
+                    )
+                )
             ),
             None,
         )
+    again = step is not None
     if step is None and steps and not steps[-1]["done"]:
         open_ = steps[-1]
         # The step being filled, unless the owner already checked it.
@@ -389,7 +490,7 @@ def merge_page(
             step = open_
     if step is None:
         step = _new_step(steps, norm(title) or f"page-{len(steps) + 1}", title)
-    if title and step["key"].startswith("page-") and not step["done"]:
+    if title and step["key"].startswith("page-") and not step["done"] and not again:
         # Named by Claude the first time it's done (Job Catcher's label wins).
         step["title"] = title
     step["done"] = True
@@ -514,6 +615,9 @@ def add_fix(
         "status": "waiting",
         "at": now,
     }
+    if to and not ask and _same(row.get("a"), to):
+        # The box already holds it: nothing for Claude to do.
+        fix.update(status="done", done_at=now, already=True)
     return [*out, fix][-MAX_FIXES_KEPT:], fix
 
 

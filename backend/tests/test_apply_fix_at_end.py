@@ -749,17 +749,22 @@ def test_migration_round_trip_and_postgres_sql(tmp_path):
         f"INSERT INTO alembic_version VALUES ('{prev}');"
         "INSERT INTO apply_runs VALUES ('" + "a" * 32 + "', 'filling');"
         "INSERT INTO apply_runs VALUES ('" + "b" * 32 + "', 'sent');"
+        "INSERT INTO apply_runs VALUES ('" + "c" * 32 + "', 'waiting');"
     )
     con.commit()
     con.close()
     _ok(_alembic(db, "upgrade", head))
     con = sqlite3.connect(db)
-    # A run open at deploy carries on as before (Keep going); new ones and
-    # ended ones get the default, Page by page.
+    # A run Claude started carries on as before (Keep going); one pressed but
+    # not started, and ended ones, get the default, Page by page.
     assert con.execute(
         "SELECT sheet, fixes, mode, paused_step, live_changed_at FROM apply_runs"
         " ORDER BY id"
-    ).fetchall() == [("{}", "[]", "keep", None, None), ("{}", "[]", "page", None, None)]
+    ).fetchall() == [
+        ("{}", "[]", "keep", None, None),
+        ("{}", "[]", "page", None, None),
+        ("{}", "[]", "page", None, None),
+    ]
     con.close()
     _ok(_alembic(db, "downgrade", prev))
     con = sqlite3.connect(db)
@@ -900,14 +905,22 @@ def test_a_look_alike_page_is_a_new_step():
         sheet, [*exp, {"q": "I agree", "a": "Yes"}], "Terms"
     )
     assert t != e
-    # A label the site reuses for a different step: a new step of that name.
-    sheet, n1 = sheet_svc.merge_live({}, [{"q": "Name", "a": "x"}], "Apply")
-    sheet, _ = sheet_svc.merge_page(
-        sheet, [{"q": "Name", "a": "x"}], "Apply", label="Apply"
+    # A date picker over a finished step revisited for a fix: that step.
+    sheet, _ = sheet_svc.merge_live(
+        {},
+        [{"q": "Job Title", "a": "Eng"}, {"q": "From", "a": "2019"}],
+        "My Experience",
     )
-    sheet, n2 = sheet_svc.merge_live(sheet, [{"q": "Degree", "a": "x"}], "Apply")
-    sheet, n3 = sheet_svc.merge_live(sheet, [{"q": "Degree", "a": "y"}], "Apply")
-    assert n1 == "apply" and n2 == n3 == "apply#2"
+    sheet, _ = sheet_svc.merge_page(
+        sheet,
+        [{"q": "Job Title", "a": "Eng"}, {"q": "From", "a": "2019"}],
+        "My Experience",
+        label="My Experience",
+    )
+    sheet, n = sheet_svc.merge_live(
+        sheet, [{"q": "Month", "a": ""}, {"q": "Year", "a": ""}], "My Experience"
+    )
+    assert n == "my experience" and len(sheet["steps"]) == 1
 
 
 def test_two_wordings_join_only_when_they_are_one_question():
@@ -1108,18 +1121,32 @@ async def test_no_fixes_after_the_review_is_answered(engine, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_a_live_step_name_lasts_while_the_page_sits(engine, monkeypatch):
+async def test_a_live_step_name_lasts_a_few_minutes(engine, monkeypatch):
+    """Job Catcher re-sends an unchanged page every minute: its step name
+    stands for 3 minutes, never longer (it stopped reading the page)."""
     maker, user, run_id, job_id, rid, saved = await _filling(engine, monkeypatch)
-    await _live(maker, user, run_id, INFO, "My Information")
-    async with maker() as db:
-        run = await db.get(ApplyRun, run_id)
-        run.live = {**run.live, "at": (svc._now() - timedelta(minutes=30)).isoformat()}
-        await db.commit()
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": []})
+
+    async def aged(minutes):
+        async with maker() as db:
+            run = await db.get(ApplyRun, run_id)
+            then = svc._now() - timedelta(minutes=minutes)
+            run.live = {**run.live, "at": then.isoformat()}
+            await db.commit()
+
+    await _live(maker, user, run_id, INFO, "My Information")
+    await aged(2)
     out = await mcp_mod.page_done(
         rid, PAGE, "Personal details", [{"q": "Prefix", "a": "Mr."}]
     )
     assert out["step_on_page"] == "My Information"
+    await _live(maker, user, run_id, [{"q": "School", "a": ""}], "Education")
+    await aged(4)
+    out = await mcp_mod.page_done(rid, PAGE, "Education", [{"q": "School", "a": "x"}])
+    assert out["step_on_page"] == "Education"  # its own title, not the old name
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+    assert svc._live_step(run, PAGE) is None
 
 
 def test_only_google_s_job_search_is_a_listing():
@@ -1134,3 +1161,168 @@ def test_only_google_s_job_search_is_a_listing():
         is None
     )
     assert svc._listing_site("https://www.linkedin.com/jobs/view/1") == "linkedin.com"
+
+
+# --------------------------------------------------------------------------- #
+# Re-review (PR #68): pinned
+# --------------------------------------------------------------------------- #
+
+
+def test_a_shorter_look_alike_page_never_writes_over_a_finished_step():
+    """A 2-box emergency contact page after the applicant's details: read
+    live, then finished, it is its own step; the applicant's names stay."""
+    mine = [
+        {"q": "First Name", "a": "Ana"},
+        {"q": "Last Name", "a": "Lee"},
+        {"q": "Phone", "a": "1"},
+    ]
+    theirs = [{"q": "First Name", "a": "Bo"}, {"q": "Last Name", "a": "Kim"}]
+    sheet, _ = sheet_svc.merge_live({}, mine)
+    sheet, a = sheet_svc.merge_page(sheet, mine, "Your details")
+    sheet, b = sheet_svc.merge_live(sheet, theirs)
+    assert b != a
+    sheet, c = sheet_svc.merge_page(sheet, theirs, "Emergency contact")
+    assert c == b
+    assert _rows(sheet, "Your details") == [
+        ("First Name", "Ana"),
+        ("Last Name", "Lee"),
+        ("Phone", "1"),
+    ]
+    assert _rows(sheet, "Emergency contact") == [
+        ("First Name", "Bo"),
+        ("Last Name", "Kim"),
+    ]
+    # A pop-up on the step just finished, answers agreeing: that step.
+    sheet, d = sheet_svc.merge_live(sheet, [{"q": "First Name", "a": "Bo"}])
+    assert d == c and len(sheet["steps"]) == 2
+
+
+@pytest.mark.parametrize(
+    ("page", "claude"),
+    [
+        ("Have you previously worked for Acme?", "Previously worked for Acme"),
+        (
+            "Will you now or in the future require sponsorship for employment visa status?",
+            "Will you require sponsorship",
+        ),
+        ("Phone Device Type", "Phone type"),
+        ("Desired Salary (USD)", "Desired salary"),
+        ("Years of experience (0-10)", "Years of experience"),
+        ("LinkedIn Profile URL", "LinkedIn URL"),
+        ("How did you hear about us?", "How did you hear about this job"),
+        ("Please select your veteran status", "Veteran status"),
+        ("What is your gender?", "Gender"),
+        (
+            "Are you legally authorized to work in the United States?",
+            "Legally authorized to work in the United States",
+        ),
+    ],
+)
+def test_claude_s_shorter_label_is_the_same_box(page, claude):
+    sheet, _ = sheet_svc.merge_live(
+        {}, [{"q": page, "a": "x", "options": ["x", "y"]}], "Application Questions"
+    )
+    sheet, _ = sheet_svc.merge_page(
+        sheet,
+        [{"q": claude, "a": "x", "claude": True, "guess": True}],
+        "Application Questions",
+        label="Application Questions",
+    )
+    (row,) = sheet["steps"][0]["rows"]
+    assert (row["q"], row["tag"], row["aliases"]) == (page, "guess", [claude])
+
+
+@pytest.mark.parametrize(
+    ("page", "claude"),
+    [
+        ("Address Line 1", "Address Line 2"),
+        ("Email Address", "Confirm Email Address"),
+        ("Password", "Re-enter password"),
+        ("Phone", "Phone Extension"),
+    ],
+)
+def test_different_boxes_never_join(page, claude):
+    sheet, _ = sheet_svc.merge_live({}, [{"q": page, "a": "x"}], "My Information")
+    sheet, _ = sheet_svc.merge_page(
+        sheet,
+        [{"q": claude, "a": "y", "claude": True}],
+        "My Information",
+        label="My Information",
+    )
+    assert len(sheet["steps"][0]["rows"]) == 2
+
+
+def test_a_shorter_label_prefers_a_box_no_one_claimed():
+    rows = [
+        {"q": "Phone Device Type", "a": "Mobile"},
+        {"q": "Phone Number", "a": "555"},
+    ]
+    sheet, _ = sheet_svc.merge_live({}, rows, "My Information")
+    sheet, _ = sheet_svc.merge_page(
+        sheet,
+        [
+            {"q": "Phone type", "a": "Mobile", "claude": True},
+            {"q": "Phone number", "a": "555", "claude": True},
+        ],
+        "My Information",
+        label="My Information",
+    )
+    assert len(sheet["steps"][0]["rows"]) == 2
+
+
+def test_a_checked_step_done_again_under_a_new_title_is_that_step():
+    """Redone after a fix with a new title, while the next step is open: it
+    joins its step (nothing new on it, an answer still the same), and the
+    open step keeps its name."""
+    addr = [{"q": "Street", "a": "1"}, {"q": "City", "a": "A"}, {"q": "Zip", "a": "9"}]
+    sheet, a = sheet_svc.merge_page({}, addr, "Address")
+    sheet = sheet_svc.check_step(sheet, a, now=NOW)
+    sheet, school = sheet_svc.merge_live(sheet, [{"q": "School", "a": ""}])
+    redo = [{"q": "Street", "a": "2"}, {"q": "City", "a": "B"}, {"q": "Zip", "a": "9"}]
+    sheet, b = sheet_svc.merge_page(sheet, redo, "Home address")
+    assert b == a
+    assert _rows(sheet, "Address") == [("Street", "2"), ("City", "B"), ("Zip", "9")]
+    assert _rows(sheet, "Page 2") == [("School", "")]
+
+
+def test_a_fix_to_what_the_box_already_holds_is_done_at_once():
+    sheet, k = sheet_svc.merge_live(
+        {}, [{"q": "City", "a": "Portland"}], "My Information"
+    )
+    fixes, fix = sheet_svc.add_fix(sheet, [], step=k, q="City", to="portland", now=NOW)
+    assert (fix["status"], fix["already"]) == ("done", True)
+    assert sheet_svc.waiting(fixes) == []
+    # With a question, it still goes to Claude.
+    fixes, fix = sheet_svc.add_fix(
+        sheet, [], step=k, q="City", to="Portland", ask="Right?", now=NOW
+    )
+    assert fix["status"] == "waiting"
+
+
+@pytest.mark.asyncio
+async def test_a_fill_that_finishes_as_the_wait_ends_is_handed_over(
+    engine, monkeypatch
+):
+    """The race between the last look and marking it late: the finished
+    fill is Claude's answer now, never left for a second fill."""
+    maker, user, run_id, job_id, rid, saved = await _filling(engine, monkeypatch)
+    calls = []
+
+    async def finishes_late(db, req_id, seconds=None):
+        calls.append(req_id)
+        async with maker() as jc:
+            if len(calls) == 1:
+                await svc.claim(jc, user.id, req_id)
+            else:
+                await svc.finish_request(
+                    jc, user.id, req_id, {"ok": True, "filled": ["A"]}
+                )
+            await jc.commit()
+        return {"status": "working", "reason": "still_filling"}  # its last look
+
+    monkeypatch.setattr(svc, "wait_request", finishes_late)
+    out = await mcp_mod.fill_page(rid, PAGE)
+    assert out["filled"] == ["A"]
+    async with maker() as db:
+        (req,) = (await db.scalars(select(ApplyRequest))).all()
+    assert req.status == "done" and not (req.result or {}).get("late")

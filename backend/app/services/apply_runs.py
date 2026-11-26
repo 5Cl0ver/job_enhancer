@@ -116,6 +116,9 @@ STOPPED_AFTER = timedelta(minutes=3)
 STOPPED_FILLING = timedelta(minutes=8)
 # A fill nobody claimed is asked for again once, after this share of the wait.
 REQUEUE_SHARE = 0.5
+# Job Catcher re-sends an unchanged page every minute: a step name older than
+# this is no longer the page on screen.
+LIVE_FRESH = timedelta(minutes=3)
 # A fill Job Catcher is still doing is waited for again for this long.
 FILL_GOING = timedelta(minutes=3)
 ASK_IF_SENT_AFTER = timedelta(minutes=2)
@@ -2193,14 +2196,16 @@ async def _request(
 
 
 def _live_step(run: ApplyRun, page_url: str) -> str | None:
-    """Job Catcher's step label for this page, when its last reading is of
-    this very page (spec 033)."""
+    """Job Catcher's step label for this page, when its last reading (a few
+    minutes at most) is of this very page (spec 033)."""
     live = run.live or {}
     at = live.get("at")
     if not live.get("step") or not at or _key(live.get("url")) != _key(page_url):
         return None
-    # Job Catcher only posts when the page changes: an unchanged page keeps
-    # its label however long it sat.
+    # Job Catcher re-sends an unchanged page every minute; older than a few
+    # minutes, it stopped reading this page.
+    if _now() - datetime.fromisoformat(at) > LIVE_FRESH:
+        return None
     return live["step"]
 
 
@@ -2429,9 +2434,21 @@ async def wait_fill(
         res = await wait_request(db, rid, WAIT_SECONDS - first)
     elif res.get("status") == REQUEST_WORKING:
         res = await wait_request(db, rid, WAIT_SECONDS - first)
-    if res.get("status") == REQUEST_WORKING:
-        await _late(db, rid, {"late": True}, only_working=True)
-    elif res.get("late"):
+    if res.get("status") == REQUEST_WORKING and not await _late(
+        db, rid, {"late": True}, only_working=True
+    ):
+        # Finished between the last look and now: this is its answer.
+        row = (
+            await db.execute(
+                select(ApplyRequest.status, ApplyRequest.result).where(
+                    ApplyRequest.id == rid
+                )
+            )
+        ).first()
+        await db.commit()
+        if row and row.status in (REQUEST_DONE, REQUEST_FAILED):
+            res = {"status": row.status, **(row.result or {})}
+    if res.get("status") != REQUEST_WORKING and res.get("late"):
         kept = {k: v for k, v in res.items() if k != "status"}
         await _late(db, rid, {**kept, "late": False})
     return res
@@ -2439,12 +2456,15 @@ async def wait_fill(
 
 async def _late(
     db: AsyncSession, req_id: uuid.UUID, result: dict, *, only_working: bool = False
-) -> None:
+) -> bool:
+    """One UPDATE (with only_working, only while still being worked on):
+    whether it changed the row."""
     q = update(ApplyRequest).where(ApplyRequest.id == req_id)
     if only_working:
         q = q.where(ApplyRequest.status == REQUEST_WORKING)
-    await db.execute(q.values(result=result))
+    res = await db.execute(q.values(result=result))
     await db.commit()
+    return bool(res.rowcount)
 
 
 REASONS = {
