@@ -122,8 +122,19 @@ export interface ApplyReview {
   pressed_at?: string | null;
   /** Job Catcher saw the confirmation page (spec 023). */
   confirmed?: { words: string; at: string } | null;
-  /** The answer bubbles the user changed or asked about (spec 026). */
-  fixes?: Fix[];
+  /** The answer bubbles the user changed or asked about (spec 026), as
+   * stored: the page's text apart from the user's words (spec 030). */
+  fixes?: ReviewFix[];
+}
+
+/** A sent fix as the server keeps it: the question and value are the
+ * page's (from the run's own pages); only `to` / `ask` are the user's. */
+export interface ReviewFix {
+  page: number;
+  box_on_page: string;
+  now_on_page: string;
+  to?: string;
+  ask?: string;
 }
 
 /** One answer bubble the user changed ("to") or asked Claude about ("ask"). */

@@ -20,7 +20,7 @@ In **Filling now**, the user taps a line. A small pop-up offers **Change it to�
 - Claude changes the box on the page (going back a page if needed), or answers the question with a message.
 - The line shows "→ new answer (sent to Claude)" until the box changes.
 - Only the user's own words are the message. The box's label and value come from the web page: they're taken from Job Catcher's live view (a box that isn't on it is refused) and given to Claude apart, marked as page text, never as instructions.
-- The review's answer bubbles (spec 026) stay as they are.
+- The review's answer bubbles (spec 026) work as before, with the same page-text rule: the fix note is only the user's words ("Fix 1: Change it to “None”."), and each fix's question and value come from the run's own pages (unknown answers are dropped), given to Claude apart as `box_on_page` / `now_on_page`.
 
 **Acceptance:**
 1. Tapping "Prefix: Mr." and sending "None" gives Claude `from_user: [{text, fix: {q: "Prefix", a: "Mr.", to: "None"}}]` with a note saying what to do.

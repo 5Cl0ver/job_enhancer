@@ -41,4 +41,12 @@ The migration `y3b4c5d6e7f9_apply_problems` comes after 029's `y3c5e7a9b1d2`. It
 
 - `text` is only the user's words. `box_on_page` / `now_on_page` are page text, from the live view (the box must be on it).
 - `fix` has `to` (≤ 2000) and/or `ask` (≤ 500).
+
+## `apply_runs.review.fixes[]` (existing, new shape)
+
+```json
+{"page": 1, "box_on_page": "Prefix", "now_on_page": "Mr.", "to": "None"}
+```
+
+- `box_on_page` / `now_on_page` come from the run's own page `page` (Job Catcher's reading, else Claude's list), never the request; a fix for an answer that isn't there is dropped. `review.note` is only the user's words ("Fix 1: Change it to “None”.").
 - At most 30 unread fixes at once.

@@ -36,6 +36,7 @@
 - [X] T015 Answers go back to where asking began (`from` on each question): filling, or the résumé change
 - [X] T016 No new checklist over answers Claude hasn't picked up
 - [X] T017 Live fixes: only the user's words in the message; box label and value from the live view, apart, marked as page text
+- [X] T018a The review bubbles' fixes get the same page-text rule: note = the user's words only; question and value from the run's pages, kept apart (backend `_fixes` / `_fix_note`, test in backend/tests/test_apply_best_judgment.py)
 - [X] T018 Stronger scrub (bare codes, "password X", emails, phones), job slugs kept in pages; admin list reads only the columns it needs
 
 ## Phase 7: US4, Bug reports
