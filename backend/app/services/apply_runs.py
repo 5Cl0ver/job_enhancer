@@ -69,7 +69,13 @@ from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.services import apply_learn, apply_resume, master_profile, releases
+from app.services import (
+    apply_learn,
+    apply_resume,
+    cover_letters,
+    master_profile,
+    releases,
+)
 from app.services import apply_problems as problems_svc
 from app.services import saved_jobs as sj_svc
 from app.services import skipped_sites as sites_svc
@@ -1059,6 +1065,11 @@ async def view(db: AsyncSession, run: ApplyRun, *, full: bool = True) -> dict[st
         document_id=str(run.document_id) if run.document_id else None,
         resume_picked=run.resume_picked,
         resume_file=await _resume_file(db, run),
+        # The cover letter that goes with it (spec 031): the job's pick.
+        cover_letter=await _cover_letter(db, run),
+        # Claude wrote one in this run (the card says "None" when the user
+        # then chose no letter for the job).
+        cover_letter_written=run.cover_letter_id is not None,
         live=run.live if run.status in LIVE_STATUSES else None,
         problems=run.problems or [],
         events=(run.events or [])[-60:],
@@ -1277,6 +1288,9 @@ async def brief(db: AsyncSession, user: User, run_id: str | None) -> dict[str, A
         # The résumé as it is now, with any edit the user made in the app: fix
         # from this, never from an older copy.
         "resume_text": await _resume_text(db, run),
+        # The job's cover letter (spec 031), when it has one: use it, don't
+        # write another unless the user asks.
+        "cover_letter_text": await _cover_letter_text(db, run),
         "pages_done": len(run.pages or []),
         "review": _public_review(run.review),
         **({"apply_url_skipped": True} if skipped else {}),
@@ -1297,6 +1311,13 @@ def _skip_line(site: str) -> str:
         "never apply there. Find the company's own posting (its careers page) "
         "and apply there; if you can't find one, ask the user with need_help."
     )
+
+
+async def _cover_letter_text(db: AsyncSession, run: ApplyRun) -> str | None:
+    doc = await cover_letters.own_letter(
+        db, run.user_id, await _cover_letter_id(db, run)
+    )
+    return cover_letters.text_of(doc) if doc else None
 
 
 async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
@@ -1587,6 +1608,79 @@ async def resume_decide(
     _event(run, "resume_decision", text)
     await db.flush()
     return run
+
+
+async def save_cover_letter(
+    db: AsyncSession, user: User, run_id: str | None, content: str
+) -> dict[str, Any]:
+    """Claude's cover letter for this job (spec 031): it becomes the job's, and
+    Job Catcher attaches it (or pastes its text) on the application. It never
+    changes the run's step."""
+    run = await for_agent(db, user.id, run_id)
+    if run.status in (APPLY_REVIEW, APPLY_SUBMITTING):
+        raise ValueError(
+            "Not now: the application is with the user. Call wait_for_you; save "
+            "the cover letter again only when they ask you to fix it."
+        )
+    sj = await _saved_job(db, run)
+    doc, attached = await cover_letters.save_for_job(db, user, sj, content, run)
+    _event(run, "cover_letter", "Claude saved a cover letter for this job.")
+    await db.flush()
+    out = {
+        "run_id": str(run.id),
+        "cover_letter_id": str(doc.id),
+        "file_name": await cover_letters.file_name(db, user.id),
+    }
+    if not attached:
+        # The user chose another letter (or none) for this job: theirs wins.
+        return {
+            **out,
+            "attached": False,
+            "note": (
+                "Saved, but the user picked a different letter for this job; "
+                "it won't be attached."
+            ),
+            "next": (
+                "Don't attach or paste this letter yourself. Leave the "
+                "cover-letter box to Job Catcher (the user's choice) and go on."
+            ),
+        }
+    return {
+        **out,
+        "attached": True,
+        "tell_user": (
+            "Tell the user: I wrote a short cover letter for this job; it's on "
+            "the job in the app, where you can read or change it."
+        ),
+        "next": (
+            "Call fill_page again on this page: Job Catcher attaches the letter "
+            "to the cover-letter upload box, or puts its text in the "
+            "cover-letter text box. Never put it in the résumé box."
+        ),
+    }
+
+
+async def _cover_letter_id(db: AsyncSession, run: ApplyRun) -> uuid.UUID | None:
+    """The job's pick is the one truth (spec 031): Claude's save sets it, and
+    the user choosing another letter, or None, on the job page wins, even mid
+    run. (``run.cover_letter_id`` only records what Claude wrote, so a second
+    save replaces that letter.)"""
+    return await db.scalar(
+        select(SavedJob.cover_letter_id).where(SavedJob.id == run.saved_job_id)
+    )
+
+
+async def _cover_letter(db: AsyncSession, run: ApplyRun) -> dict[str, str] | None:
+    """The letter that goes with this application, for the app's card."""
+    doc = await cover_letters.own_letter(
+        db, run.user_id, await _cover_letter_id(db, run)
+    )
+    if doc is None:
+        return None
+    return {
+        "id": str(doc.id),
+        "filename": await cover_letters.file_name(db, run.user_id),
+    }
 
 
 async def need_help(
@@ -2376,6 +2470,9 @@ async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
         # The résumé Job Catcher attaches on this run's pages (spec 026): the
         # run's own, else the job's. Never a guess from the page's address.
         "resume_id": await _run_resume_id(db, run),
+        # The cover letter it attaches or pastes (spec 031): the job's pick;
+        # null = none, the box is left.
+        "cover_letter_id": _str_or_none(await _cover_letter_id(db, run)),
         # Read the run's tab for the live view while it's being filled.
         "live": run.status in LIVE_STATUSES,
         "requests": [
@@ -2390,6 +2487,10 @@ async def _run_resume_id(db: AsyncSession, run: ApplyRun) -> str | None:
         select(SavedJob.resume_id).where(SavedJob.id == run.saved_job_id)
     )
     return str(rid) if rid else None
+
+
+def _str_or_none(value: uuid.UUID | None) -> str | None:
+    return str(value) if value else None
 
 
 def _on_host(host: str, hosts: list[str]) -> bool:

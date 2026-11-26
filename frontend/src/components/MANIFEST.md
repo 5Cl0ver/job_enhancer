@@ -74,6 +74,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `OriginLabel.tsx` | Where a saved job came from, as an icon and a few words ("Claude Scout · fit 8/10", "From an email"); nothing when unknown |
 | `WhereFrom.tsx` | "Where this came from" on the job page and pop-up: origin, Claude's why/gaps and a link to the Scout search, the email it was made from, and its collection |
 | `SavedJobsBody.tsx` | My Jobs list on a computer: folders, filter bar, card grid drawn 30 at a time |
+| `JobCoverLetterPicker.tsx` | "Cover letter for this job" (spec 031): pick one of your letters (this job's first) or None, View it in the app, Edit text (the PDF is remade); hidden until you have one. `CoverLetterCard`: the application page's small card |
 | `StagePicker.tsx` | A saved job's stage as a coloured pill you can change (the board's move, from the job page; pinned at the bottom on a phone) |
 | `PhoneJobList.tsx` | My Jobs list on a phone: rows (about ten a screen), stage chips with counts (remembered per device), search, filters in a bottom sheet, 30 rows at a time |
 | `JobDetail.tsx` | Full job view (legacy; no `/jobs/:id` route yet) |

@@ -132,6 +132,7 @@ async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list
             SavedJob.resume_id.label("own_resume_id"),
             ResumeTrack.resume_id.label("track_resume_id"),
             SavedJob.resume_usual,
+            SavedJob.cover_letter_id,
         )
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
         .outerjoin(ResumeTrack, SavedJob.track_id == ResumeTrack.id)

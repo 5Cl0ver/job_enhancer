@@ -10,7 +10,7 @@ read directly from ORM objects.
 | `job.py` | `JobListingSchema`, `PaginatedMeta`, `JobSearchResponse` |
 | `collection.py` | `CollectionCreate`, `CollectionUpdate`, `CollectionSchema` |
 | `job_link.py` | `JobOption`, `LinkJobRequest`, `LinkEventRequest`, `LinkResult`, `LinkUndo` (what Undo needs to put a link back) |
-| `saved_job.py` | `SavedJobCreate`, `SavedJobUpdate`, `SavedJobSchema` (nested `job_listing`) |
+| `saved_job.py` | `SavedJobCreate`, `SavedJobUpdate`, `SavedJobSchema` (nested `job_listing`), `JobCoverLetterIn` (spec 031) |
 | `pipeline_stage.py` | `PipelineStageCreate`, `PipelineStageUpdate`, `PipelineStageSchema` |
 | `saved_search.py` | `SavedSearchCreate`, `SavedSearchSchema`, new-matches feed shapes |
 | `resume.py` | `ResumeSchema`, `GeneratedDocumentCreate/Update/Schema` |

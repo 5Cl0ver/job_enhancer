@@ -35,6 +35,8 @@ export function parseSummary(data) {
     applied: !!j.applied_at,
     // The résumé chosen for this job (spec 020); null = the usual one.
     resume_id: j.resume_id || null,
+    // The cover letter chosen for this job (spec 031); null = none.
+    cover_letter_id: j.cover_letter_id || null,
   }));
   return { changed: true, version: data.version, jobs };
 }

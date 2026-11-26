@@ -52,6 +52,42 @@ export function isResumeUpload(field) {
   return kind === "resume" || (kind === "unclear" && (field.hints?.unclearUploads ?? 1) === 1);
 }
 
+const COVER = /cover[\s_-]*letter/i;
+const LETTER_BOX = new Set(["textarea", "editable"]);
+
+/**
+ * Is this upload box for the cover letter (spec 031)? Never the résumé's box.
+ * Its own label says cover letter, else the text just before it, else the
+ * part of the page that holds it alone, else its heading — the nearest one that says anything about a résumé or a cover
+ * letter decides. A box for "résumé and cover letter" together is neither.
+ */
+export function isCoverLetterUpload(field) {
+  if (field.kind !== "file" || isResumeUpload(field)) return false;
+  const own = [field.question, field.hints?.name, field.hints?.id].join(" ");
+  for (const text of [own, field.hints?.context || "", field.hints?.area || "", field.hints?.group || ""]) {
+    if (RESUME.test(text)) return false;
+    if (COVER.test(text)) return true;
+  }
+  return false;
+}
+
+// "Cover letter", "Cover Letter:", "Cover letter (paste it here)", "Your cover letter".
+const COVER_LABEL = /^(your\s+|paste\s+(your\s+)?)?cover[\s_-]*letter\b/i;
+const NOT_WANTED = /\b(no|not|optional|n\/a)\b/i;
+
+/**
+ * Is this a text box asking for the cover letter itself? Only when its label
+ * is mainly about the letter: short, starting with "cover letter", and not
+ * "no cover letter needed" or "optional". "Anything else (e.g. a cover
+ * letter)?" is an essay, left for the user.
+ */
+export function isCoverLetterText(field) {
+  if (!LETTER_BOX.has(field.kind)) return false;
+  const label = String(field.question || "").trim() || [field.hints?.name, field.hints?.id].filter(Boolean).join(" ").replace(/[_-]+/g, " ");
+  if (!label || label.length > 60) return false;
+  return COVER_LABEL.test(label) && !NOT_WANTED.test(label) && !RESUME.test(label);
+}
+
 /** Legal identity: learned only from an explicit point-and-save, never from typing. */
 export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "email", "email_confirm"]);
 
@@ -150,14 +186,27 @@ export function nationalNumber(phone) {
 }
 
 /**
- * @typedef {{values: Record<string, string[]>, answers: Array<{question_key: string, answer: string}>, resumeFile?: File|null}} Copy
+ * @typedef {{values: Record<string, string[]>, answers: Array<{question_key: string, answer: string}>, resumeFile?: File|null, coverLetterFile?: File|null, coverLetterText?: string}} Copy
  * @returns {{values: Array<string|File>, source: "profile"|"learned", key?: string, learnKey?: string}
- *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person", key?: string}}
+ *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person"|"too_long", key?: string}}
  */
 export function resolve(field, copy) {
   const guard = guardReason(field.question, field.kind);
+  // "Paste your cover letter": the job's letter, when it has one (spec 031);
+  // otherwise it stays an essay for the user (or Claude) to write.
+  if (guard === "essay" && copy.coverLetterText && isCoverLetterText(field)) {
+    // Never cut a letter off: a box too small for it is left for the user.
+    const max = field.hints?.maxLength || 0;
+    if (max > 0 && copy.coverLetterText.length > max) return { skip: "too_long", key: "cover_letter" };
+    return { values: [copy.coverLetterText], source: "profile", key: "cover_letter" };
+  }
   if (guard) return { skip: guard };
   if (field.kind === "file") {
+    // The job's cover letter goes only in a box that clearly is for it (spec
+    // 031); none = the box is left for the user (or Claude).
+    if (isCoverLetterUpload(field)) {
+      return copy.coverLetterFile ? { values: [copy.coverLetterFile], source: "profile", key: "cover_letter_file" } : { skip: "no_data", key: "cover_letter_file" };
+    }
     if (!isResumeUpload(field)) return { skip: "other_file" };
     return copy.resumeFile ? { values: [copy.resumeFile], source: "profile", key: "resume_file" } : { skip: "no_data", key: "resume_file" };
   }

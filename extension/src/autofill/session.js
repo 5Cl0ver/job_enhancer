@@ -69,7 +69,7 @@ const LEARNABLE_PROFILE = new Set([
 ]);
 const BOOL_PROFILE = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
 // Keys filled once per page (repeated education blocks: only the first).
-const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title", "resume_file"]);
+const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title", "resume_file", "cover_letter_file", "cover_letter"]);
 // Questions about a business, a recipient or someone's work line, not the user.
 const NOT_MINE = /company|employer|business|office|work (phone|address)|recipient|shipping|billing|gift|delivery/i;
 
@@ -156,7 +156,7 @@ function within(box, el) {
   return false;
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "other_person"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "other_person", "too_long"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 const optionLabels = (f) => (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60);
@@ -389,6 +389,9 @@ export function createSession(deps) {
       // The résumé is already up on this page (the site re-drew its box
       // empty): never a second copy (spec 029).
       if (field.kind === "file" && resumeShown() && isResumeUpload(field)) continue;
+      // A box that shows the résumé's name is the résumé's: never a cover
+      // letter (or anything else) in it (spec 031).
+      if (field.kind === "file" && attachedName && [(field.mark || field.el)?.textContent, field.hints?.area].join(" ").includes(attachedName)) continue;
       const entry = section === "education" ? copy.history?.education?.[block] : copy.history?.work?.[block];
       const d = taught.has(field.id)
         ? taughtDecision(field, taught.get(field.id), copy)

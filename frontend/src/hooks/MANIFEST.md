@@ -14,6 +14,7 @@ optimistic updates where useful.
 | `useAnalytics.ts` | `useAnalyticsSummary` | `GET /v1/analytics/summary` |
 | `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers`, `useApplyProblems`, `useSetProblemStatus` (bug reports, spec 030) | `/v1/admin/*` |
 | `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useJobDocuments`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
+| `useCoverLetters.ts` | `useCoverLetters`, `useSetJobCoverLetter` (spec 031) | `GET /v1/ai/cover-letters`, `PUT /v1/saved-jobs/{id}/cover-letter` |
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |
 | `useAttention.ts` | `useAttention` (counts for the nav badges; refreshed each minute and after any email action) | `GET /v1/attention` |
 | `useIsPhone.ts` | `useIsPhone` (screen under 768px) — for places where phone and desktop are different components | — |

@@ -27,6 +27,11 @@ export function useApplyRun(id: string | undefined) {
         qc.invalidateQueries({ queryKey: ["apply-open"] });
         qc.invalidateQueries({ queryKey: ["apply-runs"] });
       }
+      // Claude wrote a cover letter (spec 031): the job's pickers show it.
+      if (was && was.cover_letter?.id !== run.cover_letter?.id) {
+        qc.invalidateQueries({ queryKey: ["cover-letters"] });
+        qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+      }
       return run;
     },
     enabled: !!id,

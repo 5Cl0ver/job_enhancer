@@ -232,6 +232,10 @@ export interface ApplyRun extends ApplyRunShort {
   resume_file?: { id: string; filename: string } | null;
   /** What went wrong, as Claude reported it (spec 030). */
   problems?: ApplyProblem[];
+  /** The cover letter that goes with it (spec 031): the job's pick. */
+  cover_letter?: { id: string; filename: string } | null;
+  /** Claude wrote a letter in this run (even if the job now has none). */
+  cover_letter_written?: boolean;
 }
 
 export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";

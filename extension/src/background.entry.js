@@ -1238,17 +1238,21 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // On a page of an Apply with Claude run, that run's résumé (spec 026):
         // the one made for the job or picked for it, never a guess.
         const runResume = await applyRun.resumeFor(tab).catch(() => null);
+        // The cover letter (spec 031): the job's pick, from the run on its
+        // tab (undefined = not the run's tab), else the linked saved job.
+        const runLetter = await applyRun.coverLetterFor(tab).catch(() => undefined);
+        const coverLetterId = runLetter !== undefined ? runLetter : (await linkedJob(tab).catch(() => null))?.cover_letter_id || null;
         if (runResume) {
           // Never the usual résumé in its place: no file, and Claude is told.
           // Its jobs and schools never come from the usual (master) résumé
           // either (spec 029): with this one's not loaded, they're read from
           // it by id (getWorkHistory), else left for Claude.
-          const got = await autofill.get({ resumeId: runResume });
+          const got = await autofill.get({ resumeId: runResume, coverLetterId });
           const failed = got.chosenFailed ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {};
           sendResponse({ ok: true, ...got, ...failed, resumeId: runResume });
         } else {
           const { key, choice, resumeId } = await resumeFor(tab);
-          const got = await autofill.get({ resumeId });
+          const got = await autofill.get({ resumeId, coverLetterId });
           // Never a silent switch: the panel says the chosen résumé failed.
           if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
             const { job } = await resumeFor(tab);

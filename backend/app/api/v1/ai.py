@@ -30,6 +30,7 @@ from app.models.user import User
 from app.schemas.resume import (
     AutofillMapRequest,
     AutofillMapResponse,
+    CoverLetterItem,
     GeneratedDocumentCreate,
     GeneratedDocumentSchema,
     GeneratedDocumentUpdate,
@@ -44,6 +45,7 @@ from app.services import (
     ai_service,
     allowance,
     apply_resume,
+    cover_letters,
     resume_history,
     resume_parser,
 )
@@ -576,6 +578,11 @@ async def update_document(
     )
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
+    if doc.document_type == cover_letters.KIND:
+        try:
+            cover_letters.check_edit(data.edited_content)
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail=str(e)) from e
     doc.edited_content = data.edited_content
     # A résumé made for a job is this document as a PDF: remake it (spec 022).
     await apply_resume.rerender(db, doc)
@@ -602,12 +609,26 @@ async def download_document_pdf(
     if not doc:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    pdf_bytes = render_pdf(doc.edited_content or doc.content or "")
+    if doc.document_type == cover_letters.KIND:
+        # A cover letter in the résumé's look, under the user's name (spec 031).
+        pdf_bytes, name = await cover_letters.pdf_of(db, doc)
+        disposition = content_disposition("attachment", name)
+    else:
+        pdf_bytes = render_pdf(doc.edited_content or doc.content or "")
+        disposition = f'attachment; filename="document-{doc_id}.pdf"'
 
     return StreamingResponse(
         io.BytesIO(pdf_bytes),
         media_type="application/pdf",
-        headers={
-            "Content-Disposition": f'attachment; filename="document-{doc_id}.pdf"'
-        },
+        headers={"Content-Disposition": disposition},
     )
+
+
+@router.get("/cover-letters", response_model=list[CoverLetterItem])
+async def list_cover_letters(
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> list[CoverLetterItem]:
+    """The user's cover letters, newest first, each with the job it was
+    written for: the choices for "Cover letter for this job" (spec 031)."""
+    return [CoverLetterItem(**r) for r in await cover_letters.listed(db, user.id)]

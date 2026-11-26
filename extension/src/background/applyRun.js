@@ -25,6 +25,7 @@
 //   (spec 026). Reading a page works in a background tab; no Claude tokens.
 // - The run's own résumé (the one Claude made, or the user picked) is the
 //   one attached on the run's pages: never a guess from the page's address.
+//   Its cover letter likewise (spec 031): the run's, else the job's.
 // Extension API calls on each turn keep the service worker awake while a run
 // is open (Chrome resets its idle timer on every extension call).
 import { onRunHost, shotPlan } from "../autofill/applyPage.js";
@@ -140,6 +141,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   async function inRun() {
     const data = await active();
     return !!data.run_id;
+  }
+
+  /** The cover letter on the run's own tab (spec 031): the job's pick; null = none, undefined = not the run's tab. */
+  async function coverLetterFor(tab) {
+    const data = await active();
+    if (!data.run_id || !tab?.url || tab.id == null) return undefined;
+    if (!(await isRunTab(data, tab))) return undefined;
+    return data.cover_letter_id || null;
   }
 
   /** Is this the application's own tab (and still on its site)? */
@@ -488,5 +497,5 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
   }
 
-  return { tick, event, active, loop, resumeFor, inRun };
+  return { tick, event, active, loop, resumeFor, inRun, coverLetterFor };
 }

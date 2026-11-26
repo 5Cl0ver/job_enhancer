@@ -251,15 +251,18 @@ async function loadCopy() {
   const res = await send({ type: "getAutofillCopy" });
   if (!res?.signedIn) return { signedOut: true };
   if (!res.copy) return { unreachable: true };
-  let resumeFile = null;
-  if (res.resume?.b64) {
+  const fileOf = (f, fallback) => {
+    if (!f?.b64) return null;
     try {
-      const bytes = Uint8Array.from(atob(res.resume.b64), (c) => c.charCodeAt(0));
-      resumeFile = new File([bytes], res.resume.filename || "resume.pdf", { type: res.resume.mime || "application/pdf" });
+      const bytes = Uint8Array.from(atob(f.b64), (c) => c.charCodeAt(0));
+      return new File([bytes], f.filename || fallback, { type: f.mime || "application/pdf" });
     } catch {
-      /* a corrupt transfer: fill everything else */
+      return null; // a corrupt transfer: fill everything else
     }
-  }
+  };
+  const resumeFile = fileOf(res.resume, "resume.pdf");
+  // The job's cover letter (spec 031): its PDF for an upload box, its text for a text box.
+  const coverLetterFile = fileOf(res.coverLetter, "Cover letter.pdf");
   const copy = res.copy || {};
   lastCopy = {
     values: profileValues(copy.profile, copy.email, new Date(), copy.history),
@@ -269,6 +272,8 @@ async function loadCopy() {
     languages: copy.profile?.languages || [],
     resumeFile,
     resumeId: res.resumeId || null,
+    coverLetterFile,
+    coverLetterText: res.coverLetter?.text || "",
   };
   return lastCopy;
 }

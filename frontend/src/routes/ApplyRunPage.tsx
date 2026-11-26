@@ -8,6 +8,7 @@ import { Pages } from "@/components/apply/Pages";
 import { Problems } from "@/components/apply/Problems";
 import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
+import { CoverLetterCard } from "@/components/jobs/JobCoverLetterPicker";
 import { ResumeReview } from "@/components/apply/ResumeReview";
 import { LiveFill } from "@/components/apply/LiveFill";
 import { ReviewBoard } from "@/components/apply/Review";
@@ -226,6 +227,18 @@ export function ApplyRunPage() {
       {run.resume_id && !checking && (
         <Card title="Résumé for this job">
           <ResumeForJob run={run} />
+        </Card>
+      )}
+
+      {(run.cover_letter || run.cover_letter_written) && (
+        <Card title="Cover letter">
+          {run.cover_letter ? (
+            <CoverLetterCard letter={run.cover_letter} />
+          ) : (
+            <p className="text-sm text-muted-foreground">
+              None for this job: Job Catcher leaves the cover-letter box. Pick one on the job's page.
+            </p>
+          )}
         </Card>
       )}
 

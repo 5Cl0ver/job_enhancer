@@ -68,6 +68,8 @@ export interface SavedJob {
   pipeline_stage_id: string | null;
   /** The resume type (Claude Scout track) to apply with, or null. */
   track_id: string | null;
+  /** The cover letter that goes with this job (spec 031); null = none. */
+  cover_letter_id?: string | null;
   /** How it got into My Jobs (see lib/origin); null when that isn't known. */
   origin?: string | null;
   /** Claude Scout's fit score and the run that found it, on jobs Scout saved. */

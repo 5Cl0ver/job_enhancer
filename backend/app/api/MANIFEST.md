@@ -6,7 +6,7 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | Module | Prefix | Key endpoints |
 |---|---|---|
 | `v1/jobs.py` | `/jobs` | `GET /jobs/?q=…` (search + dedupe), `GET /jobs/{id}` |
-| `v1/saved_jobs.py` | `/saved-jobs` | list / create / `PATCH` / `DELETE` (filters: collection, stage, archived) |
+| `v1/saved_jobs.py` | `/saved-jobs` | list / create / `PATCH` / `DELETE` (filters: collection, stage, archived); `PUT /saved-jobs/{id}/cover-letter` (the job's cover letter or none, spec 031) |
 | `v1/collections.py` | `/collections` | full CRUD; `DELETE` blocked for `is_default` |
 | `v1/tracker.py` | `/pipeline-stages` | stage CRUD + `POST /move` (Kanban) |
 | `v1/saved_searches.py` | `/saved-searches` | save/list/delete searches, new-matches feed, mark-seen (FR-024) |
@@ -15,7 +15,7 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/ai.py` (resumes) | `/ai` | `GET /ai/resumes/{id}/file` (view one of your resumes in the browser) · `GET /ai/resumes/{id}/skills` (skills the resume names, as it writes them, to pre-fill a resume type; word list, no AI) |
 | `v1/attention.py` | `/attention` | `GET /attention` (counts for the nav badges: email updates to review; to-do counts reserved) |
 | `v1/scout.py` | `/scout` | Claude Scout: `GET/POST /scout/tracks`, `PATCH/DELETE /scout/tracks/{id}`; `GET/POST /scout/missions`, `PATCH/DELETE /scout/missions/{id}`, `POST /scout/missions/{id}/runs` (Start); `GET /scout/runs`, `GET /scout/runs/active` (extension), `GET /scout/runs/{id}`, `POST /scout/runs/{id}/stop`; `POST /scout/captures` (extension page copy) |
-| `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload; `?make_active=false` keeps the main resume), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET /ai/documents` (list, optional `?job_listing_id=`), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` |
+| `v1/ai.py` | `/ai` | `POST /ai/resumes` (upload; `?make_active=false` keeps the main resume), `GET /ai/resumes`, `POST /ai/generate` (5/min), `GET /ai/documents` (list, optional `?job_listing_id=`), `GET/PATCH /ai/documents/{id}`, `GET /ai/documents/{id}/pdf` (a cover letter: its letter PDF, spec 031), `GET /ai/cover-letters` (the user's letters with their jobs) |
 | `v1/users.py` | `/users` | `GET/PATCH /users/me`, `GET /users/me/export` (includes the sites to skip), `DELETE /users/me` |
 | `v1/skipped_sites.py` | `/skipped-sites` | Sites to skip (spec 024), owner only: `GET` (newest first), `POST {site, confirm?}` (201 added, 200 already there, 400 not a site / over 100, 409 `needs_confirm` for a site Scout searches), `DELETE /{id}`, `GET /suggestions` |
 | `v1/admin.py` | `/admin` | `GET /admin/{stats,health,users}`, `GET /admin/apply-problems` (bug reports: problems Claude ran into, everyone's) and `PATCH /admin/apply-problems/{run_id}/{id}` (open / fixed / ignored), spec 030 — requires `role=admin` |

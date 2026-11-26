@@ -2,7 +2,7 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, Query, Request, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -15,6 +15,7 @@ from app.schemas.saved_job import (
     ApplicationSyncRequest,
     ApplicationSyncResult,
     BackfillResult,
+    JobCoverLetterIn,
     JobResumeIn,
     JobSavedCheck,
     JobSavedResult,
@@ -30,7 +31,7 @@ from app.schemas.saved_job import (
     SavedJobSummaryResponse,
     SavedJobUpdate,
 )
-from app.services import job_links, job_source
+from app.services import cover_letters, job_links, job_source
 from app.services import saved_jobs as svc
 
 router = APIRouter()
@@ -95,6 +96,7 @@ async def saved_jobs_summary(
                 applied_at=r.applied_at,
                 resume_id=svc.effective_resume_id(r),
                 resume_usual=bool(r.resume_usual),
+                cover_letter_id=r.cover_letter_id,
             )
             for r in rows
         ],
@@ -265,6 +267,24 @@ async def choose_job_resume(
     """The résumé Job Catcher uploads and fills from for this job (spec 020).
     Job Catcher's "Filling from … · Change" and the app's job page both set it."""
     await svc.set_job_resume(db, user.id, saved_job_id, data.resume_id, data.usual)
+    await db.commit()
+    return Response(status_code=204)
+
+
+@router.put("/{saved_job_id}/cover-letter", status_code=204)
+async def choose_job_cover_letter(
+    saved_job_id: uuid.UUID,
+    data: JobCoverLetterIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> Response:
+    """The cover letter that goes with this job (spec 031): Job Catcher
+    attaches it to a cover-letter upload box or pastes it into a cover-letter
+    text box. Null = none."""
+    try:
+        await cover_letters.set_for_job(db, user.id, saved_job_id, data.cover_letter_id)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
     await db.commit()
     return Response(status_code=204)
 

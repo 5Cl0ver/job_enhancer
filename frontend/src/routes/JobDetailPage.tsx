@@ -9,6 +9,7 @@ import { SameJobButton } from "@/components/jobs/SameJob";
 import { WhereFrom } from "@/components/jobs/WhereFrom";
 import { JobResumeType } from "@/components/scout/JobResumeType";
 import { JobResumePicker } from "@/components/jobs/JobResumePicker";
+import { JobCoverLetterPicker } from "@/components/jobs/JobCoverLetterPicker";
 import { StagePicker } from "@/components/jobs/StagePicker";
 import { ApplyWithClaudeButton } from "@/components/apply/ApplyWithClaudeButton";
 import { WhatYouSent } from "@/components/apply/WhatYouSent";
@@ -93,6 +94,7 @@ export function JobDetailPage() {
                 {savedJob && <JobActions page savedJob={savedJob} listing={job} />}
                 <JobResumeType jobListingId={id} />
                 <JobResumePicker jobListingId={id} />
+                <JobCoverLetterPicker jobListingId={id} />
               </>
             ) : null
           }

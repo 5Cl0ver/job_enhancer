@@ -36,7 +36,7 @@ from app.models.user import User
 from app.schemas.saved_job import ManualJobCreate
 from app.services import apply_runs as apply_svc
 from app.services import collections as col_svc
-from app.services import master_profile, onboarding, scout_log
+from app.services import cover_letters, master_profile, onboarding, scout_log
 from app.services import saved_jobs as sj_svc
 from app.services import scout_runs as scout_svc
 from app.services import tracker as tracker_svc
@@ -373,6 +373,9 @@ async def save_draft(job_id: str, document_type: str, content: str) -> dict:
     document_type must be 'resume' or 'cover_letter'. Returns the draft id."""
     if document_type not in ("resume", "cover_letter"):
         raise ValueError("document_type must be 'resume' or 'cover_letter'")
+    if document_type == "cover_letter":
+        # The same rules as save_cover_letter (spec 031): size, no "Dear …".
+        content = cover_letters.check_letter(content)
     async with _session_user() as (db, user):
         sj = await sj_svc.get_saved_job(db, _uuid(job_id), user.id)
         doc = GeneratedDocument(
@@ -726,9 +729,24 @@ async def save_resume(run_id: str, content: str) -> dict:
 
 
 @mcp.tool
+async def save_cover_letter(run_id: str, content: str) -> dict:
+    """Save a short cover letter for this job, ONLY when the application has a
+    cover-letter box or the user asked for one. Plain text: 3–4 short
+    paragraphs (under about 250 words), no header (the app adds the name and
+    contact), no "Dear …", "Hi <name>," only when the hiring manager's name is
+    known, and a plain sign-off with the user's name. It becomes the job's
+    cover letter; call fill_page again so Job Catcher attaches or pastes it.
+    Calling it again in the same run replaces it."""
+    return await _apply(
+        lambda db, user: apply_svc.save_cover_letter(db, user, run_id, content),
+        run_id,
+    )
+
+
+@mcp.tool
 async def fill_page(run_id: str, page_url: str) -> dict:
     """Ask Job Catcher to fill this application page with what it knows
-    (profile, saved answers, this job's résumé file). Waits up to ~45 s and
+    (profile, saved answers, this job's résumé and cover letter). Waits ~45 s and
     returns what it filled, what still needs an answer, and `resume`
     (attached / no_box / no_file / failed, with `resume_note`). page_url is
     the page's full address."""
