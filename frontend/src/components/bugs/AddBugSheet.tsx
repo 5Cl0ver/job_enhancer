@@ -199,8 +199,16 @@ export function AddBugSheet({
     ? draft
     : { ...draft, section: sectionForPath(pathname, search) };
   const busy = add.isPending || uploading;
+  // Opened again: a fresh start, never the last report's "Added" step.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && saved && !busy) setSaved(null);
+  }
 
   const close = (next: boolean) => {
+    // Not while saving or sending pictures: the sheet says how it went.
+    if (!next && busy) return;
     // The report is kept: what's left of it in the form can go.
     if (!next && saved) {
       for (const shot of saved.failed) URL.revokeObjectURL(shot.url);

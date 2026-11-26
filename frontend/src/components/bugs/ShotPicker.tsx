@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { ImagePlus, Loader2, X } from "lucide-react";
 import { buttonVariants } from "@/components/ui/button";
-import { shrinkImage } from "@/lib/shrinkImage";
+import { SHRINK_PROBLEM, shrinkImage } from "@/lib/shrinkImage";
 import { cn } from "@/lib/utils";
 
 export const SHOTS_MAX = 3;
@@ -15,12 +15,18 @@ export interface PickedShot {
 
 let nextKey = 0;
 
-/** A picked picture, shrunk for sending, or null when it can't be used. */
-export async function pickShot(file: File): Promise<PickedShot | null> {
-  const blob = await shrinkImage(file);
-  if (!blob) return null;
+/** A picked picture, shrunk for sending, or why it can't be used. */
+export async function pickShot(
+  file: File,
+): Promise<PickedShot | { problem: string }> {
+  const out = await shrinkImage(file);
+  if ("problem" in out) return out;
   nextKey += 1;
-  return { key: `shot-${nextKey}`, blob, url: URL.createObjectURL(blob) };
+  return {
+    key: `shot-${nextKey}`,
+    blob: out.blob,
+    url: URL.createObjectURL(out.blob),
+  };
 }
 
 /**
@@ -46,14 +52,16 @@ export function ShotPicker({
     setProblem(null);
     const room = SHOTS_MAX - shots.length;
     const picked: PickedShot[] = [];
-    let bad = 0;
+    let bad: string | null = null;
     for (const file of Array.from(files).slice(0, room)) {
-      const shot = await pickShot(file).catch(() => null);
-      if (shot) picked.push(shot);
-      else bad += 1;
+      const shot = await pickShot(file).catch(() => ({
+        problem: SHRINK_PROBLEM.unreadable,
+      }));
+      if ("problem" in shot) bad = shot.problem;
+      else picked.push(shot);
     }
     setBusy(false);
-    if (bad) setProblem("That picture couldn't be used. Try a JPEG or PNG.");
+    if (bad) setProblem(bad);
     else if (files.length > room) setProblem(`Up to ${SHOTS_MAX} screenshots.`);
     if (picked.length) onChange([...shots, ...picked]);
   };

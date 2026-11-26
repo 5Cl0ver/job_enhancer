@@ -67,9 +67,9 @@ beforeEach(() => {
   post.mockReset();
   upload.mockReset();
   toastSuccess.mockReset();
-  shrink
-    .mockReset()
-    .mockImplementation(async () => new Blob(["jpeg"], { type: "image/jpeg" }));
+  shrink.mockReset().mockImplementation(async () => ({
+    blob: new Blob(["jpeg"], { type: "image/jpeg" }),
+  }));
   URL.createObjectURL = vi.fn(() => "blob:preview");
   URL.revokeObjectURL = vi.fn();
 });
@@ -334,16 +334,47 @@ describe("Screenshots", () => {
   });
 
   it("says when a picture can't be used", async () => {
-    shrink.mockResolvedValue(null);
+    shrink.mockResolvedValue({
+      problem: "This picture is too large. Try a crop.",
+    });
     const { user, sheet } = await openAndType("/jobs", "Odd picture");
     await user.upload(
       within(sheet).getByLabelText("Add a screenshot"),
       photo(),
     );
     expect(await within(sheet).findByRole("alert")).toHaveTextContent(
-      "That picture couldn't be used. Try a JPEG or PNG.",
+      "This picture is too large. Try a crop.",
     );
     expect(within(sheet).queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("can't be closed while the pictures are sending", async () => {
+    post.mockResolvedValue({ report: { id: "r1" }, similar: [] });
+    let done: (v: unknown) => void = () => {};
+    upload.mockReturnValueOnce(new Promise((r) => (done = r)));
+    const { user, sheet } = await openAndType("/jobs", "Slow upload");
+    await user.upload(
+      within(sheet).getByLabelText("Add a screenshot"),
+      photo(),
+    );
+    await within(sheet).findByRole("img", { name: "Screenshot 1" });
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    await user.keyboard("{Escape}");
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+    done({ id: "s1", size: 4 });
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Added"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    // Opened again: a fresh form.
+    await user.click(screen.getByRole("button", { name: "Add a bug or idea" }));
+    const again = await screen.findByRole("dialog", {
+      name: "Add a bug or idea",
+    });
+    expect(within(again).getByRole("textbox", { name: "Title" })).toHaveValue(
+      "",
+    );
   });
 
   it("keeps the report when the picture fails, and tries again", async () => {

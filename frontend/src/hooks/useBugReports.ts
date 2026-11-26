@@ -118,26 +118,41 @@ export function useUploadShot() {
   });
 }
 
+/** A screenshot never changes, so its picture is kept apart from the inbox
+ * data: refreshing the inbox doesn't download every picture again. */
+const shotKey = (id: string) => ["bug-shot", id] as const;
+
 export function useDeleteShot() {
-  const refresh = useRefresh();
+  const qc = useQueryClient();
   return useMutation({
     mutationFn: (shotId: string) =>
       api.delete(`/v1/admin/bugs/shots/${shotId}`),
-    onSuccess: refresh,
+    onSuccess: async (_done, shotId) => {
+      // The report again (its thumbnail goes), then the picture, if
+      // nothing shows it any more (else it goes a few minutes after).
+      await qc.invalidateQueries({ queryKey: KEY });
+      qc.removeQueries({
+        queryKey: shotKey(shotId),
+        predicate: (q) => q.getObserversCount() === 0,
+      });
+    },
   });
 }
 
 /** A screenshot as a URL the page can show. The picture needs the sign-in,
- * so it's fetched with it and shown from memory, freed when it's gone. */
+ * so it's fetched once with it and shown from memory; the URL is freed
+ * when the thumbnail goes, the picture a few minutes after nothing shows it. */
 export function useShotUrl(shotId: string): {
   url: string | null;
   isError: boolean;
 } {
   const { data, isError } = useQuery({
-    queryKey: [...KEY, "shot", shotId],
+    queryKey: shotKey(shotId),
     queryFn: () => api.getBlob(`/v1/admin/bugs/shots/${shotId}`),
     staleTime: Infinity,
     gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
   });
   const [url, setUrl] = useState<string | null>(null);
   useEffect(() => {

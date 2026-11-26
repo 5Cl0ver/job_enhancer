@@ -1,8 +1,18 @@
 // Spec 032: a screenshot or phone photo is made into a JPEG at most 1200 px
-// wide and about 400 KB before it's sent (the canvas is mocked: jsdom has
-// none).
+// wide, 4000 px tall and 12 million pixels, and about 400 KB, before it's
+// sent; when it can't be, the reason is said (the canvas is mocked: jsdom
+// has none).
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { MAX_BYTES, MAX_WIDTH, shrinkImage } from "@/lib/shrinkImage";
+import {
+  MAX_BYTES,
+  MAX_HEIGHT,
+  MAX_PIXELS,
+  MAX_WIDTH,
+  SHRINK_PROBLEM,
+  type ShrinkResult,
+  scaleFor,
+  shrinkImage,
+} from "@/lib/shrinkImage";
 
 const drawImage = vi.fn();
 const fillRect = vi.fn();
@@ -43,11 +53,22 @@ afterEach(() => {
 const photo = (type = "image/png", size = 5_000_000) =>
   new File([new Uint8Array(size)], "shot.png", { type });
 
+const blobOf = (out: ShrinkResult) => {
+  if (!("blob" in out)) throw new Error(`no picture: ${out.problem}`);
+  return out.blob;
+};
+
+const bitmap = (width: number, height: number) =>
+  vi.stubGlobal(
+    "createImageBitmap",
+    vi.fn().mockResolvedValue({ width, height, close: vi.fn() }),
+  );
+
 describe("shrinkImage", () => {
   it("makes a big picture a JPEG at most 1200 px wide", async () => {
-    const out = await shrinkImage(photo());
-    expect(out?.type).toBe("image/jpeg");
-    expect(out!.size).toBeLessThanOrEqual(MAX_BYTES);
+    const out = blobOf(await shrinkImage(photo()));
+    expect(out.type).toBe("image/jpeg");
+    expect(out.size).toBeLessThanOrEqual(MAX_BYTES);
     expect(canvas!.width).toBe(MAX_WIDTH);
     expect(canvas!.height).toBe(800);
     expect(drawImage).toHaveBeenCalledWith(
@@ -62,36 +83,58 @@ describe("shrinkImage", () => {
   });
 
   it("keeps a small picture's size", async () => {
-    vi.stubGlobal(
-      "createImageBitmap",
-      vi.fn().mockResolvedValue({ width: 800, height: 600, close: vi.fn() }),
-    );
+    bitmap(800, 600);
     await shrinkImage(photo());
     expect(canvas!.width).toBe(800);
     expect(canvas!.height).toBe(600);
   });
 
+  it("shrinks a very tall screenshot to fit too", async () => {
+    bitmap(1080, 20_000);
+    blobOf(await shrinkImage(photo()));
+    expect(canvas!.height).toBe(MAX_HEIGHT);
+    expect(canvas!.width).toBe(216);
+    expect(canvas!.width * canvas!.height).toBeLessThanOrEqual(MAX_PIXELS);
+  });
+
+  it("keeps any picture under 12 million pixels", () => {
+    for (const [w, h] of [
+      [1200, 4000],
+      [1080, 20_000],
+      [4000, 3000],
+      [500, 100_000],
+    ]) {
+      const s = scaleFor(w, h);
+      expect(Math.round(w * s)).toBeLessThanOrEqual(MAX_WIDTH);
+      expect(Math.round(h * s)).toBeLessThanOrEqual(MAX_HEIGHT);
+      expect(w * s * h * s).toBeLessThanOrEqual(MAX_PIXELS + 1);
+    }
+    expect(scaleFor(800, 600)).toBe(1);
+  });
+
   it("tries lower qualities until it's small enough", async () => {
     sizes = [900_000, 600_000, 300_000];
-    const out = await shrinkImage(photo());
-    expect(out!.size).toBe(300_000);
+    const out = blobOf(await shrinkImage(photo()));
+    expect(out.size).toBe(300_000);
     expect((out as Blob & { quality: number }).quality).toBe(0.5);
   });
 
-  it("gives up when it never gets small enough", async () => {
+  it("says it's too large when it never gets small enough", async () => {
     sizes = [900_000, 900_000, 900_000, 900_000];
-    expect(await shrinkImage(photo())).toBeNull();
+    expect(await shrinkImage(photo())).toEqual({
+      problem: SHRINK_PROBLEM.tooLarge,
+    });
   });
 
-  it("refuses what isn't a picture", async () => {
+  it("says when it isn't a picture", async () => {
     expect(
       await shrinkImage(
         new File(["%PDF"], "a.pdf", { type: "application/pdf" }),
       ),
-    ).toBeNull();
+    ).toEqual({ problem: SHRINK_PROBLEM.notPicture });
   });
 
-  it("refuses a picture it can't read", async () => {
+  it("says when a picture can't be opened", async () => {
     vi.stubGlobal(
       "createImageBitmap",
       vi.fn().mockRejectedValue(new Error("bad image")),
@@ -102,14 +145,20 @@ describe("shrinkImage", () => {
       .mockRejectedValue(new Error("bad image"));
     URL.createObjectURL = vi.fn(() => "blob:x");
     URL.revokeObjectURL = vi.fn();
-    expect(await shrinkImage(photo())).toBeNull();
+    expect(await shrinkImage(photo())).toEqual({
+      problem: SHRINK_PROBLEM.unreadable,
+    });
   });
 
   it("without a canvas, sends a small JPEG as it is and refuses a big one", async () => {
     vi.spyOn(HTMLCanvasElement.prototype, "getContext").mockReturnValue(null);
     const small = photo("image/jpeg", 200_000);
-    expect(await shrinkImage(small)).toBe(small);
-    expect(await shrinkImage(photo("image/jpeg", 2_000_000))).toBeNull();
-    expect(await shrinkImage(photo("image/heic", 200_000))).toBeNull();
+    expect(await shrinkImage(small)).toEqual({ blob: small });
+    expect(await shrinkImage(photo("image/jpeg", 2_000_000))).toEqual({
+      problem: SHRINK_PROBLEM.tooLarge,
+    });
+    expect(await shrinkImage(photo("image/heic", 200_000))).toEqual({
+      problem: SHRINK_PROBLEM.unreadable,
+    });
   });
 });

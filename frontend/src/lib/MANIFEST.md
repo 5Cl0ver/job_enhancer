@@ -24,7 +24,7 @@ Shared utilities and external-service clients.
 | `bugReport.ts` | Copy for Claude (spec 032, on spec 030's format): `bugReport` (one report, or numbered in a list), `bugsReport` (several under one heading, the data note once), `fenced`, `contextLine`, `utcTime`. |
 | `bugs.ts` | Bugs & ideas types and plain words (sections, statuses, severities, sources), `statusesFor`, `sectionForPath` (the add form's guess), `browserName`, `stepsFrom`, `stepsCheck` (a step over 300 characters, more than 12), `saveErrorText` (a refused save in words). |
 | `catchErrors.ts` | The app catches its own crashes (spec 032): `installErrorCatcher` (window `error` + `unhandledrejection`, once, from `main.tsx`), `reportCaught` (signed in only, the same words at most once a minute, nothing while sending, never throws), `isNoise` (ResizeObserver, aborted or failed fetches, 401s, server 5xx, other extensions' scripts) |
-| `shrinkImage.ts` | A picture as a JPEG ≤ 1200 px wide and ~400 KB (canvas; like Job Catcher's `shrink`), or null |
+| `shrinkImage.ts` | A picture as a JPEG ≤ 1200 px wide, 4000 px tall, 12 million pixels and ~400 KB (canvas; like Job Catcher's `shrink`), or the reason it can't be (`SHRINK_PROBLEM`); `scaleFor` |
 | `appVersion.ts` | `APP_VERSION`: `__APP_VERSION__` from `vite.config.ts` (Vercel's commit, 7 characters) or `dev` |
 | `emailSections.ts` | A job's emails in sections (spec 027): `sectionOf`, `groupBySection`, `latestLine`, `isNew` (pure, tested) |
 
