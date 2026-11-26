@@ -1212,6 +1212,7 @@ def test_a_shorter_look_alike_page_never_writes_over_a_finished_step():
         ("How did you hear about us?", "How did you hear about this job"),
         ("Please select your veteran status", "Veteran status"),
         ("What is your gender?", "Gender"),
+        ("Do you have a disability?", "Disability status"),
         (
             "Are you legally authorized to work in the United States?",
             "Legally authorized to work in the United States",
@@ -1239,6 +1240,8 @@ def test_claude_s_shorter_label_is_the_same_box(page, claude):
         ("Email Address", "Confirm Email Address"),
         ("Password", "Re-enter password"),
         ("Phone", "Phone Extension"),
+        ("First Name", "Name"),
+        ("Start Date", "Date"),
     ],
 )
 def test_different_boxes_never_join(page, claude):
@@ -1326,3 +1329,15 @@ async def test_a_fill_that_finishes_as_the_wait_ends_is_handed_over(
     async with maker() as db:
         (req,) = (await db.scalars(select(ApplyRequest))).all()
     assert req.status == "done" and not (req.result or {}).get("late")
+
+
+def test_a_one_word_label_joins_only_a_box_no_other_shares():
+    rows = [{"q": "Veteran status", "a": "No"}, {"q": "Veteran spouse?", "a": "No"}]
+    sheet, _ = sheet_svc.merge_live({}, rows, "Self Identify")
+    sheet, _ = sheet_svc.merge_page(
+        sheet,
+        [{"q": "Veteran", "a": "No", "claude": True}],
+        "Self Identify",
+        label="Self Identify",
+    )
+    assert len(sheet["steps"][0]["rows"]) == 3

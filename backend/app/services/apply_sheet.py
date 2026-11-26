@@ -288,6 +288,60 @@ def _words(q: str) -> list[str]:
     return out
 
 
+# Words that only say what kind of answer it is ("Disability status").
+_SOFT = {"statu", "type", "info", "information", "detail"}
+# Words too common to tell a box by on their own ("Name" in "First Name").
+_GENERIC = {
+    "name",
+    "number",
+    "date",
+    "address",
+    "email",
+    "phone",
+    "city",
+    "state",
+    "country",
+    "title",
+    "company",
+    "school",
+    "degree",
+    "start",
+    "end",
+    "from",
+    "to",
+    "yes",
+    "no",
+}
+
+
+def _core(q: str) -> set[str]:
+    return {w for w in _words(q) if w not in _SOFT}
+
+
+def _apart(a: str, b: str) -> bool:
+    """Boxes that differ by a number or by a confirm / re-enter word."""
+    ha, hb = norm(_HINT.sub(" ", a)), norm(_HINT.sub(" ", b))
+    da, db = _DIGITS.findall(ha), _DIGITS.findall(hb)
+    if da and db and da != db:
+        return True
+    return (set(norm(a).split()) & _TWIN) != (set(norm(b).split()) & _TWIN)
+
+
+def _one_word(rows: list[dict], q: str, r: dict) -> bool:
+    """A one-word label ("Disability status" / "Do you have a disability?"):
+    the same box only when that word isn't a common one and only this row of
+    the step has it."""
+    ca, cb = _core(q), _core(str(r.get("q") or ""))
+    small, big = (ca, cb) if len(ca) <= len(cb) else (cb, ca)
+    if len(small) != 1 or not small <= big or _apart(q, str(r.get("q") or "")):
+        return False
+    (word,) = small
+    if word in _GENERIC:
+        return False
+    holders = [x for x in rows if word in _core(str(x.get("q") or ""))]
+    return holders == [r]
+
+
 def _near(a: str, b: str) -> float:
     """How surely two labels on one step are one question (0 when they
     can't be). The shorter one's meaningful words (two or more) all in the
@@ -331,6 +385,14 @@ def _match(rows: list[dict], q: str, k: int, src: str, used: set[int]) -> dict |
         rank = (not r.get("aliases"), s)  # unclaimed first, then the best
         if rank > score:
             best, score = r, rank
+    if best is None:
+        ones = [
+            r
+            for r in rows
+            if id(r) not in used and r.get("src") != src and _one_word(rows, q, r)
+        ]
+        if len(ones) == 1:
+            best = ones[0]
     return best
 
 
