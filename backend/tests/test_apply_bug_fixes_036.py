@@ -291,3 +291,123 @@ async def test_busy_says_which_job_is_going(client):
     again = await client.post("/v1/apply/runs", json={"saved_job_id": jobs[1]})
     assert again.status_code == 201
     assert again.json()["job"]["company"] == "Globex"
+
+
+# --------------------------------------------------------------------------- #
+# E, review: other jobs off the job boards; run codes shared by two runs
+# --------------------------------------------------------------------------- #
+
+
+async def _pair(engine, monkeypatch, a_url, b_url):
+    """Run A waiting (never started) for a_url; job B saved at b_url."""
+    maker = await _connected_user(engine, monkeypatch)
+    a = await mcp_mod.save_job(
+        title="Help Desk Analyst",
+        company="Acme",
+        apply_url=a_url,
+        description="Help desk work. " * 50,
+    )
+    await mcp_mod.save_job(
+        title="Systems Administrator",
+        company="Globex",
+        apply_url=b_url,
+        description="Servers. " * 50,
+    )
+    async with maker() as db:
+        user = await db.scalar(select(User).where(User.email == "claude@test.dev"))
+        run = await svc.create_run(db, user, uuid.UUID(a["job_id"]))
+        await db.commit()
+    return maker, run.id
+
+
+@pytest.mark.asyncio
+async def test_a_waiting_run_and_a_tab_on_another_saved_job_s_hiring_site(
+    engine, monkeypatch
+):
+    workday = "https://globex.wd5.myworkdayjobs.com/en-US/careers/job/9"
+    maker, run_id = await _pair(
+        engine, monkeypatch, "https://jobs.lever.co/acme/1", workday
+    )
+    before = await _run(maker, run_id)
+    out = await mcp_mod.get_apply_brief(page_url=f"{workday}/apply/applyManually")
+    assert out["not_now"] == "other_job"
+    assert out["open_run"]["title"] == "Help Desk Analyst"
+    after = await _run(maker, run_id)
+    assert after.status == before.status == "waiting"
+    assert after.events == before.events
+
+
+@pytest.mark.asyncio
+async def test_a_tab_on_another_saved_job_s_own_careers_page(engine, monkeypatch):
+    maker, run_id = await _pair(
+        engine,
+        monkeypatch,
+        "https://www.linkedin.com/jobs/view/1001",
+        "https://careers.globex.example/jobs/9",
+    )
+    out = await mcp_mod.get_apply_brief(
+        page_url="https://careers.globex.example/jobs/9"
+    )
+    assert out["not_now"] == "other_job"
+
+
+@pytest.mark.asyncio
+async def test_another_posting_on_the_run_s_own_hiring_site(engine, monkeypatch):
+    maker, run_id = await _pair(
+        engine,
+        monkeypatch,
+        "https://jobs.lever.co/acme/1",
+        "https://www.indeed.com/viewjob?jk=feedbeef1234",
+    )
+    out = await mcp_mod.get_apply_brief(page_url="https://jobs.lever.co/acme/2")
+    assert out["not_now"] == "other_job"
+    # Its own posting's application page, or a page naming no job: the brief.
+    out = await mcp_mod.get_apply_brief(page_url="https://jobs.lever.co/acme/1/apply")
+    assert out["run_id"] == str(run_id)
+
+
+@pytest.mark.asyncio
+async def test_the_run_s_own_listing_leading_to_a_hiring_site_is_its_own(
+    engine, monkeypatch
+):
+    """A LinkedIn listing that leads to the company's Workday, before any page:
+    never another job."""
+    maker, run_id = await _pair(
+        engine,
+        monkeypatch,
+        "https://www.linkedin.com/jobs/view/1001",
+        "https://www.indeed.com/viewjob?jk=feedbeef1234",
+    )
+    out = await mcp_mod.get_apply_brief(
+        page_url="https://acme.wd1.myworkdayjobs.com/en-US/careers/job/7/apply"
+    )
+    assert out["run_id"] == str(run_id)
+
+
+@pytest.mark.asyncio
+async def test_a_run_code_two_runs_share(engine, monkeypatch):
+    maker, user, run_id, _ = await _setup(engine, monkeypatch)
+    code = str(run_id)[:8]
+    async with maker() as db:
+        old = ApplyRun(
+            id=uuid.UUID(code + "-0000-4000-8000-000000000001"),
+            user_id=user.id,
+            saved_job_id=(await db.get(ApplyRun, run_id)).saved_job_id,
+            status="stopped",
+            playbook_version=APPLY_PLAYBOOK_VERSION,
+        )
+        db.add(old)
+        await db.commit()
+    # The open one wins.
+    out = await mcp_mod.get_apply_brief(code)
+    assert out["run_id"] == str(run_id)
+    async with maker() as db:
+        (await db.get(ApplyRun, run_id)).status = "stopped"
+        await db.commit()
+    with pytest.raises(ValueError, match="matches more than one application"):
+        await mcp_mod.get_apply_brief(code)
+
+
+def test_the_rules_allow_forward_once_to_come_back():
+    text = playbook_text()
+    assert "(except Forward once to return after leaving it by accident)" in text

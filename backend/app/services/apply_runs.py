@@ -88,6 +88,7 @@ from app.services import saved_jobs as sj_svc
 from app.services import skipped_sites as sites_svc
 from app.services import tracker as tracker_svc
 from app.services.match import match_resume
+from app.services.scout_dedupe import url_key
 
 logger = logging.getLogger(__name__)
 
@@ -371,15 +372,23 @@ async def _run_uuid(db: AsyncSession, user_id: uuid.UUID, run_id: str) -> uuid.U
     looked up among the user's own runs only (spec 036)."""
     text = run_id.strip().lower().removeprefix("run").strip()
     if RUN_CODE.match(text):
-        ids = [
-            rid
-            for rid in await db.scalars(
-                select(ApplyRun.id).where(ApplyRun.user_id == user_id)
+        runs = [
+            (rid, status)
+            for rid, status in await db.execute(
+                select(ApplyRun.id, ApplyRun.status).where(ApplyRun.user_id == user_id)
             )
             if str(rid).startswith(text)
         ]
-        if len(ids) == 1:
-            return ids[0]
+        if len(runs) == 1:
+            return runs[0][0]
+        # Two of the user's runs share the code: the open one, else ask.
+        going = [rid for rid, status in runs if status in APPLY_OPEN]
+        if len(going) == 1:
+            return going[0]
+        if runs:
+            raise ValueError(
+                "That run code matches more than one application. Pass the full run_id."
+            )
         raise ValueError("No application with that run_id.")
     try:
         return uuid.UUID(text)
@@ -1785,33 +1794,61 @@ def _apply_site(host: str) -> bool:
     return any(host == s or host.endswith(f".{s}") for s in APPLY_SITES)
 
 
+def _posting(url: str | None) -> str | None:
+    """A hiring site's posting, when its address names one for sure
+    (Greenhouse, Lever, Ashby, Workday): its canonical key, else None."""
+    key = url_key(url or "") if url else None
+    host = _host(url)
+    if not key:
+        return None
+    if key.startswith("greenhouse/"):
+        return key
+    if host in ("jobs.lever.co", "jobs.ashbyhq.com"):
+        return key if len(urlsplit(url).path.strip("/").split("/")) >= 2 else None
+    if host.endswith(("myworkdayjobs.com", "myworkdaysite.com")) and "/job/" in key:
+        return key
+    return None
+
+
 async def _tab_shows_other_job(
     db: AsyncSession, run: ApplyRun, sj: SavedJob, page_url: str
 ) -> bool:
     """Whether the tab Claude is on shows another job than the open run's
     (spec 036): another posting on the same job board, another of the user's
-    saved jobs, or mid-application, a hiring site the run never used."""
+    saved jobs (anywhere), another posting on the same hiring site, or
+    mid-application a hiring site the run never used. A page that names no
+    job (a sign-in, the run's own listing's redirect) is never another job."""
+    listing = sj.job_listing
+    own_urls = [u for u in (_apply_url(sj), listing.apply_url if listing else "") if u]
+    rows = list(
+        await db.execute(
+            select(SavedJob.custom_apply_url, JobListing.apply_url)
+            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .where(SavedJob.user_id == run.user_id, SavedJob.id != sj.id)
+        )
+    )
+    other_urls = [u for row in rows for u in row if u]
     shown = _board_job(page_url)
     if shown:
-        listing = sj.job_listing
-        own = {
-            _board_job(u)
-            for u in (_apply_url(sj), listing.apply_url if listing else "")
-            if u
-        }
+        own = {_board_job(u) for u in own_urls}
         if shown in own:
             return False
         board = shown.split(":", 1)[0]
         if any(k and k.startswith(f"{board}:") for k in own):
             return True  # the run's job is on this board, as another posting
-        rows = await db.execute(
-            select(SavedJob.id, SavedJob.custom_apply_url, JobListing.apply_url)
-            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
-            .where(SavedJob.user_id == run.user_id, SavedJob.id != sj.id)
-        )
-        return any(
-            shown in (_board_job(custom), _board_job(url)) for _, custom, url in rows
-        )
+        return any(shown == _board_job(u) for u in other_urls)
+    # Another saved job's own page (its careers site, its posting).
+    page_key = url_key(page_url)
+    own_keys = {url_key(u) for u in own_urls}
+    if page_key and page_key not in own_keys:
+        if page_key in {url_key(u) for u in other_urls}:
+            return True
+    # Another posting on the same hiring site as the run's own posting.
+    page_posting = _posting(page_url)
+    own_postings = {p for p in (_posting(u) for u in own_urls) if p}
+    if page_posting and own_postings and page_posting not in own_postings:
+        if any(_host(page_url) == _host(u) for u in own_urls):
+            return True
     host = _host(page_url)
     return (
         bool(run.pages)
