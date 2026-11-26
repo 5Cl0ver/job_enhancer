@@ -762,7 +762,10 @@ def _set_status(
 ) -> bool:
     if to not in statuses_for(r.type):
         raise ValueError(f"Unknown status for {r.type}s: {to}")
-    if to == r.status and not (to == "fixed" and fixed_in and fixed_in != r.fixed_in):
+    new_fix = to == "fixed" and fixed_in and fixed_in != r.fixed_in
+    # Claude saying "fixed" about one already fixed still waits for a look.
+    claude_fix = to == "fixed" and by == "claude" and not r.needs_check
+    if to == r.status and not (new_fix or claude_fix):
         return False
     data: dict[str, Any] = {"from": r.status, "to": to}
     if to == "fixed":
