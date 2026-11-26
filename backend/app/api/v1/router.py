@@ -4,6 +4,7 @@ from fastapi import APIRouter
 
 from app.api.v1 import (
     admin,
+    admin_bugs,
     ai,
     analytics,
     apply,
@@ -37,6 +38,9 @@ api_router.include_router(tracker.router, prefix="/pipeline-stages", tags=["Trac
 api_router.include_router(ai.router, prefix="/ai", tags=["AI"])
 api_router.include_router(users.router, prefix="/users", tags=["Users"])
 api_router.include_router(admin.router, prefix="/admin", tags=["Admin"])
+api_router.include_router(
+    admin_bugs.router, prefix="/admin/bugs", tags=["Bugs & ideas"]
+)
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(email.router, prefix="/email", tags=["Email"])
 api_router.include_router(attention.router, prefix="/attention", tags=["Attention"])

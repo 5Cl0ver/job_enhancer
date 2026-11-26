@@ -20,6 +20,12 @@ from app.models.apply import (  # noqa: E402, F401
     ApplyRun,
     ProfileFact,
 )
+from app.models.bug_report import (  # noqa: E402, F401
+    BugReport,
+    BugReportEvent,
+    BugReportLink,
+    BugReportShot,
+)
 from app.models.collection import Collection  # noqa: E402, F401
 from app.models.custom_answer import CustomAnswer  # noqa: E402, F401
 from app.models.detected_event import DetectedEvent  # noqa: E402, F401
@@ -57,6 +63,10 @@ from app.models.user import User  # noqa: E402, F401
 __all__ = [
     "Base",
     "ApplicationProfile",
+    "BugReport",
+    "BugReportEvent",
+    "BugReportLink",
+    "BugReportShot",
     "CustomAnswer",
     "TaughtField",
     "DetectedEvent",

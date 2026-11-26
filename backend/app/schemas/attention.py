@@ -13,3 +13,5 @@ class AttentionOut(BaseModel):
     email_review: int = 0
     # Jobs Claude Scout picked that are waiting to be ticked and saved.
     scout_review: int = 0
+    # New bugs in Bugs & ideas, for the owner only (spec 032); 0 for anyone else.
+    bugs_new: int = 0
