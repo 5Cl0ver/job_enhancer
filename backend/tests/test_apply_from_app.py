@@ -35,7 +35,7 @@ async def test_answer_claude_from_the_app(engine, monkeypatch):
     out = await mcp_mod.need_help(
         rid,
         "question",
-        "Can CFS reach out by SMS?",
+        "Can Acme reach out by SMS?",
         choices=["Yes", "No", "Yes"],
         page_url="https://acme.example/apply/1",
     )

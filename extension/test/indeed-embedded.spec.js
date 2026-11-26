@@ -75,7 +75,7 @@ describe("remote flag honesty (regression: everything was flagged Remote)", () =
       <html><body>
         <div class="other-card">Software Engineer — Remote in Cambridge, MA</div>
         <h1 class="jobsearch-JobInfoHeader-title">Junior Machine Learning Engineer</h1>
-        <div data-testid="inlineHeader-companyName">Tax Relief Advocates</div>
+        <div data-testid="inlineHeader-companyName">Tax Help Advocates</div>
         <div data-testid="inlineHeader-companyLocation">Irvine, CA</div>
       </body></html>`);
     const job = extractJob(w.document, "https://www.indeed.com/viewjob?jk=onsite1");
@@ -153,7 +153,7 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
       detail: {
         jobKey: "css1",
         jobTitle: "Full Stack Engineer - OE",
-        companyName: "Infosys",
+        companyName: "Infotech Partners",
         formattedLocation: "Pomona, CA",
         description:
           "<style>@layer htmlContent { #react-native-html-content p { margin: 8px; } }</style>" +
@@ -173,7 +173,7 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
         {
           jobkey: "sal1",
           title: "Full Stack Engineer - OE",
-          company: "Infosys",
+          company: "Infotech Partners",
           formattedLocation: "Pomona, CA",
           extractedSalary: { min: 80299, max: 104389, type: "yearly" },
         },
@@ -186,7 +186,7 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
         {
           jobkey: "sal3",
           title: "Staff Software Engineer - AI Trainer",
-          company: "DataAnnotation",
+          company: "DataLabelers",
           salarySnippet: "$50 - $100 an hour",
           jobTypes: ["Part-time", "Contract", "Full-time"],
         },
@@ -215,23 +215,23 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
       detail: {
         jobKey: "det1",
         jobTitle: ".Net Full stack Developer",
-        companyName: "Infosys",
+        companyName: "Infotech Partners",
         formattedLocation: "United States",
         description: "<p>.NET role</p>",
       },
     });
     const job = extractJob(doc, "https://www.indeed.com/viewjob?jk=det1");
     expect(job.title).toBe(".Net Full stack Developer");
-    expect(job.company).toBe("Infosys");
+    expect(job.company).toBe("Infotech Partners");
     expect(job._via).toBe("indeed-embedded");
   });
 
   it("saves the OPEN card (?vjk=), NOT the stale _initialData detail", () => {
     // Regression: the pane showed one job while _initialData still held another.
     const doc = bridgeDoc({
-      detail: { jobKey: "topcard", jobTitle: "Contract Software Engineer", companyName: "DataAnnotation" },
+      detail: { jobKey: "topcard", jobTitle: "Contract Software Engineer", companyName: "DataLabelers" },
       cards: [
-        { jobkey: "topcard", title: "Contract Software Engineer", company: "DataAnnotation" },
+        { jobkey: "topcard", title: "Contract Software Engineer", company: "DataLabelers" },
         { jobkey: "open99", title: "Software Engineer II", company: "OpenEye", formattedLocation: "Liberty Lake, WA" },
       ],
     });
@@ -244,8 +244,8 @@ describe("Indeed embedded JSON — MAIN-world bridge attribute", () => {
 
   it("returns no title when the open vjk job isn't available (won't save the wrong one)", () => {
     const doc = bridgeDoc({
-      detail: { jobKey: "topcard", jobTitle: "Contract Software Engineer", companyName: "DataAnnotation" },
-      cards: [{ jobkey: "topcard", title: "Contract Software Engineer", company: "DataAnnotation" }],
+      detail: { jobKey: "topcard", jobTitle: "Contract Software Engineer", companyName: "DataLabelers" },
+      cards: [{ jobkey: "topcard", title: "Contract Software Engineer", company: "DataLabelers" }],
     });
     const job = extractJob(doc, "https://www.indeed.com/?vjk=missing");
     expect(job.title).toBe(""); // better to fail than save the wrong job

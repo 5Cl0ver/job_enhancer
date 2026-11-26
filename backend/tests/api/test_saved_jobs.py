@@ -173,7 +173,7 @@ async def test_manual_add_stores_hourly_salary_period(client: AsyncClient):
         json={
             "url": "https://example.com/hourly/1",
             "title": "Staff Software Engineer - AI Trainer",
-            "company": "DataAnnotation",
+            "company": "DataLabelers",
             "location": "Remote in Pomona, CA",
             "is_remote": True,
             "salary_min": 50,
@@ -313,7 +313,7 @@ async def test_backfill_corrects_false_remote_flag(client: AsyncClient):
     scan). A backfill from the job's own page corrects the flag."""
     job = {
         "title": "Junior ML Engineer",
-        "company": "Tax Relief Advocates",
+        "company": "Tax Help Advocates",
         "location": "Irvine, CA",
     }
     await client.post(
@@ -335,7 +335,7 @@ async def test_backfill_corrects_false_remote_flag(client: AsyncClient):
     jl = next(
         s["job_listing"]
         for s in saved
-        if s["job_listing"]["company"] == "Tax Relief Advocates"
+        if s["job_listing"]["company"] == "Tax Help Advocates"
     )
     assert jl["is_remote"] is False
 
@@ -496,7 +496,7 @@ async def test_manual_add_drops_negative_salary_sentinel(client: AsyncClient):
         json={
             "url": "https://example.com/sentinel/1",
             "title": "Development Operations Engineer",
-            "company": "Speed Express",
+            "company": "Swift Express",
             "salary_min": 80000,
             "salary_max": -1,
         },
@@ -516,17 +516,17 @@ async def test_mark_applied_company_only_fallback(client: AsyncClient):
         json={
             "url": "https://example.com/co/1",
             "title": "Desktop Engineer",
-            "company": "Align Communications",
+            "company": "Harbor Communications",
         },
     )
     r = await client.post(
         "/v1/saved-jobs/mark-applied",
-        json={"title": "", "company": "Align Communications"},
+        json={"title": "", "company": "Harbor Communications"},
     )
     assert r.status_code == 200
     assert r.json()["matched"] is True
     saved = (await client.get("/v1/saved-jobs/")).json()
-    sj = next(s for s in saved if s["job_listing"]["company"] == "Align Communications")
+    sj = next(s for s in saved if s["job_listing"]["company"] == "Harbor Communications")
     assert sj["applied_at"] is not None
 
 
@@ -540,7 +540,7 @@ async def test_sync_imports_unknown_application(client: AsyncClient):
             "applications": [
                 {
                     "title": "IT Manager/Front End Lead",
-                    "company": "Veriheal",
+                    "company": "Verihealth",
                     "location": "Portland, OR",
                     "stage": "Applied",
                 }
@@ -554,7 +554,7 @@ async def test_sync_imports_unknown_application(client: AsyncClient):
     assert body["outcomes"][0]["action"] == "imported"
 
     jobs = (await client.get("/v1/saved-jobs/")).json()
-    imported = next(j for j in jobs if j["job_listing"]["company"] == "Veriheal")
+    imported = next(j for j in jobs if j["job_listing"]["company"] == "Verihealth")
     assert imported["job_listing"]["title"] == "IT Manager/Front End Lead"
     assert imported["applied_at"] is not None
 

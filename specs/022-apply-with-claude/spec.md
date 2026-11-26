@@ -29,7 +29,7 @@
   - 10 LinkedIn descriptions end in "… more" (the button's text).
   - Indeed titles were saved as the browser tab's name, for example "Systems Engineer - Tier II - Clackamas, OR 97015 - Indeed.com".
   - A LinkedIn job was saved with its company name as its title.
-  - "ZipRecruiter" was saved as a company, and an iCIMS company as "careers-nscglobal".
+  - "ZipRecruiter" was saved as a company, and an iCIMS company as "careers-acmeglobal".
 
 ## User Scenarios & Testing *(mandatory)*
 
@@ -46,7 +46,7 @@ When the user saves a job, it keeps the full description, never the "… more", 
 2. **Given** a page whose description opens fully only after pressing "See more" (or similar), **When** the user presses Save, **Then** Job Catcher presses it first and saves the full text.
 3. **Given** a title ending in "- Indeed.com", "| LinkedIn" or "- ZipRecruiter", with or without a town or state before it, **When** the job is saved, **Then** only the job title is kept.
 4. **Given** a page where the only company found is "ZipRecruiter", "Indeed", "LinkedIn" or "Glassdoor", **When** the job is saved, **Then** the company is left for the next source (or blank to fill in), never the board's name.
-5. **Given** a hiring-site address like `careers-nscglobal.icims.com`, **When** the company comes from the address, **Then** it reads "nscglobal", without the "careers-" part.
+5. **Given** a hiring-site address like `careers-acmeglobal.icims.com`, **When** the company comes from the address, **Then** it reads "acmeglobal", without the "careers-" part.
 6. **Given** a title that equals the company's name, **When** another source has a real title, **Then** the real title wins.
 
 ---

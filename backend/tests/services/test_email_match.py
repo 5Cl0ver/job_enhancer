@@ -65,7 +65,7 @@ JOBS = [
     },
     {
         "id": "g-hd",
-        "company": "The Home Depot",
+        "company": "Home Supply Co",
         "title": "Store Associate",
         "saved_at": SAVED,
     },
@@ -160,7 +160,7 @@ class TestCommonWords:
 
     def test_all_common_name_needs_the_whole_phrase(self):
         assert m(subject="Your home office setup at the depot").status == NONE
-        r = m(subject="Thank you for applying to The Home Depot — Store Associate")
+        r = m(subject="Thank you for applying to Home Supply Co — Store Associate")
         assert r.matched and r.job["id"] == "g-hd"
 
     def test_platform_domain_is_never_the_employer(self):

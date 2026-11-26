@@ -213,7 +213,11 @@ async def test_last_active_is_noted_at_most_every_15_minutes(
         test_user, "last_active_at", datetime.now(UTC) - timedelta(minutes=20)
     )
     await touch_active(db_session, test_user)
-    assert test_user.last_active_at > first
+    # Written again: "now", not the 20-minute-old value. (Compared with the
+    # 20-minute mark, not with `first`: Windows' clock ticks every ~15 ms, so
+    # a fast run can note both at the same instant.)
+    assert test_user.last_active_at >= first
+    assert test_user.last_active_at > datetime.now(UTC) - timedelta(minutes=1)
 
 
 async def test_export_includes_usage(

@@ -6,7 +6,7 @@
 
 **Status**: Approved to build (owner: "all 13 … do everything", 2026-11-25)
 
-**Input**: The owner, 2026-11-25, with their master résumé (Luis_Fabian_Montufar_Master_Resume.pdf, 3 pages):
+**Input**: The owner, 2026-11-25, with their master résumé (Sam_Rivera_Master_Resume.pdf, 3 pages):
 > "I need to be able to view résumés without having to download them. Download is fine, but it should be an option. I wanna review, and then when applying also, and if I review it I want to change things or be able to talk to Claude through the app on what I should change, before it adds it to the résumé."
 >
 > "The résumé should look like this, looks-wise and template, not all plain like it has been."

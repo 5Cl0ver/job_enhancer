@@ -192,7 +192,7 @@ def _name_word(word: str, first_or_last: bool) -> bool:
 
 def _name_from(lines: list[str]) -> tuple[int, str, str] | None:
     """The person's name: the first header line that is just 2-5 name-like
-    words ("Fabian Example", "MARIA DE LA CRUZ", "Jane Doe, MD"), before any
+    words ("Sam Example", "MARIA DE LA CRUZ", "Jane Doe, MD"), before any
     separator. Returns (line index, first name, last name)."""
     for i, line in enumerate(lines[:_HEADER_LINES]):
         head = _SEPARATORS.split(line, maxsplit=1)[0].strip()
@@ -211,7 +211,7 @@ def _name_from(lines: list[str]) -> tuple[int, str, str] | None:
             continue
         if any(w.lower().strip(".") in _NOT_NAME for w in words):
             continue
-        if head.isupper():  # "FABIAN O'BRIEN" → "Fabian O'Brien"
+        if head.isupper():  # "SAM O'BRIEN" → "Sam O'Brien"
             words = [w if w.lower() in _PARTICLES else _title(w) for w in words]
         return i, words[0][:100], words[-1][:100]
     return None

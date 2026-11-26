@@ -167,13 +167,13 @@ def _jobs():
     return [
         {
             "id": "snap",
-            "company": "Snap Inc.",
+            "company": "Snapline Inc.",
             "title": "Software Engineer, Full Stack",
             "saved_at": saved,
         },
         {
             "id": "twenty",
-            "company": "The 20",
+            "company": "The Ten",
             "title": "System Administrator",
             "saved_at": saved,
         },
@@ -265,12 +265,12 @@ class TestCompanyMustReallyBeNamed:
         jobs = [
             {
                 "id": "am",
-                "company": "Applied Medical",
+                "company": "Applied Biotech",
                 "title": "Application Developer",
             },
             {
                 "id": "ft",
-                "company": "First Tech Federal Credit Union",
+                "company": "Summit Federal Credit Union",
                 "title": "System Administrator",
             },
         ]

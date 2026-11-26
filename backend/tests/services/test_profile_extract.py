@@ -2,21 +2,21 @@
 
 from app.services.profile_extract import extract_contact_heuristics
 
-RESUME_HEADER = """Fabian Example
-Los Angeles, CA • (555) 010-0199 • fabian@example.com
-https://www.linkedin.com/in/fabian-example • github.com/5Cl0ver
-Portfolio: https://fabian.dev
+RESUME_HEADER = """Sam Example
+Los Angeles, CA • (555) 010-0199 • sam@example.com
+https://www.linkedin.com/in/sam-example • github.com/5Cl0ver
+Portfolio: https://sam.dev
 """
 
 
 def test_heuristics_find_phone_and_links():
     out = extract_contact_heuristics(RESUME_HEADER)
     assert out["phone"] == "(555) 010-0199"
-    assert out["linkedin_url"] == "https://www.linkedin.com/in/fabian-example"
+    assert out["linkedin_url"] == "https://www.linkedin.com/in/sam-example"
     # Bare domain is normalized to a real URL.
     assert out["github_url"] == "https://github.com/5Cl0ver"
     # First non-linkedin/github URL is treated as the portfolio.
-    assert out["portfolio_url"] == "https://fabian.dev"
+    assert out["portfolio_url"] == "https://sam.dev"
 
 
 def test_heuristics_ignore_missing_fields():
@@ -36,7 +36,7 @@ def test_phone_format_variants():
 
 def test_name_and_city_from_the_header():
     out = extract_contact_heuristics(RESUME_HEADER)
-    assert (out["first_name"], out["last_name"]) == ("Fabian", "Example")
+    assert (out["first_name"], out["last_name"]) == ("Sam", "Example")
     assert (out["city"], out["state"]) == ("Los Angeles", "CA")
 
 
@@ -69,7 +69,7 @@ async def test_extract_profile_calls_no_ai_by_default(monkeypatch):
 
     monkeypatch.setattr(ai_service, "_invoke", boom)
     out = await profile_extract.extract_profile(RESUME_HEADER)
-    assert out["first_name"] == "Fabian"
+    assert out["first_name"] == "Sam"
     assert out["phone"] == "(555) 010-0199"
 
 

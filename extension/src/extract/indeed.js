@@ -97,7 +97,7 @@ export function extractIndeedApply(doc, url) {
 
   const title = textFrom(card, ["#ia-JobInfoCard-header-title", ".ia-JobHeader-title"]);
 
-  // The subtitle is one line, "Veriheal - Portland, OR". Split on the FIRST
+  // The subtitle is one line, "Verihealth - Portland, OR". Split on the FIRST
   // separator so the "City, ST" (which has its own comma) stays intact.
   let company = "";
   let location = "";

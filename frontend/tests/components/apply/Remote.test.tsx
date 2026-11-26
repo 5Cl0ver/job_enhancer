@@ -95,7 +95,7 @@ describe("answer Claude from the app", () => {
     status: "needs_you" as const,
     help: {
       kind: "question" as const,
-      what: "Can CFS reach out by SMS?",
+      what: "Can Acme reach out by SMS?",
       at: "",
       done_at: null,
       choices: ["Yes", "No"],
@@ -107,7 +107,7 @@ describe("answer Claude from the app", () => {
   it("a quick answer goes to Claude in one tap, next to a photo of the screen", async () => {
     serve(asking);
     renderPage();
-    expect(await screen.findByText("Can CFS reach out by SMS?")).toBeInTheDocument();
+    expect(await screen.findByText("Can Acme reach out by SMS?")).toBeInTheDocument();
     expect(await screen.findByAltText("The application's screen")).toBeInTheDocument();
     await userEvent.click(screen.getByRole("button", { name: "No" }));
     await waitFor(() => expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/help-done", { reply: "No" }));
