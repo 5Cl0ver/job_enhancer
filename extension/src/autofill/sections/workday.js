@@ -15,7 +15,7 @@
 // DOM only: test/workday.spec.js, test/sections.spec.js; the lab covers the rest.
 import { degreeForms } from "../classify/profileKeys.js";
 import { abilityOf, levelFor, levelOption } from "../classify/languages.js";
-import { fieldId, textOf } from "../scan.js";
+import { PROMPT_BOX, fieldId, textOf } from "../scan.js";
 import { asWriter, pointerClick, readField, setNativeValue, writeField } from "../widgets.js";
 
 const FF = (id) => `[data-automation-id="formField-${id}"]`;
@@ -154,7 +154,7 @@ async function promptOrText(ctx, ff, value, question) {
   if (!ff || !value) return false;
   const input = ff.querySelector("input:not([type=checkbox]):not([type=radio]), textarea");
   if (!input) return false;
-  const isPrompt = !!ff.querySelector('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-uxi-widget-type="selectinput"]');
+  const isPrompt = !!ff.querySelector(`${PROMPT_BOX}, [data-uxi-widget-type="selectinput"]`);
   return wrote(await ctx.put(box(input, isPrompt ? "chips" : input.tagName === "TEXTAREA" ? "textarea" : "text", question), [String(value)]));
 }
 

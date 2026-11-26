@@ -435,6 +435,14 @@ export function collectFields(root, opts = {}) {
         continue;
       }
       if (!visible(el) || el.readOnly) continue;
+      // Workday's search prompt (a multiselect: "How Did You Hear About
+      // Us?", spec 036): what counts is the pills it adds, never the text
+      // typed in its search box (Workday clears that on blur).
+      if (el.getAttribute("data-uxi-widget-type") === "selectinput" || el.closest(PROMPT_BOX)) {
+        const q = comboQuestion(el);
+        add({ id: fieldId(el), kind: "chips", single: true, el, mark: el.closest(PROMPT_BOX) || comboBox(el), question: q, hints: hintsOf(el) });
+        continue;
+      }
       const combo = el.getAttribute("role") === "combobox" || /^(list|both)$/.test(el.getAttribute("aria-autocomplete") || "");
       const kind = combo ? "combobox" : type === "date" ? "date" : type === "month" ? "month" : "text";
       add({ id: fieldId(el), kind, el, mark: kind === "combobox" ? comboBox(el) : el, question: questionFor(el), hints: hintsOf(el) });
@@ -580,6 +588,10 @@ export function sectionHeading(el) {
   }
   return "";
 }
+
+/** Where Workday draws a search prompt (its real markup, spec 036:
+ * formField-… > multiselectInputContainer > ul[selectedItemList] + input). */
+export const PROMPT_BOX = '[data-automation-id="multiselectInputContainer"], [data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"]';
 
 /** The visible box of an input combobox: a known control wrapper, or its
  *  parent when that holds nothing else (never a whole form or its label). */

@@ -2,7 +2,32 @@
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
 import { answerKey, closestAnswer, isCompanySpecific, yesNo } from "./classify/answers.js";
 import { formerEmployerAnswer } from "./classify/formerEmployer.js";
-import { OTHER_PERSON, fieldGuard, profileKeyFor, valueForms } from "./classify/profileKeys.js";
+import { BOOL_KEYS, OTHER_PERSON, fieldGuard, isPhoneExtension, profileKeyFor, valueForms } from "./classify/profileKeys.js";
+
+/**
+ * A phone NUMBER where an extension goes (spec 036): an extension is at most
+ * 6 digits, so 7 or more (or the profile's phone) is the whole number, never
+ * the extension.
+ */
+export function phoneInExtension(field, value, copy = {}) {
+  if (!isPhoneExtension(field)) return false;
+  const digits = String(value ?? "").replace(/\D/g, "");
+  const phone = String(copy.values?.phone?.[0] || "").replace(/\D/g, "");
+  return digits.length >= 7 || (!!digits && digits === phone);
+}
+
+/**
+ * A remembered Yes/No for a legal fact (sponsorship, work authorization,
+ * relocation) that says the opposite of the profile (spec 036): the profile
+ * is the fact, so the remembered one is only offered. With no profile value
+ * the remembered one is used.
+ */
+function disagreesWithProfile(key, learned, copy) {
+  if (!BOOL_KEYS.has(key)) return false;
+  const mine = (copy.values?.[key] || [])[0];
+  if (!mine) return false;
+  return yesNo(learned.answer) !== yesNo(mine);
+}
 
 /** The keys that make a page look like an application. */
 export const IDENTITY = new Set(["first_name", "last_name", "full_name", "email", "phone"]);
@@ -248,6 +273,12 @@ export function resolve(field, copy) {
   // What the user taught beats the profile (spec 020): correct a box once and
   // every site asking it gets the correction.
   const learned = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
+  // The phone number remembered for an extension box (a Workday revisit
+  // taken for the user's answer): never put back (spec 036).
+  if (learned && phoneInExtension(field, learned.answer, copy)) return { skip: "no_data" };
+  // A remembered legal Yes/No that contradicts the profile (spec 036: a
+  // reversed question once saved the wrong way): offered, never filled.
+  if (learned && key && disagreesWithProfile(key, learned, copy)) return { skip: "unknown", key, offer: learned.answer };
   // A learned answer, with its OWN other wordings ("Washington" → "WA") so a
   // dropdown still finds it — never the profile's old value (spec 020 review).
   const use = (l) => {

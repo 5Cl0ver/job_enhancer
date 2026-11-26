@@ -157,11 +157,22 @@ const RULES = [
   { key: "linkedin_url", re: /linked[\s_-]*in/i },
   { key: "github_url", re: /git[\s_-]*hub/i },
   { key: "portfolio_url", re: /portfolio|personal[\s_-]*(web)?site|website|^url$|other (url|link)/i },
+  // Sponsorship before work authorization (spec 036): "require sponsorship
+  // to legally work…" is about sponsorship. Read from the question itself
+  // (up to its "?"): help text after it ("we do not sponsor visas") doesn't
+  // change what's asked. The reversed question first: "able to work WITHOUT
+  // sponsorship?" or "Do you NOT require sponsorship?" is answered Yes when
+  // you don't need it.
+  {
+    key: "no_sponsorship_needed",
+    head: true,
+    re: /\bwithout\b[^?]{0,40}\bsponsor|\b(not|never)\b[^?]{0,25}\b(require|need)\w*[^?]{0,30}\bsponsor|\bsponsor\w*[^?]{0,25}\bnot (be )?(required|needed)/i,
+  },
+  { key: "requires_sponsorship", head: true, re: /sponsor/i },
   {
     key: "authorized_to_work",
     re: /authori[sz]ed[\s\S]*(work|employ)|work[\s_-]*authori[sz]ation|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ)|right to work/i,
   },
-  { key: "requires_sponsorship", re: /sponsor/i },
   { key: "willing_to_relocate", re: /relocat/i },
   // From the résumé (education, the most recent job) — spec 015 R2.
   { key: "graduation_year", re: /graduat(ion|ed)?[\s_-]*(year|date)|year of graduation|completion[\s_-]*(year|date)|year (completed|graduated)/i },
@@ -188,7 +199,26 @@ const RULES = [
 ];
 
 /** Profile keys answered Yes/No. */
-export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
+export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", "no_sponsorship_needed", "willing_to_relocate"]);
+
+/** Legal facts: they belong in the profile, never learned from a box (spec 036). */
+export const LEGAL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", "no_sponsorship_needed"]);
+
+/** A question about work authorization or sponsorship, however it's worded
+ * (two in one too): never remembered from what was typed (spec 036). */
+export const LEGAL_QUESTION = /sponsor|authori[sz]ed to work|work authori[sz]ation|legally (authori[sz]ed|eligible|permitted|able)|eligib\w* (to|for) (work|employment)|right to work/i;
+
+// Two questions in one (spec 036): "Are you authorized to work in the US,
+// and will you require sponsorship?" has no one Yes/No: left for the user.
+const AUTH_WORDS = /authori[sz]|legally|eligib|right to work/i;
+// Each question (a sentence ending in "?"; text after the last one is help
+// text), and each "…, and will you …" inside one.
+const ANOTHER_ASK = /,?\s*\b(?:and|or)\s+(?=(?:will|do|would|are|have|can)\s+you\b)/i;
+function twoLegalQuestions(q) {
+  if (!/sponsor/i.test(q)) return false;
+  const asks = (q.includes("?") ? q.match(/[^?]+\?/g) || [] : [q]).flatMap((s) => s.split(ANOTHER_ASK));
+  return asks.some((a) => /sponsor/i.test(a)) && asks.some((a) => AUTH_WORDS.test(a) && !/sponsor/i.test(a));
+}
 
 /**
  * The profile key a field asks for, or null.
@@ -239,8 +269,11 @@ function profileKeyOf(field) {
   if (field.hints?.type === "tel") return "phone";
   const text = [field.question, field.hints?.name, field.hints?.id].filter(Boolean).join(" ");
   const q = field.question || "";
-  for (const { key, re } of RULES) {
-    if (!(re.test(q) || (!q && re.test(text)))) continue;
+  if (twoLegalQuestions(q)) return null;
+  // The question itself, up to its "?" (help text after it is not the question).
+  const head = q.includes("?") ? q.slice(0, q.indexOf("?") + 1) : q;
+  for (const { key, re, head: onlyHead } of RULES) {
+    if (!(re.test(onlyHead ? head : q) || (!q && re.test(text)))) continue;
     if (SHORT_ONLY.has(key) && q.length > 45) continue;
     return inPreferredBlock(field, key);
   }
@@ -356,6 +389,8 @@ export function profileValues(profile, email, today = new Date(), history = null
     portfolio_url: list(p.portfolio_url),
     authorized_to_work: list(yn(p.authorized_to_work)),
     requires_sponsorship: list(yn(p.requires_sponsorship)),
+    // "Able to work without sponsorship?": the other way round (spec 036).
+    no_sponsorship_needed: list(yn(p.requires_sponsorship == null ? null : !p.requires_sponsorship)),
     willing_to_relocate: list(yn(p.willing_to_relocate)),
     desired_salary: list(p.desired_salary),
     notice_period: list(p.notice_period),

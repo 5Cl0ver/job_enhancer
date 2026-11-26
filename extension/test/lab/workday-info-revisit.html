@@ -1,0 +1,61 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 036): Workday's My Information step,
+     revisited. One address for every step; Save and Continue draws My
+     Experience, Back draws My Information again as NEW boxes (new elements,
+     the values Workday kept). The Phone Extension came pre-filled with the
+     whole phone number (an earlier application's mistake). What the user
+     empties stays empty: a revisit never fills it again.
+     window.__formData() holds what the PAGE has taken. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply - Northwind Labs Careers</title>
+    <style>.field { margin: 8px 0; }</style>
+  </head>
+  <body>
+    <div data-automation-id="mainContent">
+      <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+      <h2 id="title"></h2>
+      <div id="step"></div>
+      <button type="button" data-automation-id="pageFooterBackButton" id="back">Back</button>
+      <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button>
+    </div>
+    <script>
+      // What Workday keeps between steps.
+      const data = { "phoneNumber--extension": "555-010-4477" };
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      let n = 0;
+      const text = (id, label, extra = "") =>
+        `<div class="field" data-automation-id="formField-${id}"><label for="${id}">${label}</label><input id="${id}" data-automation-id="${id}" ${extra}></div>`;
+      const STEPS = [
+        ["My Information", () =>
+          text("legalNameSection_firstName", "First Name") +
+          text("legalNameSection_lastName", "Last Name") +
+          text("phoneNumber--phoneNumber", "Phone Number", 'type="tel"') +
+          text("phoneNumber--extension", "Phone Extension", 'type="tel"') +
+          text("addressSection_addressLine1", "Address Line 1") +
+          text("addressSection_city", "City")],
+        ["My Experience", () =>
+          text("wx-title", "Job Title") +
+          text("wx-company", "Company") +
+          text("wx-location", "Location")],
+      ];
+      function show(i) {
+        n = i;
+        const [title, body] = STEPS[i];
+        document.getElementById("title").textContent = title;
+        const step = document.getElementById("step");
+        step.innerHTML = body();
+        for (const input of step.querySelectorAll("input")) {
+          if (data[input.id] != null) input.value = data[input.id];
+          const save = () => (data[input.id] = input.value);
+          input.addEventListener("input", save);
+          input.addEventListener("change", save);
+        }
+      }
+      document.getElementById("next").addEventListener("click", () => show(Math.min(n + 1, STEPS.length - 1)));
+      document.getElementById("back").addEventListener("click", () => show(Math.max(n - 1, 0)));
+      show(0);
+    </script>
+  </body>
+</html>
