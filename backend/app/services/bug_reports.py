@@ -23,7 +23,8 @@ attention count and Apply with Claude's ``report_problem`` all call it.
   3 open reports in its section with a close title (research R3).
 - **Caught errors** (research R6): server errors, browser crashes, Job
   Catcher failures, email checks, Scout refusals and services going down are
-  kept with no user, merged by fingerprint, and capped at 30 new an hour.
+  kept with no user, merged by fingerprint, and capped an hour (the
+  server's own and the ones the app and Job Catcher send, apart).
   Keeping one can never raise or loop: a failure there is only logged.
 """
 
@@ -31,6 +32,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import time
 import uuid
 from collections.abc import Callable
 from datetime import UTC, datetime, timedelta
@@ -41,7 +43,6 @@ from rapidfuzz import fuzz, utils
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
-from sqlalchemy.orm import aliased
 
 from app.models.apply import ApplyRun
 from app.models.bug_report import (
@@ -369,6 +370,45 @@ def event_out(e: BugReportEvent) -> dict[str, Any]:
     }
 
 
+async def _merged_family(
+    db: AsyncSession, roots: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Each report and every report merged into it (up to ``MERGE_HOPS``
+    deep), mapped to the root it now shows under."""
+    family = {rid: rid for rid in roots}
+    frontier = list(roots)
+    for _ in range(MERGE_HOPS):
+        if not frontier:
+            break
+        children = (
+            await db.execute(
+                select(BugReport.id, BugReport.merged_into_id).where(
+                    BugReport.merged_into_id.in_(frontier)
+                )
+            )
+        ).all()
+        frontier = []
+        for child, parent in children:
+            if child not in family:
+                family[child] = family[parent]
+                frontier.append(child)
+    return family
+
+
+async def _with_shots(db: AsyncSession, roots: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Which of these reports have a screenshot, their own or one of a
+    report merged into them (however deep)."""
+    if not roots:
+        return set()
+    family = await _merged_family(db, roots)
+    owners = await db.scalars(
+        select(BugReportShot.report_id)
+        .where(BugReportShot.report_id.in_(list(family)))
+        .distinct()
+    )
+    return {family[o] for o in owners}
+
+
 def _escape_like(q: str) -> str:
     return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -441,25 +481,18 @@ async def list_reports(
     if section:
         conds.append(BugReport.section == section)
     total = await db.scalar(select(func.count()).select_from(BugReport).where(*conds))
-    # Its own screenshots, or those of a report merged into it.
-    owner = aliased(BugReport)
-    has_shot = (
-        select(BugReportShot.id)
-        .join(owner, owner.id == BugReportShot.report_id)
-        .where(or_(owner.id == BugReport.id, owner.merged_into_id == BugReport.id))
-        .exists()
-    )
     rows = (
-        await db.execute(
-            select(BugReport, has_shot)
+        await db.scalars(
+            select(BugReport)
             .where(*conds)
             .order_by(*_priority())
             .limit(min(max(limit, 1), LIST_MAX))
             .offset(max(offset, 0))
         )
     ).all()
+    with_shots = await _with_shots(db, [r.id for r in rows])
     return {
-        "items": [_row(r, bool(shot)) for r, shot in rows],
+        "items": [_row(r, r.id in with_shots) for r in rows],
         "total": total or 0,
         "counts": {
             "bugs_open": await _open_count(db, BUG),
@@ -530,18 +563,13 @@ async def detail(
             .order_by(BugReport.title)
         )
     ).all()
-    # A report merged into this one brings its screenshots (a split takes
-    # them back with it).
-    merged_in = select(BugReport.id).where(BugReport.merged_into_id == r.id)
+    # Reports merged into this one, however deep, bring their screenshots
+    # (a split takes them back with it).
+    family = list(await _merged_family(db, [r.id]))
     shots = (
         await db.execute(
             select(BugReportShot.id, BugReportShot.size)
-            .where(
-                or_(
-                    BugReportShot.report_id == r.id,
-                    BugReportShot.report_id.in_(merged_in),
-                )
-            )
+            .where(BugReportShot.report_id.in_(family))
             .order_by(BugReportShot.created_at)
         )
     ).all()
@@ -1212,13 +1240,23 @@ async def similar(db: AsyncSession, report: BugReport) -> list[dict[str, Any]]:
 # Caught errors (research R6)
 # --------------------------------------------------------------------------- #
 
-CAUGHT_PER_HOUR = 30
 CAUGHT_MESSAGE_MAX = 300
 # The part of an error's own words kept with it: the start of its first line
 # (a database error's next lines hold the query and its values).
 ERROR_TEXT_MAX = 120
 FLOOD_KIND = "too_many"
 _KEY_MAX = 80
+# What the server notices itself. Everything else was sent in by the app or
+# Job Catcher (``/v1/bugs/caught``), which anyone signed in can do, so it has
+# caps of its own: a flood of those never pushes the server's own errors out.
+SERVER_KINDS = ("server_error", "email_check", "scout_refused", "service_down")
+SERVER_PER_HOUR = 30
+SENT_PER_HOUR = 20
+SENT_PER_SENDER_HOUR = 5
+# Per sender (a hash of who, kept in memory only, never stored): when each of
+# their last new reports was made.
+_sent_new: dict[str, list[float]] = {}
+_URL = re.compile(r"\bhttps?://[^\s'\"<>()\[\]{}]+", re.I)
 _TITLES = {
     "server_error": "Server error on {place}",
     "crash": "The app crashed on {place}",
@@ -1248,10 +1286,20 @@ def _sessions() -> async_sessionmaker:
     return AsyncSessionLocal
 
 
+def clean_urls(text: Any) -> str:
+    """Every web address in a text as its site and path only: no query or
+    fragment (where searches, tokens and names live), ids as ``:id``."""
+    return _URL.sub(
+        lambda m: clean_place(m.group(0).rstrip(".,;:!?")) or "[link]",
+        str(text or ""),
+    )
+
+
 def caught_key(text: Any) -> str:
     """What tells two errors on one page apart: their words, with numbers as
     N, so "row 12" and "row 13" are the same problem."""
-    return re.sub(r"\d+", "N", scrub(text, _KEY_MAX * 2))[:_KEY_MAX].lower()
+    words = scrub(clean_urls(text), _KEY_MAX * 2)
+    return re.sub(r"\d+", "N", words)[:_KEY_MAX].lower()
 
 
 def _caught_place(place: Any) -> str:
@@ -1269,22 +1317,44 @@ def caught_fingerprint(
 
 
 def error_text(exc: BaseException) -> str:
-    """An exception as its class and the start of its first line, scrubbed."""
+    """An exception as its class and the start of its first line, scrubbed,
+    with any web address as its site and path only."""
     lines = (str(exc) or "").strip().splitlines()
-    words = scrub(lines[0] if lines else "", ERROR_TEXT_MAX)
+    words = scrub(clean_urls(lines[0]) if lines else "", ERROR_TEXT_MAX)
     name = type(exc).__name__
     return f"{name}: {words}" if words else name
 
 
-async def _caught_this_hour(db: AsyncSession) -> int:
+def _sender_key(sender: str) -> str:
+    return hashlib.sha256(str(sender).encode()).hexdigest()[:16]
+
+
+def _sender_recent(sender: str) -> list[float]:
+    """This sender's new reports in the last hour (and forget older ones)."""
+    now = time.monotonic()
+    for key in [k for k, v in _sent_new.items() if not v or now - v[-1] > 3600]:
+        _sent_new.pop(key, None)
+    times = [t for t in _sent_new.get(_sender_key(sender), []) if now - t <= 3600]
+    _sent_new[_sender_key(sender)] = times
+    return times
+
+
+async def _caught_this_hour(db: AsyncSession, sent: bool) -> int:
+    """New caught reports in the last hour: the server's own, or the ones
+    the app and Job Catcher sent in."""
     since = _now() - timedelta(hours=1)
+    group = (
+        BugReport.kind.not_in((*SERVER_KINDS, FLOOD_KIND))
+        if sent
+        else BugReport.kind.in_(SERVER_KINDS)
+    )
     return (
         await db.scalar(
             select(func.count())
             .select_from(BugReport)
             .where(
                 BugReport.source == "caught",
-                BugReport.kind != FLOOD_KIND,
+                group,
                 BugReport.first_seen >= since,
             )
         )
@@ -1312,29 +1382,61 @@ async def _add_new_or_count(
     return report
 
 
-async def _flood(db: AsyncSession) -> None:
-    """Past the hourly cap: one report counts every error not kept."""
-    fp = fingerprint("app", FLOOD_KIND, "caught")
+def _flood_title(sent: bool, n: int, hour: datetime) -> str:
+    who = " sent by the app and Job Catcher" if sent else ""
+    return (
+        f"Too many errors{who}: {n} more not kept between "
+        f"{hour:%H}:00 and {(hour + timedelta(hours=1)):%H}:00 UTC"
+    )
+
+
+async def _flood(db: AsyncSession, sent: bool) -> None:
+    """Past an hourly cap: one report counts the errors not kept, its title
+    saying how many in this hour. If the owner merged it into another report,
+    that one counts them, and keeps its own title."""
+    fp = fingerprint("app", FLOOD_KIND, "sent" if sent else "caught")
+    now = _now()
+    hour = now.replace(minute=0, second=0, microsecond=0)
     found = await _by_fingerprint(db, fp)
     if found is not None:
-        await _seen_again(db, found, {"place": None}, "app")
-        found.title = f"Too many errors, {found.count} more not kept"
+        last = await db.scalar(
+            select(BugReportEvent)
+            .where(
+                BugReportEvent.report_id == found.id,
+                BugReportEvent.kind == "seen",
+            )
+            .order_by(BugReportEvent.at.desc())
+            .limit(1)
+        )
+        data = (last.data or {}) if last is not None else {}
+        n = (
+            int(data.get("not_kept") or 0) + 1
+            if data.get("hour") == hour.isoformat()
+            else 1
+        )
+        await _seen_again(
+            db, found, {"place": None, "hour": hour.isoformat(), "not_kept": n}, "app"
+        )
+        if found.kind == FLOOD_KIND:
+            found.title = _flood_title(sent, n, hour)
         await db.flush()
         return
-    now = _now()
+    cap = SENT_PER_HOUR if sent else SERVER_PER_HOUR
 
     def build() -> BugReport:
         return BugReport(
             id=uuid.uuid4(),
             type=BUG,
-            title="Too many errors, 1 more not kept",
+            title=_flood_title(sent, 1, hour),
             section="app",
             kind=FLOOD_KIND,
             place=None,
             steps=[],
             actual=(
-                f"More than {CAUGHT_PER_HOUR} new errors were caught in an hour. "
-                "The ones past that weren't kept; this report counts them."
+                f"More than {cap} new errors"
+                + (" were sent by the app and Job Catcher" if sent else " were caught")
+                + " in an hour. The ones past that weren't kept; this report "
+                "counts them."
             ),
             expected="",
             severity="major",
@@ -1348,7 +1450,9 @@ async def _flood(db: AsyncSession) -> None:
             context={"api_version": api_version()},
         )
 
-    await _add_new_or_count(db, fp, build, {"place": None})
+    await _add_new_or_count(
+        db, fp, build, {"place": None, "hour": hour.isoformat(), "not_kept": 1}
+    )
 
 
 async def catch(
@@ -1360,16 +1464,21 @@ async def catch(
     message: Any = "",
     context: dict[str, Any] | None = None,
     key: str | None = None,
+    sender: str | None = None,
 ) -> bool:
     """Keep an error the app caught itself. Never who hit it: where, what
-    kind, the error's scrubbed words and the versions. The same one again
-    (section, kind, place and ``key``) counts up, and a fixed one comes back.
-    Past 30 new ones in an hour, only the "too many" report counts them.
-    True when it was kept."""
+    kind, the error's scrubbed words (web addresses as site and path only)
+    and the versions. The same one again (section, kind, place and ``key``)
+    counts up, and a fixed one comes back. New ones are capped an hour: 30
+    the server noticed itself, and, for ones the app or Job Catcher sent in
+    (``sender``: who sent it, only ever held in memory as a hash), 20 in all
+    and 5 from any one person. Past a cap only a "too many" report counts
+    them. True when it was kept."""
     section = section if section in SECTIONS else "other"
     kind = re.sub(r"[^a-z_]", "", str(kind or "").lower())[:40] or "other"
+    sent = sender is not None or kind not in SERVER_KINDS
     where = _caught_place(place)
-    text = scrub(message, CAUGHT_MESSAGE_MAX, lines=True)
+    text = scrub(clean_urls(message), CAUGHT_MESSAGE_MAX, lines=True)
     ctx = clean_context({**(context or {}), "api_version": api_version()})
     fp = caught_fingerprint(section, kind, place, key)
     seen = {"place": where, "context": ctx, "message": text}
@@ -1379,8 +1488,12 @@ async def catch(
         # Repeats always count, cap or not.
         await _seen_again(db, found, seen, "app")
         return True
-    if await _caught_this_hour(db) >= CAUGHT_PER_HOUR:
-        await _flood(db)
+    mine = _sender_recent(sender) if sender is not None else []
+    if (
+        await _caught_this_hour(db, sent)
+        >= (SENT_PER_HOUR if sent else SERVER_PER_HOUR)
+    ) or len(mine) >= SENT_PER_SENDER_HOUR:
+        await _flood(db, sent)
         return False
     title = _TITLES.get(kind, "Error on {place}").format(place=where)
     if kind not in _PLAIN_TITLES and text:
@@ -1411,6 +1524,8 @@ async def catch(
         )
 
     await _add_new_or_count(db, fp, build, seen)
+    if sender is not None:
+        mine.append(time.monotonic())
     return True
 
 

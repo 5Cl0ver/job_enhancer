@@ -139,12 +139,29 @@ def summarize(tool: str, sent: dict, out: dict | None, error: str | None) -> str
     return tool
 
 
+# What a refusal names (ids, titles, a user's own words) is left out of its
+# kind: anything quoted, in brackets or parentheses, ids and numbers.
+_QUOTED = re.compile(
+    r"\"[^\"]*\"|“[^”]*”|‘[^’]*’|(?<!\w)'[^']*'(?!\w)"
+    r"|\([^()]*\)|\[[^\[\]]*\]|\{[^{}]*\}"
+)
+_IDS = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
+    r"|\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b",
+    re.I,
+)
+
+
 def refusal_category(error: str) -> str:
-    """What kind of refusal it was: its first sentence, with numbers as N and
-    anything quoted left out, so the same refusal about two jobs is one."""
+    """What kind of refusal it was: its first sentence, with anything quoted
+    or in brackets left out and ids and numbers as N, so the same refusal
+    about two jobs (or two of the user's titles) is one, and names nothing."""
     first = re.split(r"(?<=[.!?])\s", str(error or "").strip(), maxsplit=1)[0]
-    first = re.sub(r'"[^"]*"|“[^”]*”', "…", first)
-    return re.sub(r"\d+", "N", scrub(first, 120)) or "Refused"
+    for _ in range(3):  # brackets inside brackets
+        first = _QUOTED.sub("…", first)
+    first = _IDS.sub("N", first)
+    first = re.sub(r"\d+", "N", first)
+    return re.sub(r"\s+", " ", scrub(first, 120)).strip() or "Refused"
 
 
 async def _run(db: AsyncSession, user_id: uuid.UUID, run_id) -> ScoutRun | None:

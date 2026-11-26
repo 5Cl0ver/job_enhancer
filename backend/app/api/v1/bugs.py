@@ -3,8 +3,10 @@
 ``POST /v1/bugs/caught`` takes a crash or a failure from anyone signed in
 (the app) or a Job Catcher pass. It never stores who sent it, never returns
 the report and never says who else hit it: only whether it was kept. 20 a
-minute per person; past 30 new reports an hour, only the "too many" report
-counts them (repeats of a kept one always count).
+minute per person. New reports sent in here have caps of their own, apart
+from the server's: 20 an hour in all and 5 from any one person (known only
+in memory, as a hash); past that, only a "too many" report counts them
+(repeats of a kept one always count).
 """
 
 import logging
@@ -55,6 +57,7 @@ async def caught(
         message=data.message,
         context=data.context.model_dump(exclude_none=True),
         key=svc.caught_key(data.message) or None,
+        sender=str(_user.id),
     )
     try:
         await db.commit()

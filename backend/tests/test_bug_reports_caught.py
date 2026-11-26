@@ -16,6 +16,7 @@ from sqlalchemy.pool import StaticPool
 
 from app.api.v1 import bugs as bugs_api
 from app.models.bug_report import BugReport, BugReportEvent
+from app.models.email_account import EmailAccount
 from app.services import admin_service
 from app.services import bug_reports as svc
 from app.services.admin_service import ServiceStatus
@@ -169,6 +170,35 @@ async def test_a_merged_reports_screenshot_shows_on_the_one_it_went_into(
     assert [r["has_shot"] for r in listed] == [True]
 
 
+@pytest.mark.asyncio
+async def test_screenshots_two_merges_deep_still_show(admin_client):
+    a = (await _post(admin_client, title="Save does nothing"))["report"]
+    b = (await _post(admin_client, title="Save button dead"))["report"]
+    c = (await _post(admin_client, title="Save broken"))["report"]
+    shot = await admin_client.post(
+        f"/v1/admin/bugs/{a['id']}/shots",
+        content=JPEG,
+        headers={"Content-Type": "image/jpeg"},
+    )
+    await admin_client.post(
+        f"/v1/admin/bugs/{a['id']}/merge", json={"into_id": b["id"]}
+    )
+    merged = await admin_client.post(
+        f"/v1/admin/bugs/{b['id']}/merge", json={"into_id": c["id"]}
+    )
+    detail = (await admin_client.get(f"/v1/admin/bugs/{c['id']}")).json()
+    assert [s["id"] for s in detail["shots"]] == [shot.json()["id"]]
+    listed = (await admin_client.get("/v1/admin/bugs")).json()["items"]
+    assert [(r["id"], r["has_shot"]) for r in listed] == [(c["id"], True)]
+    # Split B back out: the picture goes with it (A is still inside B).
+    event = next(e for e in merged.json()["events"] if e["kind"] == "merge")
+    await admin_client.post(f"/v1/admin/bugs/{c['id']}/split/{event['id']}")
+    after = (await admin_client.get(f"/v1/admin/bugs/{c['id']}")).json()
+    assert after["shots"] == []
+    back = (await admin_client.get(f"/v1/admin/bugs/{b['id']}")).json()
+    assert [s["id"] for s in back["shots"]] == [shot.json()["id"]]
+
+
 # --------------------------------------------------------------------------- #
 # Repeat suggestions
 # --------------------------------------------------------------------------- #
@@ -258,24 +288,160 @@ async def test_a_fixed_caught_error_comes_back(db_session):
     assert report.count == 2
 
 
-@pytest.mark.asyncio
-async def test_thirty_new_an_hour_then_one_report_counts_the_rest(db_session):
-    for n in range(svc.CAUGHT_PER_HOUR):
+@pytest.fixture(autouse=True)
+def _forget_senders():
+    svc._sent_new.clear()
+    yield
+    svc._sent_new.clear()
+
+
+def _hour_title(prefix: str, n: int) -> str:
+    from datetime import UTC, datetime, timedelta
+
+    hour = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    return (
+        f"{prefix}: {n} more not kept between {hour:%H}:00 and "
+        f"{(hour + timedelta(hours=1)):%H}:00 UTC"
+    )
+
+
+async def _server_errors(db, n, start=0):
+    for i in range(start, start + n):
         assert await svc.catch(
-            db_session, section="app", kind="crash", place=f"/page{chr(97 + n % 26)}{n}"
+            db, section="app", kind="server_error", place=f"GET /v1/x{i}", key="E"
         )
+
+
+@pytest.mark.asyncio
+async def test_thirty_new_server_errors_an_hour_then_one_report_counts_the_rest(
+    db_session,
+):
+    await _server_errors(db_session, svc.SERVER_PER_HOUR)
     # Past the cap: not kept, counted.
-    assert not await svc.catch(db_session, section="app", kind="crash", place="/x1")
-    assert not await svc.catch(db_session, section="app", kind="crash", place="/x2")
+    for place in ("GET /v1/y1", "GET /v1/y2"):
+        assert not await svc.catch(
+            db_session, section="app", kind="server_error", place=place, key="E"
+        )
     # A repeat of one already kept always counts.
-    assert await svc.catch(db_session, section="app", kind="crash", place="/pagea0")
+    assert await svc.catch(
+        db_session, section="app", kind="server_error", place="GET /v1/x0", key="E"
+    )
     await db_session.commit()
     reports = await _caught(db_session)
-    assert len(reports) == svc.CAUGHT_PER_HOUR + 1
+    assert len(reports) == svc.SERVER_PER_HOUR + 1
     flood = next(r for r in reports if r.kind == svc.FLOOD_KIND)
-    assert flood.count == 2 and flood.title == "Too many errors, 2 more not kept"
-    first = next(r for r in reports if r.place == "/pagea0")
+    assert flood.count == 2
+    assert flood.title == _hour_title("Too many errors", 2)
+    first = next(r for r in reports if r.place == "GET /v1/x0")
     assert first.count == 2
+
+
+@pytest.mark.asyncio
+async def test_errors_sent_in_have_their_own_caps(db_session):
+    # One person can make at most 5 new reports an hour.
+    for n in range(svc.SENT_PER_SENDER_HOUR):
+        assert await svc.catch(
+            db_session, section="app", kind="crash", place=f"/p{n}x", sender="u1"
+        )
+    assert not await svc.catch(
+        db_session, section="app", kind="crash", place="/p9x", sender="u1"
+    )
+    # A repeat of their own still counts.
+    assert await svc.catch(
+        db_session, section="app", kind="crash", place="/p0x", sender="u1"
+    )
+    # 20 in all from everyone.
+    for n in range(svc.SENT_PER_HOUR - svc.SENT_PER_SENDER_HOUR):
+        assert await svc.catch(
+            db_session,
+            section="app",
+            kind="crash",
+            place=f"/q{n}x",
+            sender=f"user-{n // 5}",
+        )
+    assert not await svc.catch(
+        db_session, section="app", kind="crash", place="/z1x", sender="someone-new"
+    )
+    # None of that pushes out the server's own errors.
+    await _server_errors(db_session, svc.SERVER_PER_HOUR)
+    await db_session.commit()
+    reports = await _caught(db_session)
+    floods = [r for r in reports if r.kind == svc.FLOOD_KIND]
+    assert [f.title for f in floods] == [
+        _hour_title("Too many errors sent by the app and Job Catcher", 2)
+    ]
+    # Who sent them is never stored, not even as a hash.
+    assert "u1" not in str([(r.title, r.actual, r.context) for r in reports])
+
+
+@pytest.mark.asyncio
+async def test_a_flood_merged_into_a_real_report_counts_there_and_keeps_its_title(
+    db_session,
+):
+    await _server_errors(db_session, svc.SERVER_PER_HOUR)
+    assert not await svc.catch(
+        db_session, section="app", kind="server_error", place="GET /v1/y1", key="E"
+    )
+    real = await svc.create(db_session, {"title": "Deploy broke saving"})
+    flood = await db_session.scalar(
+        select(BugReport).where(BugReport.kind == svc.FLOOD_KIND)
+    )
+    await svc.merge(db_session, flood.id, real.id)
+    assert not await svc.catch(
+        db_session, section="app", kind="server_error", place="GET /v1/y2", key="E"
+    )
+    await db_session.refresh(real)
+    assert real.title == "Deploy broke saving"
+    assert real.count == 3  # its own 1, the flood's 1, and this one
+
+
+@pytest.mark.asyncio
+async def test_the_flood_title_counts_this_hour_only(db_session):
+    from datetime import timedelta
+
+    await _server_errors(db_session, svc.SERVER_PER_HOUR)
+    assert not await svc.catch(
+        db_session, section="app", kind="server_error", place="GET /v1/y1", key="E"
+    )
+    flood = await db_session.scalar(
+        select(BugReport).where(BugReport.kind == svc.FLOOD_KIND)
+    )
+    # Its last count was from an earlier hour.
+    seen = await db_session.scalar(
+        select(BugReportEvent).where(BugReportEvent.report_id == flood.id)
+    )
+    seen.data = {**seen.data, "hour": "2026-01-01T00:00:00+00:00", "not_kept": 40}
+    seen.at = seen.at - timedelta(hours=3)
+    await db_session.flush()
+    assert not await svc.catch(
+        db_session, section="app", kind="server_error", place="GET /v1/y2", key="E"
+    )
+    await db_session.refresh(flood)
+    assert flood.title == _hour_title("Too many errors", 1)
+    assert flood.count == 2
+
+
+def test_web_addresses_in_caught_text_lose_their_query():
+    exc = RuntimeError(
+        "Client error '404 Not Found' for url 'https://api.adzuna.example/v1/"
+        "jobs/us/search/1?what=nurse+practitioner+in+Springfield&app_key=k'"
+    )
+    text = svc.error_text(exc)
+    assert "Springfield" not in text and "app_key" not in text
+    assert "api.adzuna.example/v1/jobs/us/search/:id" in text
+
+
+@pytest.mark.asyncio
+async def test_web_addresses_sent_in_lose_their_query(client, db_session):
+    await client.post(
+        "/v1/bugs/caught",
+        json=_crash(
+            message="Failed https://www.acme.example/jobs/77?name=Jordan+Vale#top"
+        ),
+    )
+    [report] = await _caught(db_session)
+    assert "Jordan" not in report.actual and "Jordan" not in report.title
+    assert "acme.example/jobs/:id" in report.actual
 
 
 # --------------------------------------------------------------------------- #
@@ -499,15 +665,33 @@ async def test_caught_allows_twenty_a_minute(client):
 
 @pytest.mark.asyncio
 async def test_caught_past_the_hourly_cap_says_not_kept(client, db_session):
-    for n in range(svc.CAUGHT_PER_HOUR):
-        await svc.catch(db_session, section="app", kind="crash", place=f"/p{n}x")
+    for n in range(svc.SENT_PER_HOUR):
+        await svc.catch(
+            db_session, section="app", kind="crash", place=f"/p{n}x", sender=f"s{n}"
+        )
     await db_session.commit()
     r = await client.post("/v1/bugs/caught", json=_crash())
     assert r.status_code == 202 and r.json() == {"kept": False}
     flood = await db_session.scalar(
         select(BugReport).where(BugReport.kind == svc.FLOOD_KIND)
     )
-    assert flood.title == "Too many errors, 1 more not kept"
+    assert flood.title == _hour_title(
+        "Too many errors sent by the app and Job Catcher", 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_one_person_can_send_at_most_five_new_an_hour(client, db_session):
+    for n in range(svc.SENT_PER_SENDER_HOUR):
+        r = await client.post(
+            "/v1/bugs/caught", json=_crash(message=f"Error {chr(65 + n)}")
+        )
+        assert r.json() == {"kept": True}
+    r = await client.post("/v1/bugs/caught", json=_crash(message="Error Z"))
+    assert r.json() == {"kept": False}
+    # The same one again still counts.
+    again = await client.post("/v1/bugs/caught", json=_crash(message="Error A"))
+    assert again.json() == {"kept": True}
 
 
 # --------------------------------------------------------------------------- #
@@ -516,7 +700,7 @@ async def test_caught_past_the_hourly_cap_says_not_kept(client, db_session):
 
 
 @pytest.mark.asyncio
-async def test_a_failed_email_check_is_kept_without_the_address(
+async def test_a_mailbox_check_that_keeps_failing_is_kept_without_the_address(
     client, db_session, monkeypatch
 ):
     from cryptography.fernet import Fernet
@@ -531,26 +715,36 @@ async def test_a_failed_email_check_is_kept_without_the_address(
     )
     assert r.status_code == 201
 
+    # A wrong app password is the user's to fix: never a bug report.
     async def bad_login(*args, **kwargs):
         raise email_imap.ImapAuthError("LOGIN failed for jordan.vale@yahoo.com")
 
     monkeypatch.setattr(email_sync, "sync_mailbox", bad_login)
     assert (await client.post("/v1/email/scan")).status_code == 400
     assert (await client.post("/v1/email/scan")).status_code == 400
+    assert await _caught(db_session) == []
+
+    # A working account that can't reach the server once: not yet.
+    acct = await db_session.scalar(select(EmailAccount))
+    acct.status = "connected"
+    await db_session.commit()
 
     async def unreachable(*args, **kwargs):
-        raise email_sync.SyncInterrupted(email_sync.CONNECTION_LOST, "connect")
+        raise OSError("connection reset talking to imap.mail.yahoo.com")
 
     monkeypatch.setattr(email_sync, "sync_mailbox", unreachable)
     assert (await client.post("/v1/email/scan")).status_code == 502
+    assert await _caught(db_session) == []
+    # Again: now it's a report, and the next one counts it up.
+    assert (await client.post("/v1/email/scan")).status_code == 502
+    assert (await client.post("/v1/email/scan")).status_code == 502
 
-    reports = {r.place: r for r in await _caught(db_session)}
-    assert set(reports) == {"yahoo login_failed", "yahoo connection_lost"}
-    login = reports["yahoo login_failed"]
-    assert login.section == "email" and login.kind == "email_check"
-    assert login.count == 2
-    assert login.title == "Email check failed: yahoo login_failed"
-    flat = str([(r.title, r.actual, r.context) for r in reports.values()])
+    [report] = await _caught(db_session)
+    assert report.place == "yahoo unreachable"
+    assert report.section == "email" and report.kind == "email_check"
+    assert report.count == 2
+    assert report.title == "Email check failed: yahoo unreachable"
+    flat = str([report.title, report.actual, report.context])
     assert "jordan" not in flat and "@" not in flat
 
 
@@ -579,12 +773,32 @@ async def test_a_scout_refusal_is_kept_by_tool_and_kind(engine, monkeypatch):
     assert "riley" not in str([report.title, report.actual, report.context])
 
 
-def test_refusal_category_drops_numbers_and_quoted_text():
+@pytest.mark.parametrize(
+    ("error", "category"),
+    [
+        (
+            'Job "Senior Dev at Vellacor" was reported 3 times. Try another.',
+            "Job … was reported N times.",
+        ),
+        (
+            "'3f2b8c1e-1111-4222-8333-944455556666' isn't a run id.",
+            "… isn't a run id.",
+        ),
+        ("'7a1c' is not a valid job id", "… is not a valid job id"),
+        (
+            "None of these can be searched (Pastry Chef: too vague, Baker: short).",
+            "None of these can be searched ….",
+        ),
+        (
+            "Run 3f2b8c1e9a7d4e21 is finished [Vellacor, Initech]",
+            "Run N is finished …",
+        ),
+    ],
+)
+def test_refusal_category_names_nothing(error, category):
     from app.services.scout_log import refusal_category
 
-    assert refusal_category(
-        'Job "Senior Dev at Vellacor" was reported 3 times. Try another.'
-    ) == ("Job … was reported N times.")
+    assert refusal_category(error) == category
 
 
 # --------------------------------------------------------------------------- #
@@ -594,33 +808,50 @@ def test_refusal_category_drops_numbers_and_quoted_text():
 
 @pytest.fixture
 def health(monkeypatch):
-    """The health checks as the test says; the watch's memory starts empty."""
-    state = {"Adzuna": "healthy"}
+    """The health checks as the test says (the pinged ones only answer when
+    pinged); the watch's memory starts empty."""
+    state = {"Database": "healthy", "Adzuna": "healthy"}
+    pings: list[bool] = []
 
-    async def fake(db):
+    async def fake(db, ping_external=True):
+        pings.append(ping_external)
         return [
             ServiceStatus(name=name, status=status, detail="ConnectError")
             for name, status in state.items()
+            if name != "pings"
+            and (ping_external or name not in ("Adzuna", "NVIDIA NIM"))
         ]
 
     monkeypatch.setattr(admin_service, "check_service_health", fake)
     monkeypatch.setattr(admin_service, "_health_last", {})
+    monkeypatch.setattr(admin_service, "_watch_pinged_at", None)
+    state["pings"] = pings  # type: ignore[assignment]
     return state
+
+
+def _restart(monkeypatch):
+    monkeypatch.setattr(admin_service, "_health_last", {})
+    monkeypatch.setattr(admin_service, "_watch_pinged_at", None)
 
 
 @pytest.mark.asyncio
 async def test_a_service_down_is_one_report_per_outage(engine, health, monkeypatch):
+    monkeypatch.setattr(admin_service, "_WATCH_PING_EVERY_S", 0)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False)
     await admin_service.health_watch(maker)  # healthy: nothing
     async with maker() as db:
         assert await _caught(db) == []
 
     health["Adzuna"] = "down"
+    await admin_service.health_watch(maker)  # one bad reading isn't an outage
+    async with maker() as db:
+        assert await _caught(db) == []
     for _ in range(3):
         await admin_service.health_watch(maker)
     # After a restart the memory is gone; the report says it's still down.
-    monkeypatch.setattr(admin_service, "_health_last", {})
-    await admin_service.health_watch(maker)
+    _restart(monkeypatch)
+    for _ in range(2):
+        await admin_service.health_watch(maker)
     async with maker() as db:
         [report] = await _caught(db)
         assert report.count == 1 and report.kind == "service_down"
@@ -637,17 +868,76 @@ async def test_a_service_down_is_one_report_per_outage(engine, health, monkeypat
 
     # A second outage counts the same report up, once.
     health["Adzuna"] = "down"
-    await admin_service.health_watch(maker)
-    await admin_service.health_watch(maker)
+    for _ in range(3):
+        await admin_service.health_watch(maker)
     async with maker() as db:
         [report] = await _caught(db)
         assert report.count == 2
 
 
 @pytest.mark.asyncio
+async def test_one_timeout_isnt_an_outage(engine, health, monkeypatch):
+    monkeypatch.setattr(admin_service, "_WATCH_PING_EVERY_S", 0)
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    health["Adzuna"] = "down"
+    await admin_service.health_watch(maker)
+    health["Adzuna"] = "healthy"
+    await admin_service.health_watch(maker)
+    health["Adzuna"] = "down"
+    await admin_service.health_watch(maker)
+    async with maker() as db:
+        assert await _caught(db) == []
+
+
+@pytest.mark.asyncio
+async def test_the_watch_pings_adzuna_and_nvidia_at_most_every_six_hours(
+    engine, health, monkeypatch
+):
+    import time
+
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    for _ in range(4):
+        await admin_service.health_watch(maker)
+    # The database every time; the pinged services once (96 runs a day would
+    # be 96 Adzuna calls).
+    assert health["pings"] == [True, False, False, False]
+    monkeypatch.setattr(
+        admin_service,
+        "_watch_pinged_at",
+        time.monotonic() - admin_service._WATCH_PING_EVERY_S - 1,
+    )
+    await admin_service.health_watch(maker)
+    assert health["pings"][-1] is True
+    # A bad reading is checked again on the next run, to be sure.
+    health["Adzuna"] = "down"
+    monkeypatch.setattr(admin_service, "_watch_pinged_at", None)
+    await admin_service.health_watch(maker)
+    await admin_service.health_watch(maker)
+    assert health["pings"][-2:] == [True, True]
+    health["Adzuna"] = "healthy"
+    await admin_service.health_watch(maker)  # back: seen at once
+    await admin_service.health_watch(maker)
+    assert health["pings"][-2:] == [True, False]
+
+
+@pytest.mark.asyncio
+async def test_without_pinging_only_the_database_and_jsearch_are_checked(
+    db_session, monkeypatch
+):
+    async def no_pings(*args, **kwargs):
+        raise AssertionError("pinged an outside service")
+
+    monkeypatch.setattr(admin_service, "_check_endpoint", no_pings)
+    monkeypatch.setattr(admin_service, "_external", None)
+    statuses = await admin_service.check_service_health(db_session, ping_external=False)
+    assert [s.name for s in statuses] == ["Database", "JSearch"]
+
+
+@pytest.mark.asyncio
 async def test_degraded_isnt_down(engine, health):
     maker = async_sessionmaker(bind=engine, expire_on_commit=False)
     health["JSearch"] = "degraded"
+    await admin_service.health_watch(maker)
     await admin_service.health_watch(maker)
     async with maker() as db:
         assert await _caught(db) == []

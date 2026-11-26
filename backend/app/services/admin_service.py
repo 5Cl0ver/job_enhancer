@@ -129,7 +129,12 @@ async def _jsearch_status(db: AsyncSession) -> ServiceStatus:
     )
 
 
-async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
+async def check_service_health(
+    db: AsyncSession, ping_external: bool = True
+) -> list[ServiceStatus]:
+    """The database (always), NVIDIA and Adzuna (pinged at most every 10
+    minutes; with ``ping_external`` off, only a fresh answer already in hand
+    is given, else they're left out) and JSearch (counted, never pinged)."""
     statuses: list[ServiceStatus] = []
 
     # DB latency
@@ -147,7 +152,12 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
     # one of its daily calls). JSearch is never pinged: every request costs one
     # of the ~200 shared a month (spec 019), so it shows this month's count.
     global _external
-    if _external is None or time.monotonic() - _external[0] > _EXTERNAL_EVERY_S:
+    fresh = _external is not None and (
+        time.monotonic() - _external[0] <= _EXTERNAL_EVERY_S
+    )
+    if fresh:
+        statuses.extend(_external[1])
+    elif ping_external:
         import asyncio
 
         checks = await asyncio.gather(
@@ -168,45 +178,73 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
             else None
         )
         statuses.extend(checks)
-    else:
-        statuses.extend(_external[1])
     statuses.append(await _jsearch_status(db))
     return statuses
 
 
-# Each service's state at the last health watch ("up" or "down"). After a
-# restart it's empty, and the outage reports themselves say what was down.
-_health_last: dict[str, str] = {}
+# The pinged services: the watch asks them at most every 6 hours (each Adzuna
+# check spends one of its daily calls), and again on the next run while one
+# looked down, to be sure or to see it back.
+_PINGED = ("NVIDIA NIM", "Adzuna")
+_WATCH_PING_EVERY_S = 6 * 3600
+_watch_pinged_at: float | None = None
+# One bad reading isn't an outage (a timeout happens): it takes 2 in a row.
+DOWN_READINGS = 2
+# Each service at the last watch: {"state": "up"|"down", "streak": downs in
+# a row, "noted": its outage is in Bugs & ideas}. After a restart it's
+# empty, and the outage reports themselves say what was down.
+_health_last: dict[str, dict] = {}
 
 
 async def health_watch(session_factory) -> None:
-    """Every 15 minutes (spec 032): the Admin health checks, and a service
-    turning down is one caught report per outage; coming back adds a line to
-    its history. JSearch is only counted, never pinged. Never raises."""
+    """Every 15 minutes (spec 032): the health checks, and a service down 2
+    readings in a row is one caught report per outage; coming back adds a
+    line to its history. The database is checked every time; NVIDIA and
+    Adzuna at most every 6 hours (sooner only to confirm a bad reading);
+    JSearch is only counted, never pinged. Never raises."""
     from app.services import bug_reports
 
+    global _watch_pinged_at
     try:
-        now: dict[str, str] = {}
+        suspect = any(
+            (_health_last.get(name) or {}).get("state") == "down" for name in _PINGED
+        )
+        ping = (
+            suspect
+            or _watch_pinged_at is None
+            or time.monotonic() - _watch_pinged_at >= _WATCH_PING_EVERY_S
+        )
+        now: dict[str, dict] = {}
         async with session_factory() as db:
-            for s in await check_service_health(db):
+            statuses = await check_service_health(db, ping_external=ping)
+            for s in statuses:
                 down = s.status == "down"
-                before = _health_last.get(s.name)
+                before = _health_last.get(s.name) or {}
+                streak = before.get("streak", 0) + 1 if down else 0
+                noted = bool(before.get("noted")) and down
                 try:
-                    # Memory says nothing changed: no need to look.
-                    if before != ("down" if down else "up"):
-                        async with db.begin_nested():
-                            going = await bug_reports.outage_open(db, s.name)
-                            if down and not going:
+                    async with db.begin_nested():
+                        if down and streak >= DOWN_READINGS and not noted:
+                            if not await bug_reports.outage_open(db, s.name):
                                 await bug_reports.service_down(db, s.name, s.detail)
-                            elif going and not down:
+                            noted = True
+                        elif not down and before.get("state") != "up":
+                            # Up again (or first look since a restart).
+                            if await bug_reports.outage_open(db, s.name):
                                 await bug_reports.service_up(db, s.name)
                 except Exception:  # noqa: BLE001 — never report the reporting
                     logger.warning("Health watch: %s not noted", s.name, exc_info=True)
                     continue
-                now[s.name] = "down" if down else "up"
+                now[s.name] = {
+                    "state": "down" if down else "up",
+                    "streak": streak,
+                    "noted": noted,
+                }
             await db.commit()
         # Only once it's kept: a failed write is tried again next time.
         _health_last.update(now)
+        if ping:
+            _watch_pinged_at = time.monotonic()
     except Exception:  # noqa: BLE001
         logger.warning("Health watch failed", exc_info=True)
 
