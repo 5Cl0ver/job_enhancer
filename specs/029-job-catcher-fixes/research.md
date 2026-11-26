@@ -42,3 +42,10 @@ Reuses `custom_answers` (spec 018/020) with a new nullable `source` column ("cla
 - **Double attach**: the press's general fill also attached the résumé to Workday's re-drawn empty box. Both the upload step and the general fill skip a résumé box while the résumé is up on this page and still shown. Reproduced with `apply-workday-steps.html?step=2&change` (4 copies before, 1 after).
 - **Steps**: a new step = fewer than a third of the last step's question keys remain (never while a pop-up is open or with under 2 keys); a disconnected box is matched again by question key and kind.
 - **Forgotten answers**: `users.forgotten_answers` (JSON list, ≤500, same migration): a delete adds the key, a user save removes it.
+
+## R8 - Verification pass
+
+- **No auto-save**: while ANY run is open (not only on its known sites: a redirect before the first fill isn't known yet), answers and profile are never auto-saved; an error counts as "in a run".
+- **Drop check**: the card is read before the file is set. Taken = one more file than before, or our file's name newly shown, or the card re-drawn. A returning applicant's old file in the card never counts (unit test).
+- **Company under the job line**: only text that reads like a name (capitalised words, joining words like "of" / "&" only between them, at most six words, no sentence end). Otherwise the company stays blank and the line is description.
+- **Verb-like names**: a line opening like "Mentored…" is a new point only when the next word is lower-case (or a number) or the line has six or more words, so "United Rentals" and "Applied Materials" stay names.

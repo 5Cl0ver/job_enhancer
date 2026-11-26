@@ -133,12 +133,13 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return (await isRunTab(data, tab)) ? data.resume_id : null;
   }
 
-  /** Is this tab on an open run's site (spec 029)? There, what's typed in
-   * the page is never saved as the user's own answers: Claude typed it, and
-   * the app learns only what the user approves at the review. */
-  async function inRun(tab) {
+  /** Is an Apply with Claude run open (spec 029)? Then what's typed in any
+   * page is never auto-saved as the user's own answers: Claude may be typing
+   * it, on a site the run hasn't heard of yet (a redirect before the first
+   * fill), and the app learns only what the user approves at the review. */
+  async function inRun() {
     const data = await active();
-    return !!data.run_id && !!tab?.url && onRunHost(hostOf(tab.url), data.hosts);
+    return !!data.run_id;
   }
 
   /** Is this the application's own tab (and still on its site)? */

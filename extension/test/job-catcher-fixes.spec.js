@@ -76,6 +76,43 @@ describe("Workday's résumé box (bug 2)", () => {
     expect(dropped).toBe("alex-rivera.pdf");
   }, 10_000);
 
+  it("an old résumé already in Workday's card is never taken for ours (verification)", async () => {
+    // A returning applicant: last year's file is in the card; the zone
+    // ignores a file set on the box and only takes a drop.
+    const doc = parse(`<section><h3>Resume/CV</h3><div data-automation-id="attachments-FileUpload" id="card">
+      <div data-automation-id="file-upload-successful">Alex_Rivera_2023.pdf</div>
+      <div data-automation-id="file-upload-drop-zone" id="zone"><button data-automation-id="select-files">Select files</button></div>
+      <input type="file" class="hidden-input" data-automation-id="file-upload-input-ref"></div></section>`);
+    let dropped = "";
+    doc.querySelector("#zone").addEventListener("drop", (e) => {
+      dropped = [...(e.dataTransfer?.files || [])].map((f) => f.name).join(",");
+    });
+    const box = collectFields(doc, { visible }).find((f) => f.kind === "file");
+    expect(box?.zone?.id).toBe("zone");
+    await writeField(box, [new File(["%PDF"], "Alex_Rivera_Northwind.pdf", { type: "application/pdf" })]);
+    expect(dropped).toBe("Alex_Rivera_Northwind.pdf");
+  }, 10_000);
+
+  it("one more file in the card than before counts as taken: no drop (verification)", async () => {
+    const doc = parse(`<section><h3>Resume/CV</h3><div data-automation-id="attachments-FileUpload" id="card">
+      <div data-automation-id="file-upload-successful">Alex_Rivera_2023.pdf</div>
+      <div data-automation-id="file-upload-drop-zone" id="zone"><button data-automation-id="select-files">Select files</button></div>
+      <input type="file" class="hidden-input" data-automation-id="file-upload-input-ref"></div></section>`);
+    let drops = 0;
+    doc.querySelector("#zone").addEventListener("drop", () => drops++);
+    const input = doc.querySelector("input");
+    // The site lists the new file under a shortened name.
+    input.addEventListener("change", () => {
+      const item = doc.createElement("div");
+      item.setAttribute("data-automation-id", "file-upload-successful");
+      item.textContent = "Alex_Rivera_No….pdf";
+      doc.querySelector("#card").prepend(item);
+    });
+    const box = collectFields(doc, { visible }).find((f) => f.kind === "file");
+    await writeField(box, [new File(["%PDF"], "Alex_Rivera_Northwind.pdf", { type: "application/pdf" })]);
+    expect(drops).toBe(0);
+  });
+
   it("a second press never attaches again once the site re-drew its card (review)", async () => {
     const doc = parse(`<section><h3>Resume/CV</h3><div data-automation-id="attachments-FileUpload" id="card">
       <div data-automation-id="file-upload-drop-zone"><button data-automation-id="select-files">Select files</button></div>

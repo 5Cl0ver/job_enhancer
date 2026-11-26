@@ -178,3 +178,40 @@ Northwind Labs, Inc.
         "Support Engineer",
         "Northwind Labs, Inc.",
     )
+
+
+def test_a_line_about_the_job_is_never_its_company():
+    """Verification: "Team lead for payments" under "Title  dates" was taken
+    as the company (and typed into Workday). Blank is better than wrong."""
+    text = """EXPERIENCE
+Software Engineer Mar 2020 - Jan 2023
+Team lead for payments
+• Built the refunds service.
+"""
+    [job] = read(text)["work"]
+    assert job["company"] == ""
+    assert job["description"] == "Team lead for payments\n• Built the refunds service."
+
+
+def test_company_names_under_the_job_line():
+    for name in ["Bank of America", "Contoso Retail", "Procter & Gamble"]:
+        text = (
+            f"EXPERIENCE\nData Analyst Feb 2018 - Dec 2019\n{name}\n- Built reports\n"
+        )
+        assert read(text)["work"][0]["company"] == name, name
+
+
+def test_names_that_look_like_verbs_are_names():
+    """ "United Rentals" and "Applied Materials" start like "Mentored…"."""
+    for name in ["United Rentals", "Applied Materials"]:
+        text = (
+            f"EXPERIENCE\nData Analyst Feb 2018 - Dec 2019\n{name}\n- Built reports\n"
+        )
+        assert read(text)["work"][0]["company"] == name, name
+        # Taken back from the job above as the next job's company, too.
+        above = (
+            "EXPERIENCE\nAnalyst | Kelso Labs | 2015 - 2017\n- Built reports\n"
+            f"{name}\nTechnician    2018 - 2021\n"
+        )
+        second = read(above)["work"][1]
+        assert (second["title"], second["company"]) == ("Technician", name), name

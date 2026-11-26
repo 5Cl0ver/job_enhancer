@@ -348,11 +348,12 @@ describe("the background loop", () => {
     expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: false, reason: "no_report", filled: [], need: [] });
   });
 
-  it("knows a tab on the run's site, so what's typed there is never saved as the user's (spec 029 review)", async () => {
+  it("while a run is open, nothing typed in any tab is saved as the user's (spec 029 review)", async () => {
     const api = vi.fn(async () => ({ ok: true, json: async () => ({ run_id: "r1", hosts: ["myworkdayjobs.com"], requests: [] }) }));
     const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
     expect(await run.inRun({ id: 7, url: "https://acme.wd1.myworkdayjobs.com/apply" })).toBe(true);
-    expect(await run.inRun({ id: 8, url: "https://news.example/" })).toBe(false);
+    // A site the run redirected to, before its first fill: still the run's.
+    expect(await run.inRun({ id: 8, url: "https://careers.northwind.example/apply" })).toBe(true);
     const idle = createApplyRun({ api: vi.fn(async () => ({ ok: true, json: async () => ({ run_id: null }) })), press: vi.fn(), fillSession: vi.fn(), chrome: fakeChrome() });
     expect(await idle.inRun({ id: 7, url: "https://acme.wd1.myworkdayjobs.com/apply" })).toBe(false);
   });

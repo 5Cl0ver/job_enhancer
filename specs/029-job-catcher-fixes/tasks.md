@@ -55,3 +55,6 @@
 - [X] T026 Phone Extension rule (name/id suffix, label word, "incl. ext"); tests
 - [X] T027 Learning: `claude` only, CONSENT, legal/eligibility, relatives, company name, list answers, `forgotten_answers`; tests in backend/tests/test_apply_learn.py
 - [X] T028 `rerender` / `_fill` keep details the user edited; tests
+- [X] T029 No auto-save while any run is open (extension/src/background/applyRun.js `inRun`)
+- [X] T030 Drop check against a before-snapshot of the card (extension/src/autofill/widgets.js); unit tests with a pre-existing file
+- [X] T031 Company under the job line only when name-like; verb-like company names (backend/app/services/resume_reader.py); tests

@@ -409,7 +409,7 @@ def _carries_on(item: dict, line: str, longest: int) -> bool:
         return False
     if _runs_on(text):
         return True
-    if _NEW_POINT.match(line):
+    if _verb_led(line):
         return False
     return item["last"] >= FULL_WIDTH * longest
 
@@ -463,6 +463,19 @@ def _takeable(lines: list[tuple[str, bool]]) -> list[str]:
     return out
 
 
+def _verb_led(line: str) -> bool:
+    """Does the line open with a verb of work done ("Mentored 3 engineers"),
+    not a name that merely looks like one ("United Rentals", "Applied
+    Materials")? A capitalised next word on a short line means a name."""
+    if not _NEW_POINT.match(line):
+        return False
+    words = line.split()
+    if len(words) >= 6:
+        return True
+    following = words[1] if len(words) > 1 else ""
+    return not following[:1].isupper()
+
+
 def _looks_like_name(line: str) -> bool:
     """A short line that could be a company or a job title (not a sentence)."""
     return (
@@ -471,8 +484,30 @@ def _looks_like_name(line: str) -> bool:
         and not line[:1].islower()
         and not _ends_sentence(line)
         and not _runs_on(line)
-        and not _NEW_POINT.match(line)
+        and not _verb_led(line)
     )
+
+
+# Small words a company's name may hold between capitalised ones ("Bank of
+# America", "Procter & Gamble").
+_NAME_JOINERS = {"of", "and", "&", "the", "de", "du", "la", "for", "y", "und"}
+
+
+def _company_like(text: str) -> bool:
+    """Capitalised words (a joining word only between them), at most six, no
+    sentence: "Contoso Retail", "Bank of America" — never "Team lead for
+    payments". Blank is better than wrong."""
+    words = text.split()
+    if not 1 <= len(words) <= 6 or _ends_sentence(text):
+        return False
+    if words[0].lower() in _NAME_JOINERS or words[-1].lower() in _NAME_JOINERS:
+        return False
+    for w in words:
+        if w.lower() in _NAME_JOINERS:
+            continue
+        if not (w[:1].isupper() or w[:1].isdigit()):
+            return False
+    return True
 
 
 def _name_below(job: dict, line: str) -> bool:
@@ -487,8 +522,10 @@ def _name_below(job: dict, line: str) -> bool:
         return False
     if _looks_like_title(names[0]) and not _looks_like_title(job["title"]):
         job["company"], job["title"] = job["title"], names[0][:200]
-    else:
+    elif _company_like(names[0]):
         job["company"] = names[0][:200]
+    else:
+        return False  # a line about the job, not its company: left blank
     if places and not job["location"]:
         job["location"] = places[0][:200]
     return True

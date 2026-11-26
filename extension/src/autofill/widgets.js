@@ -672,6 +672,9 @@ export async function removeChips(input, keep) {
 
 async function writeFile(field, [file]) {
   if (!(file instanceof File) || !win(field.el).DataTransfer) return { ok: false, reason: "no_data" };
+  // What Workday's card shows BEFORE: a returning applicant's old résumé
+  // there is never taken for ours (spec 029).
+  const before = field.zone ? cardState(field, file) : null;
   try {
     const dt = new (win(field.el).DataTransfer)();
     dt.items.add(file);
@@ -682,8 +685,21 @@ async function writeFile(field, [file]) {
     return { ok: false, reason: "rejected" };
   }
   const ok = field.el.files?.length === 1 && field.el.files[0].name === file.name;
-  if (ok) await dropIfIgnored(field, file);
+  if (ok && before) await dropIfIgnored(field, file, before);
   return { ok, actual: file.name };
+}
+
+/** The upload card's files as shown: how many, and whether our file's name
+ * is in the card or on the page. */
+function cardState(field, file) {
+  const card = field.zone ? uploadCard(field.zone) : null;
+  const items = [...(card?.querySelectorAll?.("[data-automation-id]") || [])].filter((n) => UPLOADED.test(n.getAttribute("data-automation-id")));
+  return {
+    card,
+    count: items.length,
+    inCard: (card?.textContent || "").includes(file.name),
+    onPage: (field.el.ownerDocument?.body?.textContent || "").includes(file.name),
+  };
 }
 
 // Workday's own drop zone (spec 029).
@@ -705,19 +721,17 @@ function uploadCard(zone) {
  * the box (its name never shows), drop the file on the zone, the way a person
  * dragging it would. Only on Workday's zone, and only once.
  */
-async function dropIfIgnored(field, file, { waitMs = 4000 } = {}) {
+async function dropIfIgnored(field, file, before, { waitMs = 4000 } = {}) {
   const zone = field.zone;
   if (!zone?.isConnected || !WORKDAY_DROP.test(zone.getAttribute?.("data-automation-id") || "")) return false;
-  // The upload card (Workday's attachments box) as it was: a re-drawn card
-  // means the site took the file.
-  const card = uploadCard(zone);
-  const doc = field.el.ownerDocument;
-  const took = () =>
-    !zone.isConnected ||
-    !card?.isConnected ||
-    [...(card.querySelectorAll?.("[data-automation-id]") || [])].some((n) => UPLOADED.test(n.getAttribute("data-automation-id"))) ||
-    (card.textContent || "").includes(file.name) ||
-    (doc.body?.textContent || "").includes(file.name);
+  const card = before.card;
+  // Taken: the card re-drawn (the site reacted), one more file than before,
+  // or OUR file's name newly shown. A file that was already there never counts.
+  const took = () => {
+    if (!zone.isConnected || !card?.isConnected) return true;
+    const now = cardState(field, file);
+    return now.count > before.count || (now.inCard && !before.inCard) || (now.onPage && !before.onPage);
+  };
   for (let waited = 0; waited < waitMs && !took(); waited += 200) await sleep(200);
   if (took()) return false;
   const W = win(zone);

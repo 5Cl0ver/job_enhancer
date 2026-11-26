@@ -1293,18 +1293,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "answersNoticed") {
         // Saved straight away (spec 018): what the user answered, when they
         // moved on. Shown in the panel with Edit / Undo; kept for review if
-        // the app can't be reached. Never on an Apply with Claude run's site
+        // the app can't be reached. Never while an Apply with Claude run is open
         // (spec 029): Claude typed those, and the app learns only what the
         // user approves at the review.
-        if (sender.tab?.id != null && !(await applyRun.inRun(sender.tab).catch(() => true))) {
+        if (sender.tab?.id != null && !(await applyRun.inRun().catch(() => true))) {
           await autoSaveAnswers(sender.tab.id, msg.answers || [], msg.site || "", msg.companyKnown !== false);
         }
         sendResponse({ ok: true });
       } else if (msg.type === "profileNoticed") {
         // What the profile was missing is saved; a DIFFERENT value waits for
         // the user's one tap ("Update your profile?"), so a typo never spreads.
-        // Never from a Claude run's pages (spec 029).
-        if (sender.tab?.id != null && !(await applyRun.inRun(sender.tab).catch(() => true))) {
+        // Never while an Apply with Claude run is open (spec 029).
+        if (sender.tab?.id != null && !(await applyRun.inRun().catch(() => true))) {
           await autoSaveProfile(sender.tab.id, msg.fields || {});
         }
         sendResponse({ ok: true });
