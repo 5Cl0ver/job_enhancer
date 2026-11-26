@@ -880,17 +880,51 @@ async def _same_workday_posting(
     return None
 
 
+# Words a company's name ends with that a Workday site's name leaves out.
+_NAME_TAIL = {
+    "corp",
+    "corporation",
+    "inc",
+    "incorporated",
+    "llc",
+    "ltd",
+    "limited",
+    "co",
+    "company",
+    "labs",
+    "group",
+    "holdings",
+    "technologies",
+    "international",
+    "usa",
+    "us",
+    "plc",
+}
+
+
 def short_for(site_name: str, company: str) -> bool:
-    """Could a Workday site's name be this company's? "jj" / "Juniper &
-    Jasper", "acmecorp" / "Acme Corp", "northwind" / "Northwind Labs"."""
+    """Could a Workday site's name be this company's? Exactly the company
+    squashed together ("acmecorp" / "Acme Corp"), exactly its initials ("jj" /
+    "Juniper & Jasper"), or the company's start followed only by words like
+    Inc, Corp or Labs ("northwind" / "Northwind Labs"). Never a mere prefix:
+    "ge" is not "Gemini Labs", "ab" not "Abbott"."""
     site = re.sub(r"[^a-z0-9]", "", (site_name or "").lower())
     words = [w for w in re.split(r"[^a-z0-9]+", (company or "").lower()) if w]
     words = [w for w in words if w != "and"]
     if len(site) < 2 or not words:
         return False
-    flat = "".join(words)
-    initials = "".join(w[0] for w in words)
-    return flat.startswith(site) or initials.startswith(site)
+    if "".join(words) == site:
+        return True
+    # Initials, unless a word is itself the site's name and more ("GMR
+    # Marketing" is not "gm").
+    if "".join(w[0] for w in words) == site and not any(
+        w.startswith(site) for w in words
+    ):
+        return True
+    for n in range(1, len(words)):
+        if "".join(words[:n]) == site and all(w in _NAME_TAIL for w in words[n:]):
+            return True
+    return False
 
 
 async def _only_by_title(

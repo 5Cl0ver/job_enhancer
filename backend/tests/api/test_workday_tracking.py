@@ -221,7 +221,7 @@ async def test_a_site_name_company_finds_the_one_job_with_that_title(
             json={
                 "url": "https://careers.example.test/jobs/77",
                 "title": "Applications Developer II",
-                "company": "Juniper & Jasper Health",
+                "company": "Juniper & Jasper",
             },
         )
     ).json()
@@ -241,7 +241,7 @@ async def test_a_site_name_company_finds_the_one_job_with_that_title(
 
 @pytest.mark.asyncio
 async def test_two_saved_jobs_with_that_title_are_never_guessed(client: AsyncClient):
-    for n, company in enumerate(["Juniper & Jasper Health", "JJ Clinics"]):
+    for n, company in enumerate(["Juniper & Jasper", "Jasper Juniper"]):
         await client.post(
             "/v1/saved-jobs/manual",
             json={
@@ -338,8 +338,15 @@ async def test_installs_tell_computers_apart(client: AsyncClient):
 def test_a_site_name_is_short_for_a_company():
     from app.services.saved_jobs import short_for
 
-    assert short_for("jj", "Juniper & Jasper Health")
+    assert short_for("jj", "Juniper & Jasper")
     assert short_for("acmecorp", "Acme Corp")
     assert short_for("northwind", "Northwind Labs")
+    assert short_for("bah", "Birch Alder Hollis")
     assert not short_for("jj", "Tidewell Labs")
     assert not short_for("x", "Xylo Systems")
+    # A mere prefix is never enough.
+    assert not short_for("intel", "Intelligent Systems Inc")
+    assert not short_for("ge", "Gemini Labs")
+    assert not short_for("gm", "GMR Marketing")
+    assert not short_for("pg", "PGA Tour")
+    assert not short_for("ab", "Abbott")
