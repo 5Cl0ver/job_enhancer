@@ -63,13 +63,39 @@ export function shotPlan(height, view, max = 8) {
 
 const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|\bsin\b|social insurance|security (?:question|answer|code)|one[- ]time|\botp\b|verification code|\bcvv\b|card number/i;
 
+// A dropdown's prompt, never one of its choices (spec 033).
+const PLACEHOLDER = /^(?:[-—–_.\s]+|select(?: one| an? option| one or more)?|choose(?: one| an? option)?|please (?:select|choose)(?: one| an? option)?|none selected|no selection)\W*$/i;
+export const MAX_CHOICES = 60;
+export const CHOICE_CHARS = 120;
+
+/** A box's choices as the form shows them (labels only, capped), from the
+ * scan, else from what the fill engine saw when it opened the dropdown. */
+export function choicesOf(field, seen) {
+  const raw = (field.options || []).map((o) => (typeof o === "string" ? o : o?.label));
+  const labels = raw.length ? raw : seen?.get?.(field.id) || [];
+  const out = [];
+  const keys = new Set();
+  for (const l of labels) {
+    const t = String(l ?? "").replace(/\s+/g, " ").trim().slice(0, CHOICE_CHARS);
+    if (!t || PLACEHOLDER.test(t) || keys.has(t.toLowerCase())) continue;
+    keys.add(t.toLowerCase());
+    out.push(t);
+    if (out.length >= MAX_CHOICES) break;
+  }
+  return out;
+}
+
 /**
  * Every question on the page with what's in it now, for the review: what the
  * user will check before anything is sent. Passwords and codes are never read.
- * @param {Array<{question:string, kind:string, el?:Element, hints?:object}>} fields
+ * Spec 033: each box's choices too (a dropdown, radio or checkbox group), and
+ * whether the form takes typed words as well (`free`).
+ * @param {Array<{question:string, kind:string, el?:Element, hints?:object, options?:Array}>} fields
  * @param {(field:object) => unknown} read  the widget reader
+ * @param {Set<string>|null} [filled]  ids Job Catcher filled
+ * @param {{choices?: Map<string, string[]>}} [more]  choices seen when filling
  */
-export function pageAnswers(fields, read, filled = null) {
+export function pageAnswers(fields, read, filled = null, more = {}) {
   const out = [];
   const seen = new Set();
   for (const f of fields || []) {
@@ -89,10 +115,57 @@ export function pageAnswers(fields, read, filled = null) {
     if (seen.has(key)) continue;
     seen.add(key);
     // Job Catcher's own answers are marked for the live view (spec 026).
-    out.push(filled?.has(f.id) ? { q: q.slice(0, 300), a, by: "job_catcher" } : { q: q.slice(0, 300), a });
+    const row = filled?.has(f.id) ? { q: q.slice(0, 300), a, by: "job_catcher" } : { q: q.slice(0, 300), a };
+    const choices = f.kind === "file" ? [] : choicesOf(f, more.choices);
+    if (choices.length) {
+      row.options = choices;
+      // A box you can type in that also suggests (a datalist, a search box).
+      if (f.el?.tagName === "INPUT" || f.el?.tagName === "TEXTAREA") row.free = true;
+    }
+    out.push(row);
     if (out.length >= 120) break;
   }
   return out;
+}
+
+const STEP_LABELS = [
+  // Workday: the progress bar's current step.
+  '[data-automation-id="progressBarActiveStep"]',
+  '[data-automation-id="progressBar"] [aria-current="step"]',
+  // Any site that marks its current step the standard way.
+  '[aria-current="step"]',
+];
+
+/** The site's own name for the step on screen (spec 033): the progress
+ * bar's current step ("My Experience"), never "Step 2 of 6". "" when the
+ * site doesn't say: the app then finds the step from its questions. */
+export function stepName(doc) {
+  // Each label's words apart ("current step 2 of 6" + "My Experience").
+  const words = (el) => {
+    const parts = [];
+    const walk = (n) => {
+      if (n.nodeType === 3) parts.push(n.nodeValue);
+      else for (const child of n.childNodes || []) walk(child);
+    };
+    walk(el);
+    return parts.join(" ");
+  };
+  const clean = (t) =>
+    String(t || "")
+      .replace(/\b(?:current\s+)?step\s+\d+\s+(?:of|\/)\s+\d+\b/gi, " ")
+      .replace(/\b(?:completed|current|not started)\b/gi, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 120);
+  for (const sel of STEP_LABELS) {
+    const el = doc?.querySelector?.(sel);
+    const name = el && clean(words(el));
+    if (name) return name;
+  }
+  // A progress bar that only names the step on show.
+  const bar = doc?.querySelector?.('[data-automation-id="progressBar"]');
+  const text = bar && clean(words(bar));
+  return text && text.length <= 60 ? text : "";
 }
 
 /** Does a page's host belong to the run (its own host or a sub-host)? */

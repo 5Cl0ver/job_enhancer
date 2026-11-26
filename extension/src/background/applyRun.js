@@ -28,7 +28,7 @@
 //   Its cover letter likewise (spec 031): the run's, else the job's.
 // Extension API calls on each turn keep the service worker awake while a run
 // is open (Chrome resets its idle timer on every extension call).
-import { onRunHost, shotPlan } from "../autofill/applyPage.js";
+import { CHOICE_CHARS, MAX_CHOICES, onRunHost, shotPlan } from "../autofill/applyPage.js";
 
 const OPEN_TTL = 2_000;
 const IDLE_TTL = 60_000;
@@ -462,26 +462,46 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // The run's most recent tab still on its site.
     const tab = [...mine].reverse().map((id) => tabs.find((t) => t.id === id)).find((t) => t?.url && onRunHost(hostOf(t.url), data.hosts));
     if (!tab) return;
-    const boxes = (await readLive(tab.id))
+    const read = await readLive(tab.id);
+    const boxes = read.boxes
       .filter((b) => b?.q && !PRIVATE.test(b.q))
       .slice(0, MAX_LIVE)
-      .map((b) => ({ q: String(b.q).slice(0, 300), a: String(b.a ?? "").slice(0, 300), ...(b.by ? { by: b.by } : {}) }));
-    const body = JSON.stringify({ url: tab.url, title: (tab.title || "").slice(0, 200), boxes });
+      .map((b) => ({
+        q: String(b.q).slice(0, 300),
+        a: String(b.a ?? "").slice(0, 300),
+        ...(b.by ? { by: b.by } : {}),
+        // The form's choices (spec 033), capped like the page side does.
+        ...(Array.isArray(b.options) && b.options.length
+          ? { options: b.options.slice(0, MAX_CHOICES).map((o) => String(o).slice(0, CHOICE_CHARS)), ...(b.free ? { free: true } : {}) }
+          : {}),
+      }));
+    // The site's own name for the step on screen, when it has one (spec 033).
+    const step = read.step ? { step: String(read.step).slice(0, 120) } : {};
+    const body = JSON.stringify({ url: tab.url, title: (tab.title || "").slice(0, 200), ...step, boxes });
     if (body === live.sent) return;
     const res = await api(`/v1/apply/runs/${data.run_id}/live`, { method: "POST", body }).catch(() => null);
     // Sent, or the run moved on (409): either way, not again until it changes.
     if (res?.ok || res?.status === 409) live.sent = body;
   }
 
+  /** Every frame's boxes, and the step name (the top frame's first). An
+   * older page copy answers with just its boxes. */
   async function readLive(tabId) {
     try {
       const results = await c.scripting.executeScript({
         target: { tabId, allFrames: true },
-        func: () => globalThis.__jecAutofill?.live?.() || [],
+        func: () => {
+          const jc = globalThis.__jecAutofill;
+          const boxes = jc?.live?.() || [];
+          const step = jc?.step?.() || "";
+          return step ? { boxes, step } : boxes;
+        },
       });
-      return results.flatMap((r) => r?.result || []);
+      const boxes = results.flatMap((r) => (Array.isArray(r?.result) ? r.result : r?.result?.boxes || []));
+      const step = results.map((r) => (Array.isArray(r?.result) ? "" : r?.result?.step || "")).find(Boolean) || "";
+      return { boxes, step };
     } catch {
-      return [];
+      return { boxes: [], step: "" };
     }
   }
 
