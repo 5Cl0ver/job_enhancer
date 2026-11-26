@@ -6,7 +6,7 @@ React Router **page components** (the app's screens), wired up in
 
 | File | Route | Purpose | Uses |
 |---|---|---|---|
-| `DashboardLayout.tsx` | `/` (layout) | The app frame: desktop sidebar (icons, Email count, the owner's Add a bug or idea and new-bug count on Admin), or on a phone a top bar + bottom tab bar (`components/layout/PhoneNav`); `<Outlet/>`; wraps children in `RequireAuth`. `/` opens My Jobs on a phone, Find Jobs on a computer | `useAttention`, `useProfile` |
+| `DashboardLayout.tsx` | `/` (layout) | The app frame: desktop sidebar (icons, Email count, the owner's Add a bug or idea and new-bug count on Admin), or on a phone a top bar + bottom tab bar (`components/layout/PhoneNav`); `<Outlet/>`; the Job Catcher update banner (spec 034); wraps children in `RequireAuth`. `/` opens My Jobs on a phone, Find Jobs on a computer | `useAttention`, `useProfile` |
 | `RequireAuth.tsx` | (guard) | Redirect to `/login` if no Supabase session | `lib/supabase` |
 | `Login.tsx` | `/login` | Email/password + GitHub sign in/up | `lib/supabase` |
 | `AuthCallback.tsx` | `/auth/callback` | OAuth redirect landing → session → `/search` | `lib/supabase` |
@@ -20,7 +20,7 @@ React Router **page components** (the app's screens), wired up in
 | `AdminPage.tsx` | `/admin` | Owner-only dashboard (role-guarded), with the way into Bugs & ideas and its new-bug count | `hooks/useAdmin`, `components/admin` |
 | `AdminBugsPage.tsx` | `/admin/bugs?id=` | Bugs & ideas (spec 032), owner only: the list, and the open report as a side panel (computer) or a sheet (phone) | `hooks/useBugReports`, `components/bugs` |
 | `Placeholder.tsx` | — | Dev stub for un-ported pages (none currently) | — |
-| `JobCatcherPage.tsx` | `/job-catcher` | Get Job Catcher: download, 6-step guide, version and update note, connected computers (spec 019) | `hooks/useJobCatcher`, `components/jobcatcher` |
+| `JobCatcherPage.tsx` | `/job-catcher` | Get Job Catcher: download, 6-step guide, version, what's new in the latest release (spec 034), how to update, connected computers (spec 019) | `hooks/useJobCatcher`, `components/jobcatcher` |
 | `ConnectPage.tsx` | `/connect?code=` | Approve a Job Catcher with one press; needs the proof from the Job Catcher in this Chrome (spec 019) | `lib/jobCatcher`, `hooks/useJobCatcher` |
 | `ForgotPasswordPage.tsx` | `/forgot-password` | Email a reset link; always the same neutral message | `lib/supabase/client` |
 | `ResetPasswordPage.tsx` | `/reset-password` | Choose a new password (8+ characters, twice) | `lib/supabase/client`, `lib/recovery` |

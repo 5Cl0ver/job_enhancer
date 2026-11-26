@@ -50,6 +50,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `Navbar.tsx`, `Sidebar.tsx` | ⚠️ Legacy shell — the live app frame is `routes/DashboardLayout.tsx`; these are pending consolidation |
 | `OfflineBanner.tsx` | Offline indicator when the browser goes offline |
+| `UpdateBanner.tsx` | Spec 034: on every app page, "Job Catcher on your computer is out of date (0.42.0 → 0.45.0)" with How to update and Hide for a day (localStorage, per release); hidden on /job-catcher |
 | `nav.ts` | The page list: desktop sidebar order, the phone's three tabs (`TABS`) and its More sheet (`MORE`), admin-only filtering, `pageFor(path)`, `subPageTitle(path)` (Bugs & ideas), `signOut` |
 | `PhoneNav.tsx` | The phone frame (under 768px): `TopBar` (page title, back arrow on inner pages, a slot for the page's buttons via `TopBarActions`), `TabBar` (My Jobs · Email with count · Find Jobs · More → sheet with the rest + Sign out; the owner's new bugs on More and Admin), `CountBadge`; `TopBar extra` holds the owner's Add a bug or idea |
 
