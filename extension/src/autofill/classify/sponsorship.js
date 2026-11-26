@@ -12,8 +12,17 @@ const SPONSOR = /sponsor|\bvisa\b[^?.]{0,30}\b(work|employ|support)|\b(work|empl
 const AUTH_WORDS = /authori[sz]|legally|eligib|right to work|lawfully/i;
 
 // "…without sponsorship", "…not require sponsorship", "sponsorship not required".
-const REVERSED =
-  /\bwithout\b[^?]{0,40}\b(sponsor|visa)|\b(not|never)\b[^?]{0,25}\b(requir|need)\w*[^?]{0,30}\b(sponsor|visa)|\bsponsor\w*[^?]{0,25}\bnot (be )?(required|needed)/i;
+// The "without"/"not" must belong to the same clause as the ask: never across
+// a comma or semicolon, and never past a new "will you / do you…" — so a
+// lead-in like "Not including OPT, will you require sponsorship?" is still
+// asked the straight way.
+const SAME_CLAUSE = "(?:(?!\\b(?:will|do|does|would|are|can|is)\\s+you\\b)[^?,;])";
+const REVERSED = new RegExp(
+  `\\bwithout\\b${SAME_CLAUSE}{0,40}\\b(sponsor|visa)` +
+    `|\\b(not|never)\\b${SAME_CLAUSE}{0,25}\\b(requir|need)\\w*${SAME_CLAUSE}{0,30}\\b(sponsor|visa)` +
+    `|\\bsponsor\\w*[^?]{0,25}\\bnot (be )?(required|needed)`,
+  "i",
+);
 // A direct ask: "Will you (now or in the future) require…", "Do you need…",
 // "Is sponsorship required…" — with no "not" before its verb.
 const DIRECT = /\b(will|do|does|would|is|are|did)\b(?:(?!\bnot\b|\bnever\b|n['’]t\b)[^?]){0,60}?\b(requir|need)\w*/i;

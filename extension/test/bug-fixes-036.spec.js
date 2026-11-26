@@ -442,3 +442,18 @@ describe("D: Workday's 'How Did You Hear About Us?' counts only a pill", () => {
     expect(r.need_you).toEqual([]);
   });
 });
+
+describe("a short lead-in never turns a sponsorship question round (final review)", () => {
+  it.each([
+    ["Not including OPT, will you require sponsorship in the future?", "requires_sponsorship"],
+    ["Not counting OPT, do you need sponsorship?", "requires_sponsorship"],
+    ["Not including OPT will you require sponsorship in the future?", "requires_sponsorship"],
+    ["Without OPT, will you require sponsorship?", "requires_sponsorship"],
+    ["Are you able to work in the US without sponsorship?", "no_sponsorship_needed"],
+    ["Do you NOT require sponsorship?", "no_sponsorship_needed"],
+    ["Can you work without the need for sponsorship now or in the future?", "no_sponsorship_needed"],
+  ])("%s → %s", async (question, want) => {
+    const { sponsorshipKey } = await import("../src/autofill/classify/sponsorship.js");
+    expect(sponsorshipKey(question)).toBe(want);
+  });
+});
