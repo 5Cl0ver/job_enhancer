@@ -81,25 +81,28 @@ describe("which Job Catcher is behind", () => {
     expect(
       outdatedJobCatcher(
         [
-          { version: "0.45.0", browser: "Edge 142", last_seen_at: now() },
-          { version: "0.42.0", browser: "Chrome 141", last_seen_at: daysAgo(2) },
+          { install_id: "a", version: "0.45.0", browser: "Edge 142 (Windows)", last_seen_at: now() },
+          { install_id: "b", version: "0.42.0", browser: "Chrome 141 (macOS)", last_seen_at: daysAgo(2) },
         ],
         "0.45.0",
       ),
-    ).toEqual({ version: "0.42.0", latest: "0.45.0", where: "Chrome" });
+    ).toEqual({ version: "0.42.0", latest: "0.45.0", where: "Chrome (macOS)" });
   });
 
-  it("ignores one not seen for 30 days, one replaced by an up-to-date copy, and an unknown release", () => {
-    expect(outdatedJobCatcher([{ version: "0.42.0", browser: "Chrome 141", last_seen_at: daysAgo(40) }], "0.45.0")).toBeNull();
+  it("an old computer is named even when another computer's same browser is up to date", () => {
     expect(
       outdatedJobCatcher(
         [
-          { version: "0.45.0", browser: "Chrome 142", last_seen_at: now() },
-          { version: "0.42.0", browser: "Chrome 141", last_seen_at: daysAgo(1) },
+          { install_id: "home", version: "0.45.0", browser: "Chrome 142 (Windows)", last_seen_at: now() },
+          { install_id: "laptop", version: "0.42.0", browser: "Chrome 141 (macOS)", last_seen_at: daysAgo(1) },
         ],
         "0.45.0",
       ),
-    ).toBeNull();
+    ).toEqual({ version: "0.42.0", latest: "0.45.0", where: "Chrome (macOS)" });
+  });
+
+  it("ignores one not seen for 30 days, and an unknown release", () => {
+    expect(outdatedJobCatcher([{ version: "0.42.0", browser: "Chrome 141", last_seen_at: daysAgo(40) }], "0.45.0")).toBeNull();
     expect(outdatedJobCatcher([{ version: "0.42.0", browser: "Chrome 141", last_seen_at: now() }], null)).toBeNull();
   });
 });

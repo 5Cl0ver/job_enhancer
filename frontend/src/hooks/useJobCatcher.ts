@@ -22,6 +22,8 @@ export interface JobCatcherConnection {
 }
 
 export interface JobCatcherInstall {
+  /** One per browser profile (spec 034: computers told apart). */
+  install_id?: string;
   version: string;
   browser: string | null;
   last_seen_at: string;
