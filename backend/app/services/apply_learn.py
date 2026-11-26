@@ -163,13 +163,19 @@ def fix_question(fix: Any) -> str:
 
 
 def changed_questions(
-    review: dict | None, messages: list[dict[str, Any]] | None = None
+    review: dict | None,
+    messages: list[dict[str, Any]] | None = None,
+    waiting: list[dict[str, Any]] | None = None,
 ) -> set[str]:
     """Questions the user changed or asked about at any review so far, and
-    boxes they changed or asked about while Claude filled (spec 030)."""
+    boxes they changed or asked about while Claude filled (spec 030), or in
+    the run's fixes (spec 033: `q`)."""
     out = set((review or {}).get("changed") or [])
     fixes = [*((review or {}).get("fixes") or [])]
-    fixes += [m.get("fix") for m in messages or [] if isinstance(m, dict)]
+    for m in messages or []:
+        if isinstance(m, dict):
+            fixes += [m.get("fix"), *(m.get("fixes") or [])]
+    fixes += list(waiting or [])
     for fix in fixes:
         if q := fix_question(fix):
             out.add(normalize(q))
@@ -179,7 +185,7 @@ def changed_questions(
 def candidates(run: ApplyRun, company: str = "") -> list[tuple[str, str]]:
     """(question, answer) pairs from Claude's pages that are safe to learn."""
     company = normalize(company)
-    changed = changed_questions(run.review, run.messages)
+    changed = changed_questions(run.review, run.messages, run.fixes)
     seen: dict[str, tuple[str, str]] = {}
     given: dict[str, set[str]] = {}  # every answer each question got, any round
     for page in run.pages or []:

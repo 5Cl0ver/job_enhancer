@@ -127,7 +127,7 @@ async def test_answer_decide_and_the_review(client, db_session, test_user):
 @pytest.mark.asyncio
 async def test_job_catcher_routes(client, db_session, test_user):
     _, run_id = await _started(client, db_session, test_user)
-    _, page, req = await svc.page_done(
+    _, page, req, _next = await svc.page_done(
         db_session, test_user, run_id, "https://jobs.lever.co/acme/123/apply", "One", []
     )
     await db_session.commit()

@@ -677,10 +677,23 @@ async def finish_scout_run(run_id: str, note: str = "") -> dict:
 # --------------------------------------------------------------------------- #
 
 
+async def _not_now(db, user, run_id, exc) -> dict:
+    """A refusal that tells Claude what to do instead (spec 033): never an
+    error that ends its turn. Real errors still raise."""
+    await db.rollback()
+    await db.refresh(user)  # the rollback expired it
+    out = await apply_svc.not_now(db, user, run_id, exc)
+    out = await apply_svc.with_inbox(db, user, out.get("run_id") or run_id, out)
+    await db.commit()
+    return out
+
+
 async def _apply(call, run_id=None):
     async with _session_user() as (db, user):
         try:
             out = await call(db, user)
+        except apply_svc.NotNow as exc:
+            return await _not_now(db, user, run_id, exc)
         except ValueError:
             await db.rollback()
             raise
@@ -753,11 +766,15 @@ async def fill_page(run_id: str, page_url: str) -> dict:
     async with _session_user() as (db, user):
         try:
             run, req = await apply_svc.fill_request(db, user, run_id, page_url)
+        except apply_svc.NotNow as exc:
+            return await _not_now(db, user, run_id, exc)
         except ValueError:
             await db.rollback()
             raise
         rid = run.id
-        res = await apply_svc.wait_request(db, req.id)
+        # One nobody picked up is asked for once more; a long fill still going
+        # is waited for again on the next call (spec 033).
+        res = await apply_svc.wait_fill(db, user, rid, req)
         out = {"run_id": str(rid), **apply_svc.fill_result(res)}
         out = await apply_svc.with_inbox(db, user, rid, out)
         await db.commit()
@@ -767,15 +784,19 @@ async def fill_page(run_id: str, page_url: str) -> dict:
 async def _page(run_id, page_url, page_title, answers, last: bool) -> dict:
     async with _session_user() as (db, user):
         try:
-            run, page, req = await apply_svc.page_done(
+            run, page, req, extra = await apply_svc.page_done(
                 db, user, run_id, page_url, page_title, answers, last=last
             )
+        except apply_svc.NotNow as exc:
+            return await _not_now(db, user, run_id, exc)
         except ValueError:
             await db.rollback()
             raise
         rid, n = run.id, page["n"]
         res = await apply_svc.wait_request(db, req.id)
         out = await apply_svc.photo_result(db, user, rid, n, res)
+        # What's next, by the run's mode (spec 033).
+        out = {**out, **extra}
         out = await apply_svc.with_inbox(db, user, rid, out)
         await db.commit()
         return out
@@ -788,9 +809,12 @@ async def page_done(
     """Call when you've filled a page, BEFORE pressing Next. answers lists every
     question on the page and what's in it: [{"q", "a", "claude": true if you
     wrote it, "guess": true if it's your best-judgment pick rather than a fact
-    from the profile, "agreement": true for an agreement box you ticked}].
+    from the profile, "agreement": true for an agreement box you ticked,
+    "only_you": true for a box you left empty because only the user knows}].
     Job Catcher takes photos of the whole page (it scrolls; wait for this to
-    return). Returns the page number and whether photos were taken."""
+    return). Returns the page number, whether photos were taken, and `next`:
+    Page by page, wait_for_you while the user looks the step over; Keep
+    going, press Next and go on."""
     return await _page(run_id, page_url, page_title, answers, last=False)
 
 
@@ -802,6 +826,19 @@ async def ready_for_review(
     pressing Submit. Photos are taken and the user reviews everything in the
     app. Then call wait_for_you for their decision."""
     return await _page(run_id, page_url, page_title, answers, last=True)
+
+
+@mcp.tool
+async def mark_fixes(
+    run_id: str, done: list[str] | None = None, gone: list[str] | None = None
+) -> dict:
+    """After making the user's fixes (from_user `fixes`, or a review's
+    `fixes`): pass the `id`s you made as done, and the ids of boxes you
+    couldn't find on the page as gone. The app shows each fix as done or
+    "couldn't apply". No page_done is needed just for a fix."""
+    return await _apply(
+        lambda db, user: apply_svc.mark_fixes(db, user, run_id, done, gone), run_id
+    )
 
 
 @mcp.tool
@@ -853,11 +890,12 @@ async def report_problem(
 @mcp.tool
 async def wait_for_you(run_id: str) -> dict:
     """Wait (about 45 s) for the user: their answers, their look at the
-    résumé (use / change + note), their reply to need_help, or their review
-    decision (submit / fix + note and `fixes` / self). Returns ready: false
-    while still waiting: call it again, for up to 30 minutes. It also returns
-    early with from_user when the user writes to you in the app. next says what
-    to do."""
+    résumé (use / change + note), their look at a step (Page by page: go on,
+    with any fixes), their reply to need_help, or their review decision
+    (submit / fix + note and `fixes` / self). Returns ready: false while still
+    waiting: call it again, for as long as it says so. It also returns early
+    with from_user when the user writes to you in the app. next says what to
+    do."""
     return await _apply(
         lambda db, user: apply_svc.wait_for_you(db, user, run_id), run_id
     )

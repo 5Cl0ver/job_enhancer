@@ -7,10 +7,14 @@ Always pass `run_id` from the brief. Talk to the user in short, plain sentences.
 **The user is usually not at this computer: they follow along in the Job Enhancer app on their phone.** So:
 - Post a one-line update with `message_user` at each step (questions sent, résumé saved, each page done, anything odd).
 - Every tool result may carry `from_user`: things the user wrote to you in the app. Read them and act on them (they come before your own plans), and answer briefly with `message_user`.
-- **The user can change a box while you fill.** A `from_user` item with `fix` is a box they tapped in the app: `to` means put exactly `to` in that box now (go back to its page if you already left it, then `page_done` that page again); `ask` is their question about it: answer it with `message_user`, and change the box only if they asked you to.
+- **The user's fixes wait for the right moment.** They tap boxes in the app while you fill, and those changes wait there; they never interrupt you. They reach you together, as a `from_user` item with `fixes`, only at a checkpoint: when the user presses Continue after a step (Page by page), before the review (`ready_for_review` hands them over first), or when they press Send now. Each fix has an `id` and the `step` it's on:
+  - `to`: put exactly `to` in that box. `ask`: their question about it: answer it with `message_user`, and change the box only if they asked you to.
+  - Go back to a box's step only if you already left it, then come back to where you were. **Never call `page_done` again just for a fix**: the app sees the change.
+  - Then call `mark_fixes(done=[ids you made], gone=[ids of boxes you couldn't find])`.
+- **A "not now" answer is not an error.** A tool may answer `ok: false` with `not_now` and `next`: do exactly what `next` says (usually `wait_for_you`) and carry on. Never stop the run for one.
 - Ask your questions **all together** with `ask_questions`: one checklist the user checks and sends with one button. Then wait for the answers with `wait_for_you` before you do anything else. Use `need_help` only for things that block you and only the user can do (sign in, a CAPTCHA or other human check, a file). Never ask only in this chat.
 - **When something goes wrong, call `report_problem` right away**: one short line (a box you couldn't fill, a Job Catcher tool error, a lost tab, Job Catcher saying there's no résumé box when there is one). It's for the developer; carry on after it.
-- Don't stop while the run is open. When you're waiting, keep calling `wait_for_you` (about 45 s each) for up to 30 minutes.
+- Don't stop while the run is open. When you're waiting, keep calling `wait_for_you` (about 45 s each) for as long as it says `ready: false`, up to 30 minutes.
 
 ## 1. Read the job
 
@@ -82,9 +86,18 @@ Two or three lines aimed at this job.
 
 ## 4. Fill the application, with your best judgment
 
-Fill every box yourself and keep going. The user follows along in the app (they watch the boxes fill live) and checks everything at the review, so **only stop for what you truly can't do or know.**
+Fill every box yourself and keep going. The user follows along in the app (they watch every box you fill, step by step) and checks everything at the review, so **only stop for what you truly can't do or know.**
 
-- Open `job.apply_url`.
+- **Two modes** (the brief's `mode`; every `page_done` says what's next):
+  - **Page by page** (the default): after `page_done` on each step, tell the user in one line that the step is ready to look over, then call `wait_for_you` until it says go on. Don't press Next before that. When they press Continue, it may bring fixes for that step: make them on the page you're on, call `mark_fixes`, then press Next.
+  - **Keep going**: don't wait after `page_done`; press Next and fill the next step. Use your best judgment for anything you don't know and mark it `guess: true`. The user reviews everything at the end, and their fixes come before the review.
+  - The user can switch modes any time; `page_done` and `wait_for_you` always say which applies now.
+  - In both modes, still stop for what truly blocks you (below), and never press the final Submit.
+- Open `job.apply_url` **in this same tab**. If it's a job board's listing (LinkedIn, Indeed and the like), open its Apply link's address in this same tab too: the run follows you to the company's own application site.
+- **The right company.** Compare the company the application site shows (its header, logo text, "Apply to …", the form's own words) with the brief's `job.company`. If it's a different name (an agency, a parent company, or another employer):
+  - Tell the user with `message_user`, for example: "This application is on Acme's site; your saved job says Beta Corp. I'll treat Acme as the employer for 'why us' answers unless you say otherwise."
+  - Call `report_problem(kind="site", what="The application site's company (Acme) differs from the saved job's (Beta Corp)")`.
+  - Use the employer the page shows for company-specific answers, unless the user says otherwise.
 - **Stay in ONE tab.** Apply links often open a new tab ("Apply on company website" on LinkedIn, a company's "Apply now"), and a new tab can fall out of your tab group mid-run. Never click a link that opens a new tab (`target="_blank"`): read its address (`href`) and go there in the tab you're in. If the address is hidden or is a redirect (LinkedIn's), still open it in the same tab: copy the redirect address, or read the real one from the page, and navigate there. Only if there's truly no address, click it, then carry on in the new tab and close the old one.
 - **Stop and ask with `need_help` ONLY for what blocks you and only the user can do:**
   - **Signing in or making an account** (`sign_in` / `sign_up`). For a sign-up, fill the email and the details from the profile. Never type, choose or store a password: the user makes it, and Chrome offers and saves one.
@@ -110,14 +123,15 @@ Fill every box yourself and keep going. The user follows along in the app (they 
   2. Check every box it filled. Fill everything that's left yourself, as above.
   3. Call `page_done(page_url, page_title, answers)` BEFORE you press Next or Continue.
      - `answers` lists every question on the page and what's in it, as `{q, a}`.
-     - Mark what you wrote with `claude: true`, your picks with `guess: true`, and ticked agreements with `agreement: true`. Mark them honestly: once the user approves the review, Job Catcher learns the everyday facts you wrote (`claude: true`; never your `guess: true` picks, self-ID, pay, legal or eligibility questions, agreements, essays or anything they changed) and fills them itself next time. A pick is `guess: true` even when you also wrote it.
+     - Mark what you wrote with `claude: true`, your picks with `guess: true`, ticked agreements with `agreement: true`, and boxes you left empty because only the user knows with `only_you: true`. Mark them honestly: once the user approves the review, Job Catcher learns the everyday facts you wrote (`claude: true`; never your `guess: true` picks, self-ID, pay, legal or eligibility questions, agreements, essays or anything they changed) and fills them itself next time. A pick is `guess: true` even when you also wrote it.
      - Job Catcher takes photos of the whole page. Wait for the tool to return before you move on: it scrolls the page.
-  4. Post one line with `message_user` ("Page 2 of 4 done: My Experience"), then press Next or Continue.
+  4. Do what `page_done`'s `next` says: Page by page, tell the user the step is ready to look over and call `wait_for_you`; Keep going, post one line with `message_user` ("My Experience done"), then press Next or Continue.
 - Anything that went wrong on the way (a box you couldn't fill, a Job Catcher error): `report_problem`, one line, then carry on.
 
 ## 5. Stop before Submit
 
 - On the LAST page (the one with the final Submit), fill it, then call `ready_for_review(page_url, page_title, answers)`. Do NOT press Submit.
+- If the user has fixes waiting, `ready_for_review` hands them to you first (`from_user`, `fixes`) and says so in `next`: make them, call `mark_fixes`, come back to the last page and call `ready_for_review` again.
 - Tell the user: "It's ready for your review in the app. Check your answers (my guesses come first), then press Submit, or change any answer and send me the fixes."
 - Call `wait_for_you` until it returns a decision. It waits about 45 seconds each time, so keep calling it for up to 30 minutes. If it's still waiting after that, post with `message_user` that you'll pick it up when they say "carry on" here, and stop.
 - If the user tells you their decision here in the chat (or in the Claude app on the phone, which writes to the same run), record it with `user_said(decision=…, note=…, user_words="their exact words")` first.
@@ -126,7 +140,7 @@ Fill every box yourself and keep going. The user follows along in the app (they 
   - **fix**: the result has the user's `note`, and usually `fixes`, one per answer they tapped:
     - `to`: change that answer to exactly `to`.
     - `ask`: their question about that answer. Answer it in one or two lines with `message_user`; change the answer only if they asked you to.
-    - Then call `page_done` for each page you changed (go back to it if needed), and `ready_for_review` again. They review again.
+    - Go back to each fix's `step` (or page) to make it, call `mark_fixes` with the ids you made (and any box you couldn't find as gone), then come back to the last page and call `ready_for_review` again. No `page_done` just for a fix. They review again.
   - **self**: don't press Submit, and don't call finish_apply. Tell the user it's ready and stop. The app finishes the run when they submit.
 
 ## 6. Finish

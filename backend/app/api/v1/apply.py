@@ -27,10 +27,12 @@ from app.schemas.apply import (
     ExtensionEvent,
     FactIn,
     FactOut,
+    FixAddIn,
+    FixEditIn,
     HelpDoneIn,
-    LiveFixIn,
     LiveIn,
     MessageIn,
+    ModeIn,
     RequestResult,
     ResumeDecisionIn,
 )
@@ -64,7 +66,9 @@ async def start_run(
     db: AsyncSession = Depends(get_db),
 ):
     try:
-        run = await svc.create_run(db, user, data.saved_job_id, data.resume_id)
+        run = await svc.create_run(
+            db, user, data.saved_job_id, data.resume_id, mode=data.mode
+        )
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except svc.RunBusy as busy:
@@ -221,21 +225,92 @@ async def message(
     return await svc.view(db, run)
 
 
-@router.post("/runs/{run_id}/live-fix")
-async def live_fix(
-    run_id: uuid.UUID,
-    data: LiveFixIn,
-    user: User = Depends(get_current_user),
-    db: AsyncSession = Depends(get_db),
-):
-    """Change a box while Claude fills, or ask Claude about it (spec 030)."""
-    await _run(db, user, run_id)
+async def _changed(db: AsyncSession, call):
+    """Run one change to a run's fixes or mode; 400 / 404 in plain words."""
     try:
-        run = await svc.live_fix(db, user.id, run_id, data.model_dump())
+        run = await call()
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()
     return await svc.view(db, run)
+
+
+@router.post("/runs/{run_id}/fixes")
+async def add_fix(
+    run_id: uuid.UUID,
+    data: FixAddIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change a box on any step, or ask Claude about it. It waits on the run
+    until a checkpoint (spec 033), never interrupting Claude."""
+    await _run(db, user, run_id)
+    return await _changed(
+        db, lambda: svc.add_fix(db, user.id, run_id, data.model_dump())
+    )
+
+
+@router.patch("/runs/{run_id}/fixes/{fix_id}")
+async def edit_fix(
+    run_id: uuid.UUID,
+    fix_id: str,
+    data: FixEditIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _run(db, user, run_id)
+    return await _changed(
+        db, lambda: svc.edit_fix(db, user.id, run_id, fix_id, data.model_dump())
+    )
+
+
+@router.delete("/runs/{run_id}/fixes/{fix_id}")
+async def remove_fix(
+    run_id: uuid.UUID,
+    fix_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    await _run(db, user, run_id)
+    return await _changed(db, lambda: svc.remove_fix(db, user.id, run_id, fix_id))
+
+
+@router.post("/runs/{run_id}/fixes/send")
+async def send_fixes(
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Send now: every waiting fix goes to Claude at once (at the review, as
+    the review's fixes)."""
+    await _run(db, user, run_id)
+    return await _changed(db, lambda: svc.send_fixes(db, user.id, run_id))
+
+
+@router.post("/runs/{run_id}/continue")
+async def continue_step(
+    run_id: uuid.UUID,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Page by page: the owner looked the step over. Its fixes go to Claude,
+    and Claude carries on."""
+    await _run(db, user, run_id)
+    return await _changed(db, lambda: svc.continue_step(db, user.id, run_id))
+
+
+@router.patch("/runs/{run_id}/mode")
+async def set_mode(
+    run_id: uuid.UUID,
+    data: ModeIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Page by page or Keep going, any time (spec 033)."""
+    await _run(db, user, run_id)
+    return await _changed(db, lambda: svc.set_mode(db, user.id, run_id, data.mode))
 
 
 @router.post("/runs/{run_id}/peek", status_code=202)

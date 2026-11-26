@@ -69,7 +69,11 @@ async def _setup(engine, monkeypatch):
                 parsed_history={"work": [{"title": "IT Systems Engineer"}]},
             )
         )
-        run = await svc.create_run(db, user, uuid.UUID(job["job_id"]))
+        # Keep going: these tests are about filling; Page by page's pauses
+        # have their own tests (spec 033, test_apply_fix_at_end.py).
+        run = await svc.create_run(
+            db, user, uuid.UUID(job["job_id"]), mode=svc.APPLY_MODE_KEEP
+        )
         await db.commit()
         return maker, user, run.id, uuid.UUID(job["job_id"])
 
@@ -385,7 +389,7 @@ async def test_photos_are_checked(engine, monkeypatch):
     rid = str(run_id)
     await mcp_mod.get_apply_brief(rid)
     async with maker() as db:
-        run, page, req = await svc.page_done(
+        run, page, req, _next = await svc.page_done(
             db, user, rid, "https://acme.example/a", "A", []
         )
         await db.commit()
