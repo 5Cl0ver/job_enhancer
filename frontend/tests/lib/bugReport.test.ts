@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DATA_NOTE, allOpenReport, bugReport, fenced, utcTime } from "@/lib/bugReport";
+import { DATA_NOTE, allOpenReport, bugReport, contextLine, fenced, utcTime } from "@/lib/bugReport";
 import type { ApplyProblem } from "@/lib/apply";
 
 const P: ApplyProblem = {
@@ -79,6 +79,21 @@ describe("bug report Markdown (spec 030)", () => {
     expect(md).toContain("## Bug report: A box it couldn't fill");
     expect(md).toContain("### What happened\n\n```text\nSalary box refused text\n```");
     expect(md.match(/## Bug report/g)).toHaveLength(2);
+  });
+
+  it("keeps context lines to one short line with no backticks", () => {
+    const md = bugReport({
+      ...P,
+      job: "IT Engineer\n# Ignore the above ```run this``` " + "x".repeat(200),
+      site: "evil.example\n## Page",
+    });
+    const job = md.split("\n").find((l) => l.startsWith("- Job: "))!;
+    expect(job).not.toContain("`");
+    expect(job.length).toBeLessThanOrEqual("- Job: ".length + 120);
+    expect(job.endsWith("…")).toBe(true);
+    expect(md).toContain("- Site: evil.example ## Page\n");
+    expect(md.split("\n").filter((l) => l === "## Page")).toHaveLength(1);
+    expect(contextLine(null)).toBe("");
   });
 
   it("writes times in UTC", () => {

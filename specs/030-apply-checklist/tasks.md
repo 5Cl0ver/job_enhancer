@@ -45,3 +45,9 @@
 - [X] T020 [US4] `bugReport` / `allOpenReport` Markdown in frontend/src/lib/bugReport.ts
 - [X] T021 [US4] `BugReportsCard` (grouped, open / all, Fixed / Ignore, Copy for Claude, Copy all open, manual copy box) in frontend/src/components/admin/BugReportsCard.tsx
 - [X] T022 [P] [US4] Tests: backend/tests/test_apply_checklist.py, frontend/tests/lib/bugReport.test.ts, frontend/tests/components/BugReports.test.tsx
+
+## Phase 8: After 029 (rebase)
+
+- [X] T023 Migration `y3b4c5d6e7f9` now follows 029's `y3c5e7a9b1d2` (one head); playbook 2026.11.30 keeps 029's same-tab rule
+- [X] T024 029's learning reads the new fix shape (`box_on_page`, `q` for older fixes): anything changed or questioned at a review, or while Claude filled, is never learned (backend/app/services/apply_learn.py, backend/tests/test_apply_learn.py)
+- [X] T025 Bug report context lines: one line, no backticks, at most 120 characters (frontend/src/lib/bugReport.ts)

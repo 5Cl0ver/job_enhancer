@@ -26,7 +26,17 @@ export function fenced(text: string): string {
   return [`${fence}text`, text, fence].join("\n");
 }
 
-const siteOf = (p: ApplyProblem) => {
+/** A context line's value (the job's title, the site): one line, no
+ * backticks, at most 120 characters, since it comes from the listing or the
+ * page and sits outside the fenced blocks. */
+export function contextLine(value: string | null | undefined): string {
+  const one = (value ?? "").replace(/`/g, "").replace(/\s+/g, " ").trim();
+  return one.length > 120 ? `${one.slice(0, 119)}…` : one;
+}
+
+const siteOf = (p: ApplyProblem) => contextLine(siteRaw(p));
+
+const siteRaw = (p: ApplyProblem) => {
   if (p.site) return p.site;
   try {
     return p.page ? new URL(p.page).hostname.replace(/^www\./, "") : "";
@@ -46,11 +56,11 @@ export function bugReport(p: ApplyProblem, level: 1 | 2 = 1): string {
     `${h} Bug report: ${PROBLEM_KIND[p.kind] ?? "Other"}${site ? ` on ${site}` : ""}`,
     "",
     ...(level === 1 ? [DATA_NOTE, ""] : []),
-    `- Run: ${p.run_id ?? "unknown"}`,
-    `- Job: ${p.job || "unknown"}`,
+    `- Run: ${contextLine(p.run_id) || "unknown"}`,
+    `- Job: ${contextLine(p.job) || "unknown"}`,
     `- Site: ${site || "unknown"}`,
-    `- Job Catcher: ${p.job_catcher || "unknown"}`,
-    `- Playbook: ${p.playbook || "unknown"}`,
+    `- Job Catcher: ${contextLine(p.job_catcher) || "unknown"}`,
+    `- Playbook: ${contextLine(p.playbook) || "unknown"}`,
     `- When: ${when}`,
     "",
     `${h}# What happened`,
