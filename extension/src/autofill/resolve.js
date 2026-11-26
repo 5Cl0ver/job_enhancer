@@ -10,6 +10,9 @@ const RESUME = /r[ée]sum[ée]|\bcv\b|curriculum/i;
 // Whole words: "another format" or "your preferences" don't make a box something else.
 const NOT_RESUME = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|\bother\b|\badditional\b|\bsupporting\b|\breferences?\b|certific/i;
 const DOC_ACCEPT = /pdf|msword|officedocument|rtf|\.docx?/i;
+// Another document, named in a heading or the text around a box (a page's own
+// words like "other" or "additional" don't count there).
+const NOT_DOC = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|certific/i;
 
 /**
  * What an upload box is for: its own label first, then the heading above it
@@ -24,6 +27,18 @@ export function uploadKind(field) {
   const around = field.hints?.context || "";
   if (NOT_RESUME.test(around)) return "other";
   if (RESUME.test(around)) return "resume";
+  // The smallest part of the page that holds it alone and names a document,
+  // then its group's and section's headings (spec 029: Workday's "Upload a
+  // file (5MB max)" under "Resume/CV").
+  for (const text of [field.hints?.area, field.hints?.group, field.hints?.section]) {
+    const t = text || "";
+    const resume = RESUME.test(t);
+    const other = NOT_DOC.test(t);
+    if (resume && !other) return "resume";
+    if (other && !resume) return "other";
+  }
+  // Workday's own upload box, which takes any file type.
+  if (/file-upload-input/i.test(field.hints?.automation || "")) return "unclear";
   return DOC_ACCEPT.test(field.hints?.accept || "") ? "unclear" : "other";
 }
 

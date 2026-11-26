@@ -328,6 +328,40 @@ describe("the background loop", () => {
     expect(JSON.parse(result[2])).toEqual({ ok: true, reason: null, filled: ["First name", "Email"], need: ["Why Acme?"] });
   });
 
+  it("reports only what this fill reported, never a frame left from the last step (spec 029)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    const fillSession = vi.fn().mockImplementation(async () => ({
+      frames: {
+        0: { entries: [{ label: "Resume/CV" }], need_you: [], resume: "attached", at: Date.now() },
+        // A frame from step 1 that didn't fill now (gone with that step).
+        4: { entries: [{ label: "Phone Extension" }], need_you: [{ label: "Prefix" }], resume: "no_box", at: 1 },
+      },
+    }));
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: true }), fillSession, chrome: fakeChrome() }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: true, reason: null, filled: ["Resume/CV"], need: [], resume: "attached" });
+  });
+
+  it("while Keep filling is filling the step, waits for ITS report instead of the last step's (spec 029)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    const old = { 0: { entries: [{ label: "First Name" }], need_you: [{ label: "Suffix" }], resume: "no_box", at: 1 } };
+    let reads = 0;
+    const fillSession = vi.fn().mockImplementation(async () =>
+      ++reads < 3 ? { frames: old } : { frames: { 0: { entries: [{ label: "Why Tidewell?" }], need_you: [], resume: "attached", at: Date.now() } } },
+    );
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, busy: true }), fillSession, chrome: fakeChrome() }));
+    const result = JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]);
+    expect(result).toEqual({ ok: true, reason: null, filled: ["Why Tidewell?"], need: [], resume: "attached" });
+  });
+
+  it("never switches tabs while the user is busy in another window (spec 029)", async () => {
+    const c = fakeChrome({ tabActive: false, idle: "active" });
+    c._win.focused = false; // the user is working in another window
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(c.tabs.update).not.toHaveBeenCalled();
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).reason).toBe("busy");
+  });
+
   it("says what happened to the résumé, the best of every frame (spec 026)", async () => {
     const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 1 }]);
     const fillSession = vi.fn().mockResolvedValue({

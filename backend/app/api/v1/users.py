@@ -196,6 +196,7 @@ async def upsert_custom_answers(
             existing[item.question_key] = row
         row.question_text = item.question_text
         row.answer = item.answer
+        row.source = None  # saved by the user: theirs now, not Claude's
     await db.commit()
     rows = await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
     return [CustomAnswerSchema.model_validate(r) for r in rows]
@@ -433,6 +434,7 @@ async def export_data(
                 "use_count": a.use_count,
                 "updated_at": _dt(a.updated_at),
                 "last_used_at": _dt(a.last_used_at),
+                "source": a.source,
             }
             for a in custom_answers
         ],

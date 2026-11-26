@@ -7,12 +7,16 @@ Claude writes it in the layout the PDF maker renders. The app keeps it two ways:
 - a **résumé** (``Resume``) whose file is that document as a PDF, set as the
   job's résumé, so Job Catcher's existing per-job choice uploads it.
 
-Editing the document remakes the PDF (``rerender``). The résumé borrows the
-master résumé's read-in history, so Workday's job and school sections still
-fill from it.
+Editing the document remakes the PDF (``rerender``). The résumé's details
+(jobs, schools, skills) are read from the document itself (spec 029), so
+Workday's job and school sections fill from THIS résumé, never from the
+master's PDF text. Résumés saved before that borrowed the master's details;
+they are read again from their document the first time Job Catcher asks
+(``refresh_borrowed``).
 """
 
 import re
+from datetime import UTC, datetime
 
 from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -24,7 +28,7 @@ from app.models.resume import Resume
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.services import master_profile
+from app.services import master_profile, resume_reader
 from app.services.resume_pdf import render_pdf
 
 MODEL = "claude-connector"
@@ -74,13 +78,53 @@ async def _file_name(db: AsyncSession, user: User) -> str:
     return f"{name} - Résumé.pdf" if name else "Résumé.pdf"
 
 
-def _fill(resume: Resume, text: str, history: dict | None) -> None:
+def history_of_document(text: str) -> dict:
+    """The résumé's jobs, schools and skills, read from Claude's Markdown: one
+    line per point already (no PDF line breaks), group sub-headings and the
+    title line left out."""
+    lines = [
+        ln
+        for ln in (text or "").splitlines()
+        if not ln.lstrip().startswith(("### ", "> "))
+    ]
+    return resume_reader.read(plain("\n".join(lines)))
+
+
+def _fill(resume: Resume, text: str) -> None:
     data = render_pdf(text)
     resume.file_data = data
     resume.file_size_bytes = len(data)
     resume.extracted_text = plain(text)
-    if history is not None:
-        resume.parsed_history = history
+    resume.parsed_history = history_of_document(text)
+    resume.parsed_history_at = datetime.now(tz=UTC)
+
+
+def _aware(dt: datetime | None) -> datetime | None:
+    if dt is None:
+        return None
+    return dt if dt.tzinfo else dt.replace(tzinfo=UTC)
+
+
+async def refresh_borrowed(db: AsyncSession, resume: Resume) -> bool:
+    """A job's résumé saved before spec 029 carries the master's details,
+    stamped with the master's (older) reading time: read them from its own
+    document instead. Details the user edited (stamped after the résumé was
+    made) are never touched. True when they were read again."""
+    if resume.document_id is None:
+        return False
+    read_at, made_at = _aware(resume.parsed_history_at), _aware(resume.created_at)
+    if read_at is not None and (made_at is None or read_at >= made_at):
+        return False
+    doc = await db.get(GeneratedDocument, resume.document_id)
+    if doc is None or doc.user_id != resume.user_id:
+        return False
+    text = doc.edited_content or doc.content or ""
+    if not text.strip():
+        return False
+    resume.parsed_history = history_of_document(text)
+    resume.parsed_history_at = datetime.now(tz=UTC)
+    await db.flush()
+    return True
 
 
 async def save_for_job(
@@ -106,7 +150,6 @@ async def save_for_job(
     await db.flush()
 
     master = await master_profile.master_resume(db, user.id)
-    history = master.parsed_history if master else None
     resume = None
     if run and run.resume_id:
         resume = await db.get(Resume, run.resume_id)
@@ -118,11 +161,10 @@ async def save_for_job(
             file_size_bytes=0,
             is_active=False,
             document_id=doc.id,
-            parsed_history_at=master.parsed_history_at if master else None,
         )
         db.add(resume)
     resume.document_id = doc.id
-    _fill(resume, text, history)
+    _fill(resume, text)
     await db.flush()
 
     doc.resume_id = master.id if master else None
@@ -142,7 +184,7 @@ async def rerender(db: AsyncSession, doc: GeneratedDocument) -> None:
             Resume.document_id == doc.id, Resume.user_id == doc.user_id
         )
     ):
-        _fill(resume, doc.edited_content or doc.content or "", None)
+        _fill(resume, doc.edited_content or doc.content or "")
     await db.flush()
 
 

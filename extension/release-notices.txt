@@ -4,3 +4,4 @@
 0.40.0: New in 0.40.0: Apply with Claude. Job Catcher takes a photo of every application page and keeps Submit locked until you say so. Chrome may ask you to allow Job Catcher on all sites again.
 0.41.0: New in 0.41.0: follow Apply with Claude from the app. "Show me the screen" photos, and Job Catcher spots the thank-you page so you know an application was really sent.
 0.42.0: New in 0.42.0: watch the boxes fill in the app, the résumé made for the job is attached (Workday too), and photos work even when you are on another tab. Chrome may ask to know when the computer is locked: that only explains a missing photo.
+0.43.0: New in 0.43.0: on Workday the résumé box is found and your résumé goes in, jobs fill from the résumé picked for the job (whole sentences, bullets kept), each step shows only its own boxes, and the phone never goes in Phone Extension. What Claude answers for you is learned once you approve, so Job Catcher fills it next time.

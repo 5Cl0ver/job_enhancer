@@ -14,6 +14,8 @@ export interface CustomAnswer {
   /** Usage insights (Answer Library): how often autofill reused this answer. */
   use_count?: number;
   last_used_at?: string | null;
+  /** "claude": learned from an answer Claude gave in Apply with Claude (spec 029). */
+  source?: string | null;
 }
 
 export function useCustomAnswers() {

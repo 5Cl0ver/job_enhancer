@@ -162,6 +162,13 @@ const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "che
 const optionLabels = (f) => (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60);
 const shortLabel = (q) => (q.length > 90 ? q.slice(0, 89) + "…" : q) || "Unlabelled field";
 
+/** Still on the page: in it, and not inside a step the site hid (spec 029). */
+function onPage(field) {
+  const box = field.mark || field.el;
+  if (!field.el?.isConnected || !box?.isConnected) return false;
+  return typeof box.checkVisibility === "function" ? box.checkVisibility() : true;
+}
+
 /**
  * @param {{doc?: Document, send: (msg: object) => Promise<any>, onChange?: () => void,
  *          getShadow?: Function, visible?: Function, skipField?: (f) => boolean,
@@ -438,14 +445,16 @@ export function createSession(deps) {
     return n;
   }
 
-  /** The review the side panel shows (serializable). */
+  /** The review the side panel shows (serializable): the boxes on the page
+   * NOW. A one-address application (Workday) swaps its steps in place, and
+   * the last step's boxes must never be reported again (spec 029). */
   function report() {
     return {
       url: doc.location?.href || "",
       resume: resumeState,
-      entries: [...filled.values()].map((x) => x.entry),
-      need_you: [...needYou.values()].filter((x) => !hasValue(x.field) && !suggestions.has(x.field.id)).map((x) => x.item),
-      suggestions: [...suggestions.values()].filter((x) => !hasValue(x.field)).map((x) => x.item),
+      entries: [...filled.values()].filter((x) => onPage(x.field)).map((x) => x.entry),
+      need_you: [...needYou.values()].filter((x) => onPage(x.field) && !hasValue(x.field) && !suggestions.has(x.field.id)).map((x) => x.item),
+      suggestions: [...suggestions.values()].filter((x) => onPage(x.field) && !hasValue(x.field)).map((x) => x.item),
     };
   }
 

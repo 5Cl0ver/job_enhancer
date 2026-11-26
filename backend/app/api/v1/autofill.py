@@ -24,8 +24,8 @@ from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.resume import Resume
 from app.models.taught_field import TaughtField
 from app.models.user import User
+from app.services import apply_resume, resume_history
 from app.services import autofill_bundle as svc
-from app.services import resume_history
 from app.services.extension_connect import TOKEN_PREFIX
 from app.utils.content_disposition import file_headers
 
@@ -347,7 +347,13 @@ async def get_resume_details(
     db: AsyncSession = Depends(get_db),
 ) -> ResumeDetailsOut:
     """One of the user's résumés, read into details (Job Catcher fills from it)."""
-    return _details(await _own_resume(db, user, resume_id))
+    resume = await _own_resume(db, user, resume_id)
+    # A job's résumé that still carries the master's details reads its own
+    # (spec 029): Workday's sections fill from THIS résumé.
+    if await apply_resume.refresh_borrowed(db, resume):
+        await db.commit()
+        await db.refresh(resume)
+    return _details(resume)
 
 
 @router.put("/resumes/{resume_id}/details", response_model=ResumeDetailsOut)

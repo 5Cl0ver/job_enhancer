@@ -1240,8 +1240,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const runResume = await applyRun.resumeFor(tab).catch(() => null);
         if (runResume) {
           // Never the usual résumé in its place: no file, and Claude is told.
+          // Its jobs and schools never come from the usual (master) résumé
+          // either (spec 029): with this one's not loaded, they're read from
+          // it by id (getWorkHistory), else left for Claude.
           const got = await autofill.get({ resumeId: runResume });
-          sendResponse({ ok: true, ...got, ...(got.chosenFailed ? { resume: null } : {}) });
+          const failed = got.chosenFailed ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {};
+          sendResponse({ ok: true, ...got, ...failed, resumeId: runResume });
         } else {
           const { key, choice, resumeId } = await resumeFor(tab);
           const got = await autofill.get({ resumeId });

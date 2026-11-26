@@ -670,7 +670,7 @@ export async function removeChips(input, keep) {
 
 // ---- Files ----------------------------------------------------------------
 
-function writeFile(field, [file]) {
+async function writeFile(field, [file]) {
   if (!(file instanceof File) || !win(field.el).DataTransfer) return { ok: false, reason: "no_data" };
   try {
     const dt = new (win(field.el).DataTransfer)();
@@ -682,7 +682,40 @@ function writeFile(field, [file]) {
     return { ok: false, reason: "rejected" };
   }
   const ok = field.el.files?.length === 1 && field.el.files[0].name === file.name;
+  if (ok) await dropIfIgnored(field, file);
   return { ok, actual: file.name };
+}
+
+// Workday's own drop zone (spec 029).
+const WORKDAY_DROP = /file-upload-drop-zone/i;
+
+/**
+ * Workday's upload is a React drop zone: when it hasn't taken the file from
+ * the box (its name never shows), drop the file on the zone, the way a person
+ * dragging it would. Only on Workday's zone, and only once.
+ */
+async function dropIfIgnored(field, file, { waitMs = 1500 } = {}) {
+  const zone = field.zone;
+  if (!zone?.isConnected || !WORKDAY_DROP.test(zone.getAttribute?.("data-automation-id") || "")) return false;
+  const doc = field.el.ownerDocument;
+  const shows = () => (doc.body?.textContent || "").includes(file.name);
+  for (let waited = 0; waited < waitMs && !shows(); waited += 150) await sleep(150);
+  if (shows() || !zone.isConnected) return false;
+  const W = win(zone);
+  const dt = new W.DataTransfer();
+  dt.items.add(file);
+  for (const type of ["dragenter", "dragover", "drop"]) {
+    let ev;
+    try {
+      ev = new W.DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dt });
+    } catch {
+      ev = new W.Event(type, { bubbles: true, cancelable: true, composed: true });
+    }
+    // Some engines leave dataTransfer empty on a made-up drag event.
+    if (!ev.dataTransfer) Object.defineProperty(ev, "dataTransfer", { value: dt });
+    zone.dispatchEvent(ev);
+  }
+  return true;
 }
 
 // ---- Reading, snapshot, restore ------------------------------------------
@@ -873,7 +906,7 @@ async function writeFieldNow(field, candidates) {
       case "chips":
         return await writeChips(field, candidates);
       case "file":
-        return writeFile(field, candidates);
+        return await writeFile(field, candidates);
       default:
         return { ok: false, reason: "no_data" };
     }

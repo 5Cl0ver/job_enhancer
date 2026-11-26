@@ -442,6 +442,9 @@ async def work_history(
     )
     if resume is None or not resume.extracted_text:
         return WorkHistoryResponse(entries=[])
+    # A job's résumé that still carries the master's details reads its own.
+    if await apply_resume.refresh_borrowed(db, resume):
+        await db.commit()
     history = await resume_history.history_of(db, resume)
     return WorkHistoryResponse(
         entries=[WorkExperienceEntry(**e) for e in history.get("work", [])]

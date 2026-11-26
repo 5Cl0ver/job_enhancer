@@ -155,7 +155,21 @@ async def test_the_whole_application(engine, monkeypatch):
         assert sj.resume_id == resume.id
         assert resume.file_data.startswith(b"%PDF")
         assert resume.document_id is not None and not resume.is_active
-        assert resume.parsed_history == {"work": [{"title": "IT Systems Engineer"}]}
+        # Its details are read from THIS résumé, never the master's (spec 029).
+        [work] = resume.parsed_history["work"]
+        assert (work["title"], work["company"]) == (
+            "IT Systems Engineer",
+            "Logical Position",
+        )
+        assert work["description"] == (
+            "• Moved 200 laptops to Intune with zero lost data.\n"
+            "• Ran the help desk for 180 people."
+        )
+        assert resume.parsed_history["education"][0]["school"] == (
+            "Portland Community College"
+        )
+        assert "Intune" in resume.parsed_history["skills"]
+        assert resume.parsed_history_at is not None
         fact = await db.scalar(select(ProfileFact))
         assert (fact.question, fact.answer) == (
             "Have you used Okta?",

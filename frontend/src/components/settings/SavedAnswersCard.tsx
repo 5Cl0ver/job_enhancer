@@ -310,6 +310,12 @@ export function SavedAnswersCard({ initialQuery = "" }: { initialQuery?: string 
                                 {scopeOf(a.question_key)!.label}
                               </p>
                             )}
+                            {a.source === "claude" && (
+                              <p className="mb-1.5 flex items-center gap-1 text-xs text-violet-600 dark:text-violet-400">
+                                <Sparkles className="h-3 w-3" /> From Claude: an answer Claude gave that you
+                                sent. Change it or delete it here.
+                              </p>
+                            )}
                             <textarea
                               className="w-full min-h-[40px] resize-y rounded-md border bg-background px-3 py-2 text-sm text-foreground focus:outline-none focus:ring-1 focus:ring-ring"
                               rows={1}

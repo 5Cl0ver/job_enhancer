@@ -88,7 +88,12 @@ _INLINE = re.compile(
     re.IGNORECASE,
 )
 
-_BULLET = re.compile(r"^\s*(?:[-•*▪◦●·‣–]|\d+\.)\s+")
+# A bullet: a dash or star with a space after it, a number ("2. "), or a bullet
+# glyph, which a PDF often runs straight into its text ("•Built") or writes in
+# a symbol font's private character (U+F0B7).
+_BULLET = re.compile(r"^\s*(?:[•▪◦●‣∙⁃\uf0b7\uf0a7\uf076\uf0d8]\s*|[-*·–]\s+|\d+\.\s+)")
+# A bullet glyph alone on its line: the text is on the next line.
+_LONE_MARK = re.compile(r"^\s*[•▪◦●‣∙⁃\uf0b7\uf0a7\uf076\uf0d8*·–-]\s*$")
 # Bounded on purpose (spec 020 security review): no unbounded runs, so a long
 # line of "a-a-a-…" can't make the search slow.
 _URL = re.compile(
@@ -362,55 +367,130 @@ def _join_split_dates(lines: list[str]) -> list[str]:
     return out
 
 
+# A line that ends a sentence (the next line starts a new one).
+_SENTENCE_END = re.compile(r"[.!?;:][\"'’”)\]]?$")
+# A line that can't be the end of its sentence: the next line carries it on.
+_CARRIES_ON = re.compile(
+    r"(?:[,/&(+–—]|\b(?:and|or|of|in|to|for|with|by|the|a|an|on|at|from|into|"
+    r"via|as|across|using|including|while|that|which|per|over|under|than)\b)$",
+    re.IGNORECASE,
+)
+# A word broken at the end of a line ("Omni-" / "channel").
+_BROKEN_WORD = re.compile(r"[A-Za-z]-$")
+MAX_DESCRIPTION = 2000
+
+
+def _carries_on(item: dict, line: str, longest: int) -> bool:
+    """Is ``line`` the rest of ``item`` (a PDF wrapped it), not a new point?"""
+    if line[:1].islower():
+        return True
+    text = item["text"]
+    if _SENTENCE_END.search(text):
+        return False
+    if _CARRIES_ON.search(text) or _BROKEN_WORD.search(text):
+        return True
+    # The line before ran to the edge of the page: it wrapped.
+    return item["last"] >= 0.75 * longest
+
+
+def _description(lines: list[tuple[str, bool]]) -> str:
+    """A job's lines as its description: wrapped lines joined back into their
+    sentence, one point per line, bullets kept ("• "), never cut mid-word."""
+    longest = max((len(t) for t, _ in lines), default=0)
+    items: list[dict] = []
+    for text, bullet in lines:
+        text = re.sub(r"\s+", " ", text).strip()
+        if not text:
+            continue
+        if items and not bullet and _carries_on(items[-1], text, longest):
+            prev = items[-1]
+            glue = "" if _BROKEN_WORD.search(prev["text"]) else " "
+            prev["text"] = f"{prev['text']}{glue}{text}"
+            prev["last"] = len(text)
+            continue
+        items.append({"text": text, "bullet": bullet, "last": len(text)})
+    out: list[str] = []
+    size = 0
+    for item in items:
+        line = f"• {item['text']}" if item["bullet"] else item["text"]
+        extra = len(line) + (1 if out else 0)
+        if size + extra > MAX_DESCRIPTION:
+            if not out:
+                # One point longer than the box: cut at a space, never mid-word.
+                cut = line[:MAX_DESCRIPTION].rsplit(" ", 1)[0]
+                out.append(cut.rstrip(" ,;:-"))
+            break
+        out.append(line)
+        size += extra
+    return "\n".join(out)
+
+
+def _tail(job: dict) -> list[str]:
+    """The job's last lines after its last bullet: they may name the next job."""
+    out: list[str] = []
+    for text, bullet in reversed(job["lines"]):
+        if bullet:
+            break
+        out.insert(0, text)
+    return out
+
+
 def _work(lines: list[str]) -> list[dict]:
     lines = _join_split_dates(lines)
     jobs: list[dict] = []
-    pending: list[str] = []  # lines naming the next job, before its dates
-    in_bullets = False
+    pending: list[str] = []  # lines naming the first job, before its dates
+    marker = False  # a bullet glyph alone on the line before
     for line in lines:
-        if _BULLET.match(line):
+        if _LONE_MARK.match(line):
+            marker = True
+            continue
+        bullet = marker or bool(_BULLET.match(line))
+        marker = False
+        if bullet:
             if jobs:
-                text = _BULLET.sub("", line)
-                desc = jobs[-1]["description"]
-                jobs[-1]["description"] = (f"{desc}\n{text}" if desc else text)[:2000]
-                in_bullets = True
+                jobs[-1]["lines"].append((_BULLET.sub("", line), True))
             pending.clear()
             continue
         dates = _dates(line)
         if dates:
             a, b = dates["span"]
-            head = (line[:a] + " " + line[b:]).strip(" |·•,–—-\t")
+            head = (line[:a] + " " + line[b:]).strip(" |·•,–—-	")
             candidates = _pieces(head)
             # A dates line that names the job on its own needs nothing else;
             # otherwise the lines just above hold the rest ("Title" over
             # "Company | City | dates", "Company, City" over "Title  dates", or
-            # "Title" / "Company" / "dates" on three lines).
+            # "Title" / "Company" / "dates" on three lines). Those lines are
+            # taken back from the job before: they were never its description.
             named = lambda c: [x for x in c if not _PLACE.match(x)]  # noqa: E731
-            for prev in reversed(pending[-2:]):
-                if len(named(candidates)) >= 2:
+            above = _tail(jobs[-1]) if jobs else pending
+            took = 0
+            for prev in reversed(above[-2:]):
+                if len(named(candidates)) >= 2 or prev[:1].islower():
                     break
                 candidates = _pieces(prev) + candidates
+                took += 1
+            if took and jobs:
+                del jobs[-1]["lines"][-took:]
             job = _job_from(candidates, dates)
             if job:
-                jobs.append(job)
+                jobs.append({**job, "lines": []})
             pending.clear()
-            in_bullets = False
             continue
-        # A bullet that wrapped onto the next line ("…with duplicate / events
-        # handled safely"): it starts lower-case.
-        if jobs and in_bullets and line[:1].islower():
-            jobs[-1]["description"] = (jobs[-1]["description"] + " " + line)[:2000]
+        if jobs:
+            job = jobs[-1]
+            # "Portland, OR" right under the job's line is where it was.
+            if not job["lines"] and _PLACE.match(line):
+                job["location"] = job["location"] or line[:200]
+                continue
+            # Everything else under a job is its description (a wrapped line
+            # is joined back to its sentence in _description).
+            job["lines"].append((line, False))
             continue
-        # A long line without a bullet is the job's description, not a heading.
-        if jobs and len(line) > 70:
-            desc = jobs[-1]["description"]
-            jobs[-1]["description"] = (f"{desc}\n{line}" if desc else line)[:2000]
-            in_bullets = True
-            continue
-        in_bullets = False
         pending.append(line)
         if len(pending) > 2:
             pending.pop(0)
+    for job in jobs:
+        job["description"] = _description(job.pop("lines"))
     return jobs[:12]
 
 

@@ -46,6 +46,9 @@ class CustomAnswer(Base):
     last_used_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
+    # Where it came from (spec 029): "claude" = an answer Claude gave in Apply
+    # with Claude that the user approved; null = the user's own.
+    source: Mapped[str | None] = mapped_column(String(20), nullable=True)
 
     def __repr__(self) -> str:
         return f"<CustomAnswer user_id={self.user_id} key={self.question_key!r}>"

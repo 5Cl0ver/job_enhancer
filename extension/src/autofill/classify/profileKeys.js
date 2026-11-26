@@ -129,7 +129,24 @@ const SHORT_ONLY = new Set([
   "school", "degree", "field_of_study", "graduation_year",
 ]);
 
+// A phone EXTENSION box ("Phone Extension", "Ext.", Workday's
+// "phone-extension", autocomplete "tel-extension"): never the phone number
+// itself (spec 029: Workday got the whole number in its Extension box).
+const EXTENSION = /\bext\b|\bext\.|extension|tel-extension/i;
+export function isPhoneExtension(field) {
+  const h = field.hints || {};
+  if (EXTENSION.test([h.name, h.id, h.autocomplete].filter(Boolean).join(" "))) return true;
+  // "Phone number (with extension)" is still the number's box.
+  const asks = [field.question, h.placeholder].filter(Boolean).join(" ");
+  return EXTENSION.test(asks) && !/\bnumber\b|\bno\.?\s*$/i.test(asks);
+}
+
 export function profileKeyFor(field) {
+  const key = profileKeyOf(field);
+  return key === "phone" && isPhoneExtension(field) ? null : key;
+}
+
+function profileKeyOf(field) {
   // Someone else's details (a reference, an emergency contact) aren't yours,
   // and "How did you hear about us (LinkedIn, …)?" isn't your LinkedIn link.
   if (OTHER_PERSON.test(field.question || "") || HEARD_ABOUT.test(field.question || "")) return null;

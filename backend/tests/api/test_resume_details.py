@@ -405,3 +405,87 @@ async def test_a_pass_never_overwrites_details_edited_in_the_app(
     assert got["work"][0]["title"] == "My own title"
     again = (await client.post(f"/v1/autofill/resumes/{r.id}/read")).json()
     assert again["work"][0]["company"] == "Tidewell Labs"  # re-read from the file
+
+
+JOB_RESUME = """# Alex Rivera
+Portland, OR · alex@example.com
+
+## WORK EXPERIENCE
+**Platform Engineer** · Northwind Labs | Mar 2023 – Present
+### Cloud
+- Moved the build servers to containers with zero downtime.
+- Cut cloud costs by a third.
+
+## EDUCATION
+**Lakeview College** | *B.S. Computer Science* | 2016 – 2020
+"""
+
+
+async def _job_resume(db: AsyncSession, user: User, *, read_at, edited=False):
+    from app.models.generated_document import GeneratedDocument
+
+    doc = GeneratedDocument(user_id=user.id, document_type="resume", content=JOB_RESUME)
+    db.add(doc)
+    await db.flush()
+    r = Resume(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        filename="Alex Rivera - Résumé.pdf",
+        mime_type="application/pdf",
+        file_size_bytes=4,
+        file_data=b"%PDF",
+        extracted_text="Alex Rivera Platform Engineer",
+        is_active=False,
+        document_id=doc.id,
+        # The master's details, borrowed (spec 022–028): its PDF's broken lines.
+        parsed_history={
+            "work": [
+                {
+                    "title": "Platform Engineer",
+                    "company": "Northwind Labs",
+                    "description": "Moved the build servers to\ncontainers with zero",
+                }
+            ]
+        },
+        parsed_history_at=read_at,
+    )
+    db.add(r)
+    await db.commit()
+    return r
+
+
+async def test_a_job_resume_reads_its_own_details_not_the_masters(
+    client: AsyncClient, db_session, test_user
+):
+    """Spec 029: a résumé made for a job used to carry the master résumé's
+    details, so Workday got the master's PDF text, broken mid-sentence."""
+    from datetime import UTC, datetime, timedelta
+
+    old = datetime.now(tz=UTC) - timedelta(days=30)  # the master's reading
+    r = await _job_resume(db_session, test_user, read_at=old)
+    d = (await client.get(f"/v1/autofill/resumes/{r.id}/details")).json()
+    assert d["read"] is True
+    [job] = d["work"]
+    assert (job["title"], job["company"]) == ("Platform Engineer", "Northwind Labs")
+    assert job["description"] == (
+        "• Moved the build servers to containers with zero downtime.\n"
+        "• Cut cloud costs by a third."
+    )
+    assert d["education"][0]["school"] == "Lakeview College"
+    # Job Catcher's older path asks for the work history the same way.
+    work = (await client.post(f"/v1/ai/work-history?resume_id={r.id}")).json()
+    assert work["entries"][0]["description"].startswith("• Moved the build servers")
+
+
+async def test_details_the_user_edited_on_a_job_resume_are_kept(
+    client: AsyncClient, db_session, test_user
+):
+    from datetime import UTC, datetime, timedelta
+
+    later = datetime.now(tz=UTC) + timedelta(minutes=5)  # edited after it was made
+    r = await _job_resume(db_session, test_user, read_at=later)
+    d = (await client.get(f"/v1/autofill/resumes/{r.id}/details")).json()
+    assert (
+        d["work"][0]["description"]
+        == "Moved the build servers to\ncontainers with zero"
+    )
