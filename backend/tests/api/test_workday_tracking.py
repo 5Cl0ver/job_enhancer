@@ -345,7 +345,7 @@ def test_a_site_name_is_short_for_a_company():
     assert not short_for("jj", "Tidewell Labs")
     assert not short_for("x", "Xylo Systems")
     # A mere prefix is never enough.
-    assert not short_for("intel", "Intelligent Systems Inc")
+    assert not short_for("nova", "Novaline Systems Inc")
     assert not short_for("ge", "Gemini Labs")
     assert not short_for("gm", "GMR Marketing")
     assert not short_for("pg", "PGA Tour")
