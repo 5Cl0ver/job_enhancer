@@ -105,18 +105,17 @@ function passwordShowing(doc) {
 }
 
 /**
- * Workday's own final Submit (spec 034 review): the button that reads
- * exactly "Submit" (Workday's bottom-navigation "next" button on the Review
- * step, or its page-footer submit button), on an application step (…/apply…),
- * with no password box showing. A sign-in, a Create Account page or a search
- * box on the job page is never it.
+ * Workday's own final Submit (spec 034 review): a button whose words (its
+ * text, else its aria-label — Workday lays a "click_filter" over its buttons)
+ * are "Submit" or start with it ("Submit Application"), on an application
+ * step (…/apply…), with no password box showing. "Save and Continue",
+ * "Next", "Back", a sign-in or a search box on the job page are never it.
  */
 export function isWorkdayFinalSubmit(button, doc, loc) {
   if (!button) return false;
-  const label = (button.textContent || button.value || "").replace(/\s+/g, " ").trim().toLowerCase();
-  if (label !== "submit") return false;
-  const aid = button.getAttribute?.("data-automation-id") || "";
-  if (aid && !/bottom-navigation-next-button|submit/i.test(aid)) return false;
+  const words = (s) => String(s || "").replace(/\s+/g, " ").trim();
+  const label = words(button.textContent) || words(button.value) || words(button.getAttribute?.("aria-label"));
+  if (!/^submit\b/i.test(label)) return false;
   return !!workdayAddress(loc.href)?.apply && !passwordShowing(doc);
 }
 

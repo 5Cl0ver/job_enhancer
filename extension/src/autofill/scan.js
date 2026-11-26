@@ -6,7 +6,7 @@
 // the extension — closed). Frames are NOT walked: each frame runs its own copy
 // of the script, and one press fills them all.
 import { normalizeQuestion } from "./classify/answers.js";
-import { CONSENT } from "./classify/profileKeys.js";
+import { AGREEMENT_OPTION } from "./classify/profileKeys.js";
 import { applicantHost, isApplyUrl } from "./hosts.js";
 import { isOnScreen } from "./visible.js";
 import { uploadKind } from "./resolve.js";
@@ -267,7 +267,7 @@ function choiceBox(el) {
   const boxes = box ? [...box.querySelectorAll('input[type="checkbox"]')] : [];
   if (boxes.length < 2) return null;
   if (box.querySelector(TYPED_BOX)) return null;
-  if (boxes.some((b) => CONSENT.test(labelForOption(b)))) return null;
+  if (boxes.some((b) => AGREEMENT_OPTION.test(labelForOption(b)))) return null;
   const root = box.getRootNode?.() || box.ownerDocument;
   const legend = box.tagName === "FIELDSET" ? box.querySelector(":scope > legend") : box.querySelector("legend");
   const named =

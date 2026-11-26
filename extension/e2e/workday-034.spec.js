@@ -17,8 +17,9 @@ const PAGES = {
   info: `${JOB}/apply/useMyLastApplication`,
   questions: `${JOB}/apply/autofillWithResume`,
   job: JOB,
+  review: `${JOB}/apply/review`,
 };
-const FILES = { signup: "workday-signup.html", info: "workday-info.html", questions: "workday-questions.html", job: "workday-job.html" };
+const FILES = { signup: "workday-signup.html", info: "workday-info.html", questions: "workday-questions.html", job: "workday-job.html", review: "workday-review.html" };
 const HISTORY = { work: [{ title: "Support Engineer", company: "Tidewell Labs", location: "Portland, OR", start_month: 1, start_year: 2022, end_month: null, end_year: null, current: true, description: "Kept the lab running." }], education: [] };
 
 let api;
@@ -219,4 +220,19 @@ test("an unsaved Workday application: Submit saves it from the page and marks it
   expect(api.state.jobs[0].applied_at).toBeTruthy();
   await expect(panel.getByTestId("tracked-note")).toContainText("Saved and marked applied", { timeout: 10000 });
   await Promise.all([page.close(), panel.close()]);
+});
+
+test("Workday's Review step drawn with a click_filter overlay: Back and Save never count, the overlay's Submit does, once", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(PAGES.review);
+  await page.locator("#back").click();
+  await page.locator("#save").click();
+  await page.waitForTimeout(1000);
+  expect(api.calls("/v1/saved-jobs/mark-applied")).toHaveLength(0);
+  await page.locator("#filter").click();
+  await expect.poll(() => api.calls("/v1/saved-jobs/mark-applied").length, { timeout: 10000 }).toBe(1);
+  await page.waitForTimeout(1000);
+  expect(api.calls("/v1/saved-jobs/mark-applied")).toHaveLength(1);
+  expect(api.calls("/v1/saved-jobs/mark-applied")[0].body.create).toMatchObject({ url: JOB, title: "Applications Developer II" });
+  await page.close();
 });

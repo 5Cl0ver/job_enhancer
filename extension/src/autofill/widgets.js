@@ -268,7 +268,7 @@ function writeChoice(field, candidates) {
     // "LinkedIn, Referral" → tick each; leave others as they are. Never an
     // agreement or a self-ID answer, whatever was asked (spec 034 review).
     const want = candidates[0].split(/\s*[,;]\s*/).filter(Boolean);
-    const picks = want.map((w) => matchOption(w, options)).filter((i) => i >= 0 && !untouchableChoice(options[i].label, "checkbox_list"));
+    const picks = want.map((w) => matchOption(w, options)).filter((i) => i >= 0 && !untouchableChoice(options[i].label, "checkbox_list", field.question));
     if (!picks.length) return { ok: false, reason: "no_option" };
     for (const i of picks) if (!options[i].el.checked) clickChoice(options[i].el);
     const actual = readField(field);
@@ -281,7 +281,7 @@ function writeChoice(field, candidates) {
   }
   const i = firstMatch(candidates, options);
   if (i < 0) return { ok: false, reason: "no_option" };
-  if (untouchableChoice(options[i].label, field.kind)) return { ok: false, reason: "consent" };
+  if (untouchableChoice(options[i].label, field.kind, field.question)) return { ok: false, reason: "consent" };
   clickChoice(options[i].el);
   const actual = readField(field);
   return { ok: same(actual, options[i].label), actual };

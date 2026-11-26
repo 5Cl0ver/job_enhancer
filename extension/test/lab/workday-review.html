@@ -1,0 +1,26 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 034 review): Workday's Review step the
+     way newer tenants draw it — the page-footer button with a "click_filter"
+     overlay on top (an empty div, role=button, aria-label "Submit") that
+     takes the click. Back and Save and Continue are never a submit. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Review - Northwind Labs Careers</title>
+    <style>
+      .footer { position: relative; display: inline-block; margin: 8px 0; }
+      .footer [data-automation-id="click_filter"] { position: absolute; inset: 0; cursor: pointer; }
+    </style>
+  </head>
+  <body>
+    <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+    <h2>Review</h2>
+    <p>Check your application, then submit it.</p>
+    <button type="button" data-automation-id="pageFooterBackButton" id="back">Back</button>
+    <button type="button" data-automation-id="pageFooterSaveButton" id="save">Save and Continue</button>
+    <div class="footer">
+      <button type="button" data-automation-id="pageFooterNextButton" id="submit">Submit</button>
+      <div data-automation-id="click_filter" role="button" aria-label="Submit" tabindex="0" id="filter"></div>
+    </div>
+  </body>
+</html>
