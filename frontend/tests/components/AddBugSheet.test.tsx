@@ -377,6 +377,57 @@ describe("Screenshots", () => {
     );
   });
 
+  it("gives up on a stalled picture after 30 seconds, and keeps the report", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      post.mockResolvedValue({ report: { id: "r1" }, similar: [] });
+      let signal: AbortSignal | undefined;
+      // A stalled upload: it only ends when it's stopped.
+      upload.mockImplementationOnce(
+        (_path: string, _file: Blob, init?: RequestInit) =>
+          new Promise((_resolve, reject) => {
+            signal = init?.signal ?? undefined;
+            signal?.addEventListener("abort", () =>
+              reject(new DOMException("Aborted", "AbortError")),
+            );
+          }),
+      );
+      const user = userEvent.setup({
+        advanceTimers: vi.advanceTimersByTime,
+      });
+      wrap("/jobs");
+      await user.click(
+        screen.getByRole("button", { name: "Add a bug or idea" }),
+      );
+      const sheet = await screen.findByRole("dialog");
+      await user.type(
+        within(sheet).getByRole("textbox", { name: "Title" }),
+        "Stalled picture",
+      );
+      await user.upload(
+        within(sheet).getByLabelText("Add a screenshot"),
+        photo(),
+      );
+      await within(sheet).findByRole("img", { name: "Screenshot 1" });
+      await user.click(within(sheet).getByRole("button", { name: "Save" }));
+      await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+      expect(signal?.aborted).toBe(false);
+      vi.advanceTimersByTime(29_000);
+      expect(signal?.aborted).toBe(false);
+      vi.advanceTimersByTime(1_000);
+      expect(signal?.aborted).toBe(true);
+      const dialog = await screen.findByRole("dialog", { name: "Added" });
+      expect(within(dialog).getByRole("alert")).toHaveTextContent(
+        "Added, but the picture didn't upload.",
+      );
+      expect(
+        within(dialog).getByRole("button", { name: "Try again" }),
+      ).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps the report when the picture fails, and tries again", async () => {
     post.mockResolvedValue({ report: { id: "r1" }, similar: [] });
     upload

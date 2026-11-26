@@ -106,14 +106,26 @@ export function useAddBug() {
 }
 
 /** A screenshot (already shrunk) on a report. */
+/** How long one screenshot may take to send before it's given up on (a
+ * stalled upload must never keep the add sheet waiting). */
+export const UPLOAD_TIMEOUT_MS = 30_000;
+
 export function useUploadShot() {
   const refresh = useRefresh();
   return useMutation({
-    mutationFn: ({ id, file }: { id: string; file: Blob }) =>
-      api.upload<{ id: string; size: number }>(
-        `/v1/admin/bugs/${id}/shots`,
-        file,
-      ),
+    mutationFn: async ({ id, file }: { id: string; file: Blob }) => {
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), UPLOAD_TIMEOUT_MS);
+      try {
+        return await api.upload<{ id: string; size: number }>(
+          `/v1/admin/bugs/${id}/shots`,
+          file,
+          { signal: stop.signal },
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    },
     onSuccess: refresh,
   });
 }
