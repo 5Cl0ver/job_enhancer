@@ -5,215 +5,190 @@
 [![CI](https://github.com/5Cl0ver/job_enhancer/actions/workflows/ci.yml/badge.svg)](https://github.com/5Cl0ver/job_enhancer/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-![The application tracker with the Job Catcher browser extension open](docs/screenshots/tracker-board.png)
+Job Enhancer is a job-search app plus a Chrome extension. It finds jobs, saves
+them from any site, fills in application forms, and keeps every application up
+to date from your email, so the busywork of applying takes minutes instead of
+hours.
 
-Job Enhancer helps you find jobs, save them from anywhere, and stay on top of
-every application — all in one place. Search across multiple job boards, capture
-any posting you find (LinkedIn, Indeed, or a company's own careers page) with one
-click, and track every application on a Kanban board with follow-up reminders. A
-companion browser extension fills out application forms for you and uses AI to
-tailor your resume and draft cover letters. It never submits an application on
-your behalf — it just takes the busywork out of applying so you can do more of it.
+It works fully **without AI**. If you already use an AI assistant (Claude, or
+any assistant that supports MCP connectors), you can plug it in and let it do
+more, but nothing in the app depends on it.
 
-The idea is simple: less time spent searching, copying job details, re-filling the
-same forms, and remembering who you've contacted — and more time actually applying.
-
-> **Status: actively in development (building in public).** The core product,
-> AI quick-apply, and the browser extension are built and tested (see
-> [screenshots](#screenshots) below); a hosted live demo is coming next. See the
-> [roadmap](#roadmap) for what's done and what's in progress.
+> **Status:** live and in daily use by its developer and a few friends. Built in
+> public, one spec at a time (see [`specs/`](specs/)).
 
 ---
 
-## Features
+## What it does
 
-- 🔍 **Aggregated search** — one search across Adzuna + JSearch feeds,
-  deduplicated (fuzzy title/company matching), with salary, remote,
-  job-type, and experience-level filters
-- 🔔 **Saved searches** — the app re-runs your searches daily and greets you
-  with a "New Matches" feed
-- 📌 **Add any job by link** — paste a URL from anywhere; it becomes a
-  first-class tracked job
-- 🗂️ **Collections** — organize saved jobs into folders you name
-- 📋 **Kanban tracker** — 8 default pipeline stages plus your own custom
-  stages, drag-and-drop, follow-up reminders when an application goes quiet
-- ✅ **"Did you apply?"** — one-click confirmation when you return from an
-  external apply page keeps the board honest
-- 📊 **Analytics** — applications per week, response rate, interviews
-- 🛡️ **Admin dashboard** — user stats and live health of every external
-  service (owner-only)
-- 👤 **Full account self-service** — email/password + Google/GitHub sign-in
-  (Supabase Auth), JSON data export, and permanent account deletion
-- 🤖 **AI quick-apply** — tailors your resume and drafts cover letters per job,
-  downloadable as a **Calibri-matched PDF**. Runs on a free NVIDIA-hosted model
-  by default, or **bring your own Claude**: the extension builds a ready-to-paste
-  prompt and captures the result back into the app — no API key required
-- 🧩 **Browser extension ("Job Catcher")** — save a job from **any** site (reads
-  the page's structured data, with a review-and-fix card for unknown sites), an
-  apply-copilot side panel, application-form **auto-fill** on Greenhouse/Lever
-  (never submits for you), and **auto-tracking** when you submit on Indeed
-- 🎯 **Filter your jobs** — search plus remote, pay, job-type, location, and
-  applied-status filters over everything you've saved
+**Find jobs**
+- One search across several job boards, with repeats merged automatically
+- Saved searches that re-run every day and show new matches
+- Add any job by pasting its link
 
-## Screenshots
+**Keep track**
+- A board with your own stages (Applied, Interview, Offer…), drag and drop,
+  and follow-up reminders when things go quiet
+- Collections (folders), filters, and a page per job with its notes, emails and
+  documents
+- Analytics: applications per week, response rate, interviews
 
-**Autofill on a live application** — the browser extension fills the form from your
-saved profile and résumé. It never submits; you stay in control.
+**Email updates**
+- Connect your inbox (Yahoo, Gmail, AOL, iCloud and others, read-only)
+- Rejections, interview invites and other replies are matched to the right job
+  and move its card for you, with every email kept on the job's page
 
-![Autofill on an Indeed application](docs/screenshots/autofill-indeed.png)
+**Job Catcher (Chrome extension)**
+- Save a job from any site: LinkedIn, Indeed, company career pages, and more
+- Autofill application forms (Workday, Greenhouse, Lever and most other sites)
+  from your profile and résumé, only when you press the button
+- It learns: fix an answer once and it's used on every site after that, and
+  you can see and edit everything it remembers in the app
+- It never presses Submit for you
 
-**Saved jobs — list view** with search, filters, salary, and per-source badges.
+**Résumés and cover letters**
+- Keep a main résumé plus versions made for specific jobs, and pick which one
+  goes with each job
+- Cover letters work the same way, and Job Catcher attaches the right ones
 
-![Saved jobs, list view](docs/screenshots/saved-jobs-list.png)
+**Optional: bring your own AI**
+- A built-in [MCP connector](docs/mcp-connector.md) lets your own Claude read
+  your jobs and profile and save work back into the app
+- **Scout**: Claude searches job boards and company sites for you, using your
+  saved settings
+- **Apply with Claude**: Claude fills an application in Chrome while you watch
+  from the app. It asks before guessing and stops before the final Submit
 
-**Database schema** — the Postgres data model (rendered from Supabase).
+**For you and the owner**
+- Export all your data or delete your account at any time
+- An owner-only admin view: service health, usage, and bug reports
 
-![Database schema](docs/screenshots/database-schema.png)
+## Tech stack
 
-## Tech Stack
-
-| Layer | Technology | Why |
-|---|---|---|
-| Frontend | Vite 7 + React + React Router v7 + TypeScript + Tailwind CSS v4 + shadcn/ui (Radix) | Fast SPA build; explicit routing; strict types end to end |
-| Data fetching | TanStack Query v5 | Cache-first UX; optimistic Kanban updates |
-| Backend | FastAPI (Python 3.11) + SQLAlchemy 2 async + Alembic | Async throughout; OpenAPI generated from code |
-| Database + Auth | Supabase (PostgreSQL + Auth) | Free tier; email/password **and** OAuth without custom credential handling |
-| Job data | Adzuna API + JSearch (RapidAPI) | Free tiers; results cached in Postgres to stretch quotas |
-| AI | NVIDIA NIM (Llama 3.1) via LangChain — or bring your own Claude | Free hosted inference by default; use your own model for top quality |
-| Extension | Chrome MV3 (esbuild) + Vitest + Playwright | Capture jobs, apply copilot, ATS auto-fill — all client-side |
-| Testing | pytest (83 tests) · Vitest + Testing Library · Playwright | Contract-accurate fixtures; component + E2E layers |
-| Hosting | Vercel + Render + Supabase — **$0/month** | Free tiers, kept awake by a scheduled ping |
+| Layer | Technology |
+|---|---|
+| Frontend | Vite + React + React Router + TypeScript, Tailwind CSS v4 + shadcn/ui, TanStack Query |
+| Backend | FastAPI (Python 3.11), SQLAlchemy 2 (async), Alembic, Pydantic v2 |
+| Database + auth | Supabase (PostgreSQL, Auth, Storage) |
+| Extension | Chrome Manifest V3, built with esbuild |
+| AI connector | MCP server (FastMCP) with OAuth through Supabase |
+| Job data | Adzuna, JSearch, Remotive, RemoteOK, Jobicy, The Muse, cached in Postgres to save quota |
+| Tests | pytest, Vitest + Testing Library, Playwright (app and extension) |
+| Hosting | Vercel (frontend), Render (API), Supabase |
 
 ## Architecture
 
 ```mermaid
 flowchart LR
-    B[Browser] -->|HTTPS| V[Vite SPA on Vercel]
-    B -->|Bearer JWT| R[FastAPI on Render]
-    E[Chrome extension] -->|Bearer JWT| R
-    V -->|Auth session| S[(Supabase\nPostgres + Auth)]
-    R -->|asyncpg via pooler| S
-    R --> A[Adzuna API]
-    R --> J[JSearch API]
-    R --> N[NVIDIA NIM]
+    U[You] --> V[Web app on Vercel]
+    U --> E[Job Catcher extension]
+    V -->|Bearer JWT| R[FastAPI on Render]
+    E -->|Bearer JWT| R
+    C[Your AI assistant, optional] -->|MCP + OAuth| R
+    R --> S[(Supabase Postgres + Storage)]
+    V -->|sign-in| S
+    R --> J[Job board APIs]
+    R --> M[Your inbox, read-only IMAP]
 ```
 
-- Supabase Auth issues the session; the frontend and extension attach the access
-  token as a `Bearer` header, and FastAPI verifies it against the project's JWKS
-  public keys (asymmetric ES256 — no shared secret).
-- All frontend↔backend traffic goes through the OpenAPI-documented `/v1` API
-  ([contract](specs/001-job-search-mvp/contracts/openapi.yml) is regenerated
-  from the live app; TypeScript types are generated from it at build time).
-- Background jobs (APScheduler): hourly follow-up reminders, daily saved-search
-  refresh, daily listing-expiry marking, daily purge of deleted accounts.
+- Supabase signs people in. The app, the extension and the AI connector all
+  send that token to the API, which checks it against Supabase's public keys
+  (ES256 / JWKS). There is no shared secret.
+- Everything goes through one versioned `/v1` API, and its TypeScript types are
+  generated from the API's OpenAPI schema.
+- Background jobs handle reminders, saved-search refreshes, email checks and
+  clean-up.
 
-More detail in [docs/architecture.md](docs/architecture.md).
+More in [docs/architecture.md](docs/architecture.md) and the feature list in
+[docs/FEATURES.md](docs/FEATURES.md).
 
-## Security & Privacy
+## Security and privacy
 
-- **Authentication** — sign-in is handled by Supabase Auth; the backend verifies each
-  request's JWT against the project's public keys (JWKS, ES256). No shared secret
-  lives in the app, and no password is ever stored.
-- **Row-Level Security** — every application table has Postgres RLS enabled, so the
-  browser's public key can't read data directly; all data is served through the API.
-- **Least-privilege data flow** — the frontend uses the public key only for login;
-  jobs, profiles, and documents are served by the FastAPI backend using its own
-  database credentials, authorized per request.
-- **No secrets in the repo** — all credentials come from environment variables
-  (git-ignored `.env`); tests use sanitized fixtures, never real personal data.
-- **Validated input, safe DB access** — payloads are validated with Pydantic v2, and
-  all queries go through SQLAlchemy (parameterized — no hand-built SQL).
-- **Rate limiting & CORS** — basic per-user/per-IP rate limits (tighter on the AI
-  endpoints), an allow-list CORS policy, and generic error responses.
-- **Your data, your control** — export everything as JSON, or delete your account
-  (soft-delete then scheduled purge) at any time.
+- **Sign-in** by Supabase Auth. The API verifies every request's token, and the
+  app never stores passwords.
+- **Row-Level Security** is on for every table, so the browser can't read the
+  database directly. All data goes through the API, checked per user.
+- **Email access is read-only.** App passwords are encrypted at rest, and the
+  app never sends email.
+- **Site passwords are never stored.** Job Catcher and the AI connector stop
+  and hand sign-ins back to you.
+- **Text from web pages is treated as data, not instructions**, so a job page
+  can't steer the AI connector.
+- **No secrets in the repo.** Everything comes from environment variables, and
+  tests use made-up people and companies.
+- **Your data, your call:** export everything as JSON, or delete your account.
 
-## Local Setup
+## Run it locally
 
-Prerequisites: **Python 3.11+**, **Node.js 20+**, a free
-[Supabase](https://supabase.com) project (2 minutes, no card — the free plan
-allows two projects, so make `job-enhancer-dev` for local work and
-`job-enhancer` for production).
+You need **Python 3.11+**, **Node.js 20+**, and a free
+[Supabase](https://supabase.com) project.
 
 ```bash
 git clone https://github.com/5Cl0ver/job_enhancer.git
 cd job_enhancer
-bash scripts/setup.sh        # installs backend venv + frontend deps, creates env files
+bash scripts/setup.sh        # backend venv, frontend packages, env files
 ```
 
-Then fill in the env files:
+Fill in the env files:
 
-1. **`backend/.env`** — from your dev Supabase project: the *Transaction
-   pooler* connection string as `DATABASE_URL` (swap the prefix to
-   `postgresql+asyncpg://`) and `SUPABASE_URL` (the backend verifies JWTs via
-   the project JWKS, so no shared secret is needed), plus
+1. **`backend/.env`**: your Supabase *transaction pooler* connection string as
+   `DATABASE_URL` (with the `postgresql+asyncpg://` prefix), `SUPABASE_URL`, and
+   `ADMIN_EMAIL` (the account that sees the admin view). Optional:
    [Adzuna](https://developer.adzuna.com) and
-   [JSearch](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) keys and
-   your `ADMIN_EMAIL`. Optional: `NVIDIA_API_KEY` to enable AI generation.
-2. **`frontend/.env`** — `VITE_API_URL` (e.g. `http://localhost:8000`),
-   `VITE_SUPABASE_URL`, and `VITE_SUPABASE_ANON_KEY` from the same project.
-
-Run it:
+   [JSearch](https://rapidapi.com/letscrape-6bRBa3QguO5/api/jsearch) keys for
+   job search, and `MAIL_ENC_KEY` for email updates (the file explains how to
+   make one).
+2. **`frontend/.env.local`**: `VITE_API_URL` (e.g. `http://localhost:8000`),
+   `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`.
 
 ```bash
-# terminal 1 — API on :8000 (applies migrations first)
+# terminal 1: API on :8000 (runs migrations first)
 cd backend && .venv/bin/alembic upgrade head && .venv/bin/uvicorn app.main:app --reload
 
-# terminal 2 — web app on :5173 (Vite)
+# terminal 2: web app on :5173
 cd frontend && npm run dev
 ```
 
-Optional: `cd backend && .venv/bin/python scripts/seed_dev.py` loads sample
-listings so search/tracker have data without hitting the job APIs.
-Google/GitHub sign-in buttons need one-time provider setup in the Supabase
-dashboard (Authentication → Providers); email/password works immediately.
+To try Job Catcher, build it with `cd extension && npm install && npm run build`,
+then load the `extension/` folder at `chrome://extensions` (Developer mode →
+Load unpacked).
 
 ## Tests
 
 ```bash
-cd backend && .venv/bin/python -m pytest        # 83 API + service tests (in-memory DB)
-cd frontend && npm run test                     # Vitest component tests
-cd frontend && npx playwright test              # E2E against your running local stack
-cd extension && npm test                        # 74 extension unit tests (Vitest)
+cd backend && .venv/bin/python -m pytest     # API, services, connector
+cd frontend && npm test                      # components and pages
+cd extension && npm test                     # extension logic
+cd extension && npx playwright test          # extension in a real Chrome, on saved test pages
 ```
 
-CI (GitHub Actions) runs Ruff, pytest, ESLint, `tsc`, Vitest, and the
-production build on every push. E2E specs run against a live stack; signed-in
-scenarios activate when `E2E_EMAIL`/`E2E_PASSWORD` are set.
+GitHub Actions runs linting, type checks, all test suites and a production build
+on every push and pull request. There are over 1,000 automated tests in total.
 
-## Deployment ($0/month)
+## Deployment
 
 | Piece | Service | How |
 |---|---|---|
-| Frontend | Vercel (Hobby) | Import repo, set root directory to `frontend/`, add the `VITE_*` env vars |
-| Backend | Render (free) | Blueprint in [render.yaml](render.yaml) — Docker deploy with health checks and auto-deploy on push |
-| Database + Auth | Supabase (free) | Production project; URL/keys go into Render + Vercel env |
-| Keep-awake | GitHub Actions | [keep-alive.yml](.github/workflows/keep-alive.yml) pings the API every 10 min (set the `BACKEND_URL` repo variable) |
+| Frontend | Vercel | Root directory `frontend/`, `VITE_*` env vars |
+| API | Render | [render.yaml](render.yaml): Docker deploy, health check, migrations on start |
+| Database + auth | Supabase | URL and keys go into the Render and Vercel env |
+| Keep-awake | GitHub Actions | [keep-alive.yml](.github/workflows/keep-alive.yml) pings the API every 10 minutes |
+| Extension releases | GitHub Actions | [job-catcher-release.yml](.github/workflows/job-catcher-release.yml) packages and publishes Job Catcher when the extension changes on `main` |
 
-Free-tier honesty: Render free sleeps after 15 idle minutes (the ping prevents
-it), Supabase free pauses after 7 idle days (daily scheduled jobs prevent it),
-and JSearch allows ~200 requests/month (interactive searches only — scheduled
-refreshes are Adzuna-only by design).
-
-## Project Structure
+## Project layout
 
 ```
-backend/     FastAPI app — models, services, /v1 routers, Alembic migrations, pytest suite
-frontend/    Vite + React SPA — routes, components, TanStack Query hooks, tests
-extension/   Chrome MV3 "Job Catcher" — content scripts, side panel, esbuild bundle, tests
-specs/       Product specs, plans, and API contracts
-docs/        Architecture notes
-scripts/     setup.sh (one-time local setup)
-render.yaml  Render deploy blueprint
+backend/     FastAPI app: models, services, /v1 API, MCP connector, migrations, tests
+frontend/    React app: pages, components, hooks, tests
+extension/   Job Catcher (Chrome MV3): capture, autofill, side panel, tests
+specs/       One folder per feature: spec, plan, tasks, contracts
+docs/        Architecture, feature list, connector guide
+scripts/     One-time local setup
 ```
 
-## Roadmap
+Each main code folder has a `MANIFEST.md` that maps what's inside. Start at
+[docs/README.md](docs/README.md).
 
-1. ✅ Core product: search, saved searches, collections, tracker, analytics, admin
-2. ✅ AI quick-apply: resume tailoring + cover letters + Calibri-matched PDF, plus
-   "bring your own Claude"
-3. ✅ Browser extension "Job Catcher": save from any site, apply copilot,
-   Greenhouse/Lever auto-fill, Indeed auto-tracking
-4. 🔜 Deploy to Vercel + Render + Supabase (live link here)
-5. 🔜 Broaden auto-fill (Glassdoor + more ATSs); optional MCP connector so your
-   own Claude can read your jobs and write tailored docs back into the app
+## License
+
+[MIT](LICENSE)

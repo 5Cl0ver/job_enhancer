@@ -1,10 +1,7 @@
 # Screenshots
 
-Images referenced by the top-level [README](../../README.md). Expected files:
+Images for the top-level [README](../../README.md) go here.
 
-| File | What it shows |
-|---|---|
-| `tracker-board.png` | Application tracker (Kanban) with the Job Catcher extension panel |
-| `autofill-indeed.png` | The extension autofilling a live Indeed application |
-| `saved-jobs-list.png` | Saved jobs, list view with filters |
-| `database-schema.png` | The Postgres data model (Supabase schema visualizer) |
+Take them from a **test account** with made-up jobs and a made-up profile, never
+from a real account: real saved jobs, names, emails and addresses must not end
+up in this public repo.
