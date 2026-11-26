@@ -50,8 +50,8 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `Navbar.tsx`, `Sidebar.tsx` | ⚠️ Legacy shell — the live app frame is `routes/DashboardLayout.tsx`; these are pending consolidation |
 | `OfflineBanner.tsx` | Offline indicator when the browser goes offline |
-| `nav.ts` | The page list: desktop sidebar order, the phone's three tabs (`TABS`) and its More sheet (`MORE`), admin-only filtering, `pageFor(path)`, `signOut` |
-| `PhoneNav.tsx` | The phone frame (under 768px): `TopBar` (page title, back arrow on inner pages, a slot for the page's buttons via `TopBarActions`), `TabBar` (My Jobs · Email with count · Find Jobs · More → sheet with the rest + Sign out), `CountBadge` |
+| `nav.ts` | The page list: desktop sidebar order, the phone's three tabs (`TABS`) and its More sheet (`MORE`), admin-only filtering, `pageFor(path)`, `subPageTitle(path)` (Bugs & ideas), `signOut` |
+| `PhoneNav.tsx` | The phone frame (under 768px): `TopBar` (page title, back arrow on inner pages, a slot for the page's buttons via `TopBarActions`), `TabBar` (My Jobs · Email with count · Find Jobs · More → sheet with the rest + Sign out; the owner's new bugs on More and Admin), `CountBadge`; `TopBar extra` holds the owner's Add a bug or idea |
 
 ## `email/`
 | File | Purpose |
@@ -131,8 +131,20 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 ## `analytics/`
 | `StatCard.tsx` | icon + value + trend arrow · | `ActivityChart.tsx` | recharts bar chart |
 
+## `bugs/` — Bugs & ideas (spec 032), the owner's inbox
+| File | What it renders |
+|---|---|
+| `BugList.tsx` | Bugs / Ideas tabs with counts, search, the filter sheet (status, severity, from, came back, needs your check), section chips with counts, the rows in priority order, Copy N for Claude, select mode |
+| `BugRow.tsx` | One row: title, severity, status, came back, needs your check, section, source, ×N, last seen; `SeverityPill`, `StatusPill` |
+| `BugDetail.tsx` | The whole report: banners (needs your check: Looks fixed / Reopen; came back), status, Copy for Claude, Edit, Pin, Same as another… (merge), Delete (confirm), every field, run and job links |
+| `BugStatusMenu.tsx` | Any status; Fixed asks "Fixed in which version?" |
+| `BugNotes.tsx` · `BugLinks.tsx` · `BugHistory.tsx` | Dated notes; related reports both ways; every change in plain words (who, when), Split back on a merge |
+| `BulkBar.tsx` | Several at once: status, section, copy |
+| `AddBugSheet.tsx` | `AddBugButton` (sidebar row / phone top-bar icon, owner only) and its sheet: `BugForm`, the section guessed from the page, page/device/browser/theme/Job Catcher filled in and shown, keeps what was typed until saved |
+| `BugForm.tsx` · `ReportPicker.tsx` · `CopyForClaude.tsx` | The one format (add and edit), `Segmented`; pick another report by search; `useCopy` + `ManualCopy` when the clipboard is blocked |
+
 ## `admin/`
-| `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users with setup dots, Job Catcher version (old ones marked), last active and today's use · `AllowancesCard.tsx` the daily free allowances and the JSearch reserve · `BugReportsCard.tsx` Bug reports: problems Claude ran into on everyone's applications, grouped by kind, open / all, Fixed / Ignore, Copy for Claude / Copy all open as Markdown (spec 030) · `SignupTrendChart.tsx` recharts line chart |
+| `HealthPanel.tsx` external-service status · `StatsOverview.tsx` user-count cards · `UserTable.tsx` paginated users with setup dots, Job Catcher version (old ones marked), last active and today's use · `AllowancesCard.tsx` the daily free allowances and the JSearch reserve · `SignupTrendChart.tsx` recharts line chart |
 | `apply/*` (spec 022) | `ApplyWithClaudeButton` (job page; asks which résumé first, spec 025), `ResumeReview` (look over Claude's résumé: Use it / Change something / ask Claude, spec 025), `LiveFill` (Filling now: the boxes as Job Catcher reads them, spec 026; tap one to change it or ask Claude while it fills, `LiveFixSheet`, spec 030), `Bubbles` + `ReviewBoard` (answers as bubbles: check these first, change or ask Claude, fixes sent together, spec 026), `ApplySteps`, `Questions` (Claude's questions as one checklist: its guesses filled in, quick answers, only-you rows first, Looks good, go; spec 030), `Problems` (Problems Claude ran into, closed until tapped; spec 030), `ResumeForJob` (view in the app, edit text → PDF remade, change), `Pages` (photos + answers, full-size viewer), `Review` (Submit / Fix / I'll submit it myself), `ApplyBanner` (every screen while Claude waits for you), `WhatYouSent`; `settings/ResumesCard.tsx` (tap a résumé to view it in the app; master résumé, made for a job, things you've told Claude), `settings/ReviewResumesCard.tsx` (the look-it-over setting) |
 | `apply/Remote.tsx` (spec 023) | The application page as a remote control: `HelpCard` (Claude's question, a photo of the screen, quick answers, your own words; CAPTCHA/sign-in "needs you at the computer"), `Conversation` (Claude's updates and your messages, Read by Claude), `ScreenNow` (Show me the screen), `Stopped` (Claude went quiet + the carry-on line), `DidItGo` (It was sent / It wasn't), `Readiness` (Job Catcher 0.41.0+ seen lately), `SentCard` (Sent, confirmed: what Job Catcher saw) |
 

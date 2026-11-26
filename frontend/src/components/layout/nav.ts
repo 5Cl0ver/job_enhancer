@@ -57,6 +57,14 @@ export function pageFor(pathname: string): NavItem | undefined {
   return NAV.find((item) => pathname === item.to || pathname.startsWith(`${item.to}/`));
 }
 
+/** Pages one level down that have their own name in the phone's top bar
+ * (anything else one level down is a job's page). */
+const SUBPAGES: Record<string, string> = { "/admin/bugs": "Bugs & ideas" };
+
+export function subPageTitle(pathname: string): string | undefined {
+  return SUBPAGES[pathname.replace(/\/$/, "")];
+}
+
 export async function signOut() {
   await createClient().auth.signOut();
   window.location.href = "/login";

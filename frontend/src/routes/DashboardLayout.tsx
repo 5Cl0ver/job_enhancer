@@ -8,6 +8,7 @@ import { NAV, allowed, signOut } from "@/components/layout/nav";
 import { useAttention } from "@/hooks/useAttention";
 import { useProfile } from "@/hooks/useProfile";
 import { useRealtimeSync } from "@/hooks/useRealtimeSync";
+import { AddBugButton } from "@/components/bugs/AddBugSheet";
 
 // The persistent app frame. On a desktop that's a sidebar beside the page. On a
 // phone the sidebar would eat over half the screen, so the frame becomes a slim
@@ -31,6 +32,8 @@ function Frame() {
   const emailCount = attention?.email_review ?? 0;
   // Good fits from Claude Scout waiting to be ticked and saved (on Find Jobs).
   const scoutCount = attention?.scout_review ?? 0;
+  // New bugs in Bugs & ideas, on Admin (the owner's only; spec 032).
+  const bugsCount = isAdmin ? (attention?.bugs_new ?? 0) : 0;
 
   return (
     <div className="flex min-h-screen flex-col bg-background text-foreground">
@@ -56,15 +59,20 @@ function Frame() {
               >
                 <item.icon className="h-4 w-4 shrink-0" aria-hidden />
                 <span className="flex-1 truncate">{item.label}</span>
-                {(item.to === "/email-updates" || item.to === "/search") && (
+                {(item.to === "/email-updates" || item.to === "/search" || item.to === "/admin") && (
                   <CountBadge
-                    count={item.to === "/search" ? scoutCount : emailCount}
+                    count={item.to === "/search" ? scoutCount : item.to === "/admin" ? bugsCount : emailCount}
                     className="bg-background text-foreground ring-1 ring-border"
                   />
                 )}
               </NavLink>
             ))}
           </nav>
+          {isAdmin && (
+            <div className="mt-4 flex flex-col border-t pt-4">
+              <AddBugButton variant="sidebar" />
+            </div>
+          )}
           <button
             onClick={signOut}
             className="mt-auto flex items-center gap-2 rounded-md px-3 py-2 text-sm font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-accent-foreground"
@@ -75,7 +83,7 @@ function Frame() {
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
-          <TopBar />
+          <TopBar extra={isAdmin ? <AddBugButton variant="icon" /> : undefined} />
           <ApplyBanner />
           {/* On a phone: one 16px gutter (pages add none of their own), and
               bottom padding that clears the fixed tab bar. */}
@@ -86,7 +94,7 @@ function Frame() {
         </div>
       </div>
 
-      <TabBar emailCount={emailCount} scoutCount={scoutCount} isAdmin={isAdmin} />
+      <TabBar emailCount={emailCount} scoutCount={scoutCount} bugsCount={bugsCount} isAdmin={isAdmin} />
     </div>
   );
 }

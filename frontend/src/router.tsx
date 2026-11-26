@@ -13,6 +13,7 @@ import AiApplyPage from "@/routes/AiApplyPage";
 import SettingsPage from "@/routes/SettingsPage";
 import AutofillMemoryPage from "@/routes/AutofillMemoryPage";
 import AdminPage from "@/routes/AdminPage";
+import AdminBugsPage from "@/routes/AdminBugsPage";
 import EmailUpdatesPage from "@/routes/EmailUpdatesPage";
 import JobCatcherPage from "@/routes/JobCatcherPage";
 import ConnectPage from "@/routes/ConnectPage";
@@ -82,6 +83,7 @@ export const router = createBrowserRouter([
       { path: "job-catcher", element: <JobCatcherPage /> },
       { path: "settings", element: <SettingsPage /> },
       { path: "admin", element: <AdminPage /> },
+      { path: "admin/bugs", element: <AdminBugsPage /> },
     ],
   },
 

@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { NavLink, useLocation, useNavigate } from "react-router-dom";
 import { ArrowLeft, LogOut, Menu } from "lucide-react";
-import { MORE, TABS, allowed, pageFor, signOut } from "@/components/layout/nav";
+import { MORE, TABS, allowed, pageFor, signOut, subPageTitle } from "@/components/layout/nav";
 import { InfoBubble } from "@/components/common/InfoBubble";
 import {
   Dialog,
@@ -36,7 +36,7 @@ export function CountBadge({ count, className }: { count: number; className?: st
   );
 }
 
-export function TopBar() {
+export function TopBar({ extra }: { extra?: React.ReactNode } = {}) {
   const { pathname } = useLocation();
   const navigate = useNavigate();
   const page = pageFor(pathname);
@@ -66,11 +66,13 @@ export function TopBar() {
         <p className="truncate text-xl font-semibold tracking-tight">
           {/* A job can be opened from My Jobs, Find Jobs, Matches or an email,
               so its page isn't titled after any one of them. */}
-          {inner ? "Job" : (page?.label ?? "Job Enhancer")}
+          {inner ? (subPageTitle(pathname) ?? "Job") : (page?.label ?? "Job Enhancer")}
         </p>
         {!inner && page?.help && <InfoBubble topic={page.help} />}
         {/* The current page's own buttons land here (TopBarActions). */}
         <div id={ACTIONS_SLOT} className="-mr-2 ml-auto flex shrink-0 items-center gap-1" />
+        {/* On every page (the owner's Add a bug or idea). */}
+        {extra && <div className="-mr-3 flex shrink-0 items-center">{extra}</div>}
       </div>
     </header>
   );
@@ -93,11 +95,14 @@ const PILL =
 export function TabBar({
   emailCount,
   scoutCount = 0,
+  bugsCount = 0,
   isAdmin,
 }: {
   emailCount: number;
   /** Claude Scout's picks waiting on Find Jobs. */
   scoutCount?: number;
+  /** New bugs, on Admin in More (the owner's only). */
+  bugsCount?: number;
   isAdmin: boolean;
 }) {
   const { pathname } = useLocation();
@@ -146,6 +151,7 @@ export function TabBar({
         >
           <span className={cn(PILL, onMorePage && "bg-primary/15")}>
             <Menu className="h-5 w-5" aria-hidden />
+            {isAdmin && <CountBadge count={bugsCount} className="absolute -top-1 right-0" />}
           </span>
           <span>More</span>
         </button>
@@ -171,7 +177,8 @@ export function TabBar({
                   }
                 >
                   <item.icon className="h-5 w-5 text-muted-foreground" aria-hidden />
-                  {item.label}
+                  <span className="flex-1">{item.label}</span>
+                  {item.to === "/admin" && <CountBadge count={bugsCount} />}
                 </NavLink>
               </li>
             ))}
