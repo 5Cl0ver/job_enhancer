@@ -311,6 +311,18 @@ describe("Apply with Claude button", () => {
     expect(post).toHaveBeenLastCalledWith("/v1/apply/runs", { saved_job_id: "s1", resume_id: null });
   });
 
+  it("never offers to stop one waiting for 'Did it go through?'", async () => {
+    const other = { ...RUN, id: "r9", status: "submitting", job: { ...RUN.job, title: "Network Technician", company: "Globex" } };
+    get.mockImplementation((path: string) => Promise.resolve(path === "/v1/apply/runs/open" ? other : []));
+    post.mockRejectedValue(new ApiError(409, "Another application is already going."));
+    renderButton();
+    await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start" }));
+    expect(await screen.findByText(/Answer whether it went through first/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open it" })).toHaveAttribute("href", "/apply/r9");
+    expect(screen.queryByRole("button", { name: "Stop it and start this one" })).toBeNull();
+  });
+
   it("a job with an application going opens it", async () => {
     get.mockResolvedValue([{ ...RUN, status: "filling" }]);
     renderButton();

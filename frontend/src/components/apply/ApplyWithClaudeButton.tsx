@@ -173,19 +173,27 @@ export function ApplyWithClaudeButton({ savedJobId }: { savedJobId: string }) {
                   : "Another application is going."}{" "}
                 One at a time.
               </p>
+              {busy.status === "submitting" && (
+                <p className="text-xs text-muted-foreground">
+                  Answer whether it went through first: open it and tap It was sent or It wasn't.
+                </p>
+              )}
               {busy.openRunId && (
                 <div className="flex flex-wrap items-center gap-2">
                   <Button asChild variant="outline" size="sm">
                     <Link to={`/apply/${busy.openRunId}`}>Open it</Link>
                   </Button>
-                  <Button
-                    size="sm"
-                    disabled={stop.isPending || start.isPending}
-                    onClick={() => stop.mutate(busy.openRunId as string, { onSuccess: go })}
-                  >
-                    {stop.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
-                    Stop it and start this one
-                  </Button>
+                  {/* Never while Submit was pressed: stopping would lose "Did it go through?". */}
+                  {busy.status !== "submitting" && (
+                    <Button
+                      size="sm"
+                      disabled={stop.isPending || start.isPending}
+                      onClick={() => stop.mutate(busy.openRunId as string, { onSuccess: go })}
+                    >
+                      {stop.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+                      Stop it and start this one
+                    </Button>
+                  )}
                 </div>
               )}
               {stop.isError && <p className="text-xs text-destructive">Couldn't stop it. Try again.</p>}
