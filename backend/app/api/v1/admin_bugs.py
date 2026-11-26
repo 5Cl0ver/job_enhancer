@@ -9,6 +9,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import AdminUser
+from app.models.user import User
 from app.schemas.bug_reports import (
     BugBulk,
     BugCreate,
@@ -26,9 +27,11 @@ router = APIRouter()
 Source = Literal["owner", "owner_ai", "run", "caught"]
 
 
-async def _detail(db: AsyncSession, report_id: uuid.UUID) -> dict[str, Any]:
+async def _detail(
+    db: AsyncSession, report_id: uuid.UUID, viewer: User
+) -> dict[str, Any]:
     try:
-        return await svc.detail(db, report_id)
+        return await svc.detail(db, report_id, viewer.id)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
 
@@ -78,7 +81,7 @@ async def add_bug(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
-    return {"report": await svc.detail(db, report.id)}
+    return {"report": await svc.detail(db, report.id, _user.id)}
 
 
 @router.post("/bulk")
@@ -98,7 +101,7 @@ async def bulk_change(
 async def get_bug(
     report_id: uuid.UUID, _user: AdminUser, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
-    return await _detail(db, report_id)
+    return await _detail(db, report_id, _user)
 
 
 @router.patch("/{report_id}")
@@ -115,7 +118,7 @@ async def change_bug(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
-    return await _detail(db, report_id)
+    return await _detail(db, report_id, _user)
 
 
 @router.delete("/{report_id}", status_code=204)
@@ -192,7 +195,7 @@ async def merge_bug(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    return await _detail(db, into.id)
+    return await _detail(db, into.id, _user)
 
 
 @router.post("/{report_id}/split/{event_id}")
@@ -210,4 +213,4 @@ async def split_bug(
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
-    return await _detail(db, back.id)
+    return await _detail(db, back.id, _user)

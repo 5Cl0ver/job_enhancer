@@ -96,7 +96,8 @@ class BugReport(Base):
     pinned: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
-    fingerprint: Mapped[str | None] = mapped_column(String(16), index=True)
+    # Unique: the same problem is one report, even when two arrive at once.
+    fingerprint: Mapped[str | None] = mapped_column(String(16), unique=True, index=True)
     count: Mapped[int] = mapped_column(
         Integer, nullable=False, default=1, server_default="1"
     )

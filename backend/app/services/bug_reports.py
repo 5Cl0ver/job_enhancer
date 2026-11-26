@@ -27,6 +27,7 @@ from typing import Any
 from urllib.parse import urlsplit
 
 from sqlalchemy import case, delete, func, or_, select, update
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.apply import ApplyRun
@@ -89,6 +90,20 @@ _UUID_SEG = re.compile(
     r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$", re.I
 )
 _ID_SEG = re.compile(r"^(\d+|[0-9a-f]{12,})$", re.I)
+_TOKEN_SEG = re.compile(r"^[A-Za-z0-9_-]{16,}$")
+
+
+def _is_token(seg: str) -> bool:
+    """A long code in the path (a reset or session token, a key): letters
+    and digits mixed all through it. A job slug ("Senior-Engineer_R0012345")
+    switches between them once or twice, so it stays."""
+    if not _TOKEN_SEG.match(seg):
+        return False
+    chars = [c for c in seg if c.isalnum()]
+    switches = sum(
+        1 for a, b in zip(chars, chars[1:], strict=False) if a.isdigit() != b.isdigit()
+    )
+    return switches >= 4
 
 
 def _now() -> datetime:
@@ -134,7 +149,7 @@ def clean_place(value: Any) -> str | None:
     if parts.scheme and parts.scheme not in ("http", "https"):
         return None
     segs = [
-        ":id" if (_UUID_SEG.match(s) or _ID_SEG.match(s)) else s
+        ":id" if (_UUID_SEG.match(s) or _ID_SEG.match(s) or _is_token(s)) else s
         for s in parts.path.split("/")
     ]
     path = "/".join(segs)
@@ -222,6 +237,19 @@ async def _prune_seen(db: AsyncSession, report_id: uuid.UUID) -> None:
     )
 
 
+async def _add_count(db: AsyncSession, report: BugReport, n: int) -> None:
+    """Count up in the database itself (``count = count + n``), so two at
+    once both count; the object is refreshed after."""
+    await db.flush()
+    await db.execute(
+        update(BugReport)
+        .where(BugReport.id == report.id)
+        .values(count=BugReport.count + n)
+        .execution_options(synchronize_session=False)
+    )
+    await db.refresh(report, ["count"])
+
+
 async def _seen_again(
     db: AsyncSession,
     report: BugReport,
@@ -231,7 +259,7 @@ async def _seen_again(
 ) -> None:
     """It happened again: count up, and a fixed bug comes back as new."""
     now = _now()
-    report.count = (report.count or 0) + times
+    await _add_count(db, report, times)
     report.last_seen = now
     if report.type == BUG and report.status == "fixed":
         _event(
@@ -449,9 +477,13 @@ async def count_new_bugs(db: AsyncSession) -> int:
     ) or 0
 
 
-async def detail(db: AsyncSession, report_id: uuid.UUID) -> dict[str, Any]:
+async def detail(
+    db: AsyncSession, report_id: uuid.UUID, viewer_id: uuid.UUID | None = None
+) -> dict[str, Any]:
     """Everything about one report: every field, its history (notes, times
-    seen, changes; newest first), links, screenshots, run and job."""
+    seen, changes; newest first), links, screenshots, run and job. ``own``
+    says whether the run and job are the viewer's, so the app only links to
+    pages they can open (another user's job is named, not linked)."""
     r = await get(db, report_id)
     events = (
         await db.scalars(
@@ -490,6 +522,7 @@ async def detail(db: AsyncSession, report_id: uuid.UUID) -> dict[str, Any]:
             await db.execute(
                 select(
                     SavedJob.id,
+                    SavedJob.user_id,
                     SavedJob.custom_title,
                     SavedJob.custom_company,
                     JobListing.title,
@@ -500,15 +533,25 @@ async def detail(db: AsyncSession, report_id: uuid.UUID) -> dict[str, Any]:
             )
         ).first()
         if found:
-            jid, my_t, my_c, title, company = found
+            jid, uid, my_t, my_c, title, company = found
             job = {
                 "id": str(jid),
                 "title": my_t or title or "",
                 "company": my_c or company or "",
+                "own": viewer_id is not None and uid == viewer_id,
             }
+    run = None
+    if r.run_id:
+        run_user = await db.scalar(
+            select(ApplyRun.user_id).where(ApplyRun.id == r.run_id)
+        )
+        run = {
+            "id": str(r.run_id),
+            "own": viewer_id is not None and run_user == viewer_id,
+        }
     return {
         **_row(r, bool(shots)),
-        "run": {"id": str(r.run_id)} if r.run_id else None,
+        "run": run,
         "job": job,
         "events": [event_out(e) for e in events],
         "links": [
@@ -589,53 +632,63 @@ async def from_run_problem(
     place = clean_place(problem.get("page")) or site
     seen = {"place": place, "context": context, "run_id": str(run.id)}
 
-    found = await db.scalar(
-        select(BugReport)
-        .where(BugReport.fingerprint == fp)
-        .order_by(BugReport.merged_into_id.is_not(None), BugReport.created_at)
-        .limit(1)
-    )
+    found = await _by_fingerprint(db, fp)
+    if found is None:
+        now = _now()
+        report = BugReport(
+            id=uuid.uuid4(),
+            type=BUG,
+            title=scrub(text, TITLE_MAX),
+            section=section,
+            kind=kind,
+            place=place,
+            steps=[],
+            actual=text,
+            expected="",
+            severity="major",
+            confidence="sure",
+            source="run",
+            status="new",
+            fingerprint=fp,
+            count=1,
+            first_seen=now,
+            last_seen=now,
+            context=context,
+            run_id=run.id,
+            job_id=run.saved_job_id,
+        )
+        try:
+            # The fingerprint is unique: if the same problem was added at
+            # the same moment, this one counts that one up instead.
+            async with db.begin_nested():
+                db.add(report)
+                await db.flush()
+        except IntegrityError:
+            found = await _by_fingerprint(db, fp)
+            if found is None:
+                raise
+        else:
+            _event(db, report, "seen", "claude", seen)
+            await db.flush()
+            return report
+
+    found.run_id = run.id
+    found.job_id = run.saved_job_id
+    if place:
+        found.place = place
+    found.context = {**(found.context or {}), **context}
+    await _seen_again(db, found, seen, "claude")
+    return found
+
+
+async def _by_fingerprint(db: AsyncSession, fp: str) -> BugReport | None:
+    """The report with this fingerprint, or the one it was merged into."""
+    found = await db.scalar(select(BugReport).where(BugReport.fingerprint == fp))
     for _ in range(MERGE_HOPS):
         if found is None or found.merged_into_id is None:
             break
         found = await db.get(BugReport, found.merged_into_id)
-    if found is not None:
-        found.run_id = run.id
-        found.job_id = run.saved_job_id
-        if place:
-            found.place = place
-        found.context = {**(found.context or {}), **context}
-        await _seen_again(db, found, seen, "claude")
-        return found
-
-    now = _now()
-    report = BugReport(
-        id=uuid.uuid4(),
-        type=BUG,
-        title=scrub(text, TITLE_MAX),
-        section=section,
-        kind=kind,
-        place=place,
-        steps=[],
-        actual=text,
-        expected="",
-        severity="major",
-        confidence="sure",
-        source="run",
-        status="new",
-        fingerprint=fp,
-        count=1,
-        first_seen=now,
-        last_seen=now,
-        context=context,
-        run_id=run.id,
-        job_id=run.saved_job_id,
-    )
-    db.add(report)
-    await db.flush()
-    _event(db, report, "seen", "claude", seen)
-    await db.flush()
-    return report
+    return found
 
 
 # --------------------------------------------------------------------------- #
@@ -813,10 +866,9 @@ async def bulk(
 
 async def delete_report(db: AsyncSession, report_id: uuid.UUID) -> None:
     """For good: its events, links and screenshots go with it, and anything
-    merged into it comes back as its own report."""
-    r = await db.get(BugReport, report_id)
-    if r is None:
-        raise LookupError("No such report.")
+    merged into it comes back as its own report. A report merged away isn't
+    there to delete (split it back first), so its count never lingers."""
+    r = await get(db, report_id)
     await db.execute(
         update(BugReport)
         .where(BugReport.merged_into_id == r.id)
@@ -885,39 +937,48 @@ async def unlink(
     await db.flush()
 
 
+def _when(value: Any) -> datetime | None:
+    if not value:
+        return None
+    try:
+        return _aware(datetime.fromisoformat(str(value)))
+    except ValueError:
+        return None
+
+
+def _dates(r: BugReport) -> dict[str, str | None]:
+    return {
+        "first_seen": _iso(r.first_seen),
+        "last_seen": _iso(r.last_seen),
+        "came_back_at": _iso(r.came_back_at),
+    }
+
+
 async def merge(
     db: AsyncSession, report_id: uuid.UUID, into_id: uuid.UUID, by: str = "owner"
 ) -> BugReport:
     """The same problem: ``report_id`` goes into ``into_id``, its count added,
-    and is hidden until split back. Its own text and history are kept."""
+    and is hidden until split back. Its own text and history are kept. The
+    event keeps both reports' dates, so a split can work them out again."""
     if report_id == into_id:
         raise ValueError("A report can't be merged into itself.")
     try:
         src, dst = await get(db, report_id), await get(db, into_id)
     except LookupError as exc:
         raise ValueError("That report is gone or already merged.") from exc
-    snapshot = {
-        "count": src.count,
-        "into_first_seen": _iso(dst.first_seen),
+    data = {
+        "other_id": str(src.id),
+        "title": src.title,
+        "snapshot": {"count": src.count, **_dates(src)},
+        "into": _dates(dst),
     }
-    dst.count = (dst.count or 0) + (src.count or 0)
+    await _add_count(db, dst, src.count or 0)
     dst.first_seen = min(_aware(dst.first_seen), _aware(src.first_seen))
     dst.last_seen = max(_aware(dst.last_seen), _aware(src.last_seen))
-    if (
-        src.type == BUG
-        and dst.type == BUG
-        and src.came_back_at
-        and not dst.came_back_at
-    ):
+    if dst.type == BUG and src.came_back_at and not dst.came_back_at:
         dst.came_back_at = src.came_back_at
     src.merged_into_id = dst.id
-    _event(
-        db,
-        dst,
-        "merge",
-        by,
-        {"other_id": str(src.id), "title": src.title, "snapshot": snapshot},
-    )
+    _event(db, dst, "merge", by, data)
     await db.flush()
     return dst
 
@@ -925,7 +986,9 @@ async def merge(
 async def split(
     db: AsyncSession, report_id: uuid.UUID, event_id: uuid.UUID, by: str = "owner"
 ) -> BugReport:
-    """Undo a merge: the merged report is its own again, its count taken back."""
+    """Undo a merge: the merged report is its own again, its count taken back,
+    and the dates worked out from the report's own and what's still merged
+    into it (another merge may still be there)."""
     dst = await get(db, report_id)
     ev = await db.get(BugReportEvent, event_id)
     if ev is None or ev.report_id != dst.id or ev.kind != "merge":
@@ -937,11 +1000,54 @@ async def split(
     if src is None or src.merged_into_id != dst.id:
         raise ValueError("That report isn't merged here any more.")
     snap = data.get("snapshot") or {}
-    dst.count = max(1, (dst.count or 0) - int(snap.get("count") or 0))
-    if snap.get("into_first_seen"):
-        dst.first_seen = datetime.fromisoformat(snap["into_first_seen"])
     src.merged_into_id = None
     ev.data = {**data, "split": True}
+    await db.flush()
+
+    taken = int(snap.get("count") or 0)
+    await db.execute(
+        update(BugReport)
+        .where(BugReport.id == dst.id)
+        .values(
+            count=case((BugReport.count - taken < 1, 1), else_=BugReport.count - taken)
+        )
+        .execution_options(synchronize_session=False)
+    )
+    await db.refresh(dst, ["count"])
+
+    # The report's own dates: as they were at its first merge.
+    first_merge = await db.scalar(
+        select(BugReportEvent)
+        .where(BugReportEvent.report_id == dst.id, BugReportEvent.kind == "merge")
+        .order_by(BugReportEvent.at)
+        .limit(1)
+    )
+    own = (first_merge.data or {}).get("into", {}) if first_merge else {}
+    still = (
+        await db.scalars(select(BugReport).where(BugReport.merged_into_id == dst.id))
+    ).all()
+    last_own_seen = await db.scalar(
+        select(func.max(BugReportEvent.at)).where(
+            BugReportEvent.report_id == dst.id, BugReportEvent.kind == "seen"
+        )
+    )
+    firsts = [_when(own.get("first_seen")), *[_aware(r.first_seen) for r in still]]
+    lasts = [
+        _when(own.get("last_seen")),
+        _aware(last_own_seen),
+        *[_aware(r.last_seen) for r in still],
+    ]
+    dst.first_seen = min(d for d in firsts if d) if any(firsts) else dst.first_seen
+    dst.last_seen = max(d for d in lasts if d) if any(lasts) else dst.last_seen
+    # "Came back" that only came with this merge goes with it; one the report
+    # earned itself since (a later date) stays.
+    copied = _when(snap.get("came_back_at"))
+    if copied and _aware(dst.came_back_at) == copied:
+        backs = [
+            _when(own.get("came_back_at")),
+            *[_aware(r.came_back_at) for r in still],
+        ]
+        dst.came_back_at = max((d for d in backs if d), default=None)
     _event(db, dst, "split", by, {"other_id": str(src.id), "title": src.title})
     await db.flush()
     return src

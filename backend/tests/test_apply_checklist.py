@@ -505,7 +505,8 @@ async def test_problems_reach_the_owners_inbox(admin_client, db_session, admin_u
         "new",
     )
     report = (await admin_client.get(f"/v1/admin/bugs/{row['id']}")).json()
-    assert report["run"] == {"id": run_id}
+    assert report["run"] == {"id": run_id, "own": True}
+    assert report["job"]["own"] is True
     assert report["job"]["id"] == job_id
     assert report["job"]["company"] == "Northwind Labs"
     assert report["place"] == "acme.wd1.myworkdayjobs.com/apply/:id"
@@ -525,6 +526,22 @@ async def test_problems_reach_the_owners_inbox(admin_client, db_session, admin_u
     assert [(i["title"], i["count"]) for i in jc["items"]] == [
         ("Said no résumé box", 2)
     ]
+
+
+@pytest.mark.asyncio
+async def test_report_problem_works_when_the_inbox_fails(engine, monkeypatch):
+    """The inbox never costs Claude its call: the problem is still kept on
+    the run, and Claude is told it was noted."""
+    maker, user, run_id, job_id, rid, saved = await _filling(engine, monkeypatch)
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("inbox down")
+
+    monkeypatch.setattr(svc.bug_reports, "from_run_problem", broken)
+    out = await mcp_mod.report_problem(rid, "The tab closed", kind="tab")
+    assert out["noted"] is True and "Carry on" in out["next"]
+    run = await _run(maker, run_id)
+    assert [p["what"] for p in run.problems] == ["The tab closed"]
 
 
 @pytest.mark.asyncio

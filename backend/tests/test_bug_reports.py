@@ -580,3 +580,180 @@ async def test_missing_report_is_404(admin_client):
     assert r.status_code == 404
     r = await admin_client.post(f"/v1/admin/bugs/{rid}/notes", json={"text": "x"})
     assert r.status_code == 404
+
+
+# --------------------------------------------------------------------------- #
+# Review fixes: line breaks, cuts, tokens, merges, deletes, races, links
+# --------------------------------------------------------------------------- #
+
+
+def test_secrets_split_across_line_breaks_are_removed():
+    from app.services.apply_problems import scrub
+
+    for planted, gone in (
+        ("password:\nhunter2", "hunter2"),
+        ("my password is\nhunter2 again", "hunter2"),
+        ("the code\n482913 came by text", "482913"),
+        ("call 503-555-\n0142 now", "0142"),
+        ("card 4111-\n1111 1111 1111 was typed", "1111"),
+        ("SSN 123-\n45-6789", "6789"),
+    ):
+        out = scrub(f"Line one\n{planted}", 1000, lines=True)
+        assert gone not in out, planted
+        assert out.startswith("Line one\n")
+
+
+def test_secrets_are_removed_before_the_cut():
+    from app.services.apply_problems import scrub
+
+    near_end = "x" * 285 + " alex.rivera@example.com"
+    assert "alex" not in scrub(near_end, 300)
+    card = "y" * 290 + " 4111 1111 1111 1111"
+    assert "4111" not in scrub(card, 300)
+    assert len(scrub(near_end, 300)) <= 300
+
+
+def test_place_hides_token_segments_but_keeps_job_slugs():
+    place = svc.clean_place
+    assert place("/reset/AbC-123_xyzQ9fK2LmN0pR/done") == "/reset/:id/done"
+    assert place("https://acme.example/s/9fK2LmN0pRaB3cD4/apply") == (
+        "acme.example/s/:id/apply"
+    )
+    slug = "https://acme.example/careers/job/Senior-Software-Engineer_R0012345"
+    assert place(slug) == "acme.example/careers/job/Senior-Software-Engineer_R0012345"
+    long_place = "/" + "a" * 290 + "?x=1 alex.rivera@example.com"
+    assert "alex" not in (place(long_place) or "")
+
+
+@pytest.mark.asyncio
+async def test_notes_and_text_with_line_break_secrets(admin_client):
+    report = await _post(
+        admin_client, title="Sign in fails", actual="It said password:\nhunter2"
+    )
+    assert "hunter2" not in report["actual"]
+    r = await admin_client.post(
+        f"/v1/admin/bugs/{report['id']}/notes", json={"text": "code\n482913"}
+    )
+    assert "482913" not in r.text
+
+
+@pytest.mark.asyncio
+async def test_split_after_two_merges_works_the_dates_out(db_session):
+    now = datetime.now(tz=UTC)
+    a = await _add(db_session, title="A")
+    b = await _add(db_session, title="B")
+    c = await _add(db_session, title="C")
+    a.first_seen, a.last_seen = now - timedelta(days=1), now - timedelta(hours=5)
+    b.first_seen, b.last_seen = now - timedelta(days=10), now - timedelta(hours=1)
+    b.came_back_at, b.count = now - timedelta(hours=1), 3
+    c.first_seen, c.last_seen = now - timedelta(days=5), now - timedelta(hours=3)
+    c.count = 2
+    await db_session.commit()
+
+    await svc.merge(db_session, b.id, a.id)
+    await svc.merge(db_session, c.id, a.id)
+    await db_session.commit()
+    assert a.count == 6
+    assert svc._aware(a.first_seen) == b.first_seen
+    assert a.came_back_at is not None
+
+    merge_b = next(
+        e
+        for e in (await svc.detail(db_session, a.id))["events"]
+        if e["kind"] == "merge" and e["data"]["title"] == "B"
+    )
+    await svc.split(db_session, a.id, uuid.UUID(merge_b["id"]))
+    await db_session.commit()
+    # C is still merged in: its dates count, B's don't.
+    assert a.count == 3
+    assert svc._aware(a.first_seen) == c.first_seen
+    assert svc._aware(a.last_seen) == c.last_seen
+    assert a.came_back_at is None  # it only came with B
+
+    merge_c = next(
+        e
+        for e in (await svc.detail(db_session, a.id))["events"]
+        if e["kind"] == "merge" and e["data"]["title"] == "C"
+    )
+    await svc.split(db_session, a.id, uuid.UUID(merge_c["id"]))
+    await db_session.commit()
+    assert a.count == 1
+    assert svc._aware(a.first_seen) == now - timedelta(days=1)
+    assert svc._aware(a.last_seen) == now - timedelta(hours=5)
+
+
+@pytest.mark.asyncio
+async def test_a_merged_away_report_cant_be_deleted(admin_client):
+    a = await _post(admin_client, title="Kept")
+    b = await _post(admin_client, title="Merged away")
+    r = await admin_client.post(
+        f"/v1/admin/bugs/{b['id']}/merge", json={"into_id": a["id"]}
+    )
+    assert r.json()["count"] == 2
+    assert (await admin_client.delete(f"/v1/admin/bugs/{b['id']}")).status_code == 404
+    kept = (await admin_client.get(f"/v1/admin/bugs/{a['id']}")).json()
+    assert kept["count"] == 2
+    ev = next(e for e in kept["events"] if e["kind"] == "merge")
+    split = await admin_client.post(f"/v1/admin/bugs/{a['id']}/split/{ev['id']}")
+    assert split.status_code == 200
+
+
+@pytest.mark.asyncio
+async def test_the_same_problem_arriving_twice_at_once_is_one_report(
+    db_session, monkeypatch
+):
+    first = await svc.from_run_problem(db_session, _run(), _problem())
+    await db_session.commit()
+    real = svc._by_fingerprint
+    calls = {"n": 0}
+
+    async def missed_once(db, fp):
+        # The other call's report isn't seen yet: this one tries to add it too.
+        calls["n"] += 1
+        return None if calls["n"] == 1 else await real(db, fp)
+
+    monkeypatch.setattr(svc, "_by_fingerprint", missed_once)
+    again = await svc.from_run_problem(db_session, _run(), _problem())
+    await db_session.commit()
+    assert again.id == first.id and again.count == 2
+    total = await db_session.scalar(select(func.count()).select_from(BugReport))
+    assert total == 1
+
+
+@pytest.mark.asyncio
+async def test_job_and_run_link_only_when_they_are_the_owners(
+    admin_client, db_session, admin_user, test_user
+):
+    from app.models.job_listing import JobListing
+    from app.models.saved_job import SavedJob
+
+    async def job_of(user):
+        listing = JobListing(
+            id=uuid.uuid4(),
+            external_id=uuid.uuid4().hex,
+            source="test",
+            title="IT Engineer",
+            company="Northwind Labs",
+            location="Springfield, IL",
+            apply_url="https://northwind.example/jobs/1",
+            content_hash=uuid.uuid4().hex,
+            company_normalized="northwind labs",
+            title_normalized="it engineer",
+        )
+        db_session.add(listing)
+        await db_session.flush()
+        saved = SavedJob(id=uuid.uuid4(), user_id=user.id, job_listing_id=listing.id)
+        db_session.add(saved)
+        await db_session.flush()
+        return saved
+
+    mine, theirs = await job_of(admin_user), await job_of(test_user)
+    a = await _add(db_session, title="Mine")
+    b = await _add(db_session, title="Theirs")
+    a.job_id, b.job_id = mine.id, theirs.id
+    await db_session.commit()
+    da = (await admin_client.get(f"/v1/admin/bugs/{a.id}")).json()
+    db_ = (await admin_client.get(f"/v1/admin/bugs/{b.id}")).json()
+    assert da["job"]["own"] is True
+    assert db_["job"]["own"] is False
+    assert db_["job"]["title"] == "IT Engineer"

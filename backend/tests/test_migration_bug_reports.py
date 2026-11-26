@@ -55,6 +55,8 @@ def _db(tmp_path):
     run2 = [
         _p("Said no résumé box", "job_catcher", "open", "2026-11-22T09:00:00+00:00"),
         _p("Phone box wrong", "fill", "ignored", "2026-11-22T09:30:00+00:00"),
+        # From before pages were kept: no page, no site, no time.
+        {"id": "old1", "kind": "other", "what": "Got stuck", "count": 1},
     ]
     con.execute(
         "INSERT INTO apply_runs VALUES (?, ?, ?), (?, ?, ?)",
@@ -96,7 +98,16 @@ def test_round_trip_with_old_problems_and_starting_entries(tmp_path):
     assert by_title["Fill everything, fix at the end"]["section"] == "apply"
 
     old = {r["title"]: r for r in rows if r["source"] == "run"}
-    assert set(old) == {"Said no résumé box", "Lost the tab", "Phone box wrong"}
+    assert set(old) == {
+        "Said no résumé box",
+        "Lost the tab",
+        "Phone box wrong",
+        "Got stuck",
+    }
+    stuck = old["Got stuck"]
+    assert (stuck["place"], stuck["status"], stuck["section"]) == (None, "new", "apply")
+    assert stuck["fingerprint"] == run_fingerprint("apply", "other", "", "Got stuck")
+    assert json.loads(stuck["context"]) == {}
     jc = old["Said no résumé box"]
     # The same problem in two runs is one report, counted twice, linked to the
     # latest run and job.
@@ -147,6 +158,7 @@ def test_postgres_offline_sql():
         assert f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY" in up
     assert "ON DELETE CASCADE" in up and "ON DELETE SET NULL" in up
     assert up.count("INSERT INTO bug_reports") == 5
+    assert "CREATE UNIQUE INDEX ix_bug_reports_fingerprint" in up
     assert "'032-review-repeats'" in up
     down = _ok(_alembic(None, "downgrade", f"{HEAD}:{PREV}", "--sql", url=url)).stdout
     for table in NEW:

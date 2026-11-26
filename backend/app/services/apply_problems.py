@@ -27,6 +27,8 @@ from app.models.apply import ApplyRun
 KINDS = ("fill", "job_catcher", "tab", "resume", "site", "other")
 MAX_PROBLEMS = 20
 MAX_CHARS = 500
+# Longer texts are cut to this before scrubbing (every caller caps far lower).
+SCRUB_MAX = 20_000
 
 _REMOVED = "[removed]"
 # "password: hunter2", "token = abc", "security answer is Rex"
@@ -101,10 +103,12 @@ _CODE = re.compile(
 )
 _EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE = re.compile(
-    r"(?<![\w/])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w/])"
+    # Up to two separators between groups ("555-\n0142": a dash and a break).
+    r"(?<![\w/])(?:\+?\d{1,3}[\s.-]{0,2})?\(?\d{3}\)?"
+    r"[\s.-]{0,2}\d{3}[\s.-]{0,2}\d{4}(?![\w/])"
 )
-_CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
-_SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CARD = re.compile(r"\b(?:\d[\s-]{0,2}){13,19}\b")
+_SSN = re.compile(r"\b\d{3}-\s?\d{2}-\s?\d{4}\b")
 # Keys and session blobs: 32+ hex, or 32+ base64 with upper, lower and digits.
 # No hyphens or underscores, so job slugs ("Senior-Engineer_R0012345") stay.
 _HEX = re.compile(r"(?<![\w-])[0-9a-fA-F]{32,}(?![\w-])")
@@ -144,12 +148,17 @@ def scrub(text: Any, cap: int = MAX_CHARS, lines: bool = False) -> str:
     """Capped, with anything secret-looking removed. One line, or with
     ``lines`` its line breaks kept (at most one blank line in a row), for the
     longer texts of the Bugs & ideas inbox (spec 032)."""
-    raw = str(text or "")
-    if not lines:
-        return _scrub_line(re.sub(r"\s+", " ", raw).strip()[:cap])[:cap]
-    kept = [re.sub(r"[^\S\n]+", " ", ln).strip() for ln in raw.splitlines()]
-    out = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()[:cap]
-    return "\n".join(_scrub_line(ln) for ln in out.split("\n"))[:cap]
+    # Removed first, cut after: a cut never leaves half an email or card.
+    # The whole text is scrubbed at once, so a secret split across a line
+    # break ("password:\nhunter2") is still caught; only absurdly long texts
+    # are bounded first.
+    raw = str(text or "")[:SCRUB_MAX]
+    if lines:
+        kept = [re.sub(r"[^\S\n]+", " ", ln).strip() for ln in raw.splitlines()]
+        flat = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    else:
+        flat = re.sub(r"\s+", " ", raw).strip()
+    return _scrub_line(flat)[:cap].strip()
 
 
 def host_of(url: str | None) -> str | None:

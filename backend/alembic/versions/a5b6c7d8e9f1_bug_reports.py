@@ -300,7 +300,9 @@ def upgrade() -> None:
     )
     op.create_index("ix_bug_reports_status_type", "bug_reports", ["status", "type"])
     op.create_index("ix_bug_reports_section", "bug_reports", ["section"])
-    op.create_index("ix_bug_reports_fingerprint", "bug_reports", ["fingerprint"])
+    op.create_index(
+        "ix_bug_reports_fingerprint", "bug_reports", ["fingerprint"], unique=True
+    )
     op.create_index("ix_bug_reports_last_seen", "bug_reports", ["last_seen"])
 
     op.create_table(
