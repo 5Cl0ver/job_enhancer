@@ -118,3 +118,63 @@ Portland, OR
     job = read(text)["work"][0]
     assert job["location"] == "Portland, OR"
     assert job["description"] == "• Ran the build servers"
+
+
+def test_a_wrapped_sentence_is_never_taken_as_the_next_company():
+    """Review repro: the end of a sentence over "Title  dates" with the company
+    on the line under it."""
+    text = """EXPERIENCE
+Platform Engineer | Northwind Labs | Mar 2020 - Jan 2023
+• Kept every secret in a managed key store, with the audit trail in
+Cloud Logbook.
+Data Analyst Feb 2018 - Dec 2019
+Contoso Retail
+• Built the weekly sales dashboards.
+"""
+    first, second = read(text)["work"]
+    assert first["description"] == (
+        "• Kept every secret in a managed key store, with the audit trail in "
+        "Cloud Logbook."
+    )
+    assert (second["title"], second["company"]) == ("Data Analyst", "Contoso Retail")
+    assert second["description"] == "• Built the weekly sales dashboards."
+
+
+def test_the_title_under_company_and_dates():
+    text = """EXPERIENCE
+Kelso Labs | 2019 - 2021
+Support Engineer
+- Answered 40 tickets a day
+"""
+    [job] = read(text)["work"]
+    assert (job["title"], job["company"]) == ("Support Engineer", "Kelso Labs")
+
+
+def test_a_new_point_after_a_full_line_is_not_glued_on():
+    text = """EXPERIENCE
+Site Reliability Engineer | Tidewell Health | 2021 - 2024
+Ran the on-call rotation and the incident reviews for eight EKS clusters
+Mentored 3 junior engineers
+Cut paging noise by half with better alert rules and runbooks for the team
+"""
+    desc = read(text)["work"][0]["description"]
+    assert desc.split("\n") == [
+        "Ran the on-call rotation and the incident reviews for eight EKS clusters",
+        "Mentored 3 junior engineers",
+        "Cut paging noise by half with better alert rules and runbooks for the team",
+    ]
+
+
+def test_a_company_ending_inc_is_still_taken_as_the_next_jobs_name():
+    text = """EXPERIENCE
+Analyst | Kelso Labs | 2019 - 2021
+- Built reports
+Support Engineer
+Northwind Labs, Inc.
+2021 - 2023
+"""
+    second = read(text)["work"][1]
+    assert (second["title"], second["company"]) == (
+        "Support Engineer",
+        "Northwind Labs, Inc.",
+    )

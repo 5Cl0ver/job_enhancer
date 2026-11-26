@@ -43,9 +43,21 @@ The playbook tells Claude to open apply links in the same tab (read the `href`, 
 
 ### User Story 6 - Learning from Claude's runs (P2)
 
-When the user approves the review (Submit, or "I'll press Submit myself"), each answer Claude wrote (`claude: true`) or picked (`guess: true`) for a box Job Catcher didn't fill is saved to Autofill memory, marked **From Claude**, editable and deletable there. Never learned: passwords and private numbers, self-ID, agreements, essays (essay questions or answers over 300 characters), salary and one company's questions, the user's own details (name, contact, address, links, schools, jobs, dates), any answer the user changed or asked about at a review or that changed between rounds. An answer the user already has is never replaced.
+When the user approves the review (Submit, or "I'll press Submit myself"), each fact Claude wrote (`claude: true`, never a `guess: true` pick) for a box Job Catcher didn't fill is saved to Autofill memory, marked **From Claude**, editable and deletable there. Never learned: passwords and private numbers, self-ID, agreements, essays (essay questions or answers over 300 characters), salary and one company's questions, the user's own details (name, contact, address, links, schools, jobs, dates), any answer the user changed or asked about at a review or that changed between rounds. An answer the user already has is never replaced.
 
 ## Out of scope
 
 - Re-reading master résumés already stored with the old reader (the user can press "Read my résumé" in the app; edited details must never be overwritten).
 - Resolving LinkedIn's hidden apply link inside Job Catcher.
+
+## Review follow-up (same PR)
+
+An independent review found, and this PR now fixes:
+
+1. On a run's pages, Claude's "Save and Continue" made Job Catcher save what Claude typed as the user's own answers (guesses and essays too), so learning never applied. Now nothing typed on a run's site is auto-saved; only the review approval learns.
+2. The reader took a sentence's end ("Application Insights.") as the next company and glued new points onto full-width lines. Old readings never edited by the user are read again once (reader version mark).
+3. Workday could get the résumé twice after re-drawing its card empty.
+4. The step filter could drop boxes Workday re-draws in place; an old report could stand in for a missing one.
+5. "Extension Number" / "Phone Ext. Number" still got the phone; ExtJS ids and "incl. ext." wrongly lost it.
+6. Learning: only `claude: true` facts (never `guess`); Job Catcher's full consent words; no legal/eligibility, relatives, former-employee or company-named questions; lists stored as "A, B"; never re-learn a deleted answer.
+7. Editing a job's résumé no longer wipes details the user edited.

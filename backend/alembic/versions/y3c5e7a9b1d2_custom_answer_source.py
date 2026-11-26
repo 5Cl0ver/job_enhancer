@@ -6,7 +6,10 @@ Create Date: 2026-11-25
 
 - custom_answers.source: where a remembered answer came from. "claude" = an
   answer Claude gave in Apply with Claude that the user approved and sent;
-  null = the user's own (typed, taught or edited). Additive.
+  null = the user's own (typed, taught or edited).
+- users.forgotten_answers: question keys whose answer the user deleted, never
+  learned again from Claude's runs.
+Additive.
 """
 
 import sqlalchemy as sa
@@ -21,8 +24,11 @@ depends_on = None
 
 def upgrade() -> None:
     op.add_column("custom_answers", sa.Column("source", sa.String(20), nullable=True))
+    op.add_column("users", sa.Column("forgotten_answers", sa.JSON(), nullable=True))
 
 
 def downgrade() -> None:
+    with op.batch_alter_table("users") as batch:
+        batch.drop_column("forgotten_answers")
     with op.batch_alter_table("custom_answers") as batch:
         batch.drop_column("source")

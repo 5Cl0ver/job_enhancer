@@ -215,7 +215,8 @@ def _answers(raw: Any, limit: int = MAX_ANSWERS) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         q = _text(item.get("q") or item.get("question"), 300)
-        a = _text(item.get("a") or item.get("answer"), 2000)
+        # A list of choices reads "A, B", never "['A', 'B']" (spec 029).
+        a = _text(apply_learn.answer_text(item.get("a") or item.get("answer")), 2000)
         if not q or SENSITIVE.search(q):
             continue
         row: dict[str, Any] = {"q": q, "a": a}
@@ -1644,6 +1645,11 @@ REASONS = {
         "are kept)"
     ),
     "replaced": "A newer page came first",
+    # Spec 029: never an earlier step's report in its place.
+    "no_report": (
+        "Job Catcher filled but got no fresh reading of this page (it may "
+        "still be loading). Call fill_page again, or fill it yourself"
+    ),
     "error": "Job Catcher hit an error on this page",
 }
 

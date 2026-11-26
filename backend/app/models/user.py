@@ -3,7 +3,7 @@
 import uuid
 from datetime import datetime
 
-from sqlalchemy import Boolean, DateTime, Integer, String, func
+from sqlalchemy import JSON, Boolean, DateTime, Integer, String, func
 from sqlalchemy.dialects.postgresql import UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
@@ -28,6 +28,9 @@ class User(Base):
     # When Job Catcher turned this account's one-site answers into answers for
     # every site (spec 020): once per account, so a deleted one stays deleted.
     learn_promoted_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    # Questions whose remembered answer the user deleted (spec 029): never
+    # learned again from Claude's runs. Question keys, newest last, ≤500.
+    forgotten_answers: Mapped[list | None] = mapped_column(JSON)
     # Apply with Claude pauses at "Review your résumé" after Claude writes it
     # (spec 025). On unless the user turns it off.
     review_resumes: Mapped[bool] = mapped_column(

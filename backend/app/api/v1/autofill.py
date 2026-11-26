@@ -41,6 +41,9 @@ async def get_bundle(
 ) -> dict:
     """Everything autofill needs, or ``{"changed": false}`` when the version
     the extension holds is still current."""
+    # The usual résumé read before 029 and never edited is read again once
+    # (it changes the version, so Job Catcher picks it up).
+    await resume_history.upgrade_active(db, user.id)
     current = await svc.bundle_version(db, user.id, user.email or "")
     if version and version == current:
         return {"changed": False, "version": current}
@@ -350,7 +353,10 @@ async def get_resume_details(
     resume = await _own_resume(db, user, resume_id)
     # A job's résumé that still carries the master's details reads its own
     # (spec 029): Workday's sections fill from THIS résumé.
-    if await apply_resume.refresh_borrowed(db, resume):
+    # Read before 029 and never edited: read again, once (spec 029).
+    if await apply_resume.refresh_borrowed(db, resume) or resume_history.upgrade(
+        resume
+    ):
         await db.commit()
         await db.refresh(resume)
     return _details(resume)
@@ -367,7 +373,12 @@ async def edit_resume_details(
     from datetime import UTC, datetime
 
     resume = await _own_resume(db, user, resume_id)
-    resume.parsed_history = data.model_dump()
+    # Marked as the user's own: no reading ever replaces it (spec 029).
+    resume.parsed_history = {
+        **data.model_dump(),
+        "reader": resume_history.READER_VERSION,
+        "edited": True,
+    }
     resume.parsed_history_at = datetime.now(tz=UTC)
     await db.commit()
     await db.refresh(resume)

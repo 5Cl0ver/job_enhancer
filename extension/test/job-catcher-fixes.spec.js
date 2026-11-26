@@ -74,6 +74,26 @@ describe("Workday's résumé box (bug 2)", () => {
     const res = await writeField(box, [file]);
     expect(res.ok).toBe(true);
     expect(dropped).toBe("alex-rivera.pdf");
+  }, 10_000);
+
+  it("a second press never attaches again once the site re-drew its card (review)", async () => {
+    const doc = parse(`<section><h3>Resume/CV</h3><div data-automation-id="attachments-FileUpload" id="card">
+      <div data-automation-id="file-upload-drop-zone"><button data-automation-id="select-files">Select files</button></div>
+      <input type="file" multiple data-automation-id="file-upload-input-ref"></div></section>`);
+    const s = createSession({ doc, send: async () => ({}), visible: (el) => el.getAttribute("type") !== "file" });
+    const resumeFile = new File(["%PDF"], "alex-rivera.pdf", { type: "application/pdf" });
+    const copy = { values: {}, answers: [], resumeFile };
+    // The page takes it at once and re-draws its card: the file, then an empty box again.
+    doc.querySelector("input").addEventListener("change", () => {
+      doc.querySelector("#card").innerHTML = `<div data-automation-id="file-upload-successful">alex-rivera.pdf</div>
+        <div data-automation-id="file-upload-drop-zone"><button data-automation-id="select-files">Select files</button></div>
+        <input type="file" multiple data-automation-id="file-upload-input-ref">`;
+    });
+    expect(await s.uploadResume(copy)).toBe(true);
+    expect(await s.uploadResume(copy)).toBe(false);
+    await s.fillKnown(copy); // the rest of the press never attaches it either
+    expect(s.report().resume).toBe("attached");
+    expect(doc.querySelector("input").files?.length || 0).toBe(0);
   });
 
   it("a zone that took the file from the box is never dropped on too", async () => {
@@ -107,6 +127,35 @@ describe("the fill report is the step on the page now (bug 3)", () => {
     expect(r.entries).toEqual([]);
     expect(r.need_you.map((n) => n.label)).toEqual(["Years with Intune?"]);
   });
+
+  it("a box the site re-draws in place on the same step stays in the report (review)", async () => {
+    const doc = parse(`<form><label for="fn">First Name</label><input id="fn" autocomplete="given-name">
+      <label for="ln">Last Name</label><input id="ln" autocomplete="family-name"></form>`);
+    const s = createSession({ doc, send: async () => ({}), visible: () => true });
+    await s.fillKnown({ values: { first_name: ["Alex"], last_name: ["Rivera"] }, answers: [], taught: [] });
+    // React swaps the First Name box for a new one, value kept.
+    const again = doc.createElement("input");
+    again.id = "fn";
+    again.setAttribute("autocomplete", "given-name");
+    again.value = "Alex";
+    doc.querySelector("#fn").replaceWith(again);
+    expect(s.report().entries.map((e) => e.label).sort()).toEqual(["First Name", "Last Name"]);
+  });
+
+  it("a new step at the same address starts a new record (review)", async () => {
+    const doc = parse(`<form id="step"><label for="a">First Name</label><input id="a" autocomplete="given-name">
+      <label for="b">Last Name</label><input id="b" autocomplete="family-name">
+      <label for="c">Prefix</label><select id="c"><option value="">Select One</option><option>Dr.</option></select></form>`);
+    const s = createSession({ doc, send: async () => ({}), visible: () => true });
+    await s.fillKnown({ values: { first_name: ["Alex"], last_name: ["Rivera"] }, answers: [], taught: [] });
+    expect(s.report().entries).toHaveLength(2);
+    doc.querySelector("#step").innerHTML = `<label for="d">Years with Intune?</label><input id="d">
+      <label for="e">Can you travel?</label><select id="e"><option value="">Select One</option><option>Yes</option></select>`;
+    await s.fillKnown({ values: {}, answers: [], taught: [] });
+    const r = s.report();
+    expect(r.entries).toEqual([]);
+    expect(r.need_you.map((n) => n.label)).toEqual(["Years with Intune?", "Can you travel?"]);
+  });
 });
 
 describe("the phone never goes in a Phone Extension box (bug 4)", () => {
@@ -117,6 +166,16 @@ describe("the phone never goes in a Phone Extension box (bug 4)", () => {
     expect(profileKeyFor(f("Extension", { type: "tel" }))).toBe(null);
     expect(profileKeyFor(f("Work phone", { autocomplete: "tel-extension" }))).toBe(null);
     expect(isPhoneExtension(f("Phone Ext"))).toBe(true);
+    expect(profileKeyFor(f("Extension Number", { type: "tel" }))).toBe(null);
+    expect(profileKeyFor(f("Phone Ext. Number", { type: "tel" }))).toBe(null);
+    expect(profileKeyFor(f("Phone", { name: "phone_ext" }))).toBe(null);
+  });
+
+  it("an ExtJS id or 'incl. ext.' is still the phone's box (review)", () => {
+    expect(profileKeyFor(f("Phone", { id: "ext-comp-1023" }))).toBe("phone");
+    expect(profileKeyFor(f("Mobile", { id: "ext-gen1234", type: "tel" }))).toBe("phone");
+    expect(profileKeyFor(f("Phone (incl. ext.)"))).toBe("phone");
+    expect(profileKeyFor(f("Phone + ext"))).toBe("phone");
   });
 
   it("the phone number box is still the phone's", () => {

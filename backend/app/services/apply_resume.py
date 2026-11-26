@@ -28,7 +28,7 @@ from app.models.resume import Resume
 from app.models.resume_track import ResumeTrack
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.services import master_profile, resume_reader
+from app.services import master_profile, resume_history, resume_reader
 from app.services.resume_pdf import render_pdf
 
 MODEL = "claude-connector"
@@ -87,7 +87,26 @@ def history_of_document(text: str) -> dict:
         for ln in (text or "").splitlines()
         if not ln.lstrip().startswith(("### ", "> "))
     ]
-    return resume_reader.read(plain("\n".join(lines)))
+    return {
+        **resume_reader.read(plain("\n".join(lines))),
+        "reader": resume_history.READER_VERSION,
+    }
+
+
+def _user_edited(resume: Resume) -> bool:
+    """Did the user change this résumé's details in the app since it was
+    last read? Then no reading replaces them (spec 029)."""
+    ph = resume.parsed_history
+    if not isinstance(ph, dict):
+        return False
+    if resume_history.edited(ph):
+        return True
+    if ph.get("reader"):
+        return False
+    # Before 029: a job's résumé's details stamped after it was made were the
+    # user's edits (Claude's save stamped them with the master's older time).
+    read_at, made_at = _aware(resume.parsed_history_at), _aware(resume.created_at)
+    return read_at is not None and made_at is not None and read_at >= made_at
 
 
 def _fill(resume: Resume, text: str) -> None:
@@ -95,8 +114,9 @@ def _fill(resume: Resume, text: str) -> None:
     resume.file_data = data
     resume.file_size_bytes = len(data)
     resume.extracted_text = plain(text)
-    resume.parsed_history = history_of_document(text)
-    resume.parsed_history_at = datetime.now(tz=UTC)
+    if not _user_edited(resume):
+        resume.parsed_history = history_of_document(text)
+        resume.parsed_history_at = datetime.now(tz=UTC)
 
 
 def _aware(dt: datetime | None) -> datetime | None:
@@ -110,8 +130,11 @@ async def refresh_borrowed(db: AsyncSession, resume: Resume) -> bool:
     stamped with the master's (older) reading time: read them from its own
     document instead. Details the user edited (stamped after the résumé was
     made) are never touched. True when they were read again."""
-    if resume.document_id is None:
+    if resume.document_id is None or _user_edited(resume):
         return False
+    ph = resume.parsed_history
+    if isinstance(ph, dict) and ph.get("reader"):
+        return False  # read from its own document already
     read_at, made_at = _aware(resume.parsed_history_at), _aware(resume.created_at)
     if read_at is not None and (made_at is None or read_at >= made_at):
         return False

@@ -49,30 +49,52 @@
                  <p>Drop file here</p><p>or</p>
                  <button type="button" data-automation-id="select-files" id="pick">Select files</button>
                </div>
-               <input type="file" class="css-hidden-input" data-automation-id="file-upload-input-ref" id="input-3f9a" />
+               <input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="input-3f9a" />
              </div>
            </div>
          </section>
          <label for="why">Why do you want to work at Tidewell Labs?</label>
          <textarea id="why"></textarea>`,
       ];
-      let at = 0;
-      function draw() {
-        step.innerHTML = steps[at];
-        document.getElementById("step-name").textContent = at ? "My Experience" : "My Information";
+      const params = new URLSearchParams(location.search);
+      let at = params.get("step") === "2" ? 1 : 0;
+      // ?change: the box also takes a file set on it (like real Workday's
+      // input); by default only a drop on the zone counts.
+      const takesChange = params.has("change");
+      const uploads = [];
+      // Like a React drop zone: by default a file set on the input alone is
+      // ignored; only a drop on the zone counts. Each upload re-draws the whole
+      // card: the files so far, then a fresh EMPTY zone and input (what made
+      // Job Catcher attach twice).
+      function took(files) {
+        for (const f of files || []) uploads.push(f.name);
+        document.getElementById("got").textContent = uploads.join(", ");
+        const card = document.querySelector("[data-automation-id=attachments-FileUpload]");
+        card.innerHTML =
+          uploads.map((n) => '<div data-automation-id="file-upload-successful">' + n + "</div>").join("") +
+          '<div data-automation-id="file-upload-drop-zone" class="css-zone" id="zone"><p>Drop file here</p>' +
+          '<button type="button" data-automation-id="select-files" id="pick">Select files</button></div>' +
+          '<input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="input-3f9a" />';
+        wireZone();
+      }
+      function wireZone() {
         const zone = document.getElementById("zone");
         if (!zone) return;
-        // Like a React drop zone: a file set on the input alone is ignored;
-        // only a drop on the zone counts.
         zone.addEventListener("dragover", (e) => e.preventDefault());
         zone.addEventListener("drop", (e) => {
           e.preventDefault();
-          const files = [...(e.dataTransfer?.files || [])];
-          document.getElementById("got").textContent = files.map((f) => f.name).join(", ");
+          took(e.dataTransfer?.files);
         });
+        if (takesChange) document.getElementById("input-3f9a").addEventListener("change", (e) => took(e.target.files));
+      }
+      function draw() {
+        step.innerHTML = steps[at];
+        document.getElementById("step-name").textContent = at ? "My Experience" : "My Information";
+        wireZone();
       }
       document.getElementById("next").addEventListener("click", () => {
-        at = Math.min(at + 1, steps.length - 1);
+        if (at === steps.length - 1) return; // the last step stays as it is
+        at += 1;
         draw();
       });
       draw();

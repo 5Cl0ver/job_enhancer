@@ -133,6 +133,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return (await isRunTab(data, tab)) ? data.resume_id : null;
   }
 
+  /** Is this tab on an open run's site (spec 029)? There, what's typed in
+   * the page is never saved as the user's own answers: Claude typed it, and
+   * the app learns only what the user approves at the review. */
+  async function inRun(tab) {
+    const data = await active();
+    return !!data.run_id && !!tab?.url && onRunHost(hostOf(tab.url), data.hosts);
+  }
+
   /** Is this the application's own tab (and still on its site)? */
   async function isRunTab(data, tab) {
     if (!onRunHost(hostOf(tab.url || ""), data.hosts)) return false;
@@ -256,14 +264,16 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
     // Only what this fill reported: a frame that didn't fill now (gone with
     // the last step, or no form in it) never speaks for this page.
-    const now = fresh(session);
-    const frames = now.length ? now : Object.values(session?.frames || {});
+    const frames = fresh(session);
+    // Busy: Keep filling is already filling this step; its report is the answer.
+    const ok = !!out?.ok || !!out?.busy;
+    if (!ok) return { ok: false, reason: out?.problem || "error", filled: [], need: [] };
+    // No report from this fill: say so, never the last step's (spec 029).
+    if (!frames.length) return { ok: false, reason: "no_report", filled: [], need: [] };
     const filled = frames.flatMap((f) => (f.entries || []).map((e) => e.label).filter(Boolean));
     const need = frames.flatMap((f) => (f.need_you || []).map((n) => n.label).filter(Boolean));
     const resume = RESUME_RANK.find((s) => frames.some((f) => f.resume === s)) || null;
-    // Busy: Keep filling is already filling this step; its report is the answer.
-    const ok = !!out?.ok || !!out?.busy;
-    return { ok, reason: ok ? null : out?.problem || "error", filled, need, ...(resume ? { resume } : {}) };
+    return { ok, reason: null, filled, need, ...(resume ? { resume } : {}) };
   }
 
   /** Still the same tab, showing the same page, in the same window? */
@@ -477,5 +487,5 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
   }
 
-  return { tick, event, active, loop, resumeFor };
+  return { tick, event, active, loop, resumeFor, inRun };
 }

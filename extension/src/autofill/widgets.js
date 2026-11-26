@@ -688,19 +688,38 @@ async function writeFile(field, [file]) {
 
 // Workday's own drop zone (spec 029).
 const WORKDAY_DROP = /file-upload-drop-zone/i;
+// A file shown as uploaded in Workday's card.
+const UPLOADED = /file-upload-successful|file-upload-item|delete-file/i;
+
+/** The upload card around a drop zone (Workday's "attachments-FileUpload"),
+ * else the zone's parent. */
+function uploadCard(zone) {
+  for (let n = zone.parentElement, i = 0; n && i < 4; n = n.parentElement, i++) {
+    if (/attachments|fileupload/i.test(n.getAttribute?.("data-automation-id") || "")) return n;
+  }
+  return zone.parentElement || zone;
+}
 
 /**
  * Workday's upload is a React drop zone: when it hasn't taken the file from
  * the box (its name never shows), drop the file on the zone, the way a person
  * dragging it would. Only on Workday's zone, and only once.
  */
-async function dropIfIgnored(field, file, { waitMs = 1500 } = {}) {
+async function dropIfIgnored(field, file, { waitMs = 4000 } = {}) {
   const zone = field.zone;
   if (!zone?.isConnected || !WORKDAY_DROP.test(zone.getAttribute?.("data-automation-id") || "")) return false;
+  // The upload card (Workday's attachments box) as it was: a re-drawn card
+  // means the site took the file.
+  const card = uploadCard(zone);
   const doc = field.el.ownerDocument;
-  const shows = () => (doc.body?.textContent || "").includes(file.name);
-  for (let waited = 0; waited < waitMs && !shows(); waited += 150) await sleep(150);
-  if (shows() || !zone.isConnected) return false;
+  const took = () =>
+    !zone.isConnected ||
+    !card?.isConnected ||
+    [...(card.querySelectorAll?.("[data-automation-id]") || [])].some((n) => UPLOADED.test(n.getAttribute("data-automation-id"))) ||
+    (card.textContent || "").includes(file.name) ||
+    (doc.body?.textContent || "").includes(file.name);
+  for (let waited = 0; waited < waitMs && !took(); waited += 200) await sleep(200);
+  if (took()) return false;
   const W = win(zone);
   const dt = new W.DataTransfer();
   dt.items.add(file);

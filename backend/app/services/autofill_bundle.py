@@ -132,7 +132,17 @@ async def build_bundle(db: AsyncSession, user_id: uuid.UUID, email: str) -> dict
         # Job Catcher already turned this account's one-site answers into
         # answers for every site (spec 020): never again.
         "promoted": promoted_at is not None,
-        "history": (resume.parsed_history or None) if read else None,
+        # (Without the reading's own marks, spec 029.)
+        "history": (
+            {
+                k: v
+                for k, v in (resume.parsed_history or {}).items()
+                if k not in ("reader", "edited")
+            }
+            or None
+        )
+        if read
+        else None,
         "history_pending": resume is not None
         and not read
         and bool(resume.extracted_text),

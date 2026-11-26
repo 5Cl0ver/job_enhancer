@@ -33,3 +33,12 @@ Job Catcher never calls `tabs.create/move/group/ungroup` or `tabGroups` during a
 ## R6 - Learning
 
 Reuses `custom_answers` (spec 018/020) with a new nullable `source` column ("claude"). The key is the extension's `normalizeQuestion`, so Job Catcher finds it by its usual exact/close match. Learning happens in `decide()` for submit/self; the questions the user changed (fix bubbles) are kept across review rounds in `review.changed`. A user save clears `source`.
+
+## R7 - Review follow-up
+
+- **Auto-save during a run**: `answersNoticed` / `profileNoticed` are ignored for a tab on the open run's site (`applyRun.inRun`). Reproduced in the e2e (a Prefix pick saved as `prefix: Dr.` before the fix).
+- **Take-back**: `_takeable` never takes a line that ends a sentence (not "Inc.", "Co."), starts lower-case, or carries on the line above. A job named once on its dates line takes the next short line as its company (or title, by `_looks_like_title`). New points: a capitalised line after a full-width line still starts a point when it opens with a verb of work done; the width rule is 90%.
+- **Old readings**: details now carry `reader: 2` (a reading) or `edited: true` (the user's). Unmarked details whose jobs equal the frozen pre-029 reader's output (`resume_reader_v1.work`) were never edited: their jobs are read again once; any other unmarked details are marked `edited`. Runs on details, work-history and the bundle (before its version check).
+- **Double attach**: the press's general fill also attached the résumé to Workday's re-drawn empty box. Both the upload step and the general fill skip a résumé box while the résumé is up on this page and still shown. Reproduced with `apply-workday-steps.html?step=2&change` (4 copies before, 1 after).
+- **Steps**: a new step = fewer than a third of the last step's question keys remain (never while a pop-up is open or with under 2 keys); a disconnected box is matched again by question key and kind.
+- **Forgotten answers**: `users.forgotten_answers` (JSON list, ≤500, same migration): a delete adds the key, a user save removes it.

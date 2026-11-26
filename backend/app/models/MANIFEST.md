@@ -6,7 +6,7 @@ imports every model so Alembic can discover them.
 | File | Model | Purpose | Depends on |
 |---|---|---|---|
 | `__init__.py` | `Base` | Declarative base + model registry for Alembic | — |
-| `user.py` | `User` | Accounts (Supabase Auth: email/password + OAuth). UUID PK, soft-delete via `deleted_at`, `role` (user/admin), `image`, `follow_up_days`. | — |
+| `user.py` | `User` | Accounts (Supabase Auth: email/password + OAuth). UUID PK, soft-delete via `deleted_at`, `role` (user/admin), `image`, `follow_up_days`; `forgotten_answers` (spec 029: question keys whose answer the user deleted, never learned again from Claude). | — |
 | `job_listing.py` | `JobListing` | **Shared** (not per-user) job pool. Deduped on `content_hash` + fuzzy (`company_normalized`, `title_normalized`). Indexes on `posted_at`, `is_expired`. | — |
 | `collection.py` | `Collection` | User folders for saved jobs. `UNIQUE(user_id, name)`; `is_default` protected; `color`, `sort_order`. | `User` |
 | `pipeline_stage.py` | `PipelineStage` | Kanban columns. `UNIQUE(user_id, name)`; `sort_order`; 8 defaults seeded per user; `is_default` blocks deletion. | `User` |

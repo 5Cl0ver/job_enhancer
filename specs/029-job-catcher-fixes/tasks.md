@@ -44,3 +44,14 @@
 
 - [X] T019 Job Catcher 0.43.0 (extension/manifest.json) + extension/release-notices.txt
 - [X] T020 MANIFEST files (extension, backend app, services)
+
+## Review follow-up
+
+- [X] T021 No auto-save of typed answers or profile on a run's site (`applyRun.inRun`, background handlers); e2e in extension/e2e/apply.spec.js
+- [X] T022 Reader take-back and new-point rules, company on the next line; tests in backend/tests/services/test_resume_reader_wraps.py
+- [X] T023 `reader` / `edited` marks, `resume_reader_v1`, `resume_history.upgrade`; tests in backend/tests/api/test_resume_details.py
+- [X] T024 No second résumé copy (upload step + general fill), drop waits ~4 s and checks the card; lab `?step=2&change`; unit + e2e tests
+- [X] T025 New-step detection and re-found boxes in session.js; `no_report` in applyRun.js and the server's words; tests
+- [X] T026 Phone Extension rule (name/id suffix, label word, "incl. ext"); tests
+- [X] T027 Learning: `claude` only, CONSENT, legal/eligibility, relatives, company name, list answers, `forgotten_answers`; tests in backend/tests/test_apply_learn.py
+- [X] T028 `rerender` / `_fill` keep details the user edited; tests

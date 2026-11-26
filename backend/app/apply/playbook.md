@@ -100,7 +100,7 @@ Fill every box yourself and keep going. The user follows along in the app (they 
   2. Check every box it filled. Fill everything that's left yourself, as above.
   3. Call `page_done(page_url, page_title, answers)` BEFORE you press Next or Continue.
      - `answers` lists every question on the page and what's in it, as `{q, a}`.
-     - Mark what you wrote with `claude: true`, your picks with `guess: true`, and ticked agreements with `agreement: true`. Mark them honestly: once the user approves the review, Job Catcher learns your everyday answers (never self-ID, pay, agreements, essays or anything they changed) and fills them itself next time.
+     - Mark what you wrote with `claude: true`, your picks with `guess: true`, and ticked agreements with `agreement: true`. Mark them honestly: once the user approves the review, Job Catcher learns the everyday facts you wrote (`claude: true`; never your `guess: true` picks, self-ID, pay, legal or eligibility questions, agreements, essays or anything they changed) and fills them itself next time. A pick is `guess: true` even when you also wrote it.
      - Job Catcher takes photos of the whole page. Wait for the tool to return before you move on: it scrolls the page.
   4. Post one line with `message_user` ("Page 2 of 4 done: My Experience"), then press Next or Continue.
 

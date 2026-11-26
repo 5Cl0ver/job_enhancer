@@ -23,7 +23,7 @@ from sqlalchemy.orm import defer
 
 from app.database import AsyncSessionLocal
 from app.models.resume import Resume
-from app.services import resume_reader
+from app.services import resume_reader, resume_reader_v1
 
 logger = logging.getLogger(__name__)
 
@@ -43,15 +43,64 @@ async def read_resume(resume: Resume) -> dict:
     caller commits). The reader runs in a worker thread so it never holds up
     the server; a résumé with no text is settled as empty, never re-read."""
     text = resume.extracted_text or ""
-    history = await asyncio.to_thread(resume_reader.read, text)
+    history = {
+        **await asyncio.to_thread(resume_reader.read, text),
+        "reader": READER_VERSION,
+    }
     resume.parsed_history = history
     resume.parsed_history_at = datetime.now(tz=UTC)
     return history
 
 
+# Spec 029: details carry who made them. "reader" = the reader's version that
+# read them; "edited" = the user changed them in the app (never replaced by a
+# reading). Details stored before 029 carry neither.
+READER_VERSION = 2
+
+
+def edited(history: object) -> bool:
+    return isinstance(history, dict) and history.get("edited") is True
+
+
+def upgrade(resume: Resume) -> bool:
+    """Details read before spec 029 by the old reader (broken PDF lines,
+    sentences cut) are read again, once: only when the stored jobs are exactly
+    what the old reader made, so jobs the user edited are never replaced.
+    Either way they're marked, so this happens once. True when changed."""
+    stored = resume.parsed_history
+    if not isinstance(stored, dict) or resume.parsed_history_at is None:
+        return False
+    if stored.get("reader") or edited(stored) or resume.document_id is not None:
+        return False
+    text = resume.extracted_text or ""
+    if text.strip() and stored.get("work") == resume_reader_v1.work(text):
+        work = resume_reader.read(text)["work"]
+        resume.parsed_history = {**stored, "work": work, "reader": READER_VERSION}
+        resume.parsed_history_at = datetime.now(tz=UTC)  # Job Catcher refreshes
+    else:
+        # The user's own (or an older AI reading): never touched again.
+        resume.parsed_history = {**stored, "reader": READER_VERSION, "edited": True}
+    return True
+
+
+async def upgrade_active(db: AsyncSession, user_id: uuid.UUID) -> None:
+    """``upgrade`` for the user's usual résumé (Job Catcher's bundle)."""
+    resume = await db.scalar(
+        select(Resume)
+        .options(defer(Resume.file_data))
+        .where(Resume.user_id == user_id, Resume.is_active.is_(True))
+        .order_by(Resume.created_at.desc())
+        .limit(1)
+    )
+    if resume is not None and upgrade(resume):
+        await db.commit()
+
+
 async def history_of(db: AsyncSession, resume: Resume) -> dict:
     """The stored reading, reading it now if it's missing."""
     if resume.parsed_history_at is not None and resume.parsed_history is not None:
+        if upgrade(resume):  # read before 029 and never edited: read again
+            await db.commit()
         return resume.parsed_history
     history = await read_resume(resume)
     await db.commit()

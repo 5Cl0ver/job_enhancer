@@ -215,8 +215,54 @@ export function createSession(deps) {
     const near = inside ? everything.filter((f) => within(inside, f.el)) : [];
     if (near.length) everything = near;
     fields = new Map(list.map((f) => [f.id, f]));
+    if (!inside) syncStep(all);
     return list;
   };
+
+  /** The questions of the step on show: a one-address application (Workday)
+   * moving to its next step starts a new record (spec 029). A pop-up over the
+   * step, a step still loading, or rows added to it are the same step. */
+  let stepKeys = new Set();
+  function syncStep(list) {
+    const now = new Set(list.map((f) => f.key).filter(Boolean));
+    if (now.size < 2) return;
+    if (stepKeys.size >= 2) {
+      let same = 0;
+      for (const k of stepKeys) if (now.has(k)) same++;
+      if (same / stepKeys.size < 0.34) {
+        filled.clear();
+        needYou.clear();
+        suggestions.clear();
+      }
+    }
+    stepKeys = now;
+  }
+
+  /**
+   * The records whose box is on the page now. A box the site re-drew in place
+   * (a new element for the same question, same step) is found again by its
+   * question and kept; one hidden for now (a pop-up over it) is kept but not
+   * listed; one gone with its step isn't listed.
+   */
+  function current(map) {
+    const gone = (x) => !onPage(x.field) && !x.field.el?.isConnected;
+    if ([...filled.values(), ...needYou.values(), ...suggestions.values()].some(gone)) scan();
+    const taken = new Set([...map.values()].filter((x) => onPage(x.field)).map((x) => x.field.el));
+    const out = [];
+    for (const x of map.values()) {
+      if (onPage(x.field)) {
+        out.push(x);
+        continue;
+      }
+      if (!gone(x)) continue;
+      const again = [...fields.values()].find((f) => f.key && f.key === x.field.key && f.kind === x.field.kind && !taken.has(f.el) && onPage(f));
+      if (!again) continue;
+      taken.add(again.el);
+      x.field = again;
+      out.push(x);
+    }
+    return out;
+  }
 
   const appCheck = {
     isIdentity: (f) => IDENTITY.has(profileKeyFor(f) || "") || (f.kind === "file" && isResumeUpload(f)),
@@ -340,6 +386,9 @@ export function createSession(deps) {
       // (Only on a press: on a step filled by itself, a filled box stays as it is.)
       if (prefilled && (auto || !part || taught.has(field.id) || userEdited(field.el))) continue;
       if (field.kind === "file" && (field.el.files?.length || skipFiles)) continue;
+      // The résumé is already up on this page (the site re-drew its box
+      // empty): never a second copy (spec 029).
+      if (field.kind === "file" && resumeShown() && isResumeUpload(field)) continue;
       const entry = section === "education" ? copy.history?.education?.[block] : copy.history?.work?.[block];
       const d = taught.has(field.id)
         ? taughtDecision(field, taught.get(field.id), copy)
@@ -372,6 +421,12 @@ export function createSession(deps) {
     return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)), seen: list.length };
   }
 
+  /** Did the résumé go up on this page, and does the page still show it? */
+  function resumeShown() {
+    const here = doc.location?.href || "";
+    return attachedOn === here && !!attachedName && (doc.body?.textContent || "").includes(attachedName);
+  }
+
   /**
    * Upload the résumé before anything else: many applicant systems read it
    * and rewrite the form (spec 016, research R7). True when one was uploaded.
@@ -382,8 +437,10 @@ export function createSession(deps) {
     const here = doc.location?.href || "";
     // What happened to the résumé on this page, for Apply with Claude (spec 026).
     const state = (s) => ((resumeState = s), false);
-    const shows = () => !!attachedName && (doc.body?.textContent || "").includes(attachedName);
-    if (!boxes.length) return state(attachedOn === here && shows() ? "attached" : "no_box");
+    // Already up on this page and still shown: never again, even when the
+    // site re-draws its upload box empty afterwards (Workday, spec 029).
+    if (resumeShown()) return state("attached");
+    if (!boxes.length) return state("no_box");
     if (boxes.some((f) => f.el.files?.length || filled.has(f.id))) return state("attached");
     if (!copy.resumeFile) return state("no_file");
     let tried = false;
@@ -452,9 +509,13 @@ export function createSession(deps) {
     return {
       url: doc.location?.href || "",
       resume: resumeState,
-      entries: [...filled.values()].filter((x) => onPage(x.field)).map((x) => x.entry),
-      need_you: [...needYou.values()].filter((x) => onPage(x.field) && !hasValue(x.field) && !suggestions.has(x.field.id)).map((x) => x.item),
-      suggestions: [...suggestions.values()].filter((x) => onPage(x.field) && !hasValue(x.field)).map((x) => x.item),
+      entries: current(filled).map((x) => x.entry),
+      need_you: current(needYou)
+        .filter((x) => !hasValue(x.field) && !suggestions.has(x.field.id))
+        .map((x) => x.item),
+      suggestions: current(suggestions)
+        .filter((x) => !hasValue(x.field))
+        .map((x) => x.item),
     };
   }
 
