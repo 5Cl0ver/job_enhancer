@@ -24,6 +24,49 @@ export interface ApplyQuestion {
   answer: string | null;
   skipped: boolean;
   source?: "app" | "chat" | null;
+  /** Claude's best guess, filled in for the user to check (spec 030). */
+  guess?: string | null;
+  /** Up to 4 quick answers. */
+  choices?: string[];
+  /** A fact only the user knows (experience, degrees…): highlighted. */
+  only_you?: boolean;
+  /** Which checklist it came in; the newest is the one on screen. */
+  batch?: number;
+  /** The user left Claude's guess as it was: used, not kept as told. */
+  guessed?: boolean;
+}
+
+/** Something that went wrong, as Claude reported it (spec 030): a bug
+ * report, with its context. */
+export interface ApplyProblem {
+  id: string;
+  at: string;
+  kind: "fill" | "job_catcher" | "tab" | "resume" | "site" | "other";
+  what: string;
+  page: string | null;
+  count: number;
+  status?: "open" | "fixed" | "ignored";
+  site?: string | null;
+  run_id?: string;
+  job?: string;
+  job_catcher?: string | null;
+  playbook?: string | null;
+}
+
+export const PROBLEM_KIND: Record<ApplyProblem["kind"], string> = {
+  job_catcher: "Job Catcher",
+  resume: "Résumé",
+  tab: "Lost tab",
+  site: "Site",
+  fill: "A box it couldn't fill",
+  other: "Other",
+};
+
+/** The questions of Claude's newest checklist: the ones on screen. */
+export function openBatch(questions: ApplyQuestion[]): ApplyQuestion[] {
+  if (!questions.length) return [];
+  const last = Math.max(...questions.map((q) => q.batch ?? 1));
+  return questions.filter((q) => (q.batch ?? 1) === last);
 }
 
 export interface PageAnswer {
@@ -79,8 +122,19 @@ export interface ApplyReview {
   pressed_at?: string | null;
   /** Job Catcher saw the confirmation page (spec 023). */
   confirmed?: { words: string; at: string } | null;
-  /** The answer bubbles the user changed or asked about (spec 026). */
-  fixes?: Fix[];
+  /** The answer bubbles the user changed or asked about (spec 026), as
+   * stored: the page's text apart from the user's words (spec 030). */
+  fixes?: ReviewFix[];
+}
+
+/** A sent fix as the server keeps it: the question and value are the
+ * page's (from the run's own pages); only `to` / `ask` are the user's. */
+export interface ReviewFix {
+  page: number;
+  box_on_page: string;
+  now_on_page: string;
+  to?: string;
+  ask?: string;
 }
 
 /** One answer bubble the user changed ("to") or asked Claude about ("ask"). */
@@ -117,6 +171,8 @@ export interface ApplyMessage {
   text: string;
   at: string;
   read: boolean;
+  /** A box changed while Claude fills (spec 030); its label is the page's. */
+  fix?: { box_on_page: string; now_on_page: string; to?: string; ask?: string };
 }
 
 export interface JobCatcherStatus {
@@ -174,6 +230,8 @@ export interface ApplyRun extends ApplyRunShort {
   live?: LiveFill | null;
   /** The run's résumé, for Download (spec 026). */
   resume_file?: { id: string; filename: string } | null;
+  /** What went wrong, as Claude reported it (spec 030). */
+  problems?: ApplyProblem[];
 }
 
 export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";
@@ -212,7 +270,8 @@ export function currentStep(run: ApplyRun): StepKey {
     case "reading":
       return "start";
     case "questions":
-      return "questions";
+      // A checklist while filling is still the application (spec 030).
+      return run.resume_id || run.pages.length ? "application" : "questions";
     case "writing":
     case "resume_review":
       return "resume";

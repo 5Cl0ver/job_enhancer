@@ -101,7 +101,11 @@ function useRunAction<T>(path: (vars: T) => string, body: (vars: T) => unknown =
 }
 
 export const useAnswerQuestions = () =>
-  useRunAction<{ runId: string; answers: { id: string; answer?: string; skipped?: boolean }[]; done: boolean }>(
+  useRunAction<{
+    runId: string;
+    answers: { id: string; answer?: string; skipped?: boolean; guessed?: boolean }[];
+    done: boolean;
+  }>(
     (v) => `/v1/apply/runs/${v.runId}/answers`,
     (v) => ({ answers: v.answers, done: v.done }),
   );
@@ -111,6 +115,13 @@ export const useHelpDone = () =>
   useRunAction<{ runId: string; reply?: string }>(
     (v) => `/v1/apply/runs/${v.runId}/help-done`,
     (v) => ({ reply: v.reply ?? null }),
+  );
+
+/** Change a box while Claude fills, or ask Claude about it (spec 030). */
+export const useLiveFix = () =>
+  useRunAction<{ runId: string; q: string; a: string; to?: string; ask?: string }>(
+    (v) => `/v1/apply/runs/${v.runId}/live-fix`,
+    (v) => ({ q: v.q, a: v.a.slice(0, 300), ...(v.to ? { to: v.to } : {}), ...(v.ask ? { ask: v.ask } : {}) }),
   );
 
 /** Write to Claude: it gets it on its next connector call. */

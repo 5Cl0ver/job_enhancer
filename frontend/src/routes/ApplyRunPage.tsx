@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 import { ApplySteps } from "@/components/apply/ApplySteps";
 import { Pages } from "@/components/apply/Pages";
+import { Problems } from "@/components/apply/Problems";
 import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
 import { ResumeReview } from "@/components/apply/ResumeReview";
@@ -195,7 +196,7 @@ export function ApplyRunPage() {
 
       {/* Claude's open questions are what it's waiting for: first. */}
       {asking && (
-        <Card title="Questions" tone="you">
+        <Card title="Claude's questions" tone="you">
           <Questions run={run} />
         </Card>
       )}
@@ -236,6 +237,7 @@ export function ApplyRunPage() {
 
       <SentCard run={run} />
 
+      <Problems problems={run.problems} />
       <Activity run={run} />
     </div>
   );

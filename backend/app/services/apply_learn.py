@@ -154,19 +154,32 @@ def _never(question: str, answer: str, company: str) -> bool:
     )
 
 
-def changed_questions(review: dict | None) -> set[str]:
-    """Questions the user changed or asked about at any review so far."""
+def fix_question(fix: Any) -> str:
+    """The question a fix is about: `box_on_page` since spec 030 (the page's
+    text, kept apart from the user's words), `q` before it."""
+    if not isinstance(fix, dict):
+        return ""
+    return str(fix.get("box_on_page") or fix.get("q") or "").strip()
+
+
+def changed_questions(
+    review: dict | None, messages: list[dict[str, Any]] | None = None
+) -> set[str]:
+    """Questions the user changed or asked about at any review so far, and
+    boxes they changed or asked about while Claude filled (spec 030)."""
     out = set((review or {}).get("changed") or [])
-    for fix in (review or {}).get("fixes") or []:
-        if isinstance(fix, dict) and fix.get("q"):
-            out.add(normalize(fix["q"]))
+    fixes = [*((review or {}).get("fixes") or [])]
+    fixes += [m.get("fix") for m in messages or [] if isinstance(m, dict)]
+    for fix in fixes:
+        if q := fix_question(fix):
+            out.add(normalize(q))
     return out
 
 
 def candidates(run: ApplyRun, company: str = "") -> list[tuple[str, str]]:
     """(question, answer) pairs from Claude's pages that are safe to learn."""
     company = normalize(company)
-    changed = changed_questions(run.review)
+    changed = changed_questions(run.review, run.messages)
     seen: dict[str, tuple[str, str]] = {}
     given: dict[str, set[str]] = {}  # every answer each question got, any round
     for page in run.pages or []:
@@ -272,5 +285,5 @@ def note_changes(review: dict[str, Any], fixes: list[dict[str, Any]]) -> list[st
     """The review's running list of questions the user changed or asked about,
     kept across rounds (each new review starts fresh otherwise)."""
     keep = set(review.get("changed") or [])
-    keep |= {normalize(f["q"]) for f in fixes if f.get("q")}
+    keep |= {normalize(q) for f in fixes if (q := fix_question(f))}
     return sorted(keep)[:200]

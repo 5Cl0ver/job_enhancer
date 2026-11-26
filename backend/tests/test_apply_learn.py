@@ -95,7 +95,9 @@ async def test_approved_answers_are_learned_from_claude(engine, monkeypatch):
     await mcp_mod.ready_for_review(rid, PAGE + "/review", "Review", [])
 
     # The user changes an answer at the review: nothing is learned yet.
-    fixes = [{"q": "Are you willing to travel up to 25%?", "a": "Yes", "to": "No"}]
+    fixes = [
+        {"page": 1, "q": "Are you willing to travel up to 25%?", "a": "Yes", "to": "No"}
+    ]
     await _decide(maker, user, run_id, "fix", fixes=fixes)
     assert set(await _memory(maker, user)) == {"are you 18 years of age or older"}
 
@@ -160,6 +162,55 @@ async def test_pressing_submit_yourself_counts_as_approval(engine, monkeypatch):
     memory = await _memory(maker, user)
     assert set(memory) == {"are you able to lift 25 lbs"}  # never a guess
     assert memory["are you able to lift 25 lbs"].source == "claude"
+
+
+def test_answers_changed_or_questioned_are_never_learned():
+    """Spec 030's fix shape: the question is `box_on_page`. Changed (`to`) or
+    questioned (`ask`) at the review, or while Claude filled: never learned."""
+    fixes = [
+        {
+            "page": 1,
+            "box_on_page": "Willing to travel?",
+            "now_on_page": "Yes",
+            "to": "No",
+        },
+        {
+            "page": 1,
+            "box_on_page": "Years with Jamf?",
+            "now_on_page": "3",
+            "ask": "Sure?",
+        },
+    ]
+    changed = apply_learn.note_changes({"changed": ["older one"]}, fixes)
+    assert changed == ["older one", "willing to travel", "years with jamf"]
+    run = ApplyRun(
+        id=uuid.uuid4(),
+        user_id=uuid.uuid4(),
+        review={"changed": changed, "fixes": fixes},
+        messages=[
+            {
+                "by": "you",
+                "text": "Change it to “Days”.",
+                "fix": {"box_on_page": "Preferred shift times", "to": "Days"},
+            },
+            {"by": "you", "text": "Hello"},
+        ],
+        pages=[
+            {
+                "answers": [
+                    {"q": "Willing to travel?", "a": "No", "claude": True},
+                    {"q": "Years with Jamf?", "a": "3", "claude": True},
+                    {"q": "Preferred shift times", "a": "Days", "claude": True},
+                    {"q": "Can you work weekends?", "a": "Yes", "claude": True},
+                ]
+            }
+        ],
+    )
+    assert apply_learn.candidates(run) == [("Can you work weekends?", "Yes")]
+    # Fixes from before spec 030 (`q`) still count.
+    assert apply_learn.changed_questions({"fixes": [{"q": "Old box?", "to": "x"}]}) == {
+        "old box"
+    }
 
 
 def test_an_answer_that_changed_between_rounds_is_never_learned():

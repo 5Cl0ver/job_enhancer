@@ -224,6 +224,9 @@ export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
                   m.by === "you" ? "bg-primary text-primary-foreground" : "bg-muted",
                 )}
               >
+                {m.fix && (
+                  <p className="truncate text-xs text-primary-foreground/80">{m.fix.box_on_page}</p>
+                )}
                 <p className="whitespace-pre-wrap break-words">{m.text}</p>
                 <p className={cn("mt-0.5 text-[11px]", m.by === "you" ? "text-primary-foreground/80" : "text-muted-foreground")}>
                   {m.by === "you" ? "You" : "Claude"} · {time(m.at)}

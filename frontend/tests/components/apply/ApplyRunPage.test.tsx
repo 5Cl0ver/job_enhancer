@@ -91,29 +91,37 @@ describe("the application page", () => {
     expect(screen.getByRole("link", { name: /Back to the job/ })).toHaveAttribute("href", "/jobs/l1");
   });
 
-  it("answers Claude's questions with Yes/No and details", async () => {
+  it("answers Claude's checklist with quick answers (spec 030)", async () => {
     serve({
       ...RUN,
       status: "questions",
       questions_open: 2,
       questions: [
-        { id: "q1", question: "Have you used Okta?", why: "Okta experience", answer: null, skipped: false },
+        {
+          id: "q1",
+          question: "Have you used Okta?",
+          why: "Okta experience",
+          answer: null,
+          skipped: false,
+          choices: ["Yes", "No"],
+          only_you: true,
+        },
         { id: "q2", question: "Have you used Jamf?", why: null, answer: null, skipped: false },
       ],
     });
     post.mockResolvedValue({ ...RUN, status: "writing" });
     renderPage();
-    await screen.findByText("1. Have you used Okta?");
+    await screen.findByText("Have you used Okta?");
     // What Claude waits for comes first: before the chat, and no empty screen card.
     const headings = screen.getAllByRole("heading").map((h) => h.textContent);
-    expect(headings.indexOf("Questions")).toBeLessThan(headings.indexOf("Talk to Claude"));
+    expect(headings.indexOf("Claude's questions")).toBeLessThan(headings.indexOf("Talk to Claude"));
     expect(headings).not.toContain("The screen");
     expect(screen.getByText("The listing says: “Okta experience”")).toBeInTheDocument();
-    const [yes] = screen.getAllByRole("button", { name: "Yes" });
-    await userEvent.click(yes);
-    await userEvent.type(screen.getByLabelText("Details for: Have you used Okta?"), "SSO for 40 apps");
-    await userEvent.click(screen.getAllByRole("button", { name: "Skip" })[1]);
-    await userEvent.click(screen.getByRole("button", { name: "Done, make my résumé" }));
+    await userEvent.click(screen.getByRole("button", { name: "Yes" }));
+    const box = screen.getByRole("textbox", { name: "Have you used Okta?" });
+    await userEvent.type(box, ". SSO for 40 apps");
+    expect(screen.getByText("1 left empty: Claude skips it.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Looks good, go" }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/answers", {
         done: true,
@@ -292,9 +300,9 @@ describe("after the review fixes", () => {
     });
     post.mockResolvedValue({ ...RUN, status: "writing" });
     renderPage();
-    expect(await screen.findByDisplayValue("Never used it")).toBeInTheDocument();
-    expect(screen.getByText("1 unanswered will be skipped.")).toBeInTheDocument();
-    await userEvent.click(screen.getByRole("button", { name: "Done, make my résumé" }));
+    expect(await screen.findByDisplayValue("No. Never used it")).toBeInTheDocument();
+    expect(screen.getByText("1 left empty: Claude skips it.")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Looks good, go" }));
     await waitFor(() =>
       expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/answers", { done: true, answers: [{ id: "q2", skipped: true }] }),
     );

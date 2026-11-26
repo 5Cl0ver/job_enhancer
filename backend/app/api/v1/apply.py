@@ -28,6 +28,7 @@ from app.schemas.apply import (
     FactIn,
     FactOut,
     HelpDoneIn,
+    LiveFixIn,
     LiveIn,
     MessageIn,
     RequestResult,
@@ -214,6 +215,23 @@ async def message(
     await _run(db, user, run_id)
     try:
         run = await svc.post_message(db, user.id, run_id, data.text)
+    except ValueError as exc:
+        raise _bad(exc) from exc
+    await db.commit()
+    return await svc.view(db, run)
+
+
+@router.post("/runs/{run_id}/live-fix")
+async def live_fix(
+    run_id: uuid.UUID,
+    data: LiveFixIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """Change a box while Claude fills, or ask Claude about it (spec 030)."""
+    await _run(db, user, run_id)
+    try:
+        run = await svc.live_fix(db, user.id, run_id, data.model_dump())
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()

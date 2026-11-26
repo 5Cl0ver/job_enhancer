@@ -12,7 +12,7 @@ optimistic updates where useful.
 | `useTracker.ts` | `usePipelineStages`, `useKanbanJobs`, `useMoveJobStage`, `useCreateStage`, `useDeleteStage` | `/v1/pipeline-stages` |
 | `useSavedSearches.ts` | `useSavedSearches`, `useCreateSavedSearch`, `useDeleteSavedSearch`, `useNewMatches`, `useMarkMatchesSeen` | `/v1/saved-searches` |
 | `useAnalytics.ts` | `useAnalyticsSummary` | `GET /v1/analytics/summary` |
-| `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers` | `/v1/admin/*` |
+| `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers`, `useApplyProblems`, `useSetProblemStatus` (bug reports, spec 030) | `/v1/admin/*` |
 | `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useJobDocuments`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |
 | `useAttention.ts` | `useAttention` (counts for the nav badges; refreshed each minute and after any email action) | `GET /v1/attention` |
@@ -24,7 +24,7 @@ optimistic updates where useful.
 | `useOnboarding.ts` | `useOnboarding(pollMs?)`, `useUpdateOnboarding` (spec 019 part B: Welcome progress and the Getting started ticks) | `/v1/onboarding` |
 | `useResumeDetails.ts` | `useResumeDetails`, `useSaveResumeDetails`, `useReadResume`, `useSetJobResume` (spec 020: each résumé's jobs, schools, skills, read without AI; the résumé for one saved job) | `/v1/autofill/resumes/{id}/*`, `PUT /v1/saved-jobs/{id}/resume` |
 | `useSkippedSites.ts` | `useSkippedSites`, `useSiteSuggestions`, `useAddSkippedSite` (409 → `NeedsConfirm` with the reason), `useRemoveSkippedSite`; `siteOf` / `onSite` (spec 024) | `/v1/skipped-sites` |
-| `useApply.ts` | Apply with Claude (spec 022): `useApplyRun` (live every 3 s while open), `useOpenApply` (banner), `useJobApplyRuns`, `useStartApply` (409 → `BusyError`), answers / help-done / decision / sent / stop, facts, master / delete résumé, `usePhoto` (authed blob URL) |
+| `useApply.ts` | Apply with Claude (spec 022): `useApplyRun` (live every 3 s while open), `useOpenApply` (banner), `useJobApplyRuns`, `useStartApply` (409 → `BusyError`), answers / help-done / decision / sent / stop, `useLiveFix` (change a box while Claude fills, spec 030), facts, master / delete résumé, `usePhoto` (authed blob URL) |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every
 request flows through `lib/api.ts` (which attaches the Supabase Bearer token).
