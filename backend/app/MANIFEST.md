@@ -11,7 +11,8 @@ lifecycle.
 ## Top-level files
 | File | Purpose |
 |---|---|
-| `main.py` | Builds the FastAPI app: CORS, rate limiting, exception handlers, mounts the `/v1` routers, and starts the APScheduler background jobs (in the lifespan) |
+| `main.py` | Builds the FastAPI app: CORS, rate limiting, exception handlers (the last-resort 500 handler also keeps the error in Bugs & ideas, spec 032, and can never raise or loop), mounts the `/v1` routers, `/health` (`{status, version}`), and starts the APScheduler background jobs (in the lifespan; `health_watch` every 15 min) |
+| `version.py` | `api_version()`: the deployed commit (Render's `RENDER_GIT_COMMIT`, 7 characters) or `dev`; on `/health` and every caught report |
 | `config.py` | Settings loaded from `.env` (Pydantic `BaseSettings`): `DATABASE_URL`, `SUPABASE_URL`, external API keys, CORS origins, `ADMIN_EMAIL` |
 | `database.py` | Async SQLAlchemy engine + session factory; `get_db` dependency (Supabase Postgres, SSL, pooler-safe) |
 | `__init__.py` | Package marker |

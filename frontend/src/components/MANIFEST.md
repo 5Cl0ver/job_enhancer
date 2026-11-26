@@ -141,7 +141,10 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `BugStatusMenu.tsx` | Any status; Fixed asks "Fixed in which version?" |
 | `BugNotes.tsx` · `BugLinks.tsx` · `BugHistory.tsx` | Dated notes; related reports both ways; every change in plain words (who, when), Split back on a merge |
 | `BulkBar.tsx` | Several at once: status, section, copy |
-| `AddBugSheet.tsx` | `AddBugButton` (sidebar row / phone top-bar icon, owner only) and its sheet: `BugForm`, the section guessed from the page, page/device/browser/theme/Job Catcher filled in and shown, keeps what was typed until saved |
+| `AddBugSheet.tsx` | `AddBugButton` (sidebar row / phone top-bar icon, owner only) and its sheet: `BugForm`, the section guessed from the page, page/device/browser/theme/Job Catcher filled in and shown, keeps what was typed until saved. Part B: up to 3 screenshots (`ShotPicker`), sent after the report is saved (a failed one says so, with Try again; the report stays), the app version in the context, and "Looks like…" after saving (Same problem merges; It's new) |
+| `ShotPicker.tsx` | "Add a screenshot": a file, or on a phone a photo or the library; shrunk (`lib/shrinkImage`), previews, remove, at most 3 |
+| `BugShots.tsx` | A report's screenshots in its detail: thumbnails (fetched with the sign-in), tap for the whole picture, delete (confirm) |
+| `CrashScreen.tsx` | The router's `errorElement` (spec 032): "Something went wrong", Reload, Go home, for everyone; reports the crash (`lib/catchErrors`) unless it's a not-found |
 | `BugForm.tsx` · `ReportPicker.tsx` · `CopyForClaude.tsx` | The one format (add and edit), `Segmented`; pick another report by search; `useCopy` + `ManualCopy` when the clipboard is blocked |
 
 ## `admin/`

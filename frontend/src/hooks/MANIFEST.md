@@ -13,7 +13,7 @@ optimistic updates where useful.
 | `useSavedSearches.ts` | `useSavedSearches`, `useCreateSavedSearch`, `useDeleteSavedSearch`, `useNewMatches`, `useMarkMatchesSeen` | `/v1/saved-searches` |
 | `useAnalytics.ts` | `useAnalyticsSummary` | `GET /v1/analytics/summary` |
 | `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers`, `useUpdateUserRole`, `useRemoveUser`, `useAllowances`, `useSaveAllowances` | `/v1/admin/*` |
-| `useBugReports.ts` | Bugs & ideas (spec 032): `useBugList` (paged, 100 at a time, for Show more), `useBugDetail`, `useAddBug`, `useUpdateBug`, `useBulkBugs`, `useDeleteBug`, `useAddBugNote`, `useLinkBug`, `useUnlinkBug`, `useMergeBug`, `useSplitBug` (each change refreshes the lists and the Admin badge) | `/v1/admin/bugs*` |
+| `useBugReports.ts` | Bugs & ideas (spec 032): `useBugList` (paged, 100 at a time, for Show more), `useBugDetail`, `useAddBug`, `useUpdateBug`, `useBulkBugs`, `useDeleteBug`, `useAddBugNote`, `useLinkBug`, `useUnlinkBug`, `useMergeBug`, `useSplitBug` (each change refreshes the lists and the Admin badge) | `/v1/admin/bugs*`; part B: `useAddBug` answers with `similar`, `useUploadShot`, `useDeleteShot`, `useShotUrl` (a screenshot fetched with the sign-in, shown from memory) |
 | `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useJobDocuments`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
 | `useCoverLetters.ts` | `useCoverLetters`, `useSetJobCoverLetter` (spec 031) | `GET /v1/ai/cover-letters`, `PUT /v1/saved-jobs/{id}/cover-letter` |
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |

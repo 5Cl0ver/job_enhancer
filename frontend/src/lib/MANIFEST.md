@@ -4,7 +4,7 @@ Shared utilities and external-service clients.
 
 | File | Purpose |
 |---|---|
-| `api.ts` | Typed fetch wrapper for the FastAPI `/v1` API. Attaches the Supabase access token as `Authorization: Bearer`, throws `ApiError` on non-2xx, redirects to `/login` on 401, handles 204. Exports `api.{get,post,patch,delete}`, `getAccessToken`, `API_BASE`. |
+| `api.ts` | Typed fetch wrapper for the FastAPI `/v1` API. Attaches the Supabase access token as `Authorization: Bearer`, throws `ApiError` on non-2xx, redirects to `/login` on 401, handles 204. Exports `api.{get,post,patch,delete}`, `getAccessToken`, `API_BASE`.; `api.upload` sends a file as the raw body with its type (screenshots) |
 | `supabase/client.ts` | **Singleton** browser Supabase client (`@supabase/supabase-js`) for auth/session. Reads `VITE_SUPABASE_URL` + `VITE_SUPABASE_ANON_KEY`. |
 | `supabase/server.ts` | ⚠️ **Legacy** (Next.js SSR cookie helper). Unused in the Vite SPA — pending cleanup. |
 | `boardFilter.ts` | Pure board logic: search by title/company (`matchesSearch`), what a column draws (`columnView`: one page, matches first), which column a job belongs in (`stageFor`), marking hits (`highlightParts`). |
@@ -23,6 +23,9 @@ Shared utilities and external-service clients.
 | `apply.ts` | Apply with Claude (spec 022): run types, the six steps (`STEPS`, `currentStep`), `statusLine` / `needsYou` / `bannerLine`, `pageAnswers` (Job Catcher's reading, Claude's writing marked), `latestPages`, `APPLY_LINE`; spec 030: checklist fields on questions, `openBatch`, `ApplyProblem` / `PROBLEM_KIND`; spec 033: `Sheet` / `SheetStep` / `SheetRow` / `RunFix` / `ApplyMode`, `sheetOf` (the server's sheet, else `sheetFromPages`: a redone step once), `checkRows` (each question once), `tagOf` / `TAG_LABEL`, `normQ`, `nthOf`, `fixFor` / `fixLine` / `waitingFixes`, `stepCounts`; a paused step is the user's turn in `needsYou` / `bannerLine` / `statusLine`. |
 | `bugReport.ts` | Copy for Claude (spec 032, on spec 030's format): `bugReport` (one report, or numbered in a list), `bugsReport` (several under one heading, the data note once), `fenced`, `contextLine`, `utcTime`. |
 | `bugs.ts` | Bugs & ideas types and plain words (sections, statuses, severities, sources), `statusesFor`, `sectionForPath` (the add form's guess), `browserName`, `stepsFrom`, `stepsCheck` (a step over 300 characters, more than 12), `saveErrorText` (a refused save in words). |
+| `catchErrors.ts` | The app catches its own crashes (spec 032): `installErrorCatcher` (window `error` + `unhandledrejection`, once, from `main.tsx`), `reportCaught` (signed in only, the same words at most once a minute, nothing while sending, never throws), `isNoise` (ResizeObserver, aborted or failed fetches, 401s, server 5xx, other extensions' scripts) |
+| `shrinkImage.ts` | A picture as a JPEG ≤ 1200 px wide and ~400 KB (canvas; like Job Catcher's `shrink`), or null |
+| `appVersion.ts` | `APP_VERSION`: `__APP_VERSION__` from `vite.config.ts` (Vercel's commit, 7 characters) or `dev` |
 | `emailSections.ts` | A job's emails in sections (spec 027): `sectionOf`, `groupBySection`, `latestLine`, `isNew` (pure, tested) |
 
 **How this folder connects:** `api.ts` is called by every hook in `hooks/`;
