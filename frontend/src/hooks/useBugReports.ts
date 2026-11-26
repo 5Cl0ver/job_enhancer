@@ -2,6 +2,7 @@
  * TanStack Query hooks for Bugs & ideas (spec 032), the owner's inbox.
  * Every change refreshes the lists, the open report and the Admin badge.
  */
+import { useEffect, useState } from "react";
 import {
   keepPreviousData,
   useInfiniteQuery,
@@ -18,6 +19,7 @@ import type {
   BugList,
   BugSection,
   BugSeverity,
+  BugSimilar,
   BugStatus,
   BugType,
 } from "@/lib/bugs";
@@ -89,13 +91,89 @@ export interface NewBug {
   context: BugContext;
 }
 
+/** Adds a report; the answer holds up to 3 open reports that look like the
+ * same problem, for "Looks like…". */
 export function useAddBug() {
   const refresh = useRefresh();
   return useMutation({
     mutationFn: (bug: NewBug) =>
-      api.post<{ report: BugDetail }>("/v1/admin/bugs", bug),
+      api.post<{ report: BugDetail; similar?: BugSimilar[] }>(
+        "/v1/admin/bugs",
+        bug,
+      ),
     onSuccess: refresh,
   });
+}
+
+/** A screenshot (already shrunk) on a report. */
+/** How long one screenshot may take to send before it's given up on (a
+ * stalled upload must never keep the add sheet waiting). */
+export const UPLOAD_TIMEOUT_MS = 30_000;
+
+export function useUploadShot() {
+  const refresh = useRefresh();
+  return useMutation({
+    mutationFn: async ({ id, file }: { id: string; file: Blob }) => {
+      const stop = new AbortController();
+      const timer = setTimeout(() => stop.abort(), UPLOAD_TIMEOUT_MS);
+      try {
+        return await api.upload<{ id: string; size: number }>(
+          `/v1/admin/bugs/${id}/shots`,
+          file,
+          { signal: stop.signal },
+        );
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+    onSuccess: refresh,
+  });
+}
+
+/** A screenshot never changes, so its picture is kept apart from the inbox
+ * data: refreshing the inbox doesn't download every picture again. */
+const shotKey = (id: string) => ["bug-shot", id] as const;
+
+export function useDeleteShot() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (shotId: string) =>
+      api.delete(`/v1/admin/bugs/shots/${shotId}`),
+    onSuccess: async (_done, shotId) => {
+      // The report again (its thumbnail goes), then the picture, if
+      // nothing shows it any more (else it goes a few minutes after).
+      await qc.invalidateQueries({ queryKey: KEY });
+      qc.removeQueries({
+        queryKey: shotKey(shotId),
+        predicate: (q) => q.getObserversCount() === 0,
+      });
+    },
+  });
+}
+
+/** A screenshot as a URL the page can show. The picture needs the sign-in,
+ * so it's fetched once with it and shown from memory; the URL is freed
+ * when the thumbnail goes, the picture a few minutes after nothing shows it. */
+export function useShotUrl(shotId: string): {
+  url: string | null;
+  isError: boolean;
+} {
+  const { data, isError } = useQuery({
+    queryKey: shotKey(shotId),
+    queryFn: () => api.getBlob(`/v1/admin/bugs/shots/${shotId}`),
+    staleTime: Infinity,
+    gcTime: 5 * 60_000,
+    refetchOnWindowFocus: false,
+    refetchOnReconnect: false,
+  });
+  const [url, setUrl] = useState<string | null>(null);
+  useEffect(() => {
+    if (!data) return;
+    const made = URL.createObjectURL(data);
+    setUrl(made);
+    return () => URL.revokeObjectURL(made);
+  }, [data]);
+  return { url, isError };
 }
 
 export type BugChange = Partial<{

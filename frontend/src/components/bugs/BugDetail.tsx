@@ -29,6 +29,7 @@ import { BugForm } from "@/components/bugs/BugForm";
 import { BugHistory } from "@/components/bugs/BugHistory";
 import { BugLinks } from "@/components/bugs/BugLinks";
 import { BugNotes } from "@/components/bugs/BugNotes";
+import { BugShots } from "@/components/bugs/BugShots";
 import { SeverityPill, StatusPill } from "@/components/bugs/BugRow";
 import { BugStatusMenu } from "@/components/bugs/BugStatusMenu";
 import { ManualCopy, useCopy } from "@/components/bugs/CopyForClaude";
@@ -211,6 +212,7 @@ export function BugDetail({
     c.browser,
     c.theme,
     c.app_version && `app ${c.app_version}`,
+    c.api_version && `server ${c.api_version}`,
     c.job_catcher && `Job Catcher ${c.job_catcher}`,
     c.playbook && `playbook ${c.playbook}`,
   ].filter(Boolean);
@@ -342,6 +344,7 @@ export function BugDetail({
           {r.box && <p className="break-words">Box: {r.box}</p>}
         </Field>
       )}
+      <BugShots shots={r.shots} />
       <Field label="Seen">
         <p>
           {timesText(r.count)}

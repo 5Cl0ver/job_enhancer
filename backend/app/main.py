@@ -16,8 +16,10 @@ from app.api.v1.router import api_router
 from app.config import settings
 from app.database import AsyncSessionLocal
 from app.mcp_server import build_mcp_app
+from app.services import bug_reports
 from app.services.allowance import AllowanceExceeded
 from app.utils.rate_limit import rate_limit_key
+from app.version import api_version
 
 logger = logging.getLogger(__name__)
 
@@ -130,6 +132,17 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="read_unread_resumes",
         replace_existing=True,
     )
+    from app.services.admin_service import health_watch
+
+    # Bugs & ideas (spec 032): a service turning down is reported once.
+    scheduler.add_job(
+        health_watch,
+        trigger="interval",
+        minutes=15,
+        args=[AsyncSessionLocal],
+        id="health_watch",
+        replace_existing=True,
+    )
     scheduler.start()
     try:
         yield
@@ -197,8 +210,14 @@ async def allowance_exceeded_handler(
 
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONResponse:
-    """Last-resort 500 handler — logs the error, never leaks internals."""
+    """Last-resort 500 handler — logs the error, never leaks internals, and
+    keeps it in Bugs & ideas (spec 032) with no user. Keeping it can never
+    raise or come back here: a failure there is only logged."""
     logger.exception("Unhandled error on %s %s", request.method, request.url.path)
+    try:
+        await bug_reports.catch_server_error(request, exc)
+    except Exception:  # noqa: BLE001 — never report the reporting
+        logger.warning("Couldn't keep a server error", exc_info=True)
     return JSONResponse(
         status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
         content={"detail": "Internal server error"},
@@ -207,7 +226,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception) -> JSONR
 
 @app.get("/health", tags=["Health"], include_in_schema=False)
 async def health() -> dict:
-    return {"status": "ok"}
+    return {"status": "ok", "version": api_version()}
 
 
 # Mount all v1 routes

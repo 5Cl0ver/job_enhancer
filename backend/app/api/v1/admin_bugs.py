@@ -1,10 +1,14 @@
 """Bugs & ideas endpoints (spec 032): the owner's inbox. Every route needs
-the owner (admin); anyone else gets 403 and sees nothing."""
+the owner (admin); anyone else gets 403 and sees nothing.
+
+Screenshots come as the raw picture (``image/jpeg``, ``image/png`` or
+``image/webp``), checked by their first bytes, at most 1 MB and 3 a report,
+and go back out only to the owner, never cached."""
 
 import uuid
 from typing import Any, Literal
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
@@ -75,13 +79,47 @@ async def list_bugs(
 async def add_bug(
     data: BugCreate, _user: AdminUser, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
-    """The owner's Add a bug or idea."""
+    """The owner's Add a bug or idea, with up to 3 open reports that look
+    like the same problem (``similar``), for the owner to merge or not."""
     try:
         report = await svc.create(db, data.model_dump(), source="owner")
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     await db.commit()
-    return {"report": await svc.detail(db, report.id, _user.id)}
+    return {
+        "report": await svc.detail(db, report.id, _user.id),
+        "similar": await svc.similar(db, report),
+    }
+
+
+@router.get("/shots/{shot_id}")
+async def get_shot(
+    shot_id: uuid.UUID, _user: AdminUser, db: AsyncSession = Depends(get_db)
+) -> Response:
+    try:
+        mime, data = await svc.shot_bytes(db, shot_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(
+        content=data,
+        media_type=mime,
+        headers={
+            "Cache-Control": "private, no-store",
+            "X-Content-Type-Options": "nosniff",
+        },
+    )
+
+
+@router.delete("/shots/{shot_id}", status_code=204)
+async def delete_shot(
+    shot_id: uuid.UUID, _user: AdminUser, db: AsyncSession = Depends(get_db)
+) -> Response:
+    try:
+        await svc.delete_shot(db, shot_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return Response(status_code=204)
 
 
 @router.post("/bulk")
@@ -214,3 +252,35 @@ async def split_bug(
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     await db.commit()
     return await _detail(db, back.id, _user)
+
+
+@router.post("/{report_id}/shots", status_code=201)
+async def add_shot(
+    report_id: uuid.UUID,
+    request: Request,
+    _user: AdminUser,
+    db: AsyncSession = Depends(get_db),
+) -> dict[str, Any]:
+    """A screenshot, sent as the picture itself."""
+    mime = request.headers.get("content-type", "").split(";")[0].strip().lower()
+    if mime not in svc.SHOT_TYPES:
+        raise HTTPException(status_code=415, detail="Send a JPEG, PNG or WebP picture.")
+    body = b""
+    async for chunk in request.stream():
+        body += chunk
+        if len(body) > svc.SHOT_MAX_BYTES:
+            raise HTTPException(
+                status_code=413, detail="A screenshot must be under 1 MB."
+            )
+    try:
+        shot = await svc.add_shot(db, report_id, mime, body)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except svc.NotAPicture as exc:
+        raise HTTPException(status_code=415, detail=str(exc)) from exc
+    except svc.TooManyShots as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=413, detail=str(exc)) from exc
+    await db.commit()
+    return {"id": str(shot.id), "size": shot.size}

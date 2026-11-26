@@ -17,18 +17,32 @@ attention count and Apply with Claude's ``report_problem`` all call it.
   back, count, last seen (research R5).
 - **History.** Every change is an event (who and when), and so are notes,
   links, merges and every time a report was seen (the newest 20 are kept).
+- **Screenshots** are kept as bytes, at most 3 a report, checked by their
+  first bytes (JPEG, PNG or WebP) and never over 1 MB (research R1).
+- **Repeat suggestions.** A report the owner (or their AI) writes gets up to
+  3 open reports in its section with a close title (research R3).
+- **Caught errors** (research R6): server errors, browser crashes, Job
+  Catcher failures, email checks, Scout refusals and services going down are
+  kept with no user, merged by fingerprint, and capped an hour (the
+  server's own and the ones the app and Job Catcher send, apart).
+  Keeping one can never raise or loop: a failure there is only logged.
 """
 
+import asyncio
 import hashlib
+import logging
 import re
+import time
 import uuid
-from datetime import UTC, datetime
+from collections.abc import Callable
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from urllib.parse import urlsplit
 
+from rapidfuzz import fuzz, utils
 from sqlalchemy import case, delete, func, or_, select, update
 from sqlalchemy.exc import IntegrityError
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.models.apply import ApplyRun
 from app.models.bug_report import (
@@ -50,6 +64,9 @@ from app.models.bug_report import (
 from app.models.job_listing import JobListing
 from app.models.saved_job import SavedJob
 from app.services.apply_problems import host_of, scrub
+from app.version import api_version
+
+logger = logging.getLogger(__name__)
 
 TITLE_MAX = 140
 PLACE_MAX = 300
@@ -353,6 +370,45 @@ def event_out(e: BugReportEvent) -> dict[str, Any]:
     }
 
 
+async def _merged_family(
+    db: AsyncSession, roots: list[uuid.UUID]
+) -> dict[uuid.UUID, uuid.UUID]:
+    """Each report and every report merged into it (up to ``MERGE_HOPS``
+    deep), mapped to the root it now shows under."""
+    family = {rid: rid for rid in roots}
+    frontier = list(roots)
+    for _ in range(MERGE_HOPS):
+        if not frontier:
+            break
+        children = (
+            await db.execute(
+                select(BugReport.id, BugReport.merged_into_id).where(
+                    BugReport.merged_into_id.in_(frontier)
+                )
+            )
+        ).all()
+        frontier = []
+        for child, parent in children:
+            if child not in family:
+                family[child] = family[parent]
+                frontier.append(child)
+    return family
+
+
+async def _with_shots(db: AsyncSession, roots: list[uuid.UUID]) -> set[uuid.UUID]:
+    """Which of these reports have a screenshot, their own or one of a
+    report merged into them (however deep)."""
+    if not roots:
+        return set()
+    family = await _merged_family(db, roots)
+    owners = await db.scalars(
+        select(BugReportShot.report_id)
+        .where(BugReportShot.report_id.in_(list(family)))
+        .distinct()
+    )
+    return {family[o] for o in owners}
+
+
 def _escape_like(q: str) -> str:
     return q.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
@@ -425,20 +481,18 @@ async def list_reports(
     if section:
         conds.append(BugReport.section == section)
     total = await db.scalar(select(func.count()).select_from(BugReport).where(*conds))
-    has_shot = (
-        select(BugReportShot.id).where(BugReportShot.report_id == BugReport.id).exists()
-    )
     rows = (
-        await db.execute(
-            select(BugReport, has_shot)
+        await db.scalars(
+            select(BugReport)
             .where(*conds)
             .order_by(*_priority())
             .limit(min(max(limit, 1), LIST_MAX))
             .offset(max(offset, 0))
         )
     ).all()
+    with_shots = await _with_shots(db, [r.id for r in rows])
     return {
-        "items": [_row(r, bool(shot)) for r, shot in rows],
+        "items": [_row(r, r.id in with_shots) for r in rows],
         "total": total or 0,
         "counts": {
             "bugs_open": await _open_count(db, BUG),
@@ -509,10 +563,13 @@ async def detail(
             .order_by(BugReport.title)
         )
     ).all()
+    # Reports merged into this one, however deep, bring their screenshots
+    # (a split takes them back with it).
+    family = list(await _merged_family(db, [r.id]))
     shots = (
         await db.execute(
             select(BugReportShot.id, BugReportShot.size)
-            .where(BugReportShot.report_id == r.id)
+            .where(BugReportShot.report_id.in_(family))
             .order_by(BugReportShot.created_at)
         )
     ).all()
@@ -1051,3 +1108,530 @@ async def split(
     _event(db, dst, "split", by, {"other_id": str(src.id), "title": src.title})
     await db.flush()
     return src
+
+
+# --------------------------------------------------------------------------- #
+# Screenshots (research R1)
+# --------------------------------------------------------------------------- #
+
+SHOT_MAX_BYTES = 1_000_000
+SHOTS_MAX = 3
+SHOT_TYPES = ("image/jpeg", "image/png", "image/webp")
+
+
+class TooManyShots(Exception):
+    """A report already has its 3 screenshots."""
+
+
+class NotAPicture(Exception):
+    """Not a JPEG, PNG or WebP, by its first bytes."""
+
+
+def image_type(data: bytes) -> str | None:
+    """What the first bytes say the picture is, whatever it claims to be."""
+    if data.startswith(b"\xff\xd8\xff"):
+        return "image/jpeg"
+    if data.startswith(b"\x89PNG\r\n\x1a\n"):
+        return "image/png"
+    if len(data) >= 12 and data[:4] == b"RIFF" and data[8:12] == b"WEBP":
+        return "image/webp"
+    return None
+
+
+async def add_shot(
+    db: AsyncSession, report_id: uuid.UUID, mime: str, data: bytes
+) -> BugReportShot:
+    """One screenshot on a report: a JPEG, PNG or WebP (by its bytes, and
+    matching the type it was sent as), at most 1 MB, at most 3 a report."""
+    r = await get(db, report_id)
+    if len(data) > SHOT_MAX_BYTES:
+        raise ValueError("A screenshot must be under 1 MB.")
+    if mime not in SHOT_TYPES or image_type(data) != mime:
+        raise NotAPicture("Send a JPEG, PNG or WebP picture.")
+    have = await db.scalar(
+        select(func.count())
+        .select_from(BugReportShot)
+        .where(BugReportShot.report_id == r.id)
+    )
+    if (have or 0) >= SHOTS_MAX:
+        raise TooManyShots(f"A report can have {SHOTS_MAX} screenshots.")
+    shot = BugReportShot(
+        id=uuid.uuid4(),
+        report_id=r.id,
+        mime=mime,
+        size=len(data),
+        data=data,
+        created_at=_now(),
+    )
+    db.add(shot)
+    await db.flush()
+    return shot
+
+
+async def shot_bytes(db: AsyncSession, shot_id: uuid.UUID) -> tuple[str, bytes]:
+    """A screenshot's type and bytes, or LookupError."""
+    found = (
+        await db.execute(
+            select(BugReportShot.mime, BugReportShot.data).where(
+                BugReportShot.id == shot_id
+            )
+        )
+    ).first()
+    if found is None:
+        raise LookupError("No such screenshot.")
+    return found[0], found[1]
+
+
+async def delete_shot(db: AsyncSession, shot_id: uuid.UUID) -> None:
+    found = await db.scalar(select(BugReportShot.id).where(BugReportShot.id == shot_id))
+    if found is None:
+        raise LookupError("No such screenshot.")
+    await db.execute(delete(BugReportShot).where(BugReportShot.id == shot_id))
+    await db.flush()
+
+
+# --------------------------------------------------------------------------- #
+# Repeat suggestions (research R3)
+# --------------------------------------------------------------------------- #
+
+SIMILAR_SCORE = 80
+SIMILAR_MAX = 3
+# How many open reports of a section are compared (the newest).
+SIMILAR_POOL = 500
+
+
+async def similar(db: AsyncSession, report: BugReport) -> list[dict[str, Any]]:
+    """Up to 3 open reports of the same type and section whose titles are
+    close to this one's (token set ratio of 80 or more), closest first. Only
+    suggested: the owner says whether it's the same problem."""
+    rows = (
+        await db.execute(
+            select(BugReport.id, BugReport.title, BugReport.status)
+            .where(
+                BugReport.id != report.id,
+                BugReport.merged_into_id.is_(None),
+                BugReport.type == report.type,
+                BugReport.section == report.section,
+                BugReport.status.in_(open_statuses(report.type)),
+            )
+            .order_by(BugReport.last_seen.desc())
+            .limit(SIMILAR_POOL)
+        )
+    ).all()
+    scored = []
+    for rid, title, status in rows:
+        score = fuzz.token_set_ratio(
+            report.title, title, processor=utils.default_process
+        )
+        if score >= SIMILAR_SCORE:
+            scored.append(
+                {
+                    "id": str(rid),
+                    "title": title,
+                    "status": status,
+                    "score": round(score),
+                }
+            )
+    scored.sort(key=lambda s: -s["score"])
+    return scored[:SIMILAR_MAX]
+
+
+# --------------------------------------------------------------------------- #
+# Caught errors (research R6)
+# --------------------------------------------------------------------------- #
+
+CAUGHT_MESSAGE_MAX = 300
+# The part of an error's own words kept with it: the start of its first line
+# (a database error's next lines hold the query and its values).
+ERROR_TEXT_MAX = 120
+FLOOD_KIND = "too_many"
+_KEY_MAX = 80
+# What the server notices itself. Everything else was sent in by the app or
+# Job Catcher (``/v1/bugs/caught``), which anyone signed in can do, so it has
+# caps of its own: a flood of those never pushes the server's own errors out.
+SERVER_KINDS = ("server_error", "email_check", "scout_refused", "service_down")
+SERVER_PER_HOUR = 30
+SENT_PER_HOUR = 20
+SENT_PER_SENDER_HOUR = 5
+# Per sender (a hash of who, kept in memory only, never stored): when each of
+# their last new reports was made.
+_sent_new: dict[str, list[float]] = {}
+_URL = re.compile(r"\bhttps?://[^\s'\"<>()\[\]{}]+", re.I)
+_TITLES = {
+    "server_error": "Server error on {place}",
+    "crash": "The app crashed on {place}",
+    "save_failed": "Job Catcher couldn't save on {place}",
+    "resume_failed": "Job Catcher couldn't attach the résumé on {place}",
+    "fill_failed": "Job Catcher couldn't fill on {place}",
+    "email_check": "Email check failed: {place}",
+    "scout_refused": "Scout turned down a {place} call",
+    "service_down": "{place} is down",
+}
+# Kinds whose place already says which one it is: no words in the title.
+_PLAIN_TITLES = ("server_error", "service_down", "email_check")
+# The section a server error belongs to, by its route.
+_ROUTE_SECTIONS = (
+    ("/v1/apply", "apply"),
+    ("/v1/email", "email"),
+    ("/v1/scout", "scout"),
+    ("/v1/extension", "job_catcher"),
+)
+
+
+def _sessions() -> async_sessionmaker:
+    """Where caught server errors are written: a short session of their own
+    (the request's may be the one that broke). Tests point it elsewhere."""
+    from app.database import AsyncSessionLocal
+
+    return AsyncSessionLocal
+
+
+def clean_urls(text: Any) -> str:
+    """Every web address in a text as its site and path only: no query or
+    fragment (where searches, tokens and names live), ids as ``:id``."""
+    return _URL.sub(
+        lambda m: clean_place(m.group(0).rstrip(".,;:!?")) or "[link]",
+        str(text or ""),
+    )
+
+
+def caught_key(text: Any) -> str:
+    """What tells two errors on one page apart: their words, with numbers as
+    N, so "row 12" and "row 13" are the same problem."""
+    words = scrub(clean_urls(text), _KEY_MAX * 2)
+    return re.sub(r"\d+", "N", words)[:_KEY_MAX].lower()
+
+
+def _caught_place(place: Any) -> str:
+    where = clean_place(place)
+    if where:
+        return where
+    # Not an address (a provider, a tool, a service): plain words.
+    return scrub(place, PLACE_MAX) or "unknown"
+
+
+def caught_fingerprint(
+    section: str, kind: str, place: Any, key: str | None = None
+) -> str:
+    return fingerprint(section, kind, f"{_caught_place(place)}|{key or ''}")
+
+
+def error_text(exc: BaseException) -> str:
+    """An exception as its class and the start of its first line, scrubbed,
+    with any web address as its site and path only."""
+    lines = (str(exc) or "").strip().splitlines()
+    words = scrub(clean_urls(lines[0]) if lines else "", ERROR_TEXT_MAX)
+    name = type(exc).__name__
+    return f"{name}: {words}" if words else name
+
+
+def _sender_key(sender: str) -> str:
+    return hashlib.sha256(str(sender).encode()).hexdigest()[:16]
+
+
+def _sender_recent(sender: str) -> list[float]:
+    """This sender's new reports in the last hour (and forget older ones)."""
+    now = time.monotonic()
+    for key in [k for k, v in _sent_new.items() if not v or now - v[-1] > 3600]:
+        _sent_new.pop(key, None)
+    times = [t for t in _sent_new.get(_sender_key(sender), []) if now - t <= 3600]
+    _sent_new[_sender_key(sender)] = times
+    return times
+
+
+async def _caught_this_hour(db: AsyncSession, sent: bool) -> int:
+    """New caught reports in the last hour: the server's own, or the ones
+    the app and Job Catcher sent in."""
+    since = _now() - timedelta(hours=1)
+    group = (
+        BugReport.kind.not_in((*SERVER_KINDS, FLOOD_KIND))
+        if sent
+        else BugReport.kind.in_(SERVER_KINDS)
+    )
+    return (
+        await db.scalar(
+            select(func.count())
+            .select_from(BugReport)
+            .where(
+                BugReport.source == "caught",
+                group,
+                BugReport.first_seen >= since,
+            )
+        )
+    ) or 0
+
+
+async def _add_new_or_count(
+    db: AsyncSession, fp: str, build: Callable[[], BugReport], seen: dict
+) -> BugReport:
+    """Add the report ``build`` makes, or, when one with its fingerprint was
+    added at the same moment, count that one up instead."""
+    report = build()
+    try:
+        async with db.begin_nested():
+            db.add(report)
+            await db.flush()
+    except IntegrityError:
+        found = await _by_fingerprint(db, fp)
+        if found is None:
+            raise
+        await _seen_again(db, found, seen, "app")
+        return found
+    _event(db, report, "seen", "app", seen)
+    await db.flush()
+    return report
+
+
+def _flood_title(sent: bool, n: int, hour: datetime) -> str:
+    who = " sent by the app and Job Catcher" if sent else ""
+    return (
+        f"Too many errors{who}: {n} more not kept between "
+        f"{hour:%H}:00 and {(hour + timedelta(hours=1)):%H}:00 UTC"
+    )
+
+
+async def _flood(db: AsyncSession, sent: bool) -> None:
+    """Past an hourly cap: one report counts the errors not kept, its title
+    saying how many in this hour. If the owner merged it into another report,
+    that one counts them, and keeps its own title."""
+    fp = fingerprint("app", FLOOD_KIND, "sent" if sent else "caught")
+    now = _now()
+    hour = now.replace(minute=0, second=0, microsecond=0)
+    found = await _by_fingerprint(db, fp)
+    if found is not None:
+        last = await db.scalar(
+            select(BugReportEvent)
+            .where(
+                BugReportEvent.report_id == found.id,
+                BugReportEvent.kind == "seen",
+            )
+            .order_by(BugReportEvent.at.desc())
+            .limit(1)
+        )
+        data = (last.data or {}) if last is not None else {}
+        n = (
+            int(data.get("not_kept") or 0) + 1
+            if data.get("hour") == hour.isoformat()
+            else 1
+        )
+        await _seen_again(
+            db, found, {"place": None, "hour": hour.isoformat(), "not_kept": n}, "app"
+        )
+        if found.kind == FLOOD_KIND:
+            found.title = _flood_title(sent, n, hour)
+        await db.flush()
+        return
+    cap = SENT_PER_HOUR if sent else SERVER_PER_HOUR
+
+    def build() -> BugReport:
+        return BugReport(
+            id=uuid.uuid4(),
+            type=BUG,
+            title=_flood_title(sent, 1, hour),
+            section="app",
+            kind=FLOOD_KIND,
+            place=None,
+            steps=[],
+            actual=(
+                f"More than {cap} new errors"
+                + (" were sent by the app and Job Catcher" if sent else " were caught")
+                + " in an hour. The ones past that weren't kept; this report "
+                "counts them."
+            ),
+            expected="",
+            severity="major",
+            confidence="sure",
+            source="caught",
+            status="new",
+            fingerprint=fp,
+            count=1,
+            first_seen=now,
+            last_seen=now,
+            context={"api_version": api_version()},
+        )
+
+    await _add_new_or_count(
+        db, fp, build, {"place": None, "hour": hour.isoformat(), "not_kept": 1}
+    )
+
+
+async def catch(
+    db: AsyncSession,
+    *,
+    section: str,
+    kind: str,
+    place: Any,
+    message: Any = "",
+    context: dict[str, Any] | None = None,
+    key: str | None = None,
+    sender: str | None = None,
+) -> bool:
+    """Keep an error the app caught itself. Never who hit it: where, what
+    kind, the error's scrubbed words (web addresses as site and path only)
+    and the versions. The same one again (section, kind, place and ``key``)
+    counts up, and a fixed one comes back. New ones are capped an hour: 30
+    the server noticed itself, and, for ones the app or Job Catcher sent in
+    (``sender``: who sent it, only ever held in memory as a hash), 20 in all
+    and 5 from any one person. Past a cap only a "too many" report counts
+    them. True when it was kept."""
+    section = section if section in SECTIONS else "other"
+    kind = re.sub(r"[^a-z_]", "", str(kind or "").lower())[:40] or "other"
+    sent = sender is not None or kind not in SERVER_KINDS
+    where = _caught_place(place)
+    text = scrub(clean_urls(message), CAUGHT_MESSAGE_MAX, lines=True)
+    ctx = clean_context({**(context or {}), "api_version": api_version()})
+    fp = caught_fingerprint(section, kind, place, key)
+    seen = {"place": where, "context": ctx, "message": text}
+
+    found = await _by_fingerprint(db, fp)
+    if found is not None:
+        # Repeats always count, cap or not.
+        await _seen_again(db, found, seen, "app")
+        return True
+    mine = _sender_recent(sender) if sender is not None else []
+    if (
+        await _caught_this_hour(db, sent)
+        >= (SENT_PER_HOUR if sent else SERVER_PER_HOUR)
+    ) or len(mine) >= SENT_PER_SENDER_HOUR:
+        await _flood(db, sent)
+        return False
+    title = _TITLES.get(kind, "Error on {place}").format(place=where)
+    if kind not in _PLAIN_TITLES and text:
+        # Two errors on one page are told apart by their words.
+        title = f"{title}: {text.splitlines()[0]}"
+    now = _now()
+
+    def build() -> BugReport:
+        return BugReport(
+            id=uuid.uuid4(),
+            type=BUG,
+            title=scrub(title, TITLE_MAX),
+            section=section,
+            kind=kind,
+            place=where,
+            steps=[],
+            actual=text,
+            expected="",
+            severity="major",
+            confidence="sure",
+            source="caught",
+            status="new",
+            fingerprint=fp,
+            count=1,
+            first_seen=now,
+            last_seen=now,
+            context=ctx,
+        )
+
+    await _add_new_or_count(db, fp, build, seen)
+    if sender is not None:
+        mine.append(time.monotonic())
+    return True
+
+
+async def catch_safely(db: AsyncSession, **kwargs: Any) -> bool:
+    """``catch`` inside its own savepoint, so it can't spoil the caller's
+    work, and never raising: a failure here is only logged, never caught
+    again (no loops)."""
+    try:
+        async with db.begin_nested():
+            return await catch(db, **kwargs)
+    except Exception:  # noqa: BLE001 — keeping an error must never add one
+        logger.warning("Couldn't keep a caught error", exc_info=True)
+        return False
+
+
+def section_for_route(path: str) -> str:
+    for prefix, section in _ROUTE_SECTIONS:
+        if path == prefix or path.startswith(prefix + "/"):
+            return section
+    return "app"
+
+
+async def catch_server_error(request: Any, exc: BaseException) -> None:
+    """An unexpected server error, kept in a short session of its own: the
+    method and route template (never the ids in the address), the
+    exception's class and the start of its words. Never raises."""
+    try:
+        route = request.scope.get("route")
+        template = getattr(route, "path", None) or request.url.path
+        async with asyncio.timeout(3):
+            async with _sessions()() as db:
+                await catch(
+                    db,
+                    section=section_for_route(template),
+                    kind="server_error",
+                    place=f"{request.method} {template}",
+                    message=error_text(exc),
+                    key=type(exc).__name__,
+                )
+                await db.commit()
+    except Exception:  # noqa: BLE001 — never report the reporting
+        logger.warning("Couldn't keep a server error", exc_info=True)
+
+
+# --------------------------------------------------------------------------- #
+# Services going down (the 15-minute health watch)
+# --------------------------------------------------------------------------- #
+
+
+def _recovered(e: BugReportEvent) -> bool:
+    return e.kind == "edit" and (e.data or {}).get("field") == "recovered"
+
+
+async def _outage_report(db: AsyncSession, name: str) -> BugReport | None:
+    return await _by_fingerprint(db, caught_fingerprint("app", "service_down", name))
+
+
+async def outage_open(db: AsyncSession, name: str) -> bool:
+    """Is this service's outage still going? Its report was last seen down
+    and hasn't been marked back up since."""
+    report = await _outage_report(db, name)
+    if report is None:
+        return False
+    recent = (
+        await db.scalars(
+            select(BugReportEvent)
+            .where(
+                BugReportEvent.report_id == report.id,
+                BugReportEvent.kind.in_(("seen", "edit")),
+            )
+            .order_by(BugReportEvent.at.desc())
+            .limit(50)
+        )
+    ).all()
+    for e in recent:
+        if e.kind == "seen":
+            return True
+        if _recovered(e):
+            return False
+    return False
+
+
+async def service_down(db: AsyncSession, name: str, detail: str | None) -> bool:
+    """A service turned down: one report per outage (a later outage counts
+    the same report up, and brings a fixed one back)."""
+    return await catch(
+        db,
+        section="app",
+        kind="service_down",
+        place=name,
+        # The first line of what the check said, short (never a whole
+        # connection error).
+        message=f"{name} is down"
+        + (f": {scrub((detail or '').splitlines()[0], 80)}" if detail else ""),
+    )
+
+
+async def service_up(db: AsyncSession, name: str) -> None:
+    """The service is back: a line in its report's history."""
+    report = await _outage_report(db, name)
+    if report is not None:
+        _event(
+            db,
+            report,
+            "edit",
+            "app",
+            {"field": "recovered", "from": "down", "to": "up"},
+        )
+        await db.flush()

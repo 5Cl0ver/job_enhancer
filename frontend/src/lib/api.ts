@@ -118,6 +118,18 @@ export const api = {
     request<T>(path, { ...init, method: "DELETE" }),
 
   getBlob: (path: string, init?: RequestInit) => requestBlob(path, init),
+
+  /** Send a file as the request body itself (a screenshot), with its type. */
+  upload: <T>(path: string, file: Blob, init?: RequestInit) =>
+    request<T>(path, {
+      ...init,
+      method: "POST",
+      body: file,
+      headers: {
+        "Content-Type": file.type || "application/octet-stream",
+        ...(init?.headers as Record<string, string>),
+      },
+    }),
 };
 
 export { ApiError, API_BASE };

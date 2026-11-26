@@ -12,12 +12,16 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { BugForm, EMPTY_DRAFT } from "@/components/bugs/BugForm";
-import { useAddBug } from "@/hooks/useBugReports";
+import { StatusPill } from "@/components/bugs/BugRow";
+import { type PickedShot, ShotPicker } from "@/components/bugs/ShotPicker";
+import { useAddBug, useMergeBug, useUploadShot } from "@/hooks/useBugReports";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import { useJobCatcherInstalls } from "@/hooks/useJobCatcher";
+import { APP_VERSION } from "@/lib/appVersion";
 import {
   type BugContext,
   type BugDraft,
+  type BugSimilar,
   browserName,
   sectionForPath,
   stepsCheck,
@@ -43,15 +47,136 @@ function useAutoContext(
     theme: document.documentElement.classList.contains("dark")
       ? "dark"
       : "light",
+    app_version: APP_VERSION,
     ...(newest?.version ? { job_catcher: newest.version } : {}),
   };
 }
 
+/** After saving: pictures that didn't upload, and reports it looks like. */
+interface Saved {
+  id: string;
+  similar: BugSimilar[];
+  failed: PickedShot[];
+}
+
+/**
+ * The step after Save, when there's something to say: a picture that
+ * didn't upload (try again; the report itself is kept), and "Looks like…"
+ * for an open report that seems to be the same problem: one tap merges
+ * them, or it's new.
+ */
+function AfterSave({
+  saved,
+  onRetried,
+  onDone,
+}: {
+  saved: Saved;
+  onRetried: (failed: PickedShot[]) => void;
+  onDone: () => void;
+}) {
+  const upload = useUploadShot();
+  const merge = useMergeBug();
+  const [retrying, setRetrying] = useState(false);
+  const pictures = saved.failed.length;
+
+  const retry = async () => {
+    setRetrying(true);
+    const still: PickedShot[] = [];
+    for (const shot of saved.failed) {
+      await upload
+        .mutateAsync({ id: saved.id, file: shot.blob })
+        .catch(() => still.push(shot));
+    }
+    setRetrying(false);
+    onRetried(still);
+  };
+
+  return (
+    <div className="grid gap-4">
+      {pictures > 0 && (
+        <div
+          role="alert"
+          className="space-y-2 rounded-lg border border-amber-500/40 bg-amber-500/10 p-3"
+        >
+          <p className="text-sm">
+            Added, but {pictures === 1 ? "the picture" : "the pictures"} didn't
+            upload.
+          </p>
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={() => void retry()}
+            disabled={retrying}
+          >
+            {retrying && <Loader2 className="animate-spin" aria-hidden />}
+            Try again
+          </Button>
+        </div>
+      )}
+      {saved.similar.length > 0 && (
+        <section aria-labelledby="looks-like" className="space-y-2">
+          <h3 id="looks-like" className="text-sm font-semibold">
+            Looks like
+          </h3>
+          <ul className="space-y-2">
+            {saved.similar.map((s) => (
+              <li
+                key={s.id}
+                className="flex items-center gap-3 rounded-lg border p-3"
+              >
+                <div className="min-w-0 flex-1 space-y-1">
+                  <p className="break-words text-sm font-medium leading-snug">
+                    {s.title}
+                  </p>
+                  <StatusPill status={s.status} />
+                </div>
+                <Button
+                  size="sm"
+                  disabled={merge.isPending}
+                  aria-label={`Same problem as ${s.title}`}
+                  onClick={() =>
+                    merge.mutate(
+                      { id: saved.id, intoId: s.id },
+                      {
+                        onSuccess: () => {
+                          toast.success("Added to the one you had");
+                          onDone();
+                        },
+                      },
+                    )
+                  }
+                >
+                  Same problem
+                </Button>
+              </li>
+            ))}
+          </ul>
+          {merge.isError && (
+            <p role="alert" className="text-sm text-destructive">
+              Couldn't merge them. Try again.
+            </p>
+          )}
+        </section>
+      )}
+      <DialogFooter>
+        <Button
+          variant={saved.similar.length ? "outline" : "default"}
+          className="w-full md:w-auto"
+          onClick={onDone}
+        >
+          {saved.similar.length ? "It's new" : "Done"}
+        </Button>
+      </DialogFooter>
+    </div>
+  );
+}
+
 /**
  * Add a bug or idea (spec 032), from any page, for the owner. The section is
- * guessed from the page; the page, device, browser, theme and Job Catcher's
- * version are filled in and shown. Saving keeps you where you are; if it
- * fails, what you typed stays.
+ * guessed from the page; the page, device, browser, theme and versions are
+ * filled in and shown. Up to 3 screenshots, shrunk before they're sent.
+ * Saving keeps you where you are; if it fails, what you typed stays. After
+ * saving, "Looks like…" offers a report that seems the same.
  */
 export function AddBugSheet({
   open,
@@ -63,12 +188,47 @@ export function AddBugSheet({
   const { pathname, search } = useLocation();
   const [draft, setDraft] = useState<BugDraft>(EMPTY_DRAFT);
   const [touched, setTouched] = useState(false);
+  const [shots, setShots] = useState<PickedShot[]>([]);
+  const [saved, setSaved] = useState<Saved | null>(null);
+  const [uploading, setUploading] = useState(false);
   const add = useAddBug();
+  const upload = useUploadShot();
   const context = useAutoContext(open, pathname);
   // Until the owner picks one, the section follows the page they're on.
   const shown = touched
     ? draft
     : { ...draft, section: sectionForPath(pathname, search) };
+  const busy = add.isPending || uploading;
+  // Opened again: a fresh start, never the last report's "Added" step.
+  const [wasOpen, setWasOpen] = useState(open);
+  if (open !== wasOpen) {
+    setWasOpen(open);
+    if (open && saved && !busy) setSaved(null);
+  }
+
+  const close = (next: boolean) => {
+    // Not while saving or sending pictures: the sheet says how it went.
+    if (!next && busy) return;
+    // The report is kept: what's left of it in the form can go.
+    if (!next && saved) {
+      for (const shot of saved.failed) URL.revokeObjectURL(shot.url);
+      setSaved(null);
+    }
+    onOpenChange(next);
+  };
+
+  const finish = (id: string, similar: BugSimilar[], failed: PickedShot[]) => {
+    for (const s of shots) if (!failed.includes(s)) URL.revokeObjectURL(s.url);
+    setDraft(EMPTY_DRAFT);
+    setTouched(false);
+    setShots([]);
+    if (!failed.length && !similar.length) {
+      toast.success("Added");
+      onOpenChange(false);
+      return;
+    }
+    setSaved({ id, similar, failed });
+  };
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
@@ -87,11 +247,17 @@ export function AddBugSheet({
         context: ctx,
       },
       {
-        onSuccess: () => {
-          toast.success("Added");
-          setDraft(EMPTY_DRAFT);
-          setTouched(false);
-          onOpenChange(false);
+        onSuccess: async ({ report, similar }) => {
+          // The report is saved first; a picture that fails doesn't undo it.
+          setUploading(true);
+          const failed: PickedShot[] = [];
+          for (const shot of shots) {
+            await upload
+              .mutateAsync({ id: report.id, file: shot.blob })
+              .catch(() => failed.push(shot));
+          }
+          setUploading(false);
+          finish(report.id, similar ?? [], failed);
         },
       },
     );
@@ -102,68 +268,82 @@ export function AddBugSheet({
     context.device,
     context.browser,
     context.theme,
+    `app ${APP_VERSION}`,
     context.job_catcher && `Job Catcher ${context.job_catcher}`,
     "now",
   ].filter(Boolean);
 
   return (
-    <Dialog open={open} onOpenChange={onOpenChange}>
+    <Dialog open={open} onOpenChange={close}>
       <DialogContent className="md:max-w-lg">
         <DialogHeader>
-          <DialogTitle>Add a bug or idea</DialogTitle>
+          <DialogTitle>{saved ? "Added" : "Add a bug or idea"}</DialogTitle>
           <DialogDescription className="sr-only">
             It goes straight to Bugs &amp; ideas.
           </DialogDescription>
         </DialogHeader>
-        <form onSubmit={save} className="grid gap-4">
-          <BugForm
-            idPrefix="add-bug"
-            draft={shown}
-            onChange={(d) => {
-              setDraft(d);
-              setTouched(true);
+        {saved ? (
+          <AfterSave
+            saved={saved}
+            onRetried={(failed) => {
+              const next = { ...saved, failed };
+              if (!failed.length && !saved.similar.length) {
+                toast.success("Added");
+                close(false);
+              } else setSaved(next);
             }}
+            onDone={() => close(false)}
           />
-          <div className="space-y-1.5">
-            <p className="text-xs font-medium text-muted-foreground">
-              Filled in for you
-            </p>
-            <ul
-              className="flex flex-wrap gap-1.5"
-              aria-label="Filled in for you"
-            >
-              {filled.map((v) => (
-                <li
-                  key={v as string}
-                  className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
-                >
-                  {v}
-                </li>
-              ))}
-            </ul>
-          </div>
-          {add.isError && (
-            <p role="alert" className="text-sm text-destructive">
-              {saveErrorText(add.error)}
-            </p>
-          )}
-          <DialogFooter>
-            <Button
-              type="submit"
-              disabled={
-                !shown.title.trim() ||
-                stepsCheck(shown.steps).tooLong !== null ||
-                add.isPending
-              }
-              className="w-full md:w-auto"
-            >
-              {add.isPending && (
-                <Loader2 className="animate-spin" aria-hidden />
-              )}
-              Save
-            </Button>
-          </DialogFooter>
-        </form>
+        ) : (
+          <form onSubmit={save} className="grid gap-4">
+            <BugForm
+              idPrefix="add-bug"
+              draft={shown}
+              onChange={(d) => {
+                setDraft(d);
+                setTouched(true);
+              }}
+            />
+            <ShotPicker idPrefix="add-bug" shots={shots} onChange={setShots} />
+            <div className="space-y-1.5">
+              <p className="text-xs font-medium text-muted-foreground">
+                Filled in for you
+              </p>
+              <ul
+                className="flex flex-wrap gap-1.5"
+                aria-label="Filled in for you"
+              >
+                {filled.map((v) => (
+                  <li
+                    key={v as string}
+                    className="rounded bg-muted px-1.5 py-0.5 text-xs text-muted-foreground"
+                  >
+                    {v}
+                  </li>
+                ))}
+              </ul>
+            </div>
+            {add.isError && (
+              <p role="alert" className="text-sm text-destructive">
+                {saveErrorText(add.error)}
+              </p>
+            )}
+            <DialogFooter>
+              <Button
+                type="submit"
+                disabled={
+                  !shown.title.trim() ||
+                  stepsCheck(shown.steps).tooLong !== null ||
+                  busy
+                }
+                className="w-full md:w-auto"
+              >
+                {busy && <Loader2 className="animate-spin" aria-hidden />}
+                Save
+              </Button>
+            </DialogFooter>
+          </form>
+        )}
       </DialogContent>
     </Dialog>
   );

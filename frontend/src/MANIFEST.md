@@ -10,8 +10,8 @@ See [docs/architecture.md](../../docs/architecture.md) for the frontend data flo
 ## Top-level files
 | File | Purpose |
 |---|---|
-| `main.tsx` | App entry: mounts React into `index.html`, wraps the app in `Providers` (TanStack Query) + `RouterProvider` |
-| `router.tsx` | The route table — maps each URL to a page component in `routes/` |
+| `main.tsx` | App entry: mounts React into `index.html`, wraps the app in `Providers` (TanStack Query) + `RouterProvider`; installs the error catcher (`lib/catchErrors`, spec 032) |
+| `router.tsx` | The route table — maps each URL to a page component in `routes/`; every route has the crash screen as its `errorElement` (inside the app frame a broken page keeps the menu) |
 | `providers.tsx` | `QueryClientProvider` (TanStack Query configuration) |
 | `vite-env.d.ts` | Vite type shims (`import.meta.env`) |
 | `globals.css` | Tailwind v4 import + theme CSS variables (shadcn); imported by `main.tsx`. |

@@ -6,6 +6,7 @@ repeated, and the resume is never stored: reading it is logged as a fact only.
 """
 
 import json
+import re
 import uuid
 from datetime import UTC, datetime
 from urllib.parse import urlsplit
@@ -14,8 +15,10 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.scout import RUN_RUNNING, ScoutRun, ScoutRunEvent
+from app.services import bug_reports
 from app.services import scout_instructions as instr
 from app.services import scout_runs as runs
+from app.services.apply_problems import scrub
 from app.services.scout_review import SOURCE_LABEL
 
 MAX_EVENTS = 400
@@ -136,6 +139,31 @@ def summarize(tool: str, sent: dict, out: dict | None, error: str | None) -> str
     return tool
 
 
+# What a refusal names (ids, titles, a user's own words) is left out of its
+# kind: anything quoted, in brackets or parentheses, ids and numbers.
+_QUOTED = re.compile(
+    r"\"[^\"]*\"|“[^”]*”|‘[^’]*’|(?<!\w)'[^']*'(?!\w)"
+    r"|\([^()]*\)|\[[^\[\]]*\]|\{[^{}]*\}"
+)
+_IDS = re.compile(
+    r"\b[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\b"
+    r"|\b(?=[0-9a-f]*\d)[0-9a-f]{8,}\b",
+    re.I,
+)
+
+
+def refusal_category(error: str) -> str:
+    """What kind of refusal it was: its first sentence, with anything quoted
+    or in brackets left out and ids and numbers as N, so the same refusal
+    about two jobs (or two of the user's titles) is one, and names nothing."""
+    first = re.split(r"(?<=[.!?])\s", str(error or "").strip(), maxsplit=1)[0]
+    for _ in range(3):  # brackets inside brackets
+        first = _QUOTED.sub("…", first)
+    first = _IDS.sub("N", first)
+    first = re.sub(r"\d+", "N", first)
+    return re.sub(r"\s+", " ", scrub(first, 120)).strip() or "Refused"
+
+
 async def _run(db: AsyncSession, user_id: uuid.UUID, run_id) -> ScoutRun | None:
     if run_id:
         try:
@@ -203,7 +231,19 @@ async def record(
     out: dict | None = None,
     error: str | None = None,
 ) -> None:
-    """Log one Scout connector call on its run (none: nothing is logged)."""
+    """Log one Scout connector call on its run (none: nothing is logged). A
+    refusal is also kept in Bugs & ideas (spec 032): the tool and the kind of
+    refusal, never who or what was sent."""
+    if error:
+        category = refusal_category(error)
+        await bug_reports.catch_safely(
+            db,
+            section="scout",
+            kind="scout_refused",
+            place=tool,
+            message=category,
+            key=category,
+        )
     run = await _run(db, user_id, run_id or (out or {}).get("run_id"))
     if run is None:
         return
