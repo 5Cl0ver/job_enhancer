@@ -6,7 +6,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { ApiError, api } from "@/lib/api";
-import { type ApplyRun, type ApplyRunShort, type Fix, isOpenApply } from "@/lib/apply";
+import { type ApplyMode, type ApplyRun, type ApplyRunShort, type Fix, isOpenApply } from "@/lib/apply";
 
 const LIVE_MS = 3000;
 const BANNER_MS = 15_000;
@@ -122,11 +122,49 @@ export const useHelpDone = () =>
     (v) => ({ reply: v.reply ?? null }),
   );
 
-/** Change a box while Claude fills, or ask Claude about it (spec 030). */
-export const useLiveFix = () =>
-  useRunAction<{ runId: string; q: string; a: string; to?: string; ask?: string }>(
-    (v) => `/v1/apply/runs/${v.runId}/live-fix`,
-    (v) => ({ q: v.q, a: v.a.slice(0, 300), ...(v.to ? { to: v.to } : {}), ...(v.ask ? { ask: v.ask } : {}) }),
+/** A run changed by any verb (PATCH, DELETE…): it becomes the run on screen. */
+function useRunChange<T>(send: (vars: T) => Promise<ApplyRun>) {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: send,
+    onMutate: () => qc.cancelQueries({ queryKey: ["apply-run"] }),
+    onSuccess: (run) => {
+      qc.setQueryData(["apply-run", run.id], run);
+      qc.invalidateQueries({ queryKey: ["apply-open"] });
+    },
+  });
+}
+
+const fixBody = (v: { to?: string; ask?: string }) => ({ to: v.to || null, ask: v.ask || null });
+
+/** Change a box on any step, or ask Claude about it: it waits on the run
+ * until a checkpoint, never interrupting Claude (spec 033). */
+export const useAddFix = () =>
+  useRunAction<{ runId: string; step: string; q: string; k: number; to?: string; ask?: string }>(
+    (v) => `/v1/apply/runs/${v.runId}/fixes`,
+    (v) => ({ step: v.step, q: v.q, k: v.k, ...fixBody(v) }),
+  );
+
+export const useEditFix = () =>
+  useRunChange((v: { runId: string; fixId: string; to?: string; ask?: string }) =>
+    api.patch<ApplyRun>(`/v1/apply/runs/${v.runId}/fixes/${v.fixId}`, fixBody(v)),
+  );
+
+export const useRemoveFix = () =>
+  useRunChange((v: { runId: string; fixId: string }) =>
+    api.delete<ApplyRun>(`/v1/apply/runs/${v.runId}/fixes/${v.fixId}`),
+  );
+
+/** Send now (or the review's Send fixes): every waiting fix goes to Claude. */
+export const useSendFixes = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/fixes/send`);
+
+/** Page by page: the owner looked the step over; its fixes go with it. */
+export const useContinue = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/continue`);
+
+/** Page by page or Keep going, any time. */
+export const useSetMode = () =>
+  useRunChange((v: { runId: string; mode: ApplyMode }) =>
+    api.patch<ApplyRun>(`/v1/apply/runs/${v.runId}/mode`, { mode: v.mode }),
   );
 
 /** Write to Claude: it gets it on its next connector call. */

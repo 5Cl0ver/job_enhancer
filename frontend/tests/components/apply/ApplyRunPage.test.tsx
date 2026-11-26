@@ -183,10 +183,17 @@ describe("the application page", () => {
     });
     post.mockResolvedValue({ ...RUN, status: "review" });
     renderPage();
-    expect(await screen.findByText("Page 1: My Information")).toBeInTheDocument();
-    expect(screen.getAllByText("Claude wrote it")[0]).toBeInTheDocument();
-    expect(screen.getAllByText("Left empty")).toHaveLength(2); // checked first, and on its page
+    // Every answer, by step (spec 033): one group a step, folded.
+    expect(await screen.findByRole("heading", { name: "Every answer" })).toBeInTheDocument();
+    expect(screen.getAllByText("Left empty")).toHaveLength(1); // checked first
+    await userEvent.click(screen.getByRole("button", { name: /^My Information/ }));
+    expect(screen.getByText("Claude wrote it")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: /^Review/ }));
+    expect(screen.getAllByText("Left empty")).toHaveLength(2); // and on its step
+    // The photos, folded away as proof.
+    await userEvent.click(screen.getByRole("button", { name: /Photos of each page/ }));
     expect(screen.getByText(/No photo: The tab wasn't showing/)).toBeInTheDocument();
+    await userEvent.click(screen.getByText("Page 1: My Information"));
     expect(screen.getByRole("button", { name: "Open photo 1 of page 1" })).toBeInTheDocument();
 
     await userEvent.click(screen.getByRole("button", { name: /Fix something/ }));

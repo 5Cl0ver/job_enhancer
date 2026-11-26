@@ -1,194 +1,432 @@
-import { useState } from "react";
-import { Loader2, MessageCircle, Send, X } from "lucide-react";
+import { useMemo, useState } from "react";
+import { Check, ChevronUp, Loader2, MessageCircle, Pencil, Search, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
+import { useAddFix, useEditFix, useRemoveFix, useSendFixes } from "@/hooks/useApply";
 import { cn } from "@/lib/utils";
-import { type AnswerSource, type ApplyPage, type Fix, type PageAnswer, SOURCE_LABEL, sourceOf } from "@/lib/apply";
+import {
+  type ApplyRun,
+  type RowTag,
+  type RunFix,
+  type SheetRow,
+  TAG_LABEL,
+  fixFor,
+  fixLine,
+  isOpenApply,
+  normQ,
+  sheetOf,
+  tagOf,
+  waitingFixes,
+} from "@/lib/apply";
 
-const TONE: Record<AnswerSource, string> = {
+const TONE: Record<RowTag, string> = {
+  changed: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300",
   agreement: "bg-sky-500/15 text-sky-700 dark:text-sky-300",
+  only_you: "bg-rose-500/15 text-rose-700 dark:text-rose-300",
   guess: "bg-amber-500/15 text-amber-700 dark:text-amber-300",
+  empty: "bg-amber-500/10 text-amber-700 dark:text-amber-300",
   claude: "bg-primary/10 text-primary",
-  job_catcher: "bg-muted text-muted-foreground",
-  page: "bg-muted text-muted-foreground",
+  profile: "bg-muted text-muted-foreground",
 };
 
-export function SourceChip({ source }: { source: AnswerSource }) {
-  return <span className={cn("shrink-0 rounded px-1.5 text-xs", TONE[source])}>{SOURCE_LABEL[source]}</span>;
+/** Who put the answer there, in two or three words. */
+export function TagChip({ tag }: { tag: RowTag }) {
+  return <span className={cn("shrink-0 whitespace-nowrap rounded px-1.5 text-[11px] leading-5", TONE[tag])}>{TAG_LABEL[tag]}</span>;
 }
 
 /**
- * One answer as a bubble (spec 026): the question, what's in the box, who put
- * it there, and the fix waiting to go (if any). Tap it to change it or to ask
- * Claude about it.
+ * One box (spec 033): the question, what's in it, its tag, and where its fix
+ * stands ("→ No (waiting)"). Tap it to change it or ask Claude about it.
  */
-export function AnswerBubble({
-  page,
-  answer,
+export function RowButton({
+  row,
   fix,
   onTap,
-  showPage = false,
+  place,
+  fresh = false,
 }: {
-  page: ApplyPage;
-  answer: PageAnswer;
-  fix?: Fix;
+  row: SheetRow;
+  fix?: RunFix;
   onTap?: () => void;
-  showPage?: boolean;
+  /** The step's name, where rows of several steps are listed together. */
+  place?: string;
+  fresh?: boolean;
 }) {
-  const source = sourceOf(answer);
-  const empty = !answer.a.trim();
+  const tag = tagOf(row);
+  const empty = !row.a.trim();
+  const pending = fix && (fix.status === "waiting" || fix.status === "sent") && fix.to;
   const body = (
     <>
       <span className="flex items-start justify-between gap-2">
-        <span className="min-w-0 text-xs text-muted-foreground">
-          {showPage && `Page ${page.n} · `}
-          {answer.q}
+        <span className="min-w-0 break-words text-xs text-muted-foreground">
+          {place && <span className="font-medium">{place} · </span>}
+          {row.q}
         </span>
-        {source !== "page" && <SourceChip source={source} />}
+        {tag && tag !== "empty" && <TagChip tag={tag} />}
       </span>
       <span
         className={cn(
           "block whitespace-pre-wrap break-words text-sm",
-          empty && "text-amber-600 dark:text-amber-400",
-          fix?.to && "line-through opacity-60",
+          empty && "italic text-amber-700 dark:text-amber-400",
+          pending && "line-through opacity-60",
         )}
       >
-        {empty ? "Left empty" : answer.a}
+        {empty ? "Left empty" : row.a}
       </span>
-      {fix?.to && <span className="block text-sm font-medium text-primary">→ {fix.to}</span>}
-      {fix?.ask && (
-        <span className="flex items-start gap-1 text-sm text-primary">
-          <MessageCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden /> {fix.ask}
+      {fix && (
+        <span
+          className={cn(
+            "flex items-start gap-1 text-xs font-medium",
+            fix.status === "gone" ? "text-destructive" : fix.status === "done" ? "text-emerald-700 dark:text-emerald-400" : "text-primary",
+          )}
+        >
+          {fix.to ? null : <MessageCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />}
+          <span className="min-w-0 break-words">{fixLine(fix)}</span>
         </span>
       )}
     </>
   );
   const shape = cn(
-    "block w-full space-y-0.5 rounded-xl border px-3 py-2 text-left",
-    fix && "border-primary/60 bg-primary/5",
+    "block w-full space-y-0.5 rounded-lg px-3 py-2 text-left transition-colors duration-700",
+    fresh && "bg-primary/10",
+    fix?.status === "waiting" && "bg-primary/5 ring-1 ring-primary/40",
   );
   if (!onTap) return <div className={shape}>{body}</div>;
   return (
     <button
       type="button"
       onClick={onTap}
-      className={cn(shape, "min-h-11 transition-colors hover:bg-muted/60 focus-visible:ring-2 focus-visible:ring-ring")}
-      aria-label={`${answer.q}: ${empty ? "left empty" : answer.a}. Tap to change or ask Claude.`}
+      className={cn(shape, "min-h-11 hover:bg-muted/60 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring")}
+      aria-label={`${row.q}: ${empty ? "left empty" : row.a}. Tap to change it or ask Claude.`}
     >
       {body}
     </button>
   );
 }
 
-/** Change one answer, or ask Claude about it; nothing is sent until Send fixes. */
+/** The box a fix is about: where it is, what's in it, and the form's choices. */
+export interface FixTarget {
+  step: string;
+  stepTitle: string;
+  q: string;
+  a: string;
+  k: number;
+  options?: string[];
+  free?: boolean;
+}
+
+const SEARCH_FROM = 8;
+
+/**
+ * Change one box, or ask Claude about it (spec 033). A dropdown, radio or
+ * checkbox group shows the form's own choices (search when there are many);
+ * a text box only when the form takes typed words. Nothing reaches Claude
+ * here: the fix waits for its checkpoint.
+ */
 export function FixSheet({
   target,
   current,
+  note,
+  busy = false,
+  error,
   onSave,
   onRemove,
   onClose,
 }: {
-  target: { page: ApplyPage; answer: PageAnswer } | null;
-  current?: Fix;
-  onSave: (fix: Fix) => void;
-  onRemove: () => void;
+  target: FixTarget;
+  current?: { to?: string | null; ask?: string | null };
+  note?: string;
+  busy?: boolean;
+  error?: string | null;
+  onSave: (fix: { to?: string; ask?: string }) => void;
+  onRemove?: () => void;
   onClose: () => void;
 }) {
-  const [to, setTo] = useState(current?.to ?? "");
+  const options = useMemo(() => target.options ?? [], [target.options]);
+  const known = (v?: string | null) => !!v && options.some((o) => normQ(o) === normQ(v));
+  const [pick, setPick] = useState<string | null>(known(current?.to) ? current!.to! : null);
+  const [other, setOther] = useState(current?.to && !known(current.to) ? current.to : "");
+  const [typing, setTyping] = useState(!options.length || (!!current?.to && !known(current.to)));
   const [ask, setAsk] = useState(current?.ask ?? "");
-  if (!target) return null;
-  const { page, answer } = target;
-  const save = () => {
-    onSave({
-      page: page.n,
-      q: answer.q,
-      a: answer.a,
-      ...(to.trim() ? { to: to.trim() } : {}),
-      ...(ask.trim() ? { ask: ask.trim() } : {}),
-    });
-    onClose();
-  };
+  const [asking, setAsking] = useState(!!current?.ask);
+  const [search, setSearch] = useState("");
+  const shown = useMemo(
+    () => (search.trim() ? options.filter((o) => o.toLowerCase().includes(search.trim().toLowerCase())) : options),
+    [options, search],
+  );
+  const to = (typing ? other : pick ?? "").trim();
+  const words = ask.trim();
+  const now = target.a.trim();
+  const save = () => onSave({ ...(to ? { to } : {}), ...(words ? { ask: words } : {}) });
+
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
-      <DialogContent className="max-h-[95dvh] max-w-md overflow-y-auto">
-        <DialogTitle className="text-base">{answer.q}</DialogTitle>
-        <DialogDescription>
-          Page {page.n}. Now: {answer.a.trim() || "left empty"}
+      <DialogContent className="max-h-[92dvh] max-w-md gap-3 overflow-y-auto">
+        <DialogTitle className="pr-6 text-base leading-snug">{target.q}</DialogTitle>
+        <DialogDescription className="text-xs">
+          {target.stepTitle} · Now: {now || "left empty"}
         </DialogDescription>
-        <div className="space-y-1.5">
-          <Label htmlFor="fix-to">Change it to</Label>
-          <Input
-            id="fix-to"
-            value={to}
-            maxLength={1900}
-            placeholder={answer.a || "Your answer"}
-            onChange={(e) => setTo(e.target.value)}
-          />
-        </div>
-        <div className="space-y-1.5">
-          <Label htmlFor="fix-ask">Or ask Claude about it</Label>
-          <Input
-            id="fix-ask"
-            value={ask}
-            maxLength={480}
-            placeholder="Is this right?"
-            onChange={(e) => setAsk(e.target.value)}
-          />
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <Button disabled={!to.trim() && !ask.trim()} onClick={save}>
-            {current ? "Update fix" : "Add fix"}
-          </Button>
-          {current && (
-            <Button
-              variant="ghost"
-              onClick={() => {
-                onRemove();
-                onClose();
-              }}
-            >
-              Remove fix
-            </Button>
+
+        <div className="space-y-2">
+          <p className="text-sm font-medium">Change it to</p>
+          {options.length > 0 && (
+            <>
+              {options.length > SEARCH_FROM && (
+                <div className="relative">
+                  <Search className="pointer-events-none absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" aria-hidden />
+                  <Input
+                    aria-label="Search the choices"
+                    placeholder={`Search ${options.length} choices`}
+                    className="pl-8"
+                    value={search}
+                    onChange={(e) => setSearch(e.target.value)}
+                  />
+                </div>
+              )}
+              <div role="radiogroup" aria-label="Choices" className="max-h-64 space-y-1 overflow-y-auto">
+                {shown.map((o) => {
+                  const on = !typing && pick === o;
+                  const isNow = normQ(o) === normQ(now);
+                  return (
+                    <button
+                      key={o}
+                      type="button"
+                      role="radio"
+                      aria-checked={on}
+                      onClick={() => {
+                        setTyping(false);
+                        setPick(o);
+                      }}
+                      className={cn(
+                        "flex min-h-11 w-full items-center gap-2 rounded-lg border px-3 py-2 text-left text-sm transition-colors",
+                        on ? "border-primary bg-primary/10 font-medium" : "hover:bg-muted/60",
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          "flex h-4 w-4 shrink-0 items-center justify-center rounded-full border",
+                          on && "border-primary bg-primary text-primary-foreground",
+                        )}
+                        aria-hidden
+                      >
+                        {on && <Check className="h-3 w-3" />}
+                      </span>
+                      <span className="min-w-0 flex-1 break-words">{o}</span>
+                      {isNow && <span className="shrink-0 text-[11px] text-muted-foreground">Now</span>}
+                    </button>
+                  );
+                })}
+                {!shown.length && <p className="px-1 text-sm text-muted-foreground">No choice matches.</p>}
+              </div>
+              {target.free && !typing && (
+                <button type="button" className="text-sm text-primary underline-offset-2 hover:underline" onClick={() => setTyping(true)}>
+                  Something else
+                </button>
+              )}
+            </>
           )}
+          {typing && (
+            <Input
+              aria-label="Change it to"
+              autoFocus={!options.length}
+              value={other}
+              maxLength={1900}
+              placeholder={now || "The new answer"}
+              onChange={(e) => setOther(e.target.value)}
+            />
+          )}
+        </div>
+
+        {asking ? (
+          <div className="space-y-1.5">
+            <p className="text-sm font-medium">Ask Claude about it</p>
+            <Textarea
+              aria-label="Ask Claude about it"
+              value={ask}
+              rows={2}
+              maxLength={480}
+              placeholder="Is this right?"
+              onChange={(e) => setAsk(e.target.value)}
+            />
+          </div>
+        ) : (
+          <button
+            type="button"
+            className="inline-flex items-center gap-1.5 self-start text-sm text-primary underline-offset-2 hover:underline"
+            onClick={() => setAsking(true)}
+          >
+            <MessageCircle className="h-3.5 w-3.5" aria-hidden /> Ask Claude about it
+          </button>
+        )}
+
+        <div className="flex flex-col-reverse gap-2 sm:flex-row">
           <Button variant="ghost" onClick={onClose}>
             Cancel
           </Button>
+          {current && onRemove && (
+            <Button variant="ghost" className="text-destructive" disabled={busy} onClick={onRemove}>
+              Remove fix
+            </Button>
+          )}
+          <Button className="gap-1.5 sm:ml-auto" disabled={(!to && !words) || busy} onClick={save}>
+            {busy && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+            {current ? "Update fix" : "Add fix"}
+          </Button>
         </div>
-        <p className="text-xs text-muted-foreground">Add as many as you like, then send them to Claude together.</p>
+        {error && <p className="text-sm text-destructive">{error}</p>}
+        {note && <p className="text-xs text-muted-foreground">{note}</p>}
       </DialogContent>
     </Dialog>
   );
 }
 
-/** The fixes waiting to go: one tap sends them all to Claude. */
-export function FixTray({
-  count,
-  sending,
-  onSend,
-  onClear,
-}: {
-  count: number;
-  sending: boolean;
-  onSend: () => void;
-  onClear: () => void;
-}) {
-  if (!count) return null;
+/** When a fix for this box reaches Claude, in plain words. */
+function whenItGoes(run: ApplyRun, step: string): string {
+  if (run.status === "review") return "Add as many as you like, then press Send fixes.";
+  if (run.mode !== "keep") {
+    if (run.paused_step === step) return "It goes to Claude when you press Continue.";
+    // The step being filled now pauses when it's done: Continue sends it.
+    const s = sheetOf(run).steps.find((x) => x.key === step);
+    if (s && !s.done && !s.checked) return "It goes to Claude when you press Continue after this step.";
+  }
+  return "It waits, and goes to Claude when it finishes the last step.";
+}
+
+/**
+ * Tap a box, change it: the sheet, wired to the run's waiting fixes (add,
+ * update, remove). `open` is undefined when the run can't take fixes now.
+ */
+export function useFixer(run: ApplyRun) {
+  const [target, setTarget] = useState<FixTarget | null>(null);
+  const add = useAddFix();
+  const edit = useEditFix();
+  const remove = useRemoveFix();
+  const can =
+    isOpenApply(run) && run.status !== "submitting" && !(run.status === "review" && run.review?.decision);
+  const found = target ? fixFor(run.fixes, target.step, target.q, target.k) : undefined;
+  const waiting = found?.status === "waiting" ? found : undefined;
+  const close = () => setTarget(null);
+  const failed = [add, edit, remove].find((m) => m.isError)?.error as Error | undefined;
+  const sheet = target && (
+    <FixSheet
+      key={`${target.step}|${target.q}|${target.k}`}
+      target={target}
+      current={waiting}
+      note={whenItGoes(run, target.step)}
+      busy={add.isPending || edit.isPending || remove.isPending}
+      error={failed?.message ?? null}
+      onClose={close}
+      onSave={(v) =>
+        waiting
+          ? edit.mutate({ runId: run.id, fixId: waiting.id, ...v }, { onSuccess: close })
+          : add.mutate({ runId: run.id, step: target.step, q: target.q, k: target.k, ...v }, { onSuccess: close })
+      }
+      onRemove={waiting ? () => remove.mutate({ runId: run.id, fixId: waiting.id }, { onSuccess: close }) : undefined}
+    />
+  );
+  return { open: can ? setTarget : undefined, sheet };
+}
+
+const MAX_WAITING = 30;
+
+/**
+ * The fixes waiting on the run (spec 033): a calm bar at the bottom, open it
+ * to edit or remove one. While Claude fills they wait for their checkpoint
+ * (a small Send now for the rare urgent case); at the review, Send fixes.
+ */
+export function FixTray({ run, review = false }: { run: ApplyRun; review?: boolean }) {
+  const [open, setOpen] = useState(false);
+  const send = useSendFixes();
+  const fixer = useFixer(run);
+  const waiting = waitingFixes(run);
+  if (!waiting.length || !fixer.open) return fixer.sheet || null;
+  const sheet = sheetOf(run);
+  const titleOf = (key: string) => sheet.steps.find((s) => s.key === key)?.title ?? "";
+  const edit = (f: RunFix) => {
+    const step = sheet.steps.find((s) => s.key === f.step);
+    const same = step?.rows.filter((r) => normQ(r.q) === normQ(f.q)) ?? [];
+    const row = same[(f.k || 1) - 1];
+    fixer.open?.({ step: f.step, stepTitle: titleOf(f.step), q: f.q, a: row?.a ?? f.now, k: f.k || 1, options: row?.options, free: row?.free });
+  };
+  const n = waiting.length;
+  const label = `${n} fix${n === 1 ? "" : "es"} waiting`;
+  const when = review
+    ? "Claude makes them together, then asks you again."
+    : run.mode === "keep"
+      ? "They go to Claude when it finishes the last step."
+      : "Each goes to Claude when you press Continue after its step, or at the end.";
   return (
-    <div className="sticky bottom-2 z-10 flex items-center justify-between gap-2 rounded-xl border border-primary/50 bg-background/95 p-2 pl-3 shadow-lg backdrop-blur">
-      <span className="text-sm font-medium">
-        {count} fix{count === 1 ? "" : "es"} ready
-      </span>
-      <span className="flex gap-1">
-        <Button variant="ghost" size="sm" onClick={onClear} aria-label="Clear the fixes">
-          <X className="h-4 w-4" aria-hidden />
-        </Button>
-        <Button size="sm" className="gap-1.5" disabled={sending} onClick={onSend}>
-          {sending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
-          Send fixes
-        </Button>
-      </span>
+    <div className="sticky bottom-2 z-10 rounded-xl border border-primary/40 bg-background/95 shadow-lg backdrop-blur">
+      <div className="flex items-center gap-2 p-2 pl-3">
+        <button
+          type="button"
+          aria-expanded={open}
+          onClick={() => setOpen((o) => !o)}
+          className="flex min-h-9 min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-medium"
+        >
+          <ChevronUp className={cn("h-4 w-4 shrink-0 transition-transform", !open && "rotate-180")} aria-hidden />
+          <span className="truncate">{label}</span>
+        </button>
+        {review ? (
+          <Button size="sm" className="gap-1.5" disabled={send.isPending} onClick={() => send.mutate(run.id)}>
+            {send.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Send className="h-4 w-4" aria-hidden />}
+            Send fixes
+          </Button>
+        ) : (
+          <button
+            type="button"
+            disabled={send.isPending}
+            onClick={() => {
+              if (window.confirm("Send these to Claude now? It may stop what it's doing to make them.")) send.mutate(run.id);
+            }}
+            className="shrink-0 px-2 text-xs text-muted-foreground underline underline-offset-2 hover:text-foreground"
+          >
+            Send now
+          </button>
+        )}
+      </div>
+      {open && (
+        <div className="space-y-2 border-t p-2">
+          <ul className="max-h-60 space-y-1 overflow-y-auto">
+            {waiting.map((f) => (
+              <li key={f.id} className="flex items-start gap-1 rounded-lg px-2 py-1.5 hover:bg-muted/50">
+                <button type="button" className="min-w-0 flex-1 text-left" onClick={() => edit(f)} aria-label={`Edit the fix for ${f.q}`}>
+                  <span className="block truncate text-xs text-muted-foreground">
+                    {titleOf(f.step)} · {f.q}
+                  </span>
+                  <span className="block break-words text-sm">{f.to ? `→ ${f.to}` : `Ask: ${f.ask}`}</span>
+                </button>
+                <Pencil className="mt-1 h-3.5 w-3.5 shrink-0 text-muted-foreground" aria-hidden />
+                <RemoveFix run={run} fix={f} />
+              </li>
+            ))}
+          </ul>
+          <p className="px-2 text-xs text-muted-foreground">
+            {n >= MAX_WAITING ? `${MAX_WAITING} fixes, the most at once. Send them to add more. ` : ""}
+            {when}
+          </p>
+        </div>
+      )}
+      {send.isError && <p className="px-3 pb-2 text-xs text-destructive">{(send.error as Error).message}</p>}
+      {fixer.sheet}
     </div>
+  );
+}
+
+function RemoveFix({ run, fix }: { run: ApplyRun; fix: RunFix }) {
+  const remove = useRemoveFix();
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-8 w-8 shrink-0 p-0"
+      disabled={remove.isPending}
+      aria-label={`Remove the fix for ${fix.q}`}
+      onClick={() => remove.mutate({ runId: run.id, fixId: fix.id })}
+    >
+      <X className="h-4 w-4" aria-hidden />
+    </Button>
   );
 }

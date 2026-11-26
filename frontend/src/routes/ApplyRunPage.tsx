@@ -10,8 +10,10 @@ import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
 import { CoverLetterCard } from "@/components/jobs/JobCoverLetterPicker";
 import { ResumeReview } from "@/components/apply/ResumeReview";
-import { LiveFill } from "@/components/apply/LiveFill";
+import { ModeSwitch } from "@/components/apply/ModeSwitch";
 import { ReviewBoard } from "@/components/apply/Review";
+import { StepCheck } from "@/components/apply/StepCheck";
+import { YourApplication } from "@/components/apply/YourApplication";
 import {
   Conversation,
   CopyLine,
@@ -68,6 +70,10 @@ function StartCard({ run }: { run: ApplyRun }) {
           This part happens on your computer, in Chrome. Everything after it works here too.
         </p>
       )}
+      <div className="space-y-1.5">
+        <p className="text-sm font-medium">How should Claude go?</p>
+        <ModeSwitch run={run} explain />
+      </div>
       <p className="text-sm">Open the Claude side panel in Chrome and say:</p>
       <CopyLine line={APPLY_LINE} />
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
@@ -194,6 +200,7 @@ export function ApplyRunPage() {
       <StartCard run={run} />
       <HelpCard key={run.help?.at ?? "none"} run={run} />
       <DidItGo run={run} />
+      <StepCheck run={run} />
 
       {/* Claude's open questions are what it's waiting for: first. */}
       {asking && (
@@ -214,7 +221,7 @@ export function ApplyRunPage() {
         </Card>
       )}
 
-      <LiveFill run={run} />
+      {!reviewing && <YourApplication run={run} />}
       <Conversation run={run} open={open} />
       <ScreenNow run={run} open={open} />
 
@@ -242,9 +249,9 @@ export function ApplyRunPage() {
         </Card>
       )}
 
-      {!reviewing && run.pages.length > 0 && (
-        <Card title={run.status === "sent" ? "What you sent" : "Application"}>
-          <Pages pages={run.pages} />
+      {!reviewing && run.pages.some((p) => p.photo_ids.length || p.photo === "waiting") && (
+        <Card title="Photos of each page">
+          <Pages pages={run.pages} photosOnly />
         </Card>
       )}
 

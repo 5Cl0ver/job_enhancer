@@ -6,9 +6,12 @@ import {
   currentStep,
   latestPages,
   needsYou,
+  normQ,
   pageAnswers,
+  sheetFromPages,
   sourceOf,
   statusLine,
+  tagOf,
 } from "@/lib/apply";
 
 const base: ApplyRun = {
@@ -85,6 +88,23 @@ describe("where an application is", () => {
     expect(bannerLine({ ...base, status: "questions", questions_open: 1 })).toBe(
       "Claude has 1 question for you: IT Engineer at Acme",
     );
+    // Page by page (spec 033): a finished step waits for the owner's look.
+    const paused = { ...base, status: "filling" as const, paused_step: "my information", paused_title: "My Information" };
+    expect(needsYou(paused)).toBe(true);
+    expect(needsYou({ ...paused, paused_step: null })).toBe(false);
+    expect(statusLine(paused)).toBe("Look over My Information");
+    expect(bannerLine(paused)).toBe("Look over My Information: IT Engineer at Acme");
+  });
+
+  it("builds one sheet from older runs' pages, a redone step once (spec 033)", () => {
+    const vet = { q: "Veteran status", a: "No", guess: true };
+    const sheet = sheetFromPages([
+      page(4, "u", { title: "Voluntary Disclosures", answers: [vet] }),
+      page(5, "u", { title: "Page 5", answers: [{ ...vet, guess: false }] }),
+    ]);
+    expect(sheet.steps.map((s) => [s.title, s.rows.length])).toEqual([["Voluntary Disclosures", 1]]);
+    expect(tagOf(sheet.steps[0].rows[0])).toBe(null);
+    expect(normQ("Veteran Status *")).toBe(normQ("veteran status (Required)"));
   });
 });
 

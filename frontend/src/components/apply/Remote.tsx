@@ -227,6 +227,11 @@ export function Conversation({ run, open }: { run: ApplyRun; open: boolean }) {
                 {m.fix && (
                   <p className="truncate text-xs text-primary-foreground/80">{m.fix.box_on_page}</p>
                 )}
+                {!!m.fixes?.length && (
+                  <p className="text-xs text-primary-foreground/80">
+                    {m.fixes.length} fix{m.fixes.length === 1 ? "" : "es"}: {m.fixes.map((f) => f.box_on_page).join(", ")}
+                  </p>
+                )}
                 <p className="whitespace-pre-wrap break-words">{m.text}</p>
                 <p className={cn("mt-0.5 text-[11px]", m.by === "you" ? "text-primary-foreground/80" : "text-muted-foreground")}>
                   {m.by === "you" ? "You" : "Claude"} · {time(m.at)}
@@ -283,10 +288,13 @@ export function Stopped({ run }: { run: ApplyRun }) {
         <AlertTriangle className="h-4 w-4 text-amber-600" aria-hidden /> Claude seems to have stopped
       </h2>
       <p className="text-sm">
-        It hasn't checked in for a few minutes. On your computer, open the Claude side panel (a new chat is fine) and say:
+        No word from it, and the page hasn't changed, for a few minutes. On your computer, open the Claude side panel (a
+        new chat is fine) and say:
       </p>
       <CopyLine line={CARRY_ON_LINE} />
-      <p className="text-xs text-muted-foreground">It picks up right where it was. Your answers and messages are kept.</p>
+      <p className="text-xs text-muted-foreground">
+        It picks up right where it was. Your answers, messages and waiting fixes are kept.
+      </p>
     </section>
   );
 }
