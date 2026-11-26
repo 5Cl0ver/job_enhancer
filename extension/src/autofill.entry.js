@@ -24,7 +24,7 @@ import { companyKnown, siteKey } from "./autofill/hosts.js";
 import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
-import { watchForSubmit } from "./autofill/track.js";
+import { tenantCompany, watchForSubmit, workdayAddress } from "./autofill/track.js";
 import { startApplyMode } from "./autofill/applyMode.js";
 import { pageAnswers } from "./autofill/applyPage.js";
 import { editKey, fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
@@ -163,7 +163,7 @@ const session = createSession({
 });
 
 let state = "idle"; // idle | busy
-let lastReport = { filled: 0, need: 0 };
+let lastReport = { filled: 0, need: 0, already: 0 };
 // Keep filling (spec 015, Story 4): each later step of the same application
 // fills as it appears. It starts with a press when SUPER AUTOFILL is on (the
 // panel's checkbox, on by default, kept in chrome.storage.sync so every
@@ -223,7 +223,7 @@ function check() {
     return;
   }
   const p = presenceNow();
-  const key = JSON.stringify([location.href, p.form, p.app, p.fields, p.inModal]);
+  const key = JSON.stringify([location.href, p.form, p.app, p.fields, p.inModal, !!p.signup]);
   if (key !== lastSent && (p.form || lastSent)) {
     lastSent = p.form ? key : "";
     send({ type: "formPresence", presence: { ...p, at: Date.now() } });
@@ -242,7 +242,7 @@ function check() {
 
 function report() {
   const r = session.report();
-  lastReport = { filled: r.entries.length, need: r.need_you.length };
+  lastReport = { filled: r.entries.length, need: r.need_you.length, already: (r.already || []).length };
   send({ type: "sessionUpdate", session: r });
   return r;
 }
@@ -274,6 +274,9 @@ async function loadCopy() {
     resumeId: res.resumeId || null,
     coverLetterFile,
     coverLetterText: res.coverLetter?.text || "",
+    // Which company this application is for ("have you worked here before?",
+    // spec 034): the linked saved job's, else the Workday site's own name.
+    company: res.company || tenantCompany(workdayAddress(location.href)?.tenant || ""),
   };
   return lastCopy;
 }
@@ -386,7 +389,7 @@ async function fill(auto) {
     }
     report();
   }
-  status({ phase: "done", filled: lastReport.filled, need: lastReport.need }, { now: true });
+  status({ phase: "done", filled: lastReport.filled, need: lastReport.need, already: lastReport.already }, { now: true });
   // `seen`: how many fields this frame could see — 0 makes the background
   // read the page again before reporting (spec 017).
   return { ok: true, ...lastReport, seen };
@@ -485,6 +488,8 @@ try {
         if (msg.action === "typed") return { answers: session.typedAnswers() };
         if (msg.action === "use") return { ok: (await session.useSuggestion(msg.id)).ok };
         if (msg.action === "useText") return { ok: (await session.useText(msg.id, msg.value)).ok };
+        // Add to profile (spec 034): the value just saved to the profile.
+        if (msg.action === "useProfile") return { ok: (await session.useProfile(msg.id, Array.isArray(msg.value) ? msg.value : [msg.value])).ok };
         if (msg.action === "keep") {
           keepOn = !!msg.value;
           keepUserOff = !msg.value;
@@ -604,7 +609,13 @@ const picker = createPicker({
     send({
       type: "picked",
       site,
-      field: { id: field.id, label: (field.question || "").slice(0, 120), kind: field.kind, options: (field.options || []).map((o) => o.label).filter(Boolean).slice(0, 60) },
+      field: {
+        id: field.id,
+        label: (field.question || "").slice(0, 120),
+        kind: field.kind,
+        // A lone yes/no checkbox (spec 034): ticked (Yes) or not (No).
+        options: field.kind === "checkbox" ? ["Yes", "No"] : (field.options || []).map((o) => o.label).filter(Boolean).slice(0, 60),
+      },
       fingerprint: fingerprintOf(field, fields),
       refused,
       value,
@@ -635,6 +646,9 @@ async function fillPickedNow({ fieldId: id, profile_key, answer }) {
 globalThis.__jecAutofill = {
   alive: () => isCurrent() && !runtimeGone(),
   report: () => (isCurrent() ? scanReportNow() : null),
+  // "Read the page again" (spec 034): what this frame sees, even with no form
+  // here (a sign-in page's boxes), never a value.
+  presence: () => (isCurrent() ? session.presence(taughtHere) : null),
   // Apply with Claude (spec 022): every question here with its answer, for
   // the photos' review. Read by the background in every frame.
   answers: () => (isCurrent() ? pageAnswers(session.scan(), readField) : []),

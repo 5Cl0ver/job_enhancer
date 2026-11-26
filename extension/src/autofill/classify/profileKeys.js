@@ -18,9 +18,15 @@ export const PRIVATE =
 export const OTHER_PERSON =
   /\breferences?\b(?! (number|code|id)\b)|emergency contact|\breferr(er|ed by)\b|who referred|\bsupervisor'?s?\b|\bmanager'?s (name|email|phone)|\bspouse\b|\bguardian\b|next of kin/i;
 
-/** Agreeing to terms or attesting to something: only the user can. */
+/**
+ * Agreeing to terms or attesting to something: only the user can. A lone
+ * checkbox is an agreement only when it reads like one (spec 034): agree,
+ * consent, acknowledge, certify, attest, terms, privacy, policy, "I have
+ * read", "true and complete", a signature — and an opt-in to messages
+ * ("Text me updates", "I'd like to receive emails"): agreeing to be contacted.
+ */
 export const CONSENT =
-  /\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy (policy|notice)|consent|acknowledg|attest|certif(y|ication that)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature/i;
+  /\b(text|sms|e-?mail|call|contact|message) me\b|\bopt[\s-]?in\b|\breceive (text|sms|e-?mail|messages|updates|communications|alerts|news)|\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy|\bpolic(y|ies)\b|consent|acknowledg|attest|certif(y|ication that)|true,? (and|&) (complete|correct|accurate)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature|\bsignature\b/i;
 
 /** Essays: a person writes these (Write in the panel helps). */
 export const ESSAY =

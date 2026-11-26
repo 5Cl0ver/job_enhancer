@@ -19,7 +19,8 @@ import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
 import { pageId, siteKey } from "./autofill/hosts.js";
 import { bestJobMatch } from "../panel/src/lib/context.ts";
-import { profileValue } from "./autofill/session.js";
+import { LEARNABLE_PROFILE, profileValue } from "./autofill/session.js";
+import { valueForms } from "./autofill/classify/profileKeys.js";
 import { promotions } from "./autofill/promote.js";
 
 importScripts("/config.js");
@@ -32,8 +33,13 @@ chrome.runtime.onInstalled.addListener(({ reason }) => {
   // so nothing needs a refresh (spec 015). Not on a Chrome update: the same
   // version is already running in those tabs.
   if (reason === "install" || reason === "update") reinjectOpenTabs().catch(() => {});
-  // A new version says hello again right away (the update note goes away).
-  chrome.storage.local.remove("je_hello_at").catch(() => {});
+  // A new version says hello again right away (the update note goes away),
+  // and checks for a newer one every 6 hours from now on (spec 034).
+  chrome.storage.local
+    .remove("je_hello_at")
+    .then(() => keepChecking())
+    .then(() => checkVersion())
+    .catch(() => {});
 });
 chrome.sidePanel.setPanelBehavior({ openPanelOnActionClick: true }).catch(() => {});
 
@@ -150,6 +156,7 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
   // The worker slept while waiting for approval: carry on the same loop.
   if (alarm.name === connect.alarm) connect.status().catch(() => {});
   if (alarm.name === REVOKE_ALARM) retryRevoke().catch(() => {});
+  if (alarm.name === VERSION_ALARM) checkVersion().catch(() => {});
 });
 
 function browserName() {
@@ -169,14 +176,20 @@ async function installId() {
   return id;
 }
 
-/** Tell Job Enhancer which version this is (on sign-in, then at most hourly). */
+/**
+ * Tell Job Enhancer which version this is: on sign-in, when Chrome starts and
+ * every 6 hours (spec 034), and when the panel opens (at most hourly). The
+ * answer says which version is the newest: an older Job Catcher shows "NEW"
+ * on its toolbar icon and an update card in the panel.
+ */
 async function hello(force = false) {
   const { je_hello_at } = await chrome.storage.local.get("je_hello_at");
   if (!force && je_hello_at && Date.now() - je_hello_at < 3600_000) return;
   const token = await getValidToken();
   if (!token) return;
   await chrome.storage.local.set({ je_hello_at: Date.now() });
-  const res = await fetch(`${cfg.API_BASE}/v1/extension/hello`, {
+  // A sleeping server wakes up (a cold start must not lose the check).
+  const res = await wakeFetch(`${cfg.API_BASE}/v1/extension/hello`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
     body: JSON.stringify({
@@ -187,13 +200,72 @@ async function hello(force = false) {
   }).catch(() => null);
   if (res?.ok) {
     const d = await res.json().catch(() => ({}));
-    const latest = typeof d.latest === "string" ? d.latest : null;
-    const { je_latest: before } = await chrome.storage.local.get("je_latest");
-    await chrome.storage.local.set({ je_latest: latest });
-    // A newer version just became known: the panel shows the update note.
-    if (latest !== (before ?? null)) chrome.runtime.sendMessage({ type: "authChanged" }).catch(() => {});
+    await storeLatest(typeof d.latest === "string" ? d.latest : null);
   }
 }
+
+/** The newest version, as the app said: kept, and shown when this one is older. */
+async function storeLatest(latest) {
+  const { je_latest: before } = await chrome.storage.local.get("je_latest");
+  await chrome.storage.local.set({ je_latest: latest });
+  // A newer version just became known: the panel shows the update card.
+  if (latest !== (before ?? null)) chrome.runtime.sendMessage({ type: "authChanged" }).catch(() => {});
+  await showUpdateBadge(latest !== (before ?? null));
+}
+
+// ---- Never out of date (spec 034) -------------------------------------------
+// Job Catcher is installed from a zip, so Chrome can't update it by itself:
+// it checks for a newer version when Chrome starts and every 6 hours, and an
+// older one says so on its toolbar icon ("NEW"), in the panel and in the app.
+
+const VERSION_ALARM = "je-version";
+const VERSION_EVERY_MIN = 360;
+const NEW_BADGE = { text: "NEW", color: "#dc2626" };
+
+/** "NEW" when a newer Job Catcher is out; nothing otherwise (offline: as last known). */
+async function updateBadge() {
+  const { je_latest } = await chrome.storage.local.get("je_latest");
+  return isOlder(chrome.runtime.getManifest().version, je_latest) ? NEW_BADGE : { text: "" };
+}
+
+/** The toolbar icon on every tab says it (`allTabs`: each tab's own badge too). */
+async function showUpdateBadge(allTabs = false) {
+  const b = await updateBadge();
+  try {
+    await chrome.action.setBadgeText({ text: b.text });
+    if (b.text) await chrome.action.setBadgeBackgroundColor({ color: b.color });
+  } catch {
+    /* no toolbar icon (tests) */
+  }
+  if (!allTabs) return;
+  for (const t of await chrome.tabs.query({}).catch(() => [])) if (t.id != null) await presence.badge(t.id);
+}
+
+/** Ask which version is the newest: signed in, with a hello; else the public answer. */
+async function checkVersion() {
+  if (await getValidToken()) {
+    await hello(true);
+    return;
+  }
+  const res = await wakeFetch(`${cfg.API_BASE}/v1/extension/latest`, {}).catch(() => null);
+  if (!res?.ok) return; // offline: try again at the next check
+  const d = await res.json().catch(() => ({}));
+  await storeLatest(typeof d.version === "string" ? d.version : null);
+}
+
+async function keepChecking() {
+  if (!(await chrome.alarms?.get(VERSION_ALARM).catch(() => null))) {
+    chrome.alarms?.create(VERSION_ALARM, { delayInMinutes: VERSION_EVERY_MIN, periodInMinutes: VERSION_EVERY_MIN });
+  }
+}
+
+chrome.runtime.onStartup.addListener(() => {
+  keepChecking().catch(() => {});
+  checkVersion().catch(() => {});
+});
+// The worker woke up (a new version, a browser restart): the icon as last known.
+showUpdateBadge().catch(() => {});
+keepChecking().catch(() => {});
 
 function isOlder(have, latest) {
   const parse = (v) => (typeof v === "string" && /^\d+(\.\d+){1,3}$/.test(v) ? v.split(".").map(Number) : null);
@@ -432,6 +504,8 @@ function storeFillSession(tabId, frameId, session) {
 // Does each tab have a form, and what is Autofill doing there (spec 016).
 const presence = createFillPresence({
   notify: (tabId) => chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {}),
+  // An out-of-date Job Catcher's "NEW" shows on every tab (spec 034).
+  idleBadge: () => updateBadge(),
 });
 
 // Apply with Claude (spec 022): photos, fill on request, the Submit block.
@@ -459,7 +533,8 @@ async function getFillSession(tabId) {
   const kk = keepKey(tabId);
   const ik = pickKey(tabId);
   const sk = savedKey(tabId);
-  const { [key]: held, [pk]: pending, [kk]: keep, [ik]: pick, [sk]: saved } = await chrome.storage.session.get([key, pk, kk, ik, sk]);
+  const tk = trackedKey(tabId);
+  const { [key]: held, [pk]: pending, [kk]: keep, [ik]: pick, [sk]: saved, [tk]: tracked } = await chrome.storage.session.get([key, pk, kk, ik, sk, tk]);
   return {
     ...(held || { frames: {} }),
     pending: pending || { answers: [], profile: {} },
@@ -467,6 +542,8 @@ async function getFillSession(tabId) {
     presence: await presence.get(tabId),
     pick: pick || null,
     saved: saved || [],
+    // A Submit just tracked on this tab (spec 034): the panel says so.
+    tracked: tracked && Date.now() - tracked.at < 15 * 60_000 ? tracked : null,
   };
 }
 
@@ -789,7 +866,7 @@ try {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearFillSession(tabId);
     presence.clear(tabId);
-    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), `je_edits:${tabId}`]).catch(() => {});
+    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), trackedKey(tabId), `je_edits:${tabId}`]).catch(() => {});
   });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -1017,18 +1094,45 @@ async function getDocumentPdf(docId) {
   return { b64: btoa(binary) };
 }
 
-// Auto-track: the user submitted an application on an ATS page.
-async function markApplied(job) {
+// A submit tracked on a tab: "Saved and marked applied" in the panel (spec 034).
+const trackedKey = (tabId) => `je_tracked:${tabId}`;
+const recentSubmits = new Map(); // tab + posting → when (one Submit, one save)
+
+// Auto-track: the user submitted an application on an ATS page (`tab`: the
+// page's own tab), or pressed Mark applied in the panel (`job.id`).
+async function markApplied(job, tab = null) {
   const token = await getValidToken();
   if (!token) return { matched: false };
+  let id = job.id || null;
+  if (tab?.id != null) {
+    // The page fires twice (a double click): once is enough.
+    const once = `${tab.id}|${job.create?.url || job.title}`;
+    if (Date.now() - (recentSubmits.get(once) || 0) < 30_000) return { matched: true, repeat: true };
+    recentSubmits.set(once, Date.now());
+    // The saved job this page is (the same posting): that one, no guessing by name.
+    if (!id) id = (await linkedJob(tab).catch(() => null))?.id || null;
+  }
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
     method: "POST",
     headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-    // The saved job's own id when the panel knows it: that job, no guessing.
-    body: JSON.stringify({ title: job.title || "", company: job.company || "", ...(job.id ? { saved_job_id: job.id } : {}) }),
+    // The saved job's own id when it's known: that job, no guessing. A
+    // Workday application for a job never saved carries what to save it as.
+    body: JSON.stringify({
+      title: job.title || "",
+      company: job.company || "",
+      ...(id ? { saved_job_id: id } : {}),
+      ...(!id && job.create ? { create: job.create } : {}),
+    }),
   });
   if (!res.ok) return { matched: false };
-  return res.json();
+  const out = await res.json();
+  if (out.matched && tab?.id != null) {
+    await chrome.storage.session.set({ [trackedKey(tab.id)]: { created: !!out.created, title: job.title || "", at: Date.now() } });
+    await listSaved(null).catch(() => {});
+    chrome.runtime.sendMessage({ type: "jobSaved" }).catch(() => {});
+    chrome.runtime.sendMessage({ type: "sessionChanged", tabId: tab.id }).catch(() => {});
+  }
+  return out;
 }
 
 // Bulk sync: applications the extension read off the user's Indeed "My jobs"
@@ -1241,7 +1345,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The cover letter (spec 031): the job's pick, from the run on its
         // tab (undefined = not the run's tab), else the linked saved job.
         const runLetter = await applyRun.coverLetterFor(tab).catch(() => undefined);
-        const coverLetterId = runLetter !== undefined ? runLetter : (await linkedJob(tab).catch(() => null))?.cover_letter_id || null;
+        const linked = await linkedJob(tab).catch(() => null);
+        const coverLetterId = runLetter !== undefined ? runLetter : linked?.cover_letter_id || null;
+        // The company this application is for (spec 034, "have you worked
+        // here before?"): the saved job linked to the page; else the page
+        // works it out itself (the Workday job's company, the site's name).
+        const company = linked?.company || "";
         if (runResume) {
           // Never the usual résumé in its place: no file, and Claude is told.
           // Its jobs and schools never come from the usual (master) résumé
@@ -1249,7 +1358,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           // it by id (getWorkHistory), else left for Claude.
           const got = await autofill.get({ resumeId: runResume, coverLetterId });
           const failed = got.chosenFailed ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {};
-          sendResponse({ ok: true, ...got, ...failed, resumeId: runResume });
+          sendResponse({ ok: true, ...got, ...failed, resumeId: runResume, company });
         } else {
           const { key, choice, resumeId } = await resumeFor(tab);
           const got = await autofill.get({ resumeId, coverLetterId });
@@ -1260,7 +1369,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
             await chrome.storage.session.set({ [key]: note });
             if (tab?.id != null) changed(tab.id);
           }
-          sendResponse({ ok: true, ...got });
+          sendResponse({ ok: true, ...got, company });
         }
       } else if (msg.type === "listResumes") {
         sendResponse(await listResumes());
@@ -1364,6 +1473,34 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           });
         }
         sendResponse(out.ok ? { ok: true } : { ok: false, error: out.error });
+      } else if (msg.type === "addToProfile") {
+        // "Not in your profile yet" → Add to profile (spec 034): the user's
+        // own press, so it's saved even during an Apply with Claude run (it's
+        // not learning from typing). Saved once, filled into the box, and
+        // every later application has it.
+        const key = String(msg.key || "");
+        const raw = String(msg.value ?? "").trim().slice(0, 300);
+        const value = LEARNABLE_PROFILE.has(key) && raw ? profileValue(key, raw) : null;
+        if (value === null || value === "") {
+          sendResponse({ ok: false, error: "That doesn't look right for this box. Check it and try again." });
+        } else {
+          const out = await saveProfileFields({ [key]: value });
+          if (!out.ok) {
+            sendResponse({ ok: false, error: out.error || "Couldn't save your profile. Try again." });
+          } else {
+            autofill.refresh();
+            const shown = typeof value === "boolean" ? (value ? "Yes" : "No") : String(value);
+            await updateSaved(msg.tabId, (list) => [
+              ...list.filter((x) => x.question_key !== `profile:${key}`),
+              { question_key: `profile:${key}`, question_text: key.replace(/_/g, " "), answer: shown, scope: "profile", at: Date.now() },
+            ]);
+            const opts = msg.frameId != null ? { frameId: msg.frameId } : undefined;
+            const filled = await chrome.tabs
+              .sendMessage(msg.tabId, { type: "fillAction", action: "useProfile", id: msg.id, value: valueForms(key, shown) }, opts)
+              .catch(() => null);
+            sendResponse({ ok: true, filled: !!filled?.ok });
+          }
+        }
       } else if (msg.type === "dismissPending") {
         await updatePending(msg.tabId, (held) => {
           if (msg.kind === "profile") held.profile = {};
@@ -1561,7 +1698,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "markAnswersUsed") {
         sendResponse(await markAnswersUsed(msg.question_keys || []));
       } else if (msg.type === "markApplied") {
-        sendResponse({ ok: true, ...(await markApplied(msg.job)) });
+        // From a page (its Submit): that tab; from the panel: the job it names.
+        sendResponse({ ok: true, ...(await markApplied(msg.job || {}, sender.tab || null)) });
       } else if (msg.type === "generateDocument") {
         const out = await generateDocument(msg.job_listing_id, msg.docType);
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });

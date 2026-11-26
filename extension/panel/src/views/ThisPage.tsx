@@ -10,6 +10,7 @@ import { usePanel } from "@/lib/store";
 import { extractJobFromPage } from "@/lib/extractPage.js";
 import { expandMore } from "../../../src/extract/expand.js";
 import { tidyJob } from "../../../src/extract/util.js";
+import { workdayAddress } from "../../../src/autofill/track.js";
 import { Apply, JobLinks } from "@/views/Apply";
 import { Trouble } from "@/views/Trouble";
 import { Point, startPointing } from "@/views/Point";
@@ -35,10 +36,16 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   const apply = (applying || p?.form) && (
     <Apply site={ctx.site} isApplication={applying} autoTracked={ctx.kind === "application" && ctx.autoTracked} match={match} onNotThis={notThisJob} onWrite={onWrite} />
   );
+  // A Workday job or application that isn't saved yet (spec 034): the panel
+  // reads it by itself and offers Save / Save & apply / Save & track.
+  const workday = !match ? workdayAddress(tab.url) : null;
+  const workdayJob = !!workday?.posting;
   return (
     <div className="flex flex-col gap-3">
       {fill.pick && <Point pick={fill.pick} />}
+      {workdayJob && !workday?.apply && <WorkdayJob key={`workday:${tab.url}`} apply={false} onSaved={savedHere} />}
       {applying && apply}
+      {workdayJob && workday?.apply && <WorkdayJob key={`workday:${tab.url}`} apply onSaved={savedHere} />}
       {/* Linked to a saved job and no form to fill: say which, with its links. */}
       {!applying && !apply && match && (
         <Card className="flex flex-col gap-1">
@@ -50,7 +57,7 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
       )}
       {/* A fresh card per page: nothing carries over from the last one. Always
           there: a page linked to a saved job can still be saved as its own. */}
-      <SaveJob key={tab.url} compact={applying || !!match || fill.entries.length > 0} site={ctx.site} match={match} onSaved={savedHere} />
+      <SaveJob key={tab.url} compact={applying || !!match || fill.entries.length > 0 || workdayJob} site={ctx.site} match={match} onSaved={savedHere} />
       {hidden.length > 0 && <Unlinked jobs={hidden} onLink={linkAgain} />}
       {!applying && (apply || <NoForm known={!!p} />)}
     </div>
@@ -104,7 +111,115 @@ type ReadJob = Partial<Omit<Draft, "salary_min" | "salary_max" | "salary_period"
   salary_min?: number | null;
   salary_max?: number | null;
   salary_period?: string | null;
+  /** Read from the heading and the site's name only (no job data): check it. */
+  guessed?: boolean;
 };
+
+/**
+ * A Workday job or application not in My Jobs yet (spec 034), read by itself
+ * when the panel opens: "Applications Developer II · Northwind · Portland, OR".
+ * On the job: Save, or Save & apply (saved, then the application opens). On
+ * an application: Save & track (submitting it then marks it applied — and
+ * even unsaved, a Submit saves it and marks it applied).
+ */
+function WorkdayJob({ apply, onSaved }: { apply: boolean; onSaved: (id: string) => Promise<void> }) {
+  const { tab, reloadSaved, signedOut } = usePanel();
+  const [job, setJob] = React.useState<ReadJob | null>(null);
+  const [state, setState] = React.useState<"reading" | "ready" | "failed">("reading");
+  const [busy, setBusy] = React.useState<"" | "save" | "apply">("");
+  const [error, setError] = React.useState("");
+
+  React.useEffect(() => {
+    let live = true;
+    if (tab.id == null) return;
+    // Workday draws the job after the page loads: read again until it's there.
+    (async () => {
+      for (let i = 0; i < 6 && live; i++) {
+        const got = await readPage(tab.id!);
+        if (got?.title && (got.company || i >= 2)) {
+          if (live) {
+            setJob(got);
+            setState("ready");
+          }
+          return;
+        }
+        await new Promise((r) => setTimeout(r, 700));
+      }
+      if (live) setState("failed");
+    })();
+    return () => {
+      live = false;
+    };
+  }, [tab.id]);
+
+  async function save(then: "save" | "apply") {
+    if (!job?.title || !job.company) return;
+    setBusy(then);
+    setError("");
+    const posting = job.url || tab.url;
+    const res = await send({
+      type: "saveJob",
+      job: {
+        url: posting,
+        title: job.title.trim(),
+        company: job.company.trim(),
+        location: (job.location || "").trim() || "Not specified",
+        is_remote: !!job.is_remote,
+        description: (job.description || "").trim() || null,
+        salary_min: job.salary_min || null,
+        salary_max: job.salary_max || null,
+        salary_period: job.salary_period || null,
+      },
+    });
+    setBusy("");
+    if (res?.error === "NOT_SIGNED_IN") return signedOut();
+    if (!res?.ok && res?.error !== "Already in your tracker") return setError(res?.error || "Couldn't save. Try again.");
+    if (res?.ok && res.saved?.id) await onSaved(String(res.saved.id));
+    await reloadSaved();
+    if (then === "apply" && tab.id != null) {
+      chrome.tabs.update(tab.id, { url: `${posting.replace(/\/+$/, "")}/apply` }).catch(() => {});
+    }
+  }
+
+  if (state === "failed") return null; // the usual "Save this job" is below
+  const line = job ? [job.company, job.location].filter(Boolean).join(" · ") : "";
+  return (
+    <Card className="flex flex-col gap-2" data-testid="workday-job">
+      <span className="text-[11px] font-semibold uppercase tracking-wide text-primary">
+        {apply ? "This application · not in My Jobs" : "Workday job"}
+      </span>
+      {state === "reading" || !job ? (
+        <Muted role="status">Reading the job…</Muted>
+      ) : (
+        <>
+          <SectionTitle>{job.title}</SectionTitle>
+          {line && <Muted>{line}</Muted>}
+          {job.guessed && <Muted className="text-amber-700 dark:text-amber-300">Read from the page's heading: check this before you save.</Muted>}
+          <div className="flex gap-2">
+            {apply ? (
+              <Button className="flex-1" busy={busy === "save"} onClick={() => save("save")}>
+                {busy !== "save" && <Save />}
+                Save &amp; track
+              </Button>
+            ) : (
+              <>
+                <Button className="flex-1" busy={busy === "apply"} onClick={() => save("apply")}>
+                  Save &amp; apply
+                </Button>
+                <Button variant="outline" busy={busy === "save"} onClick={() => save("save")}>
+                  {busy !== "save" && <Save />}
+                  Save
+                </Button>
+              </>
+            )}
+          </div>
+          {apply && <Muted>When you submit, it moves to Applied by itself.</Muted>}
+          {error && <Alert tone="error">{error}</Alert>}
+        </>
+      )}
+    </Card>
+  );
+}
 
 async function readPage(tabId: number): Promise<ReadJob | null> {
   // Indeed / LinkedIn / ZipRecruiter: the content script's tested extractJob().

@@ -1,0 +1,49 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 034): Workday's My Information step.
+     "Have you previously been employed by Northwind Labs?" as Workday draws
+     it (a fieldset of radios), then the address. The job history decides the
+     radio; a postal code the profile lacks offers Add to profile.
+     window.__formData() holds what the PAGE has taken. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Information - Northwind Labs Careers</title>
+    <style>.field { margin: 8px 0; } legend { font-weight: bold; }</style>
+  </head>
+  <body>
+    <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+    <h2>My Information</h2>
+    <div class="field" data-automation-id="formField-candidateIsPreviousWorker">
+      <fieldset>
+        <legend><span data-automation-id="richText">Have you previously been employed by Northwind Labs?</span> <abbr title="required">*</abbr></legend>
+        <div><input type="radio" name="candidateIsPreviousWorker" id="prev-yes" value="true" /><label for="prev-yes">Yes</label></div>
+        <div><input type="radio" name="candidateIsPreviousWorker" id="prev-no" value="false" /><label for="prev-no">No</label></div>
+      </fieldset>
+    </div>
+    <div class="field" data-automation-id="formField-addressLine1">
+      <label for="addressSection_addressLine1">Address Line 1</label>
+      <input id="addressSection_addressLine1" data-automation-id="addressSection_addressLine1" />
+    </div>
+    <div class="field" data-automation-id="formField-city">
+      <label for="addressSection_city">City</label>
+      <input id="addressSection_city" data-automation-id="addressSection_city" />
+    </div>
+    <div class="field" data-automation-id="formField-postalCode">
+      <label for="addressSection_postalCode">Postal Code</label>
+      <input id="addressSection_postalCode" data-automation-id="addressSection_postalCode" />
+    </div>
+    <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      for (const input of document.querySelectorAll("input")) {
+        const save = () => {
+          if (input.type === "radio") data[input.name] = input.checked ? input.nextElementSibling.textContent : data[input.name];
+          else data[input.id] = input.value;
+        };
+        input.addEventListener("input", save);
+        input.addEventListener("change", save);
+      }
+    </script>
+  </body>
+</html>

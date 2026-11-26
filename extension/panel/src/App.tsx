@@ -1,7 +1,7 @@
 // Job Catcher's side panel: what you're doing on the tab beside it comes first
 // (This page), everything else is one tap away in the bottom bar.
 import * as React from "react";
-import { BriefcaseBusiness, ExternalLink, PenLine, ScanSearch, Settings as SettingsIcon } from "lucide-react";
+import { BriefcaseBusiness, Download, ExternalLink, PenLine, ScanSearch, Settings as SettingsIcon } from "lucide-react";
 import { Button, Spinner } from "@/ui";
 import { cn } from "@/lib/utils";
 import { appUrl } from "@/lib/chrome";
@@ -36,6 +36,61 @@ export function Logo({ className }: { className?: string }) {
   );
 }
 
+const DOWNLOAD_URL = "https://github.com/5Cl0ver/job_enhancer/releases/latest/download/job-catcher.zip";
+
+/**
+ * Never out of date (spec 034): Job Catcher is a zip install, so Chrome can't
+ * update it. When a newer one is out this card sits on top of every view:
+ * Download, and How (three short steps). You stay signed in.
+ */
+export function UpdateCard({ version, latest }: { version: string; latest: string }) {
+  const [how, setHow] = React.useState(false);
+  return (
+    <section
+      role="status"
+      aria-label="Update Job Catcher"
+      data-testid="update-banner"
+      className="flex flex-col gap-2 border-b border-amber-500/40 bg-amber-500/10 px-3 py-2.5 text-sm"
+    >
+      <div className="flex items-start gap-2">
+        <Download className="mt-0.5 size-4 shrink-0 text-amber-700 dark:text-amber-300" aria-hidden />
+        <div className="min-w-0 flex-1">
+          <p className="font-semibold">Update Job Catcher</p>
+          <p className="text-xs text-muted-foreground">
+            {version ? `You have ${version}, the newest is ${latest}.` : `The newest is ${latest}.`} Takes 1 minute.
+          </p>
+        </div>
+      </div>
+      <div className="flex gap-2">
+        <Button size="sm" className="flex-1" onClick={() => chrome.tabs.create({ url: DOWNLOAD_URL }).catch(() => {})}>
+          <Download />
+          Download
+        </Button>
+        <Button size="sm" variant="outline" aria-expanded={how} onClick={() => setHow((v) => !v)}>
+          How
+        </Button>
+      </div>
+      {how && (
+        <ol className="flex list-decimal flex-col gap-1 pl-5 text-xs">
+          <li>Unzip the download into your Job Catcher folder, replacing the files.</li>
+          <li>
+            Open{" "}
+            <button
+              type="button"
+              className="cursor-pointer font-medium text-primary underline underline-offset-2"
+              onClick={() => chrome.tabs.create({ url: "chrome://extensions" }).catch(() => {})}
+            >
+              chrome://extensions
+            </button>
+            .
+          </li>
+          <li>Press ↻ on Job Catcher. You stay signed in.</li>
+        </ol>
+      )}
+    </section>
+  );
+}
+
 export function App() {
   const { auth, tab } = usePanel();
   const { match } = usePageJob();
@@ -49,7 +104,6 @@ export function App() {
   if (auth.state === "out") return <SignIn />;
 
   const openApp = () => chrome.tabs.create({ url: `${appUrl()}/saved` });
-  const howToUpdate = () => chrome.tabs.create({ url: `${appUrl()}/job-catcher#update` });
 
   return (
     <div className="flex h-dvh flex-col">
@@ -60,14 +114,7 @@ export function App() {
           <ExternalLink />
         </Button>
       </header>
-      {auth.latest && (
-        <div role="status" className="flex items-center gap-2 border-b bg-amber-500/10 px-3 py-2 text-sm" data-testid="update-banner">
-          <span className="flex-1">Update available ({auth.latest})</span>
-          <Button variant="link" size="sm" className="h-auto px-0" onClick={howToUpdate}>
-            How to update
-          </Button>
-        </div>
-      )}
+      {auth.latest && <UpdateCard version={auth.version || ""} latest={auth.latest} />}
 
       {/* Every view stays mounted and is only hidden, so work in progress (a
           letter just written, a job being checked) survives switching views. */}

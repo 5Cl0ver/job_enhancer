@@ -1,0 +1,34 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 034): a Workday job page with the job's
+     own data (JSON-LD JobPosting) and Workday's data-automation-id markup.
+     The panel reads it by itself: title, company, place. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Applications Developer II</title>
+    <script type="application/ld+json">
+      {
+        "@context": "https://schema.org",
+        "@type": "JobPosting",
+        "title": "Applications Developer II",
+        "hiringOrganization": { "@type": "Organization", "name": "Northwind Labs" },
+        "jobLocation": { "@type": "Place", "address": { "@type": "PostalAddress", "addressLocality": "Portland", "addressRegion": "OR", "addressCountry": "US" } },
+        "datePosted": "2026-11-20",
+        "employmentType": "FULL_TIME",
+        "identifier": { "@type": "PropertyValue", "name": "Northwind Labs", "value": "JR-1001" },
+        "description": "<p>Build and support the apps our lab teams use every day.</p><ul><li>Write clean TypeScript and Python.</li><li>Work with the support desk on fixes.</li></ul>"
+      }
+    </script>
+  </head>
+  <body>
+    <main>
+      <h2 data-automation-id="jobPostingHeader">Applications Developer II</h2>
+      <div data-automation-id="locations"><dl><dt>locations</dt><dd>Portland, OR</dd></dl></div>
+      <div data-automation-id="jobPostingDescription">
+        <p>Build and support the apps our lab teams use every day.</p>
+        <ul><li>Write clean TypeScript and Python.</li><li>Work with the support desk on fixes.</li></ul>
+      </div>
+      <a data-automation-id="adventureButton" href="#apply" role="button">Apply</a>
+    </main>
+  </body>
+</html>

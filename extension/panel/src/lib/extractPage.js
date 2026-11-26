@@ -70,6 +70,42 @@ export function extractJobFromPage() {
     if (out.title && out.company) break;
   }
 
+  // 1.5) Workday (spec 034; MIRRORS src/extract/workday.js): the posting
+  // header, locations and description by their data-automation-id, the
+  // company from the Workday site's name, the posting's own address (an
+  // application's "/apply…" taken off), and its title and place from that
+  // address when the page doesn't show them. `guessed`: no job data on the
+  // page, only a heading and the site's name — the panel says "check this".
+  const wd = /\.(myworkdayjobs|myworkdaysite)\.com$/i.test(location.hostname);
+  // An application's steps hold the form, not the posting: never its text
+  // as the job's description or pay.
+  const wdApply = wd && /\/(apply|application)(\/|$)/i.test(location.pathname);
+  if (wd) {
+    const aid = (id) => document.querySelector(`[data-automation-id="${id}"]`);
+    const words = (s) => clean(decodeURIComponent(String(s || "")).replace(/[-_+]+/g, " "));
+    const path = location.pathname.replace(/\/+$/, "");
+    const jobPath = path.replace(/\/(apply|application)(\/.*)?$/i, "");
+    const m = /\/job\/(.+)$/i.exec(jobPath);
+    const parts = m ? m[1].split("/").filter(Boolean) : [];
+    const last = parts.pop() || "";
+    const place = parts.length ? decodeURIComponent(parts[parts.length - 1]) : "";
+    const shared = /myworkdaysite\.com$/i.test(location.hostname);
+    const tenant = (shared ? /\/recruiting\/([^/]+)/i.exec(location.pathname)?.[1] : location.hostname.split(".")[0]) || "";
+    const header = clean(aid("jobPostingHeader")?.textContent);
+    const hadData = !!(out.title && out.company);
+    if (m) out.url = `${location.origin}${jobPath}`;
+    out.title = out.title || header || words(last.includes("_") ? last.slice(0, last.lastIndexOf("_")) : last);
+    out.company = out.company || words(tenant).replace(/\d+$/, "").trim().replace(/\b\p{L}/gu, (c) => c.toUpperCase());
+    const locs = aid("locations");
+    out.location =
+      out.location ||
+      clean(locs?.querySelector("dd")?.textContent || locs?.textContent?.replace(/^\s*locations?\s*/i, "")) ||
+      (/-[A-Z]{2}$/.test(place) ? `${words(place.slice(0, -3))}, ${place.slice(-2)}` : words(place));
+    const desc = aid("jobPostingDescription");
+    if (!out.description && desc) out.description = stripHtml(desc.innerHTML);
+    out.guessed = !hadData;
+  }
+
   // 2) og:title is often "Company - Title" (Lever, many boards).
   const ogTitle = clean(meta('meta[property="og:title"]'));
   if (ogTitle.includes(" - ")) {
@@ -140,7 +176,7 @@ export function extractJobFromPage() {
 
   // 4) Description fallback — the main content region. Skipped on LinkedIn,
   // where "main" is the whole feed (nav + Premium upsell), not the posting.
-  if (!out.description && !isLinkedIn) {
+  if (!out.description && !isLinkedIn && !wdApply) {
     const main = document.querySelector(
       "[data-qa='job-description'], .posting-page, main, article, [class*='description' i], [class*='job' i]",
     );
@@ -153,7 +189,7 @@ export function extractJobFromPage() {
   const bodyText = document.body?.innerText || "";
   if (/\bremote\b/i.test(out.title + " " + out.location + " " + bodyText.slice(0, 1500)))
     out.is_remote = true;
-  if (!out.salary_min && !isLinkedIn) {
+  if (!out.salary_min && !isLinkedIn && !wdApply) {
     const m = bodyText.match(
       /\$\s?([\d,]{3,})(?:\s?(?:-|–|—|to)\s?\$?\s?([\d,]{3,}))?\s*(per hour|an hour|\/\s?hr|hourly|per year|a year|annually)?/i,
     );

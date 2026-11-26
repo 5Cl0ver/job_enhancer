@@ -7,7 +7,7 @@ import { PRIVATE, guardReason, profileKeyFor } from "./classify/profileKeys.js";
 import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, eduPart, eduValues, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
-import { collectFields, hasFormHere, looksLikeApplication } from "./scan.js";
+import { collectFields, hasFormHere, isSignupPage, looksLikeApplication, passwordShown } from "./scan.js";
 import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
 
 /** Case, spaces and punctuation don't count when deciding the user changed a box. */
@@ -33,7 +33,7 @@ import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, 
 const STYLE_ID = "jec-fill-style";
 const STYLE = `
 [data-jec-fill] { outline: 2px solid var(--jec-fill) !important; outline-offset: 2px !important; border-radius: 4px; }
-[data-jec-fill="profile"] { --jec-fill: oklch(0.6 0.15 155 / .85); }
+[data-jec-fill="profile"], [data-jec-fill="history"] { --jec-fill: oklch(0.6 0.15 155 / .85); }
 [data-jec-fill="learned"] { --jec-fill: oklch(0.6 0.17 250 / .85); }
 [data-jec-fill="ai"]      { --jec-fill: oklch(0.6 0.2 300 / .9); }
 [data-jec-fill="need"]    { --jec-fill: oklch(0.72 0.16 65 / .9); outline-style: dashed !important; }
@@ -62,7 +62,7 @@ function unmark(field) {
 }
 
 // Profile answers a typed value can teach (email is the account's own).
-const LEARNABLE_PROFILE = new Set([
+export const LEARNABLE_PROFILE = new Set([
   "first_name", "last_name", "phone", "address_line1", "address_line2", "city", "state",
   "postal_code", "country", "linkedin_url", "github_url", "portfolio_url",
   "authorized_to_work", "requires_sponsorship", "willing_to_relocate", "desired_salary", "notice_period",
@@ -103,13 +103,14 @@ export function profileValue(key, value) {
 
 /**
  * What a user may never point at and teach: self-identification and private
- * details (ID, bank…), agreements and lone checkboxes, choices the scanner
- * couldn't read. Everything else is the user's call ("Notification email").
+ * details (ID, bank…), agreements, choices the scanner couldn't read. A lone
+ * checkbox that isn't an agreement is a yes/no answer like any other (spec
+ * 034). Everything else is the user's call ("Notification email").
  */
 export function pointRefusal(field) {
   const guard = guardReason(field.question, field.kind);
   if (guard === "sensitive" || guard === "consent") return guard;
-  if (field.kind === "checkbox" || field.kind === "unknown_choice") return "consent";
+  if (field.kind === "unknown_choice") return "consent";
   return "";
 }
 
@@ -159,7 +160,10 @@ function within(box, el) {
 const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "other_person", "too_long"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
-const optionLabels = (f) => (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60);
+// A lone yes/no checkbox is answered Yes (ticked) or No (left unticked).
+const optionLabels = (f) => (f.kind === "checkbox" ? ["Yes", "No"] : (f.options || []).map((o) => o.label).filter(Boolean).slice(0, 60));
+// On a Create Account page only these are filled (spec 034): never a password.
+const SIGNUP_KEYS = new Set(["email", "email_confirm"]);
 const shortLabel = (q) => (q.length > 90 ? q.slice(0, 89) + "…" : q) || "Unlabelled field";
 
 /** Still on the page: in it, and not inside a step the site hid (spec 029). */
@@ -187,6 +191,9 @@ export function createSession(deps) {
   let fields = new Map();
   /** id → {field, item}: the AI's unsure answers, offered with "Use" */
   const suggestions = new Map();
+  /** id → {field, item}: boxes that already held the right answer (Chrome's
+   * own autofill, the page): "Already filled", never silently skipped (spec 034). */
+  const already = new Map();
   /** Fields the user undid: an automatic run (keep filling) leaves them alone. */
   const declined = new Set();
   /** The résumé on this page: attached / no_box / no_file / failed (spec 026). */
@@ -233,6 +240,7 @@ export function createSession(deps) {
         filled.clear();
         needYou.clear();
         suggestions.clear();
+        already.clear();
       }
     }
     stepKeys = now;
@@ -246,7 +254,7 @@ export function createSession(deps) {
    */
   function current(map) {
     const gone = (x) => !onPage(x.field) && !x.field.el?.isConnected;
-    if ([...filled.values(), ...needYou.values(), ...suggestions.values()].some(gone)) scan();
+    if ([...filled.values(), ...needYou.values(), ...suggestions.values(), ...already.values()].some(gone)) scan();
     const taken = new Set([...map.values()].filter((x) => onPage(x.field)).map((x) => x.field.el));
     const out = [];
     for (const x of map.values()) {
@@ -280,7 +288,10 @@ export function createSession(deps) {
     const list = everything; // a page that's all résumé sections is still a form
     const app = looksLikeApplication(list, appCheck);
     const form = app || hasFormHere(list, { isApplication: () => app }) || (taught.length > 0 && matchTaught(taught, list).size > 0);
-    return { form, app, fields: list.length };
+    // A Create Account page (spec 034): email only; a password box anywhere
+    // (a sign-in page) — "Read the page again" says what it saw.
+    const signup = isSignupPage(list);
+    return { form, app, fields: list.length, ...(signup ? { signup: true } : {}), ...(passwordShown(doc) ? { password: true } : {}) };
   }
 
   function entryFor(field, source, actual, snap) {
@@ -307,6 +318,7 @@ export function createSession(deps) {
     }
     filled.set(field.id, { field, snap, entry: entryFor(field, source, res.actual, snap) });
     needYou.delete(field.id);
+    already.delete(field.id);
     mark(field, source);
     return res;
   }
@@ -336,10 +348,20 @@ export function createSession(deps) {
     return res;
   }
 
-  function leave(field, reason, saved) {
+  /** `key`: the profile answer a "Not in your profile yet" box wants (Add to profile, spec 034). */
+  function leave(field, reason, saved, key) {
     if (!LEFT_FOR_YOU.has(reason)) return;
-    needYou.set(field.id, { field, item: { id: field.id, label: shortLabel(field.question), reason, kind: field.kind, options: optionLabels(field), ...(saved ? { saved } : {}) } });
+    needYou.set(field.id, {
+      field,
+      item: { id: field.id, label: shortLabel(field.question), reason, kind: field.kind, options: optionLabels(field), ...(saved ? { saved } : {}), ...(key && reason === "no_data" ? { key } : {}) },
+    });
     if (reason !== "sensitive") mark(field, "need");
+  }
+
+  /** A box that already held the right answer: listed, never filled again. */
+  function alreadyFilled(field, value) {
+    if (filled.has(field.id)) return;
+    already.set(field.id, { field, item: { id: field.id, label: shortLabel(field.question), kind: field.kind, value: String(value ?? "").slice(0, 200) } });
   }
 
   /**
@@ -367,6 +389,10 @@ export function createSession(deps) {
     const sections = classifySections(list);
     const blockOf = createJobBlocks();
     const schoolOf = createJobBlocks();
+    // A Create Account page (spec 034): the email (and "confirm email") only.
+    // Passwords are never even seen (scan.js leaves them out); the agreement
+    // is listed for the user; anything else (a security question) is theirs.
+    const signup = isSignupPage(everything);
     let i = 0;
     for (const field of list) {
       onProgress?.(++i, list.length);
@@ -384,7 +410,16 @@ export function createSession(deps) {
       // (an applicant system's own résumé reading cuts titles; spec 020).
       const prefilled = field.kind !== "file" && hasValue(field);
       // (Only on a press: on a step filled by itself, a filled box stays as it is.)
-      if (prefilled && (auto || !part || taught.has(field.id) || userEdited(field.el))) continue;
+      if (prefilled && (auto || !part || taught.has(field.id) || userEdited(field.el))) {
+        // Already holding what Job Catcher would put there (Chrome's own
+        // autofill put the email in): "Already filled", not silence (spec 034).
+        if (!mine && !part && !taught.has(field.id) && !userEdited(field.el)) {
+          const d = resolve(field, copy);
+          const now = readField(field);
+          if (!d.skip && (!signup || SIGNUP_KEYS.has(d.key)) && d.values.some((v) => agrees(field, now, v))) alreadyFilled(field, now);
+        }
+        continue;
+      }
       if (field.kind === "file" && (field.el.files?.length || skipFiles)) continue;
       // The résumé is already up on this page (the site re-drew its box
       // empty): never a second copy (spec 029).
@@ -398,6 +433,10 @@ export function createSession(deps) {
         : section
           ? sectionDecision(field, section, part, entry, copy)
           : resolve(field, copy);
+      if (signup && !(d.key && SIGNUP_KEYS.has(d.key))) {
+        if (d.skip === "consent") leave(field, "consent");
+        continue;
+      }
       if (prefilled) {
         if (d.skip) continue; // nothing better to put there: the page's stays
         const now = readField(field);
@@ -407,11 +446,13 @@ export function createSession(deps) {
         continue;
       }
       if (d.skip) {
+        // A yes/no checkbox nobody requires: unticked already says no (spec 034).
+        if (d.quiet) continue;
         if (d.skip === "unknown" && AI_KINDS.has(field.kind)) leftovers.push(field);
         // An essay answer saved before, or an answer to a near rewording, is
         // offered ("Use saved answer"), never filled.
         const saved = d.skip === "essay" ? (copy.answers || []).find((a) => a.question_key === answerKey("essay", "", field.key))?.answer : d.offer;
-        leave(field, d.skip, saved);
+        leave(field, d.skip, saved, d.key);
         continue;
       }
       if (ONCE_KEYS.has(d.key)) {
@@ -519,6 +560,10 @@ export function createSession(deps) {
       suggestions: current(suggestions)
         .filter((x) => !hasValue(x.field))
         .map((x) => x.item),
+      already: current(already)
+        .filter((x) => hasValue(x.field) && !filled.has(x.field.id))
+        .map((x) => x.item),
+      ...(isSignupPage(everything) ? { signup: true } : {}),
     };
   }
 
@@ -527,6 +572,18 @@ export function createSession(deps) {
     const field = find(id);
     if (!field || !value) return { ok: false };
     return fillOne(field, [value], "learned");
+  }
+
+  /**
+   * "Add to profile" (spec 034): the value the user just saved to their
+   * profile goes in this box (its other wordings too: "OR" / "Oregon").
+   * Never past a guard (self-ID, agreements, passwords are never here).
+   */
+  async function useProfile(id, values) {
+    const field = find(id);
+    const list = (values || []).map(String).filter(Boolean);
+    if (!field || !list.length || pointRefusal(field)) return { ok: false };
+    return fillOne(field, list, "profile");
   }
 
   /** Use an AI suggestion (the user's tap): it fills like a sure answer. */
@@ -598,12 +655,24 @@ export function createSession(deps) {
     filled.set(id, { field, snap, entry: { ...entryFor(field, source, res.actual, snap), fixed: true } });
     needYou.delete(id);
     mark(field, source);
-    // A custom question's fix is remembered for next time (FR-014).
-    if (!profileKeyFor(field) && field.key && field.kind !== "file") {
-      await send({
-        type: "saveCustomAnswers",
-        answers: [{ question_key: field.key, question_text: field.question.slice(0, 500), answer: String(res.actual || value).slice(0, 2000) }],
-      }).catch(() => null);
+    // A custom question's fix is remembered for next time (FR-014); one about
+    // this company ("Have you worked for us before?") for this company only.
+    // Never an agreement or a self-ID answer (they're never filled or fixed).
+    if (!profileKeyFor(field) && field.key && field.kind !== "file" && !pointRefusal(field)) {
+      const site = siteKey(doc.location?.href || "");
+      const company = isCompanySpecific(field.question);
+      if (!company || site) {
+        await send({
+          type: "saveCustomAnswers",
+          answers: [
+            {
+              question_key: company ? answerKey("site", site, field.key) : field.key,
+              question_text: field.question.slice(0, 500),
+              answer: String(res.actual || value).slice(0, 2000),
+            },
+          ],
+        }).catch(() => null);
+      }
     }
     return res;
   }
@@ -664,10 +733,26 @@ export function createSession(deps) {
     for (const f of list) keyCount.set(f.key, (keyCount.get(f.key) || 0) + 1);
     for (const field of list) {
       // Agreements, private numbers, and questions we can't tell apart (two
-      // fields read as the same question) are never remembered.
-      if (field.kind === "checkbox" || PRIVATE.test(field.question) || keyCount.get(field.key) > 1) continue;
+      // fields read as the same question) are never remembered. A lone
+      // checkbox that isn't an agreement is a yes/no answer (spec 034).
+      if (PRIVATE.test(field.question) || keyCount.get(field.key) > 1) continue;
+      if (field.kind === "checkbox" && guardReason(field.question, field.kind)) continue;
       // Something we filled counts only if the user has since changed it.
       const ours = filled.get(field.id);
+      if (field.kind === "checkbox") {
+        // Ticked by the user ("Yes"), or a box Job Catcher ticked that the
+        // user unticked ("No"); an untouched unticked box says nothing new.
+        const ticked = !!field.el.checked;
+        if (ours ? (ours.entry.value === "Yes") === ticked : !ticked) continue;
+        if (!field.key || field.key.length < 3 || sections.has(field.id)) continue;
+        out.push({
+          question_key: normalizeQuestion(field.question),
+          question_text: field.question.slice(0, 500),
+          answer: ticked ? "Yes" : "No",
+          ...(isCompanySpecific(field.question) ? { company: true } : {}),
+        });
+        continue;
+      }
       if (ours && readField(field).trim() === ours.entry.value.trim()) continue; // ours, untouched
       if (field.kind === "file" || !field.key || field.key.length < 3) continue;
       const kind = sections.get(field.id);
@@ -720,6 +805,7 @@ export function createSession(deps) {
     presence,
     fillPicked,
     useText,
+    useProfile,
     /** What Job Catcher put in a box, if it filled it: {source, value}. */
     filledEntry: (id) => filled.get(id)?.entry || null,
     uploadResume,

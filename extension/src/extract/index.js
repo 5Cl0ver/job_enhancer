@@ -15,6 +15,7 @@ import { extractIndeed, extractIndeedApply } from "./indeed.js";
 import { extractLinkedIn } from "./linkedin.js";
 import { extractZipRecruiter } from "./ziprecruiter.js";
 import { extractGeneric } from "./generic.js";
+import { extractWorkday, isWorkday } from "./workday.js";
 import { mergeJob } from "./util.js";
 
 /** @typedef {{title:string,company:string,location:string,is_remote:boolean,url:string,description?:string,_via:string}} CapturedJob */
@@ -29,6 +30,7 @@ function siteExtractor(url) {
   if (host.includes("indeed.")) return { via: "indeed", fn: extractIndeed };
   if (host.includes("linkedin.")) return { via: "linkedin", fn: extractLinkedIn };
   if (host.includes("ziprecruiter.")) return { via: "ziprecruiter", fn: extractZipRecruiter };
+  if (isWorkday(url)) return { via: "workday", fn: extractWorkday };
   return null;
 }
 

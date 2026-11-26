@@ -23,17 +23,18 @@ import { appUrl, send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
 import { Trouble } from "@/views/Trouble";
 import { startPointing } from "@/views/Point";
-import { usePanel, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence, type SavedAnswer } from "@/lib/store";
+import { usePanel, type FillAlready, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence, type SavedAnswer } from "@/lib/store";
 
 const SOURCE: Record<string, { label: string; tone: string }> = {
   profile: { label: "Profile", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
   learned: { label: "Remembered", tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
   ai: { label: "AI · check", tone: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
+  history: { label: "Job history", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
 };
 
 const WHY: Record<string, string> = {
   sensitive: "Only you answer this",
-  consent: "A checkbox only you can tick",
+  consent: "An agreement only you can tick",
   job_history: "From your job history: yours to fill",
   essay: "Written answer: yours to write",
   no_data: "Not in your profile yet",
@@ -64,7 +65,10 @@ export function Apply({
   const [marking, setMarking] = React.useState(false);
   const [showFilled, setShowFilled] = React.useState(false);
 
-  const { entries, needYou, suggestions } = fill;
+  const { entries, needYou, suggestions, already } = fill;
+  // An applicant system's Create Account page (spec 034): email only.
+  const signup = !!fill.presence?.signup;
+  const emailIn = [...entries, ...already].some((e) => /e-?mail/i.test(e.label));
   const toCheck = entries.filter((e) => e.source === "ai" && !e.fixed);
   const checkCount = toCheck.length + suggestions.length;
   const sure = entries.filter((e) => !(e.source === "ai" && !e.fixed));
@@ -117,14 +121,24 @@ export function Apply({
           {!filling && <Zap />}
           {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
         </Button>
-        <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} tabId={tab.id} />
+        {signup && (
+          <div data-testid="signup-note">
+            <Alert tone="info">
+              {emailIn
+                ? "Create your account: email filled. Pick a password (Chrome can suggest one), tick the agreement, then Create Account."
+                : "Create your account: Job Catcher fills your email. Passwords are yours: Chrome can suggest one."}
+            </Alert>
+          </div>
+        )}
+        <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} alreadyNow={already.length} tabId={tab.id} />
         <ShortcutHint />
         <ResumeChoice match={match} staged={staged} />
-        {!filling && entries.length + needYou.length > 0 && (
+        {!filling && entries.length + needYou.length + already.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>
             {checkCount > 0 && <span className="text-violet-700 dark:text-violet-300"> · {checkCount} to check</span>}
             {needYou.length > 0 && <span className="text-amber-700 dark:text-amber-300"> · {needYou.length} for you</span>}
+            {already.length > 0 && <span className="text-muted-foreground"> · {already.length} already filled</span>}
             <span className="text-muted-foreground"> · nothing was submitted</span>
           </p>
         )}
@@ -153,7 +167,7 @@ export function Apply({
         </Section>
       )}
 
-      {sure.length > 0 && (
+      {sure.length + already.length > 0 && (
         <Card className="p-0">
           <button
             type="button"
@@ -163,7 +177,9 @@ export function Apply({
           >
             <CheckCircle2 className="size-4 text-emerald-600 dark:text-emerald-400" aria-hidden />
             <span className="flex-1 font-medium">
-              {sure.length} filled from your profile and answers
+              {sure.length ? `${sure.length} filled from your profile and answers` : ""}
+              {sure.length && already.length ? " · " : ""}
+              {already.length ? `${already.length} already filled` : ""}
             </span>
             <ChevronDown className={cn("size-4 text-muted-foreground transition-transform", showFilled && "rotate-180")} aria-hidden />
           </button>
@@ -171,6 +187,9 @@ export function Apply({
             <ul className="divide-y border-t">
               {sure.map((e) => (
                 <EntryRow key={`${e.frameId}:${e.id}`} entry={e} />
+              ))}
+              {already.map((a) => (
+                <AlreadyRow key={`${a.frameId}:${a.id}`} item={a} />
               ))}
             </ul>
           )}
@@ -189,6 +208,11 @@ export function Apply({
         </div>
       )}
 
+      {fill.tracked && (
+        <div data-testid="tracked-note">
+          <Alert tone="success">{fill.tracked.created ? "Saved and marked applied" : "Marked applied"}{fill.tracked.title ? `: ${fill.tracked.title}` : ""}</Alert>
+        </div>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         {match?.applied ? (
           <Badge variant="success">
@@ -274,12 +298,14 @@ function StatusLine({
   busy,
   filledNow,
   needNow,
+  alreadyNow = 0,
   tabId,
 }: {
   presence: Presence | null;
   busy: boolean;
   filledNow: number;
   needNow: number;
+  alreadyNow?: number;
   tabId: number | null;
 }) {
   const status: FillStatus | null = presence?.status || null;
@@ -303,7 +329,11 @@ function StatusLine({
     tone = "warn";
     text = PROBLEM[status.problem || "refresh"] || PROBLEM.refresh;
   } else if (status?.phase === "done") {
-    if (!filledNow && !(status.filled || 0)) {
+    if (!filledNow && !(status.filled || 0) && (alreadyNow || status.already || 0)) {
+      // Chrome (or the page) had already put your details in (spec 034).
+      tone = "ok";
+      text = "Your details were already in. Check the page, then submit it yourself.";
+    } else if (!filledNow && !(status.filled || 0)) {
       tone = "warn";
       text =
         status.seen === 0
@@ -639,12 +669,14 @@ function Editor({
   label,
   onSave,
   onCancel,
+  saveLabel = "Apply",
 }: {
   options: string[];
   initial: string;
   label: string;
   onSave: (v: string) => Promise<boolean>;
   onCancel: () => void;
+  saveLabel?: string;
 }) {
   const [value, setValue] = React.useState(options.length ? options.find((o) => o === initial) || "" : initial);
   const [busy, setBusy] = React.useState(false);
@@ -672,7 +704,7 @@ function Editor({
           <Input aria-label={label} autoFocus value={value} onChange={(e) => setValue(e.target.value)} className="flex-1" />
         )}
         <Button type="submit" size="sm" busy={busy} disabled={!value.trim()}>
-          Apply
+          {saveLabel}
         </Button>
         <Button type="button" variant="ghost" size="sm" onClick={onCancel}>
           Cancel
@@ -735,10 +767,38 @@ function EntryRow({ entry }: { entry: FillEntry }) {
   );
 }
 
+/** A box that already held the right answer: shown, nothing to undo. */
+function AlreadyRow({ item }: { item: FillAlready }) {
+  const act = useAction();
+  return (
+    <li className="px-4 py-2.5">
+      <div className="flex items-center gap-2">
+        <div className="min-w-0 flex-1">
+          <p className="truncate text-xs text-muted-foreground">{item.label}</p>
+          <p className="truncate font-medium">{item.value || "—"}</p>
+        </div>
+        <span className="shrink-0 rounded-full bg-muted px-2 py-0.5 text-[10.5px] font-medium text-foreground">Already filled</span>
+        <Button variant="ghost" size="icon-sm" aria-label={`Show ${item.label} on the page`} title="Show on the page" onClick={() => act(item.frameId, "show", item.id)}>
+          <LocateFixed />
+        </Button>
+      </div>
+    </li>
+  );
+}
+
+// Profile answers "Add to profile" can save (the profile's own fields).
+const BOOL_PROFILE = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
+
 function NeedRow({ need }: { need: FillNeed }) {
   const act = useAction();
+  const { tab } = usePanel();
   const [editing, setEditing] = React.useState(false);
-  const canAnswer = need.reason !== "sensitive" && need.reason !== "consent" && need.reason !== "essay" && need.kind !== "file";
+  const [adding, setAdding] = React.useState(false);
+  const [addError, setAddError] = React.useState("");
+  // "Not in your profile yet" (spec 034): type it once here, it's saved to
+  // your profile and filled in, and every later application has it.
+  const addable = need.reason === "no_data" && !!need.key && need.key in PROFILE_LABELS;
+  const canAnswer = !addable && need.reason !== "sensitive" && need.reason !== "consent" && need.reason !== "essay" && need.kind !== "file";
   return (
     <li className="px-4 py-2.5">
       <div className="flex items-center gap-2">
@@ -759,7 +819,35 @@ function NeedRow({ need }: { need: FillNeed }) {
             Answer
           </Button>
         )}
+        {addable && (
+          <Button variant="outline" size="sm" aria-expanded={adding} onClick={() => setAdding((v) => !v)}>
+            Add to profile
+          </Button>
+        )}
       </div>
+      {adding && (
+        <>
+          <Editor
+            label={`${PROFILE_LABELS[need.key!] || need.label} for your profile`}
+            options={BOOL_PROFILE.has(need.key!) ? ["Yes", "No"] : need.kind === "select" || need.kind === "radio" ? need.options : []}
+            initial=""
+            saveLabel="Save"
+            onCancel={() => setAdding(false)}
+            onSave={async (v) => {
+              setAddError("");
+              const r = await send({ type: "addToProfile", tabId: tab.id, frameId: need.frameId, id: need.id, key: need.key, value: v });
+              if (!r?.ok) {
+                setAddError(r?.error || "Couldn't save it. Try again.");
+                return true; // the message below says what to do
+              }
+              setAdding(false);
+              return true;
+            }}
+          />
+          <Muted className="pt-1">Saved to your profile and filled in here. Every next application has it too.</Muted>
+          {addError && <p className="text-xs text-destructive">{addError}</p>}
+        </>
+      )}
       {editing && (
         <Editor
           label={`Answer for ${need.label}`}
