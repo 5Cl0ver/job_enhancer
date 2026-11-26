@@ -808,35 +808,47 @@ def test_refusal_category_names_nothing(error, category):
 
 @pytest.fixture
 def health(monkeypatch):
-    """The health checks as the test says (the pinged ones only answer when
-    pinged); the watch's memory starts empty."""
+    """The health checks as the test says (a pinged service only answers
+    when it was pinged), a clock the test moves, and the watch's memory
+    empty. ``pings`` holds which services each run pinged."""
     state = {"Database": "healthy", "Adzuna": "healthy"}
-    pings: list[bool] = []
+    pings: list[set] = []
+    clock = [1_000_000.0]
 
     async def fake(db, ping_external=True):
-        pings.append(ping_external)
+        pinged = admin_service._PINGED
+        if ping_external is True:
+            asked = set(pinged)
+        elif ping_external is False:
+            asked = set()
+        else:
+            asked = set(ping_external)
+        pings.append(asked)
         return [
             ServiceStatus(name=name, status=status, detail="ConnectError")
             for name, status in state.items()
-            if name != "pings"
-            and (ping_external or name not in ("Adzuna", "NVIDIA NIM"))
+            if name not in ("pings", "clock") and (name not in pinged or name in asked)
         ]
 
     monkeypatch.setattr(admin_service, "check_service_health", fake)
     monkeypatch.setattr(admin_service, "_health_last", {})
-    monkeypatch.setattr(admin_service, "_watch_pinged_at", None)
+    monkeypatch.setattr(admin_service, "_watch_pinged", {})
+    monkeypatch.setattr(admin_service, "_clock", lambda: clock[0])
     state["pings"] = pings  # type: ignore[assignment]
+    state["clock"] = clock  # type: ignore[assignment]
     return state
 
 
 def _restart(monkeypatch):
     monkeypatch.setattr(admin_service, "_health_last", {})
-    monkeypatch.setattr(admin_service, "_watch_pinged_at", None)
+    monkeypatch.setattr(admin_service, "_watch_pinged", {})
 
 
 @pytest.mark.asyncio
 async def test_a_service_down_is_one_report_per_outage(engine, health, monkeypatch):
+    # Every run pings (this test is about outages, not how often).
     monkeypatch.setattr(admin_service, "_WATCH_PING_EVERY_S", 0)
+    monkeypatch.setattr(admin_service, "_WATCH_DOWN_EVERY_S", 0)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False)
     await admin_service.health_watch(maker)  # healthy: nothing
     async with maker() as db:
@@ -877,7 +889,9 @@ async def test_a_service_down_is_one_report_per_outage(engine, health, monkeypat
 
 @pytest.mark.asyncio
 async def test_one_timeout_isnt_an_outage(engine, health, monkeypatch):
+    # Every run pings (this test is about outages, not how often).
     monkeypatch.setattr(admin_service, "_WATCH_PING_EVERY_S", 0)
+    monkeypatch.setattr(admin_service, "_WATCH_DOWN_EVERY_S", 0)
     maker = async_sessionmaker(bind=engine, expire_on_commit=False)
     health["Adzuna"] = "down"
     await admin_service.health_watch(maker)
@@ -891,33 +905,49 @@ async def test_one_timeout_isnt_an_outage(engine, health, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_the_watch_pings_adzuna_and_nvidia_at_most_every_six_hours(
-    engine, health, monkeypatch
+    engine, health
 ):
-    import time
-
     maker = async_sessionmaker(bind=engine, expire_on_commit=False)
     for _ in range(4):
         await admin_service.health_watch(maker)
+        health["clock"][0] += 15 * 60
     # The database every time; the pinged services once (96 runs a day would
     # be 96 Adzuna calls).
-    assert health["pings"] == [True, False, False, False]
-    monkeypatch.setattr(
-        admin_service,
-        "_watch_pinged_at",
-        time.monotonic() - admin_service._WATCH_PING_EVERY_S - 1,
-    )
+    both = {"NVIDIA NIM", "Adzuna"}
+    assert health["pings"] == [both, set(), set(), set()]
+    health["clock"][0] += admin_service._WATCH_PING_EVERY_S
     await admin_service.health_watch(maker)
-    assert health["pings"][-1] is True
-    # A bad reading is checked again on the next run, to be sure.
-    health["Adzuna"] = "down"
-    monkeypatch.setattr(admin_service, "_watch_pinged_at", None)
-    await admin_service.health_watch(maker)
-    await admin_service.health_watch(maker)
-    assert health["pings"][-2:] == [True, True]
-    health["Adzuna"] = "healthy"
-    await admin_service.health_watch(maker)  # back: seen at once
-    await admin_service.health_watch(maker)
-    assert health["pings"][-2:] == [True, False]
+    assert health["pings"][-1] == both
+
+
+@pytest.mark.asyncio
+async def test_one_service_down_for_a_day_doesnt_spend_the_others_calls(engine, health):
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    health["NVIDIA NIM"] = "down"
+    for _ in range(96):  # a day of 15-minute runs
+        await admin_service.health_watch(maker)
+        health["clock"][0] += 15 * 60
+    adzuna = sum("Adzuna" in p for p in health["pings"])
+    nvidia = sum("NVIDIA NIM" in p for p in health["pings"])
+    assert adzuna == 4  # still every 6 hours
+    # Once at the start, again to confirm, then about hourly while noted.
+    assert 20 <= nvidia <= 26
+    assert health["pings"][1] == {"NVIDIA NIM"}  # the confirming re-ping
+    async with maker() as db:
+        [report] = await _caught(db)
+        assert report.title == "NVIDIA NIM is down" and report.count == 1
+
+    # Back up: seen on its next hourly ping, then 6-hourly again.
+    health["NVIDIA NIM"] = "healthy"
+    before = len(health["pings"])
+    for _ in range(8):  # two hours
+        await admin_service.health_watch(maker)
+        health["clock"][0] += 15 * 60
+    later = health["pings"][before:]
+    assert sum("NVIDIA NIM" in p for p in later) == 1
+    async with maker() as db:
+        detail = await svc.detail(db, report.id)
+    assert any(e["data"].get("field") == "recovered" for e in detail["events"])
 
 
 @pytest.mark.asyncio
@@ -931,6 +961,23 @@ async def test_without_pinging_only_the_database_and_jsearch_are_checked(
     monkeypatch.setattr(admin_service, "_external", None)
     statuses = await admin_service.check_service_health(db_session, ping_external=False)
     assert [s.name for s in statuses] == ["Database", "JSearch"]
+
+
+@pytest.mark.asyncio
+async def test_only_the_named_service_is_pinged(db_session, monkeypatch):
+    pinged = []
+
+    async def fake_ping(name, url, headers=None):
+        pinged.append(name)
+        return ServiceStatus(name=name, status="down", detail="ConnectError")
+
+    monkeypatch.setattr(admin_service, "_check_endpoint", fake_ping)
+    monkeypatch.setattr(admin_service, "_external", None)
+    statuses = await admin_service.check_service_health(
+        db_session, ping_external=["NVIDIA NIM"]
+    )
+    assert pinged == ["NVIDIA NIM"]
+    assert [s.name for s in statuses] == ["Database", "NVIDIA NIM", "JSearch"]
 
 
 @pytest.mark.asyncio

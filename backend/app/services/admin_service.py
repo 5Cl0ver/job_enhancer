@@ -2,6 +2,7 @@
 
 import logging
 import time
+from collections.abc import Collection
 from datetime import UTC, datetime, timedelta
 
 import httpx
@@ -130,11 +131,12 @@ async def _jsearch_status(db: AsyncSession) -> ServiceStatus:
 
 
 async def check_service_health(
-    db: AsyncSession, ping_external: bool = True
+    db: AsyncSession, ping_external: bool | Collection[str] = True
 ) -> list[ServiceStatus]:
     """The database (always), NVIDIA and Adzuna (pinged at most every 10
-    minutes; with ``ping_external`` off, only a fresh answer already in hand
-    is given, else they're left out) and JSearch (counted, never pinged)."""
+    minutes: all of them, none, or only the ones named in ``ping_external``;
+    one not pinged is given only from a fresh answer already in hand, else
+    left out) and JSearch (counted, never pinged)."""
     statuses: list[ServiceStatus] = []
 
     # DB latency
@@ -155,39 +157,53 @@ async def check_service_health(
     fresh = _external is not None and (
         time.monotonic() - _external[0] <= _EXTERNAL_EVERY_S
     )
+    if ping_external is True:
+        wanted = list(_PINGED)
+    elif ping_external is False:
+        wanted = []
+    else:
+        wanted = [name for name in _PINGED if name in set(ping_external)]
     if fresh:
         statuses.extend(_external[1])
-    elif ping_external:
+    elif wanted:
         import asyncio
 
-        checks = await asyncio.gather(
-            _check_endpoint(
-                "NVIDIA NIM",
-                "https://integrate.api.nvidia.com/v1/models",
-                headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
-            ),
-            _check_endpoint(
-                "Adzuna",
-                f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id={settings.adzuna_app_id}&app_key={settings.adzuna_app_key}&results_per_page=1&what=python",
-            ),
-        )
-        # Only a clean bill of health is kept: a problem is checked again next time.
-        _external = (
-            (time.monotonic(), list(checks))
-            if all(c.status == "healthy" for c in checks)
-            else None
-        )
+        checks = list(await asyncio.gather(*(_ping(name) for name in wanted)))
+        if len(checks) == len(_PINGED):
+            # Only a clean bill of health is kept: a problem is checked
+            # again next time.
+            _external = (
+                (time.monotonic(), checks)
+                if all(c.status == "healthy" for c in checks)
+                else None
+            )
         statuses.extend(checks)
     statuses.append(await _jsearch_status(db))
     return statuses
 
 
-# The pinged services: the watch asks them at most every 6 hours (each Adzuna
-# check spends one of its daily calls), and again on the next run while one
-# looked down, to be sure or to see it back.
+def _ping(name: str):
+    if name == "NVIDIA NIM":
+        return _check_endpoint(
+            "NVIDIA NIM",
+            "https://integrate.api.nvidia.com/v1/models",
+            headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
+        )
+    return _check_endpoint(
+        "Adzuna",
+        f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id={settings.adzuna_app_id}&app_key={settings.adzuna_app_key}&results_per_page=1&what=python",
+    )
+
+
+# The pinged services. The watch asks each one on its own clock (each Adzuna
+# check spends one of its daily calls): every 6 hours while it's up; on the
+# next run after a bad reading, to be sure; hourly once its outage is noted,
+# to see it come back.
 _PINGED = ("NVIDIA NIM", "Adzuna")
 _WATCH_PING_EVERY_S = 6 * 3600
-_watch_pinged_at: float | None = None
+_WATCH_DOWN_EVERY_S = 3600
+# When the watch last pinged each one.
+_watch_pinged: dict[str, float] = {}
 # One bad reading isn't an outage (a timeout happens): it takes 2 in a row.
 DOWN_READINGS = 2
 # Each service at the last watch: {"state": "up"|"down", "streak": downs in
@@ -196,24 +212,35 @@ DOWN_READINGS = 2
 _health_last: dict[str, dict] = {}
 
 
+def _clock() -> float:
+    return time.monotonic()
+
+
+def _due(name: str, now: float) -> bool:
+    """Should the watch ping this service now?"""
+    last = _watch_pinged.get(name)
+    if last is None:
+        return True
+    seen = _health_last.get(name) or {}
+    if seen.get("state") == "down":
+        every = _WATCH_DOWN_EVERY_S if seen.get("noted") else 0
+    else:
+        every = _WATCH_PING_EVERY_S
+    return now - last >= every
+
+
 async def health_watch(session_factory) -> None:
     """Every 15 minutes (spec 032): the health checks, and a service down 2
     readings in a row is one caught report per outage; coming back adds a
     line to its history. The database is checked every time; NVIDIA and
-    Adzuna at most every 6 hours (sooner only to confirm a bad reading);
-    JSearch is only counted, never pinged. Never raises."""
+    Adzuna each on their own clock (6-hourly while up, the next run to
+    confirm a bad reading, hourly while noted down); JSearch is only
+    counted, never pinged. Never raises."""
     from app.services import bug_reports
 
-    global _watch_pinged_at
     try:
-        suspect = any(
-            (_health_last.get(name) or {}).get("state") == "down" for name in _PINGED
-        )
-        ping = (
-            suspect
-            or _watch_pinged_at is None
-            or time.monotonic() - _watch_pinged_at >= _WATCH_PING_EVERY_S
-        )
+        started = _clock()
+        ping = [name for name in _PINGED if _due(name, started)]
         now: dict[str, dict] = {}
         async with session_factory() as db:
             statuses = await check_service_health(db, ping_external=ping)
@@ -243,8 +270,8 @@ async def health_watch(session_factory) -> None:
             await db.commit()
         # Only once it's kept: a failed write is tried again next time.
         _health_last.update(now)
-        if ping:
-            _watch_pinged_at = time.monotonic()
+        for name in ping:
+            _watch_pinged[name] = started
     except Exception:  # noqa: BLE001
         logger.warning("Health watch failed", exc_info=True)
 
