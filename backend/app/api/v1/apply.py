@@ -78,6 +78,10 @@ async def start_run(
             content={
                 "detail": "Another application is already going.",
                 "open_run_id": str(busy.run_id),
+                # Which job (spec 036), so the app can say it and offer to
+                # stop it and start this one.
+                "open_title": busy.job.get("title") or "",
+                "open_company": busy.job.get("company") or "",
             },
         )
     await db.commit()
