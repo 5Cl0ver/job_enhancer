@@ -1203,10 +1203,13 @@ SIMILAR_MAX = 3
 SIMILAR_POOL = 500
 
 
-async def similar(db: AsyncSession, report: BugReport) -> list[dict[str, Any]]:
-    """Up to 3 open reports of the same type and section whose titles are
-    close to this one's (token set ratio of 80 or more), closest first. Only
-    suggested: the owner says whether it's the same problem."""
+async def similar(
+    db: AsyncSession, report: BugReport, limit: int | None = SIMILAR_MAX
+) -> list[dict[str, Any]]:
+    """Up to 3 (``limit``; None: every one) open reports of the same type
+    and section whose titles are close to this one's (token set ratio of 80
+    or more), closest first. Only suggested: the owner says whether it's the
+    same problem."""
     rows = (
         await db.execute(
             select(BugReport.id, BugReport.title, BugReport.status)
@@ -1236,7 +1239,7 @@ async def similar(db: AsyncSession, report: BugReport) -> list[dict[str, Any]]:
                 }
             )
     scored.sort(key=lambda s: -s["score"])
-    return scored[:SIMILAR_MAX]
+    return scored if limit is None else scored[:limit]
 
 
 # --------------------------------------------------------------------------- #
