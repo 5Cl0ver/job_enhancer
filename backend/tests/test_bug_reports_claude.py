@@ -522,3 +522,29 @@ async def test_planted_words_never_leave_the_fences(engine, monkeypatch):
     assert links[0]["reported_text"] == {"title": PLANTED}
     merges = [h for h in answers["read plain"]["history"] if h["kind"] == "merge"]
     assert merges[0]["reported_text"] == {"title": f"{PLANTED} two"}
+
+
+def test_fixed_in_stays_inside_the_fence_in_history():
+    """ "Fixed in" is the owner's or Claude's words: never loose in history."""
+    from app.mcp_server import _history_item
+
+    status = _history_item(
+        {
+            "at": "t",
+            "by": "owner",
+            "kind": "status",
+            "data": {"from": "new", "to": "fixed", "fixed_in": "PLANTED"},
+        }
+    )
+    assert "fixed_in" not in status["data"]
+    assert status["reported_text"]["fixed_in"] == "PLANTED"
+    edit = _history_item(
+        {
+            "at": "t",
+            "by": "owner",
+            "kind": "edit",
+            "data": {"field": "fixed_in", "from": "A1", "to": "PLANTED"},
+        }
+    )
+    assert "PLANTED" not in str(edit["data"])
+    assert edit["reported_text"]["to"] == "PLANTED"

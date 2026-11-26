@@ -1058,11 +1058,19 @@ def _history_item(e: dict[str, Any]) -> dict[str, Any]:
     data = dict(e["data"])
     if e["kind"] == "edit" and data.get("field") in _TEXT_EDITS:
         data = {"field": data["field"]}
+    reported: dict[str, Any] = {}
     # A merged, split or linked report's title is report text too.
     title = data.pop("title", None)
-    item = {"at": e["at"], "by": e["by"], "kind": e["kind"], "data": data}
     if title is not None:
-        item["reported_text"] = {"title": title}
+        reported["title"] = title
+    # So is "fixed in" (a status change's, and its own edits' from / to).
+    if "fixed_in" in data:
+        reported["fixed_in"] = data.pop("fixed_in")
+    if e["kind"] == "edit" and data.get("field") == "fixed_in":
+        reported["from"], reported["to"] = data.pop("from", None), data.pop("to", None)
+    item = {"at": e["at"], "by": e["by"], "kind": e["kind"], "data": data}
+    if reported:
+        item["reported_text"] = reported
     return item
 
 
