@@ -8,7 +8,7 @@
 // browser lab covers the rest (e2e/autofill-*.spec.js).
 import { isPlaceholderOption, matchOption } from "./classify/answers.js";
 import { untouchableChoice } from "./classify/profileKeys.js";
-import { comboBox, textOf } from "./scan.js";
+import { PROMPT_BOX, comboBox, textOf } from "./scan.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const norm = (s) =>
@@ -216,8 +216,22 @@ function writeSpin(field, [value]) {
   return { ok: num() === n, actual: el.value || "" };
 }
 
-/** A search prompt's chips: add each item (skills) one at a time. */
+/**
+ * A search prompt's chips: add each item (skills) one at a time. A prompt
+ * that answers ONE question ("How did you hear about us?", spec 036) takes
+ * the first of the answer's wordings the site offers, and only that one.
+ */
 async function writeChips(field, items) {
+  if (field.single) {
+    const have = chipsOf(field.el);
+    const hit = items.find((it) => have.some((c) => norm(c) === norm(String(it).split(">").pop())));
+    if (hit) return { ok: true, already: true, actual: have.join(", ") };
+    for (const item of items.slice(0, 4)) {
+      const res = await searchPick(field.el, item);
+      if (res.ok) return { ok: true, actual: chipsOf(field.el).join(", ") };
+    }
+    return { ok: false, reason: "no_option", actual: chipsOf(field.el).join(", ") };
+  }
   let added = 0;
   for (const item of items.slice(0, 30)) {
     const res = await searchPick(field.el, item);
@@ -608,7 +622,7 @@ const CHIP = '[data-automation-id="selectedItem"], ul[data-automation-id="select
 
 /** The box holding a search prompt's chosen items ("chips"). */
 export function promptBox(input) {
-  return input.closest('[data-automation-id="multiSelectContainer"], [data-uxi-widget-type="multiselect"], [data-automation-id^="formField-"]') || input.parentElement;
+  return input.closest(`${PROMPT_BOX}, [data-automation-id^="formField-"]`) || input.parentElement;
 }
 
 /** The items chosen in a search prompt, as text. */
@@ -620,12 +634,19 @@ export function chipsOf(input) {
  * Add one item to a search prompt: type it, Enter, choose the matching result
  * (Workday also picks a single match by itself), check a chip appeared, close.
  * Never the first result as a guess; a term with no match is cleared and left.
+ * A result that is a category (Workday's "Social Media", spec 036) opens its
+ * own list: the item is chosen there. "Social Media > LinkedIn" says both:
+ * the item is searched first, else the category, then the item in it.
  * @returns {Promise<{ok: boolean, already?: boolean, reason?: string, actual?: string}>}
  */
 export function searchPick(input, term, { wait = 1500 } = {}) {
   return oneAtATime(async () => {
     const doc = input.ownerDocument;
-    const want = String(term || "").trim();
+    const path = String(term || "")
+      .split(/\s+>\s+/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+    const want = path[path.length - 1] || "";
     if (!want) return { ok: false, reason: "no_data" };
     if (chipsOf(input).some((c) => norm(c) === norm(want))) return { ok: true, already: true, actual: want };
     await closeOpenLists(doc);
@@ -633,30 +654,56 @@ export function searchPick(input, term, { wait = 1500 } = {}) {
     const had = count();
     const field = { el: input };
     const before = new Set(visibleOptions(field).map((o) => o.el));
-    try {
-      input.focus?.({ preventScroll: true });
-    } catch {
-      /* fine */
-    }
-    pointerClick(input);
-    setNativeValue(input, want, { blur: false });
-    key(input, "Enter");
-    ours.set(input, before);
-    let picked = "";
-    const end = Date.now() + wait;
-    while (Date.now() < end && count() === had) {
-      const opts = visibleOptions(field, before);
-      const i = opts.length ? firstMatch([want], opts) : -1;
-      if (i >= 0) {
-        picked = opts[i].label;
-        pointerClick(opts[i].click);
-        await until(() => count() > had, 800);
-        break;
+    const search = (text) => {
+      try {
+        input.focus?.({ preventScroll: true });
+      } catch {
+        /* fine */
       }
-      await sleep(60);
+      pointerClick(input);
+      setNativeValue(input, text, { blur: false });
+      key(input, "Enter");
+      ours.set(input, before);
+    };
+    // Choose each name in turn, one level of the list at a time (a category,
+    // then its item). A match that opens a list instead of becoming a chip is
+    // a category: its item is looked for there (at most 3 levels).
+    const choose = async (names) => {
+      let seen = new Set();
+      const fresh = () => visibleOptions(field, before).filter((o) => !seen.has(o.el));
+      for (let level = 0; level < 3; level++) {
+        const name = names[Math.min(level, names.length - 1)];
+        let opts = [];
+        let i = -1;
+        const end = Date.now() + wait;
+        while (Date.now() < end && count() === had) {
+          opts = fresh();
+          i = opts.length ? firstMatch([name], opts) : -1;
+          if (i >= 0) break;
+          await sleep(60);
+        }
+        if (count() > had) return i >= 0 ? opts[i].label : want; // Workday chose a single match itself
+        if (i < 0) return "";
+        seen = new Set(visibleOptions(field, before).map((o) => o.el));
+        const label = opts[i].label;
+        pointerClick(opts[i].click);
+        const moved = await until(() => count() > had || fresh().length > 0, 800);
+        if (count() > had) return label;
+        if (!moved) return "";
+      }
+      return "";
+    };
+    search(want);
+    let picked = await choose([want]);
+    if (!picked && count() === had && path.length > 1) {
+      // Not found by its own name: its category first, then it.
+      await closeOpenLists(doc, 300);
+      search(path[0]);
+      picked = await choose(path);
     }
     const ok = count() > had;
-    if (!ok && input.value) setNativeValue(input, "", { blur: false });
+    // Text left in the box (no match, or a page that keeps it) is cleared.
+    if (input.value) setNativeValue(input, "", { blur: false });
     await closeOpenLists(doc, 300);
     return ok ? { ok: true, actual: picked || want } : { ok: false, reason: "no_option" };
   });

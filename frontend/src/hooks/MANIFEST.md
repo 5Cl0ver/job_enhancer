@@ -26,7 +26,7 @@ optimistic updates where useful.
 | `useOnboarding.ts` | `useOnboarding(pollMs?)`, `useUpdateOnboarding` (spec 019 part B: Welcome progress and the Getting started ticks) | `/v1/onboarding` |
 | `useResumeDetails.ts` | `useResumeDetails`, `useSaveResumeDetails`, `useReadResume`, `useSetJobResume` (spec 020: each résumé's jobs, schools, skills, read without AI; the résumé for one saved job) | `/v1/autofill/resumes/{id}/*`, `PUT /v1/saved-jobs/{id}/resume` |
 | `useSkippedSites.ts` | `useSkippedSites`, `useSiteSuggestions`, `useAddSkippedSite` (409 → `NeedsConfirm` with the reason), `useRemoveSkippedSite`; `siteOf` / `onSite` (spec 024) | `/v1/skipped-sites` |
-| `useApply.ts` | Apply with Claude (spec 022): `useApplyRun` (live every 3 s while open), `useOpenApply` (banner), `useJobApplyRuns`, `useStartApply` (409 → `BusyError`), answers / help-done / decision / sent / stop, spec 033: `useAddFix` / `useEditFix` / `useRemoveFix` / `useSendFixes` (fixes that wait on the run), `useContinue` (Page by page), `useSetMode`, facts, master / delete résumé, `usePhoto` (authed blob URL) |
+| `useApply.ts` | Apply with Claude (spec 022): `useApplyRun` (live every 3 s while open), `useOpenApply` (banner), `useJobApplyRuns`, `useStartApply` (409 → `BusyError` with the open run's title and company, spec 036), answers / help-done / decision / sent / stop, spec 033: `useAddFix` / `useEditFix` / `useRemoveFix` / `useSendFixes` (fixes that wait on the run), `useContinue` (Page by page), `useSetMode`, facts, master / delete résumé, `usePhoto` (authed blob URL) |
 
 **How this folder connects:** consumed by `routes/*` and `components/*`; every
 request flows through `lib/api.ts` (which attaches the Supabase Bearer token).

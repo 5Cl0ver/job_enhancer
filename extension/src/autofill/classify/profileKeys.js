@@ -4,6 +4,8 @@
 // The words shown to people (labels, questions) are the stable signal on any
 // site; the HTML `autocomplete` attribute, when a site sets it, is even better.
 
+import { sponsorshipKey } from "./sponsorship.js";
+
 // ---- Never touch ----------------------------------------------------------
 
 /** Protected self-identification: the user's to answer, always. */
@@ -157,11 +159,13 @@ const RULES = [
   { key: "linkedin_url", re: /linked[\s_-]*in/i },
   { key: "github_url", re: /git[\s_-]*hub/i },
   { key: "portfolio_url", re: /portfolio|personal[\s_-]*(web)?site|website|^url$|other (url|link)/i },
+  // Sponsorship is decided before these rules (sponsorship.js, spec 036);
+  // this one is only for a box with no label, by its name or id.
+  { key: "requires_sponsorship", nameOnly: true, re: /sponsor/i },
   {
     key: "authorized_to_work",
     re: /authori[sz]ed[\s\S]*(work|employ)|work[\s_-]*authori[sz]ation|legally[\s\S]*(work|employ)|eligib[\s\S]*(work|employ)|right to work/i,
   },
-  { key: "requires_sponsorship", re: /sponsor/i },
   { key: "willing_to_relocate", re: /relocat/i },
   // From the résumé (education, the most recent job) — spec 015 R2.
   { key: "graduation_year", re: /graduat(ion|ed)?[\s_-]*(year|date)|year of graduation|completion[\s_-]*(year|date)|year (completed|graduated)/i },
@@ -188,7 +192,14 @@ const RULES = [
 ];
 
 /** Profile keys answered Yes/No. */
-export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
+export const BOOL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", "no_sponsorship_needed", "willing_to_relocate"]);
+
+/** Legal facts: they belong in the profile, never learned from a box (spec 036). */
+export const LEGAL_KEYS = new Set(["authorized_to_work", "requires_sponsorship", "no_sponsorship_needed"]);
+
+/** A question about work authorization or sponsorship, however it's worded
+ * (two in one too): never remembered from what was typed (spec 036). */
+export const LEGAL_QUESTION = /sponsor|authori[sz]ed to work|work authori[sz]ation|legally (authori[sz]ed|eligible|permitted|able)|eligib\w* (to|for) (work|employment)|right to work/i;
 
 /**
  * The profile key a field asks for, or null.
@@ -239,8 +250,12 @@ function profileKeyOf(field) {
   if (field.hints?.type === "tel") return "phone";
   const text = [field.question, field.hints?.name, field.hints?.id].filter(Boolean).join(" ");
   const q = field.question || "";
-  for (const { key, re } of RULES) {
-    if (!(re.test(q) || (!q && re.test(text)))) continue;
+  // Sponsorship, from the asking part only (spec 036): undefined when the
+  // question isn't about it (work authorization goes on below).
+  const sponsor = q ? sponsorshipKey(q) : undefined;
+  if (sponsor !== undefined) return sponsor;
+  for (const { key, re, nameOnly } of RULES) {
+    if (!((!nameOnly && re.test(q)) || (!q && re.test(text)))) continue;
     if (SHORT_ONLY.has(key) && q.length > 45) continue;
     return inPreferredBlock(field, key);
   }
@@ -356,6 +371,8 @@ export function profileValues(profile, email, today = new Date(), history = null
     portfolio_url: list(p.portfolio_url),
     authorized_to_work: list(yn(p.authorized_to_work)),
     requires_sponsorship: list(yn(p.requires_sponsorship)),
+    // "Able to work without sponsorship?": the other way round (spec 036).
+    no_sponsorship_needed: list(yn(p.requires_sponsorship == null ? null : !p.requires_sponsorship)),
     willing_to_relocate: list(yn(p.willing_to_relocate)),
     desired_salary: list(p.desired_salary),
     notice_period: list(p.notice_period),

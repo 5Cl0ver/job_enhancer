@@ -3,12 +3,12 @@
 // Nothing is ever submitted, nothing the user typed is overwritten, and
 // self-identification, agreements and essays are never touched.
 import { answerKey, isCompanySpecific, normalizeQuestion, yesNo } from "./classify/answers.js";
-import { PRIVATE, fieldGuard, profileKeyFor } from "./classify/profileKeys.js";
+import { LEGAL_KEYS, LEGAL_QUESTION, PRIVATE, fieldGuard, isPhoneExtension, profileKeyFor } from "./classify/profileKeys.js";
 import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, eduPart, eduValues, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, isSignupPage, looksLikeApplication, passwordShown } from "./scan.js";
-import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, resolve } from "./resolve.js";
+import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, phoneInExtension, resolve } from "./resolve.js";
 
 /** Case, spaces and punctuation don't count when deciding the user changed a box. */
 const loose = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -28,7 +28,15 @@ function agrees(field, now, value) {
   }
   return same(now, value);
 }
-import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
+import { asWriter, canRestore, fire, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
+
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+// Boxes a page can quietly empty after taking a choice (Workday's search
+// prompt, a typeahead): read again after leaving them (spec 036).
+const RECHECK = new Set(["combobox", "chips"]);
+// Boxes whose emptiness after a fill means it didn't stick (never a tick box:
+// unticked is an answer; never a file: Workday re-draws its box empty).
+const MUST_HOLD = new Set(["combobox", "chips", "select", "text", "textarea", "editable"]);
 
 const STYLE_ID = "jec-fill-style";
 const STYLE = `
@@ -141,9 +149,11 @@ function sectionDecision(field, section, part, entry, copy) {
 }
 
 /** What a taught box gets: its profile answer or its typed text — never past a guard. */
-function taughtDecision(field, t, copy) {
+export function taughtDecision(field, t, copy) {
   const guard = pointRefusal(field);
   if (guard) return { skip: guard };
+  // A box taught as the phone that is the extension (spec 036): never the number.
+  if (isPhoneExtension(field) && (t.profile_key === "phone" || phoneInExtension(field, t.answer, copy))) return { skip: "no_data" };
   if (t.profile_key) {
     const values = copy.values[t.profile_key] || [];
     return values.length ? { values, source: "profile", key: t.profile_key } : { skip: "no_data", key: t.profile_key };
@@ -157,7 +167,7 @@ function within(box, el) {
   return false;
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "other_person", "too_long"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "didnt_stick", "other_person", "too_long"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 // A lone yes/no checkbox is answered Yes (ticked) or No (left unticked).
@@ -185,6 +195,11 @@ export function createSession(deps) {
   const skipField = deps.skipField || (() => false);
   /** id → {field, entry, snap} for everything we filled */
   const filled = new Map();
+  /** What Job Catcher last put in each question's box, by its question
+   * (spec 036): a step the site re-draws (Workday's Back) has new boxes, and
+   * Job Catcher's own fill must never be taken for the user's answer. */
+  const wroteByKey = new Map();
+  const byKey = (field) => (field.key ? `${field.kind}|${field.key}` : "");
   /** id → {field, item} for what's left for the user */
   const needYou = new Map();
   /** id → field from the latest scan */
@@ -306,16 +321,35 @@ export function createSession(deps) {
     };
   }
 
+  /**
+   * Did a dropdown's or search prompt's choice stick? Leave the box (as a
+   * person moving on would), give the page a moment, read it again (spec 036:
+   * Workday's prompt showed the typed text, then emptied it on blur).
+   */
+  async function stuck(field, res) {
+    if (!RECHECK.has(field.kind) || res.already) return true;
+    await asWriter(field, async () => {
+      fire(field.el, "FocusEvent", "blur", { bubbles: false });
+      fire(field.el, "FocusEvent", "focusout");
+      await sleep(300);
+    });
+    const now = readField(field);
+    return !!now.trim() && agrees(field, now, res.actual);
+  }
+
   async function fillOne(field, values, source) {
     const snap = snapshot(field);
     const before = readField(field);
-    const res = await writeField(field, values);
+    let res = await writeField(field, values);
+    if (res.ok && !(await stuck(field, res))) res = { ok: false, reason: "rejected", actual: readField(field) };
     if (!res.ok) {
       // Written but not taken (or half taken): put the field back, so nothing
       // is left changed without a record and an Undo.
       if (readField(field) !== before) await restore(field, snap).catch(() => {});
       return res;
     }
+    const k = byKey(field);
+    if (k) wroteByKey.set(k, String(res.actual ?? ""));
     filled.set(field.id, { field, snap, entry: entryFor(field, source, res.actual, snap) });
     needYou.delete(field.id);
     already.delete(field.id);
@@ -409,6 +443,9 @@ export function createSession(deps) {
       // school's part, which is corrected from the résumé when it's wrong
       // (an applicant system's own résumé reading cuts titles; spec 020).
       const prefilled = field.kind !== "file" && hasValue(field);
+      // A box the user emptied stays empty, after a re-draw, a step change or
+      // a reload too (spec 036: the Phone Extension refilled on a revisit).
+      if (!prefilled && field.kind !== "file" && userEdited(field.el)) continue;
       // (Only on a press: on a step filled by itself, a filled box stays as it is.)
       if (prefilled && (auto || !part || taught.has(field.id) || userEdited(field.el))) {
         // Already holding what Job Catcher would put there (Chrome's own
@@ -448,7 +485,7 @@ export function createSession(deps) {
       if (d.skip) {
         // A yes/no checkbox nobody requires: unticked already says no (spec 034).
         if (d.quiet) continue;
-        if (d.skip === "unknown" && AI_KINDS.has(field.kind)) leftovers.push(field);
+        if (d.skip === "unknown" && AI_KINDS.has(field.kind) && !isPhoneExtension(field)) leftovers.push(field);
         // An essay answer saved before, or an answer to a near rewording, is
         // offered ("Use saved answer"), never filled.
         const saved = d.skip === "essay" ? (copy.answers || []).find((a) => a.question_key === answerKey("essay", "", field.key))?.answer : d.offer;
@@ -550,6 +587,15 @@ export function createSession(deps) {
    * NOW. A one-address application (Workday) swaps its steps in place, and
    * the last step's boxes must never be reported again (spec 029). */
   function report() {
+    // A box Job Catcher filled that the page has emptied since (spec 036): not
+    // filled — it still needs an answer ("didnt_stick"). One the user emptied
+    // is theirs: no longer listed as Job Catcher's.
+    for (const x of current(filled)) {
+      if (!MUST_HOLD.has(x.field.kind) || hasValue(x.field) || !String(x.entry.value ?? "").trim()) continue;
+      filled.delete(x.field.id);
+      unmark(x.field);
+      if (!userEdited(x.field.el)) leave(x.field, "didnt_stick");
+    }
     return {
       url: doc.location?.href || "",
       resume: resumeState,
@@ -624,18 +670,25 @@ export function createSession(deps) {
     }
     const sections = classifySections(list);
     for (const field of list) {
-      const key = profileKeyFor(field);
+      let key = profileKeyFor(field);
+      // "Able to work without sponsorship?" answered No = needs sponsorship
+      // (spec 036): saved to the profile the right way round.
+      let flip = false;
+      if (key === "no_sponsorship_needed") [key, flip] = ["requires_sponsorship", true];
       if (!LEARNABLE_PROFILE.has(key)) continue;
       if (sections.has(field.id)) continue; // a past job's, a school's or a reference's — not the user's
       // Two fields asking the same (yours and a company's, a shipping address)
       // or a question about a business: not clearly the user's own.
-      if (seen.get(key) > 1 || NOT_MINE.test(field.question)) continue;
+      if (seen.get(flip ? "no_sponsorship_needed" : key) > 1 || NOT_MINE.test(field.question)) continue;
       const ours = filled.get(field.id);
       const value = readField(field).trim();
       if (!value || value.length > 200) continue;
       if (ours && same(value, ours.entry.value)) continue; // ours, untouched
-      if ((known[key] || []).some((k) => same(value, k))) continue; // already saved
-      const v = profileValue(key, value);
+      const yn = flip ? { yes: "No", no: "Yes" }[yesNo(value)] : null;
+      if (flip && !yn) continue;
+      const shown = flip ? yn : value;
+      if ((known[key] || []).some((k) => same(shown, k))) continue; // already saved
+      const v = profileValue(key, shown);
       if (v !== null) out[key] = v;
     }
     return out;
@@ -733,6 +786,10 @@ export function createSession(deps) {
       // checkbox that isn't an agreement is a yes/no answer (spec 034).
       if (PRIVATE.test(field.question) || keyCount.get(field.key) > 1) continue;
       if (field.kind === "checkbox" && fieldGuard(field)) continue;
+      // Work authorization and sponsorship are legal facts: the profile's,
+      // offered as "Save to my profile" (typedProfile), never remembered
+      // from a box (spec 036; like the server's apply_learn).
+      if (LEGAL_KEYS.has(profileKeyFor(field)) || LEGAL_QUESTION.test(field.question)) continue;
       // Something we filled counts only if the user has since changed it.
       const ours = filled.get(field.id);
       if (field.kind === "checkbox") {
@@ -750,7 +807,12 @@ export function createSession(deps) {
         continue;
       }
       if (ours && readField(field).trim() === ours.entry.value.trim()) continue; // ours, untouched
+      // Ours in a box the site re-drew (new ids, spec 036): still ours.
+      const oursBefore = ours ? undefined : wroteByKey.get(byKey(field));
+      if (oursBefore !== undefined && loose(readField(field)) === loose(oursBefore)) continue;
       if (field.kind === "file" || !field.key || field.key.length < 3) continue;
+      // A phone number in a Phone Extension box is never an answer to keep.
+      if (phoneInExtension(field, readField(field))) continue;
       const kind = sections.get(field.id);
       if (kind === "job" || kind === "reference") continue; // about one past job / one person: never a general answer
       // A box the profile answers (spec 020): a correction of what Job Catcher

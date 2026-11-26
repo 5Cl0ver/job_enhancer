@@ -707,13 +707,19 @@ async def _apply(call, run_id=None):
 
 
 @mcp.tool
-async def get_apply_brief(run_id: str | None = None) -> dict:
+async def get_apply_brief(
+    run_id: str | None = None, page_url: str | None = None
+) -> dict:
     """Start (or carry on) the application the user pressed Apply with Claude
     for. Returns the steps to follow, the job, the user's master profile (the
     ONLY source of facts about them), skills the listing names that the
     profile doesn't show, and what to do next. Call this first, in every new
-    chat."""
-    return await _apply(lambda db, user: apply_svc.brief(db, user, run_id), run_id)
+    chat. Pass run_id: the run code from the user's message ("run 1a2b3c4d")
+    or the full id; and page_url: your tab's address. Without a run_id, a tab
+    on another job answers not_now "other_job": ask the user which one."""
+    return await _apply(
+        lambda db, user: apply_svc.brief(db, user, run_id, page_url), run_id
+    )
 
 
 @mcp.tool

@@ -23,7 +23,7 @@ Base path: **`/v1`**. All routes require auth (`CurrentUser`) unless noted.
 | `v1/bugs.py` | `/bugs` | `POST /bugs/caught` (spec 032 part B): a crash or Job Catcher failure from anyone signed in or a Job Catcher pass; 20/minute per person; `202 {kept}`; never stores who, never returns the report; new ones capped apart from the server's (20 an hour in all, 5 per sender), then only the "too many" report counts them |
 | `v1/auth.py` | — | auth helpers/routes (see file) |
 | `v1/router.py` | — | aggregates all routers under `/v1` |
-| `v1/apply.py` | `/v1/apply/*` (the app: start (with a picked résumé, spec 025), open, runs for a job, one run, answers, help-done, resume-decision, decision, sent, stop, photos; Job Catcher with its pass: active, claim, photo, result, event, live (spec 026); spec 033: fixes (add, `PATCH` / `DELETE fixes/{id}`, `fixes/send` = Send now), continue (Page by page), `PATCH mode`; start takes `mode`) and `/v1/profile-facts` (list, edit, delete) — spec 022 |
+| `v1/apply.py` | `/v1/apply/*` (the app: start (with a picked résumé, spec 025), open, runs for a job, one run, answers, help-done, resume-decision, decision, sent, stop, photos; Job Catcher with its pass: active, claim, photo, result, event, live (spec 026); spec 033: fixes (add, `PATCH` / `DELETE fixes/{id}`, `fixes/send` = Send now), continue (Page by page), `PATCH mode`; start takes `mode`; spec 036: a 409 on start also carries `open_title` / `open_company`) and `/v1/profile-facts` (list, edit, delete) — spec 022 |
 
 ## Auth pattern (`middleware/auth.py`)
 - **`CurrentUser`** — verifies the Supabase **ES256** token via the project **JWKS**; lazy-creates the User on first login.

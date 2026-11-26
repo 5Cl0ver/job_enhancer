@@ -1,7 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
   type ApplyRun,
+  applyLine,
   bannerLine,
+  carryOnLine,
+  runCode,
   currentStep,
   latestPages,
   checkRows,
@@ -216,5 +219,28 @@ describe("best judgment (spec 026)", () => {
     const changing = { ...run, resume_check: { ...run.resume_check, decision: "change" as const } };
     expect(needsYou(changing)).toBe(false);
     expect(statusLine(changing)).toBe("Claude is changing your résumé…");
+  });
+});
+
+describe("the start lines carry the run (spec 036)", () => {
+  const run = {
+    id: "1a2b3c4d-0000-4000-8000-000000000000",
+    job: { job_id: "s1", listing_id: "l1", title: "Help Desk Analyst", company: "Acme", location: "" },
+  };
+
+  it("names the job and the run's code", () => {
+    expect(runCode(run.id)).toBe("1a2b3c4d");
+    expect(applyLine(run)).toBe(
+      'Apply to my job "Help Desk Analyst" at Acme with the Job Enhancer connector (run 1a2b3c4d).',
+    );
+    expect(carryOnLine(run)).toBe(
+      'Carry on with my application to "Help Desk Analyst" at Acme with the Job Enhancer connector (run 1a2b3c4d).',
+    );
+  });
+
+  it("still carries the code without a title", () => {
+    const bare = { ...run, job: { ...run.job, title: "", company: "" } };
+    expect(applyLine(bare)).toBe("Apply to my job with the Job Enhancer connector (run 1a2b3c4d).");
+    expect(carryOnLine(bare)).toBe("Carry on with my application to my job with the Job Enhancer connector (run 1a2b3c4d).");
   });
 });

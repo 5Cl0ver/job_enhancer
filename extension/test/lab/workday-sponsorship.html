@@ -1,0 +1,87 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 036): the ways application questions
+     word work authorization and sponsorship. Sponsorship questions that also
+     say "legally work" or "work authorization" are about sponsorship; a
+     reversed one ("without sponsorship") is answered the other way round; a
+     question asking both at once is left for the user. The first one is a
+     Workday listbox (a button), the rest radios and a dropdown.
+     window.__formData() holds what the PAGE has taken. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Application Questions - Northwind Labs Careers</title>
+    <style>.field { margin: 8px 0; } legend { font-weight: bold; }</style>
+  </head>
+  <body>
+    <div data-automation-id="mainContent">
+      <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+      <h2>Application Questions</h2>
+      <div class="field" data-automation-id="formField-sponsorLegally">
+        <fieldset>
+          <legend><span data-automation-id="richText">Will you now, or in the future, require sponsorship to legally work in the United States?</span> <abbr title="required">*</abbr></legend>
+          <button type="button" aria-haspopup="listbox" id="sponsor-legally" data-options="Yes|No">Select One</button>
+        </fieldset>
+      </div>
+      <fieldset class="field">
+        <legend>Will you now or in the future require the company's sponsorship to obtain or maintain work authorization?</legend>
+        <label><input type="radio" name="sponsor-authorization" value="Yes" /> Yes</label>
+        <label><input type="radio" name="sponsor-authorization" value="No" /> No</label>
+      </fieldset>
+      <div class="field">
+        <label for="sponsor-eligible">Do you require sponsorship to be eligible for employment in the U.S.?</label>
+        <select id="sponsor-eligible">
+          <option value="">Select one</option>
+          <option value="y">Yes, I will require sponsorship</option>
+          <option value="n">No, I will not require sponsorship</option>
+        </select>
+      </div>
+      <fieldset class="field">
+        <legend>Are you able to work in the US without visa sponsorship?</legend>
+        <label><input type="radio" name="without-sponsorship" value="Yes" /> Yes</label>
+        <label><input type="radio" name="without-sponsorship" value="No" /> No</label>
+      </fieldset>
+      <fieldset class="field">
+        <legend>Are you authorized to work in the U.S.?</legend>
+        <label><input type="radio" name="authorized" value="Yes" /> Yes</label>
+        <label><input type="radio" name="authorized" value="No" /> No</label>
+      </fieldset>
+      <fieldset class="field">
+        <legend>Are you legally authorized to work in the US, and will you require sponsorship?</legend>
+        <label><input type="radio" name="both" value="Yes" /> Yes</label>
+        <label><input type="radio" name="both" value="No" /> No</label>
+      </fieldset>
+    </div>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      for (const input of document.querySelectorAll("input[type=radio]")) {
+        input.addEventListener("change", () => input.checked && (data[input.name] = input.value));
+      }
+      const sel = document.getElementById("sponsor-eligible");
+      sel.addEventListener("change", () => (data[sel.id] = sel.options[sel.selectedIndex].textContent));
+      for (const btn of document.querySelectorAll('button[aria-haspopup="listbox"]')) {
+        btn.addEventListener("click", () => {
+          const open = document.getElementById(btn.id + "-list");
+          if (open) return open.remove();
+          const list = document.createElement("ul");
+          list.setAttribute("role", "listbox");
+          list.id = btn.id + "-list";
+          for (const o of btn.dataset.options.split("|")) {
+            const li = document.createElement("li");
+            li.setAttribute("role", "option");
+            li.setAttribute("data-automation-id", "promptOption");
+            li.textContent = o;
+            li.addEventListener("click", () => {
+              btn.textContent = o;
+              data[btn.id] = o;
+              list.remove();
+            });
+            list.appendChild(li);
+          }
+          btn.after(list);
+        });
+        btn.addEventListener("keydown", (e) => e.key === "Escape" && document.getElementById(btn.id + "-list")?.remove());
+      }
+    </script>
+  </body>
+</html>

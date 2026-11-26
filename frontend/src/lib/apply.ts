@@ -444,9 +444,27 @@ export function stepCounts(step: SheetStep) {
   };
 }
 
-export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";
-/** Said in a new Claude chat when the last one stopped: it picks up the run. */
-export const CARRY_ON_LINE = "Carry on with my application with the Job Enhancer connector.";
+/** The run's short code (spec 036): the first 8 characters of its id. Claude
+ * passes it as run_id, so it never carries on with another job's run. */
+export function runCode(id: string): string {
+  return id.slice(0, 8);
+}
+
+function whichJob(run: Pick<ApplyRunShort, "id" | "job">): string {
+  const { title, company } = run.job;
+  const job = title ? `"${title}"${company ? ` at ${company}` : ""}` : "";
+  return job ? ` ${job}` : "";
+}
+
+/** What the user says to Claude to start: the job and the run's code (spec 036). */
+export function applyLine(run: Pick<ApplyRunShort, "id" | "job">): string {
+  return `Apply to my job${whichJob(run)} with the Job Enhancer connector (run ${runCode(run.id)}).`;
+}
+
+/** Said in a new Claude chat when the last one stopped: it picks up this run. */
+export function carryOnLine(run: Pick<ApplyRunShort, "id" | "job">): string {
+  return `Carry on with my application to${whichJob(run) || " my job"} with the Job Enhancer connector (run ${runCode(run.id)}).`;
+}
 
 const OPEN: ApplyStatus[] = [
   "waiting",

@@ -62,7 +62,14 @@ export function useJobApplyRuns(savedJobId: string | undefined) {
 }
 
 export class BusyError extends Error {
-  constructor(public openRunId: string | null) {
+  /** The open run's job and step (spec 036), so the dialog can say which
+   * one, and never offers to stop one waiting for "Did it go through?". */
+  constructor(
+    public openRunId: string | null,
+    public title = "",
+    public company = "",
+    public status = "",
+  ) {
     super("Another application is already going.");
   }
 }
@@ -77,7 +84,7 @@ export function useStartApply() {
       } catch (err) {
         if (err instanceof ApiError && err.status === 409) {
           const open = await api.get<ApplyRunShort | null>("/v1/apply/runs/open").catch(() => null);
-          throw new BusyError(open?.id ?? null);
+          throw new BusyError(open?.id ?? null, open?.job?.title ?? "", open?.job?.company ?? "", open?.status ?? "");
         }
         throw err;
       }

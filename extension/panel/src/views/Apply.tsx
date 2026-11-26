@@ -41,6 +41,7 @@ const WHY: Record<string, string> = {
   no_data: "Not in your profile yet",
   no_option: "None of its choices matched",
   rejected: "The page didn't take it",
+  didnt_stick: "The page emptied it after it was filled",
   unknown: "New question",
   other_person: "About someone else",
   too_long: "Too long for this box",

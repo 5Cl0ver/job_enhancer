@@ -1,0 +1,118 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 036): Workday's "How Did You Hear About
+     Us?" as Workday really draws it: a search prompt (formField-source >
+     multiselectInputContainer > ul[selectedItemList] + input
+     data-uxi-widget-type=selectinput). Typing shows nothing; Enter shows the
+     results; a result clicked becomes a pill; a category ("Social Media")
+     opens its own list; text left in the box is cleared when you leave it,
+     so only a pill is an answer. window.__formData() holds what the PAGE has
+     taken (the pills). -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>My Information - Northwind Labs Careers</title>
+    <style>
+      .field { margin: 8px 0; }
+      [data-automation-id="selectedItemList"] { display: inline-flex; gap: 4px; padding: 0; margin: 0; list-style: none; }
+      [data-automation-id="selectedItem"] { border: 1px solid #999; border-radius: 10px; padding: 0 6px; }
+      .pop { position: absolute; background: #fff; border: 1px solid #ccc; }
+      .pop li { cursor: pointer; padding: 2px 8px; list-style: none; }
+    </style>
+  </head>
+  <body>
+    <div data-automation-id="mainContent">
+      <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+      <h2>My Information</h2>
+      <div class="field" data-automation-id="formField-source">
+        <label for="source--source">How Did You Hear About Us? <abbr title="required">*</abbr></label>
+        <div data-automation-id="multiselectInputContainer">
+          <ul data-automation-id="selectedItemList" role="listbox" aria-label="items selected"></ul>
+          <input id="source--source" type="text" data-uxi-widget-type="selectinput" placeholder="Search" autocomplete="off" aria-required="true" />
+        </div>
+      </div>
+      <div class="field" data-automation-id="formField-city">
+        <label for="addressSection_city">City</label>
+        <input id="addressSection_city" data-automation-id="addressSection_city" />
+      </div>
+      <button type="button" data-automation-id="bottom-navigation-next-button" id="next">Save and Continue</button>
+    </div>
+    <script>
+      const data = { source: [] };
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      // Leaves anywhere match a search; a category matches by its own name.
+      const CATALOG = [
+        { label: "Company Website" },
+        { label: "Employee Referral" },
+        { label: "Job Board", items: ["Indeed", "Glassdoor Jobs"] },
+        { label: "Social Media", items: ["LinkedIn", "Facebook"] },
+      ];
+      const input = document.getElementById("source--source");
+      const pills = document.querySelector('[data-automation-id="selectedItemList"]');
+      let pop = null;
+      const close = () => {
+        pop?.remove();
+        pop = null;
+        input.setAttribute("aria-expanded", "false");
+      };
+      const addPill = (label) => {
+        if (data.source.includes(label)) return close();
+        const li = document.createElement("li");
+        li.setAttribute("data-automation-id", "selectedItem");
+        li.innerHTML = '<div data-automation-id="promptOption"></div><button type="button" data-automation-id="DELETE_charm" aria-label="remove"></button>';
+        li.firstChild.textContent = label;
+        li.lastChild.addEventListener("click", () => {
+          li.remove();
+          data.source = data.source.filter((s) => s !== label);
+        });
+        pills.appendChild(li);
+        data.source.push(label);
+        input.value = "";
+        close();
+      };
+      const show = (entries) => {
+        close();
+        pop = document.createElement("div");
+        pop.className = "pop";
+        pop.setAttribute("data-automation-activepopup", "true");
+        const ul = document.createElement("ul");
+        ul.setAttribute("role", "listbox");
+        for (const e of entries) {
+          const li = document.createElement("li");
+          li.setAttribute("role", "option");
+          li.innerHTML = '<div data-automation-id="promptOption"><div data-automation-id="promptLeafNode"></div></div>';
+          li.querySelector('[data-automation-id="promptOption"]').setAttribute("data-automation-label", e.label);
+          li.querySelector('[data-automation-id="promptLeafNode"]').textContent = e.label;
+          li.addEventListener("click", () => (e.items ? show(e.items.map((label) => ({ label }))) : addPill(e.label)));
+          ul.appendChild(li);
+        }
+        pop.appendChild(ul);
+        const r = input.getBoundingClientRect();
+        pop.style.left = `${r.left + scrollX}px`;
+        pop.style.top = `${r.bottom + scrollY}px`;
+        document.body.appendChild(pop);
+        input.setAttribute("aria-expanded", "true");
+      };
+      input.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") return close();
+        if (e.key !== "Enter") return;
+        e.preventDefault();
+        const q = input.value.trim().toLowerCase();
+        if (!q) return show(CATALOG);
+        const hits = [];
+        for (const c of CATALOG) {
+          if (c.label.toLowerCase().includes(q)) hits.push(c);
+          for (const item of c.items || []) if (item.toLowerCase().includes(q)) hits.push({ label: item });
+        }
+        show(hits);
+      });
+      // Leaving the box: whatever was typed is gone; only pills count.
+      input.addEventListener("blur", () => setTimeout(() => (input.value = ""), 50));
+      document.addEventListener("click", (e) => {
+        if (!pop || pop.contains(e.target) || e.target === input) return;
+        close();
+      }, true);
+      const city = document.getElementById("addressSection_city");
+      for (const t of ["input", "change"]) city.addEventListener(t, () => (data.city = city.value));
+    </script>
+  </body>
+</html>

@@ -31,7 +31,7 @@ vi.mock("@/lib/api", () => ({
 import { ApplyRunPage } from "@/routes/ApplyRunPage";
 import { ApplyWithClaudeButton } from "@/components/apply/ApplyWithClaudeButton";
 import { ApiError } from "@/lib/api";
-import { APPLY_LINE, type ApplyRun } from "@/lib/apply";
+import { applyLine, type ApplyRun } from "@/lib/apply";
 
 const RUN: ApplyRun = {
   id: "r1",
@@ -85,7 +85,11 @@ describe("the application page", () => {
   it("starts with the line to paste into Claude", async () => {
     serve(RUN);
     renderPage();
-    expect(await screen.findByText(APPLY_LINE)).toBeInTheDocument();
+    expect(await screen.findByText(applyLine(RUN))).toBeInTheDocument();
+    // The job and the run's code (spec 036).
+    expect(
+      screen.getByText('Apply to my job "IT Engineer" at Acme with the Job Enhancer connector (run r1).'),
+    ).toBeInTheDocument();
     expect(screen.getByText("Waiting for Claude…")).toBeInTheDocument();
     expect(screen.getByText(/Nothing is sent until you check the photos/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: /Back to the job/ })).toHaveAttribute("href", "/jobs/l1");
@@ -284,6 +288,39 @@ describe("Apply with Claude button", () => {
     await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
     await userEvent.click(await screen.findByRole("button", { name: "Start" }));
     expect(await screen.findByRole("link", { name: "Open it" })).toHaveAttribute("href", "/apply/r9");
+  });
+
+  it("says which job is going, and can stop it and start this one", async () => {
+    const other = { ...RUN, id: "r9", job: { ...RUN.job, title: "Network Technician", company: "Globex" } };
+    get.mockImplementation((path: string) => Promise.resolve(path === "/v1/apply/runs/open" ? other : []));
+    post.mockImplementation((path: string) => {
+      if (path === "/v1/apply/runs/r9/stop") return Promise.resolve({ ...other, status: "stopped" });
+      if (post.mock.calls.filter(([p]) => p === "/v1/apply/runs").length === 1) {
+        return Promise.reject(new ApiError(409, "Another application is already going."));
+      }
+      return Promise.resolve(RUN);
+    });
+    renderButton();
+    await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start" }));
+    expect(await screen.findByText(/Claude is applying to Network Technician at Globex\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Stop it and start this one" }));
+    expect(await screen.findByText("application page")).toBeInTheDocument();
+    expect(post).toHaveBeenCalledWith("/v1/apply/runs/r9/stop", {});
+    // Started again with the same résumé choice.
+    expect(post).toHaveBeenLastCalledWith("/v1/apply/runs", { saved_job_id: "s1", resume_id: null });
+  });
+
+  it("never offers to stop one waiting for 'Did it go through?'", async () => {
+    const other = { ...RUN, id: "r9", status: "submitting", job: { ...RUN.job, title: "Network Technician", company: "Globex" } };
+    get.mockImplementation((path: string) => Promise.resolve(path === "/v1/apply/runs/open" ? other : []));
+    post.mockRejectedValue(new ApiError(409, "Another application is already going."));
+    renderButton();
+    await userEvent.click(await screen.findByRole("button", { name: "Apply with Claude" }));
+    await userEvent.click(await screen.findByRole("button", { name: "Start" }));
+    expect(await screen.findByText(/Answer whether it went through first/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Open it" })).toHaveAttribute("href", "/apply/r9");
+    expect(screen.queryByRole("button", { name: "Stop it and start this one" })).toBeNull();
   });
 
   it("a job with an application going opens it", async () => {

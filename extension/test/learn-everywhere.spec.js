@@ -149,12 +149,20 @@ describe("spec 020 correctness review", () => {
 
 describe("spec 020 correctness re-review", () => {
   it("a learned answer never brings back the profile's old value for a choice", () => {
+    // With no profile value, the learned wording is used as it is.
     const sponsor = resolve(field("Are you authorized to work in the US?"), {
+      answers: [{ question_key: "@authorized_to_work", answer: "No, I will need sponsorship" }],
+      values: { authorized_to_work: [] },
+      site: "x",
+    });
+    expect(sponsor.values).toEqual(["No, I will need sponsorship"]);
+    // One that contradicts the profile's legal fact is only offered (spec 036).
+    const against = resolve(field("Are you authorized to work in the US?"), {
       answers: [{ question_key: "@authorized_to_work", answer: "No, I will need sponsorship" }],
       values: { authorized_to_work: ["Yes"] },
       site: "x",
     });
-    expect(sponsor.values).toEqual(["No, I will need sponsorship"]);
+    expect(against).toMatchObject({ skip: "unknown", offer: "No, I will need sponsorship" });
     const state = resolve(field("State"), { answers: [{ question_key: "@state", answer: "Washington" }], values: { state: ["Oregon", "OR"] }, site: "x" });
     expect(state.values).toEqual(["Washington", "WA"]);
   });
