@@ -7,7 +7,7 @@ import { Photo } from "@/components/apply/Pages";
 import { useHelpDone, useMarkSent, useNotSent, usePeek, usePostMessage } from "@/hooks/useApply";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
-import { CARRY_ON_LINE, type ApplyRun, HELP_TITLES } from "@/lib/apply";
+import { carryOnLine, type ApplyRun, HELP_TITLES } from "@/lib/apply";
 
 /** Save the run's résumé to the computer, to attach it by hand (spec 026). */
 function DownloadResume({ file }: { file: { id: string; filename: string } }) {
@@ -291,7 +291,7 @@ export function Stopped({ run }: { run: ApplyRun }) {
         No word from it, and the page hasn't changed, for a few minutes. On your computer, open the Claude side panel (a
         new chat is fine) and say:
       </p>
-      <CopyLine line={CARRY_ON_LINE} />
+      <CopyLine line={carryOnLine(run)} />
       <p className="text-xs text-muted-foreground">
         It picks up right where it was. Your answers, messages and waiting fixes are kept.
       </p>

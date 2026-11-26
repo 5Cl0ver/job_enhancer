@@ -29,7 +29,7 @@ import { API_BASE } from "@/lib/api";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import { cn } from "@/lib/utils";
 import {
-  APPLY_LINE,
+  applyLine,
   type ApplyRun,
   currentStep,
   isOpenApply,
@@ -75,7 +75,7 @@ function StartCard({ run }: { run: ApplyRun }) {
         <ModeSwitch run={run} explain />
       </div>
       <p className="text-sm">Open the Claude side panel in Chrome and say:</p>
-      <CopyLine line={APPLY_LINE} />
+      <CopyLine line={applyLine(run)} />
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>Keep Job Catcher on and signed in: it takes a photo of every page and fills what it knows.</li>
         <li>

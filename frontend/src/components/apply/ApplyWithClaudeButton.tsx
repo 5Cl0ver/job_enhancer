@@ -4,7 +4,7 @@ import { Check, FileText, Loader2, Sparkles } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { useResumes } from "@/hooks/useAI";
-import { BusyError, useJobApplyRuns, useStartApply } from "@/hooks/useApply";
+import { BusyError, useJobApplyRuns, useStartApply, useStopApply } from "@/hooks/useApply";
 import { useSavedJobs } from "@/hooks/useSavedJobs";
 import { isOpenApply } from "@/lib/apply";
 import { cn } from "@/lib/utils";
@@ -67,6 +67,7 @@ function Option({
 export function ApplyWithClaudeButton({ savedJobId }: { savedJobId: string }) {
   const navigate = useNavigate();
   const start = useStartApply();
+  const stop = useStopApply();
   const { data: runs = [] } = useJobApplyRuns(savedJobId);
   const { data: saved } = useSavedJobs();
   const { data: all = [] } = useResumes({ withMade: true });
@@ -165,14 +166,30 @@ export function ApplyWithClaudeButton({ savedJobId }: { savedJobId: string }) {
             Start
           </Button>
           {busy && (
-            <p className="text-xs text-muted-foreground">
-              Another application is going.{" "}
+            <div role="alert" className="space-y-2 rounded-md border px-3 py-2 text-sm">
+              <p>
+                {busy.title
+                  ? `Claude is applying to ${busy.title}${busy.company ? ` at ${busy.company}` : ""}.`
+                  : "Another application is going."}{" "}
+                One at a time.
+              </p>
               {busy.openRunId && (
-                <Link className="underline" to={`/apply/${busy.openRunId}`}>
-                  Open it
-                </Link>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button asChild variant="outline" size="sm">
+                    <Link to={`/apply/${busy.openRunId}`}>Open it</Link>
+                  </Button>
+                  <Button
+                    size="sm"
+                    disabled={stop.isPending || start.isPending}
+                    onClick={() => stop.mutate(busy.openRunId as string, { onSuccess: go })}
+                  >
+                    {stop.isPending && <Loader2 className="h-4 w-4 animate-spin" aria-hidden />}
+                    Stop it and start this one
+                  </Button>
+                </div>
               )}
-            </p>
+              {stop.isError && <p className="text-xs text-destructive">Couldn't stop it. Try again.</p>}
+            </div>
           )}
           {start.isError && !busy && <p className="text-xs text-destructive">Couldn't start. Try again.</p>}
         </DialogContent>

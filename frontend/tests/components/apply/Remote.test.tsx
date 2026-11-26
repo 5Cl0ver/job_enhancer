@@ -31,7 +31,7 @@ vi.mock("@/lib/api", () => ({
 }));
 
 import { ApplyRunPage } from "@/routes/ApplyRunPage";
-import { APPLY_LINE, CARRY_ON_LINE, type ApplyRun } from "@/lib/apply";
+import { applyLine, carryOnLine, type ApplyRun } from "@/lib/apply";
 
 const READY = { version: "0.41.0", last_seen_at: "2026-11-25T10:00:00Z", ready: true, needs: "0.41.0" };
 
@@ -163,7 +163,9 @@ describe("knowing where it stands", () => {
     serve({ ...RUN, claude_stopped: true });
     renderPage();
     expect(await screen.findByText("Claude seems to have stopped")).toBeInTheDocument();
-    expect(screen.getByText(CARRY_ON_LINE)).toBeInTheDocument();
+    // The job and the run's code, so a new chat picks up this run (spec 036).
+    expect(screen.getByText('Carry on with my application to "IT Engineer" at Acme with the Job Enhancer connector (run r1).')).toBeInTheDocument();
+    expect(screen.getByText(carryOnLine(RUN))).toBeInTheDocument();
   });
 
   it("asks if it went through, and either answer is one tap", async () => {
@@ -205,7 +207,7 @@ describe("knowing where it stands", () => {
   it("the start says any AI with the connector works", async () => {
     serve({ ...RUN, status: "waiting" });
     renderPage();
-    expect(await screen.findByText(APPLY_LINE)).toBeInTheDocument();
+    expect(await screen.findByText(applyLine({ ...RUN, status: "waiting" }))).toBeInTheDocument();
     expect(screen.getByText("https://api.example.com/mcp")).toBeInTheDocument();
   });
 });
