@@ -34,6 +34,13 @@ export function Review({ run }: { run: ApplyRun }) {
       You told Claude: <q className="italic">{review.words}</q>
     </p>
   );
+  // Fixes left in the tray when the review was answered (in a chat): never
+  // lost without a word.
+  const unsent = pending > 0 && (decision === "submit" || decision === "self") && (
+    <p className="text-sm text-amber-700 dark:text-amber-400">
+      {pending === 1 ? "1 fix wasn't sent" : `${pending} fixes weren't sent`}. Press Change my answer to send them.
+    </p>
+  );
   // Decided, and Claude hasn't acted on it yet: it can still be changed.
   const change = run.status === "review" && (
     <Button variant="ghost" size="sm" onClick={() => setChanging(true)}>
@@ -45,6 +52,7 @@ export function Review({ run }: { run: ApplyRun }) {
     return (
       <div className="space-y-2">
         {told}
+        {unsent}
         <p className="text-sm">
           Go to the application's tab and press its <strong>Submit</strong> button. Job Catcher notices and
           moves the job to Applied.
@@ -62,6 +70,7 @@ export function Review({ run }: { run: ApplyRun }) {
     return (
       <div className="space-y-2">
         {told}
+        {unsent}
         <p className="text-sm">
           {decision === "submit" ? "You said Submit." : `You asked Claude to fix: ${review?.note ?? ""}`} Claude
           picks it up the next time it checks. If its chat was closed, tell Claude in Chrome to carry on.

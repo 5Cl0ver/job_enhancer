@@ -85,6 +85,8 @@ describe("photos and answers", () => {
       { id: "c", question: "Country", kind: "select", options: Array.from({ length: 90 }, (_, i) => ({ label: `Country ${i} ${"x".repeat(200)}` })) },
       { id: "s", question: "City", kind: "text", el: { tagName: "INPUT" }, options: [{ label: "Portland" }, { label: "Salem" }] },
       { id: "f", question: "Résumé", kind: "file", el: { files: [] }, options: [{ label: "x" }] },
+      // A radio group's own inputs never take typing.
+      { id: "r", question: "Veteran?", kind: "radio", el: { tagName: "INPUT" }, options: [{ label: "Yes" }, { label: "No" }] },
     ];
     const read = (f) => ({ [vet]: "", "How did you hear about us?": "LinkedIn", Country: "", City: "Portland" })[f.question];
     const got = pageAnswers(fields, read, new Set(["h"]), { choices: new Map([["h", ["Select One", "LinkedIn", "Indeed"]]]) });
@@ -95,6 +97,7 @@ describe("photos and answers", () => {
     // A box you can type in that also suggests takes typed words too.
     expect(got[3]).toEqual({ q: "City", a: "Portland", options: ["Portland", "Salem"], free: true });
     expect(got[4]).toEqual({ q: "Résumé", a: "" });
+    expect(got[5]).toEqual({ q: "Veteran?", a: "", options: ["Yes", "No"] });
   });
 
   it("names the step on screen from the site's progress bar (spec 033)", () => {
@@ -108,8 +111,10 @@ describe("photos and answers", () => {
     expect(stepName(workday.document)).toBe("My Experience");
     const marked = page(`<nav><a>Contact</a><a aria-current="step">Step 3 of 4 Work history</a></nav>`);
     expect(stepName(marked.document)).toBe("Work history");
-    const lab = page(`<div data-automation-id="progressBar"><span>My Information</span></div>`);
-    expect(stepName(lab.document)).toBe("My Information");
+    // A bar that doesn't mark its current step names nothing (its whole text
+    // would be the same on every step).
+    const bar = page(`<div data-automation-id="progressBar"><span>Apply for Software Engineer</span></div>`);
+    expect(stepName(bar.document)).toBe("");
     expect(stepName(page(`<h1>Apply</h1><form><input></form>`).document)).toBe("");
   });
 
@@ -473,6 +478,30 @@ describe("the background loop", () => {
       title: "",
       boxes: [{ q: "First name", a: "Sam", by: "job_catcher" }],
     });
+  });
+
+  it("sends an unchanged page again once a minute, so its step stays named (spec 033)", async () => {
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    c.scripting.executeScript = vi.fn().mockResolvedValue([{ result: { step: "My Information", boxes: [{ q: "Name", a: "Sam" }] } }]);
+    const calls = [];
+    let turns = 0;
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push(path);
+      if (path === "/v1/apply/active") {
+        turns++;
+        const body = turns > 40 ? { run_id: null } : { run_id: "r1", hosts: ["acme.example"], live: true, requests: [] };
+        return { ok: true, json: async () => body };
+      }
+      return { ok: true, status: 204, json: async () => ({}) };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const done = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }).loop();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    // About 80 s of turns: the first time, then once more after a minute.
+    expect(calls.filter((p) => p === "/v1/apply/runs/r1/live")).toHaveLength(2);
   });
 
   it("sends the step's name and each box's choices with the live view (spec 033)", async () => {

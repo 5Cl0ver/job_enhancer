@@ -7,20 +7,22 @@ question twice:
     sheet = {"steps": [{key, title, n, done, checked, rows: [row]}],
              "current": step key, "check": {step, at, read, keep?}}
     row   = {q, a, src: "jc" | "claude", tag, by?, claude?, guess?,
-             agreement?, only_you?, options?, free?, fixed?}
+             agreement?, only_you?, options?, free?, fixed?, aliases?}
 
 - **Steps** come from Job Catcher's step label (Workday's progress bar) when it
-  has one, else from the questions themselves: a page whose questions are
-  mostly already in a step IS that step (a redone page, a pop-up narrowing
-  the page, one address for every step), else the step still being filled,
-  else a new step ("Page n" until Claude's ``page_done`` names it).
+  has one, else from the questions themselves: the same page seen again IS
+  that step (a pop-up over it, a page done again: the same title with nothing
+  new, or near-total overlap with matching answers), else the step still being
+  filled, else a new step ("Page n" until Claude's ``page_done`` names it). A
+  look-alike page (an emergency contact's name after the applicant's) is a
+  new step, never merged.
 - **Rows** are upserted by question (case and punctuation folded; a question
   asked twice on one step, like each job's "Job Title", is told apart by its
   order). Rows are never deleted: a pop-up that narrows Job Catcher's reading
   never drops the rest of the step.
 - **Fixes** (the owner's changes) wait on the run until a checkpoint:
-  ``waiting`` → ``sent`` → ``done`` (the box now holds what they asked for) or
-  ``gone`` (Claude couldn't find the box).
+  ``waiting`` → ``sent`` → ``done`` (Job Catcher read the box holding exactly
+  what they asked for) or ``gone`` (Claude couldn't find the box).
 
 Everything here is pure: callers pass rows already trimmed and free of
 passwords (``apply_runs``), and store what comes back.
@@ -38,7 +40,11 @@ MAX_OPTIONS = 60
 OPTION_CHARS = 120
 MAX_WAITING = 30  # fixes waiting at once
 MAX_FIXES_KEPT = 150  # every fix in a run, any state
-OVERLAP = 0.5
+# The same page seen again (a pop-up, a page done again): near-total overlap.
+SAME_SHARE = 0.8
+SAME_SHARED = 3
+# Two wordings of one question (Claude's and Job Catcher's).
+NEAR = 92
 FIX_STATES = ("waiting", "sent", "done", "gone")
 FLAGS = ("claude", "guess", "agreement", "only_you")
 # What the owner checks before Submit, most important first.
@@ -108,23 +114,55 @@ def _steps(sheet: dict | None) -> list[dict[str, Any]]:
 
 
 def _questions(rows: list[dict[str, Any]]) -> set[str]:
-    return {k for r in rows if (k := norm(r.get("q")))}
+    return {k for r in rows for k in _keys(r)}
 
 
-def _by_overlap(steps: list[dict], qs: set[str]) -> dict | None:
-    """The step that already holds most of these questions (half or more)."""
-    if not qs:
-        return None
-    best, score = None, 0.0
-    for s in steps:
-        f = len(qs & _questions(s["rows"])) / len(qs)
-        if f > score or (f == score and f and best is not None):
-            best, score = s, f
-    return best if score >= OVERLAP else None
+def _keys(row: dict[str, Any]) -> set[str]:
+    """A row's question, and the other wordings it was matched under."""
+    return {k for k in (norm(row.get("q")), *map(norm, row.get("aliases") or [])) if k}
+
+
+def _answers_of(rows: list[dict[str, Any]]) -> dict[str, str]:
+    return {norm(r.get("q")): norm(r.get("a")) for r in rows if norm(r.get("q"))}
+
+
+def _same_page(step: dict, rows: list[dict]) -> bool:
+    """Near-total overlap (a page seen again, never a look-alike page): at
+    least 80% and 3 of its questions already in the step, and at most one
+    answer different (the one the owner fixed)."""
+    qs = _questions(rows)
+    have = _questions(step["rows"])
+    shared = qs & have
+    if len(shared) < SAME_SHARED or len(shared) / len(qs) < SAME_SHARE:
+        return False
+    mine, theirs = _answers_of(step["rows"]), _answers_of(rows)
+    differ = sum(
+        1 for q in shared if q in mine and q in theirs and mine[q] != theirs[q]
+    )
+    return differ <= 1
+
+
+def _subset(step: dict, rows: list[dict]) -> bool:
+    """Every one of these questions is already in the step (a pop-up over it,
+    or Job Catcher reading less of it)."""
+    qs = _questions(rows)
+    return bool(qs) and qs <= _questions(step["rows"])
 
 
 def _by_key(steps: list[dict], key: str) -> dict | None:
     return next((s for s in steps if s["key"] == key), None)
+
+
+def _named(steps: list[dict], key: str) -> dict | None:
+    """The latest step under this name ("my experience", "my experience#2")."""
+    return next(
+        (
+            s
+            for s in reversed(steps)
+            if s["key"] == key or s["key"].startswith(f"{key}#")
+        ),
+        None,
+    )
 
 
 def _new_step(steps: list[dict], key: str, title: str) -> dict:
@@ -147,32 +185,79 @@ def _new_step(steps: list[dict], key: str, title: str) -> dict:
     return step
 
 
+_DIGITS = re.compile(r"\d+")
+# Words that make a second box out of the same question.
+_TWIN = {
+    "confirm",
+    "confirmation",
+    "re",
+    "reenter",
+    "retype",
+    "verify",
+    "again",
+    "repeat",
+}
+# Words a site adds around a question without changing it.
+_FILLER = {
+    "please",
+    "select",
+    "choose",
+    "enter",
+    "your",
+    "the",
+    "a",
+    "an",
+    "what",
+    "is",
+    "are",
+    "you",
+}
+
+
+def _near(a: str, b: str) -> float:
+    """How surely two wordings are one question (0 when they can't be):
+    never boxes that differ by a number ("Address line 1" / "2") or by a
+    confirm / re-enter / verify word ("Email" / "Confirm email")."""
+    if _DIGITS.findall(a) != _DIGITS.findall(b):
+        return 0.0
+    wa, wb = set(a.split()), set(b.split())
+    if (wa & _TWIN) != (wb & _TWIN):
+        return 0.0
+    small, big = (wa, wb) if len(wa) <= len(wb) else (wb, wa)
+    if small and small <= big and (big - small) <= _FILLER:
+        return 100.0  # "Veteran status" in "Please select your veteran status"
+    return fuzz.token_sort_ratio(a, b)
+
+
 def _match(rows: list[dict], q: str, k: int, src: str, used: set[int]) -> dict | None:
     """The row this question is: the k-th with the same question, else (once,
-    across Job Catcher's and Claude's wording) a near-identical question."""
+    across Job Catcher's and Claude's wording) the closest near-identical one."""
     nq = norm(q)
-    same = [r for r in rows if norm(r.get("q")) == nq]
+    same = [r for r in rows if nq in _keys(r)]
     if len(same) >= k:
         return same[k - 1]
     if k != 1 or len(nq) < 8:
         return None
+    best, score = None, 0.0
     for r in rows:
         other = norm(r.get("q"))
-        if (
-            id(r) not in used
-            and r.get("src") != src
-            and len(other) >= 8
-            and fuzz.token_set_ratio(nq, other) >= 90
-        ):
-            return r
-    return None
+        if id(r) in used or r.get("src") == src or len(other) < 8:
+            continue
+        s = _near(nq, other)
+        if s > score:
+            best, score = r, s
+    return best if score >= NEAR else None
 
 
 def _apply(row: dict, item: dict, src: str) -> None:
     a = str(item.get("a") or "")
+    if norm(item["q"]) not in _keys(row):
+        # Another wording of the same box: kept, so the row (and the fixes
+        # on it) keep their question.
+        row["aliases"] = [*(row.get("aliases") or []), str(item["q"])][-4:]
     if src == "jc":
-        # Job Catcher read the page: what's really in the box, in its words.
-        row.update(q=item["q"], a=a, src="jc")
+        # Job Catcher read the page: what's really in the box.
+        row.update(a=a, src="jc")
     elif row.get("src") == "claude" or not row.get("a"):
         row["a"] = a
     if src == "claude":
@@ -224,19 +309,33 @@ def _done(sheet: dict | None, steps: list[dict], current: str) -> dict[str, Any]
 def merge_live(
     sheet: dict | None, rows: list[dict], label: str | None = None
 ) -> tuple[dict, str | None]:
-    """Job Catcher's reading of the page on screen. With its step label, that
-    step; else the step holding most of these questions, else the step still
-    being filled, else a new one. Never deletes a row."""
+    """Job Catcher's reading of the page on screen. Never deletes a row.
+
+    With its step label, that step (a finished step whose questions it
+    doesn't share at all is a new step of the same name). Else: the step
+    already holding every one of these questions (a pop-up, a narrower
+    reading), the step being filled first; else the same page seen again;
+    else the step still being filled; else a new one."""
     steps = _steps(sheet)
     if not rows:
         return _done(sheet, steps, (sheet or {}).get("current")), None
     key = norm(label)
+    open_ = steps[-1] if steps and not steps[-1]["done"] else None
     if key:
-        step = _by_key(steps, key) or _new_step(steps, key, _text(label, 120))
+        step = _named(steps, key)
+        if step and step["done"] and not (_questions(rows) & _questions(step["rows"])):
+            step = None  # the site reused a name for a new step
+        step = step or _new_step(steps, key, _text(label, 120))
     else:
-        step = _by_overlap(steps, _questions(rows))
-        if step is None and steps and not steps[-1]["done"]:
-            step = steps[-1]
+        step = None
+        if open_ is not None and _subset(open_, rows):
+            step = open_
+        if step is None:
+            step = next((s for s in reversed(steps) if _subset(s, rows)), None)
+        if step is None:
+            step = next((s for s in reversed(steps) if _same_page(s, rows)), None)
+        if step is None:
+            step = open_
         if step is None:
             step = _new_step(steps, f"page-{len(steps) + 1}", "")
     _upsert(step, rows, "jc")
@@ -251,23 +350,43 @@ def merge_page(
     label: str | None = None,
 ) -> tuple[dict, str]:
     """A page Claude finished (``page_done``): its answers and marks, into the
-    step it is: Job Catcher's label for the page on screen, else the step
-    holding most of its questions (a page done again after a fix), else the
-    step being filled, else a new step named by Claude."""
+    step it is. Job Catcher's label for the page on screen; else the same
+    page done again (the same title and only its questions, or a near-total
+    overlap; never a step the owner already checked under another name);
+    else the step being filled; else a new step named by Claude."""
     steps = _steps(sheet)
     title = _text(title, 120)
     key = norm(label)
     qs = _questions(rows)
     step = None
     if key:
-        step = _by_key(steps, key) or _new_step(steps, key, _text(label, 120))
-    if step is None:
-        step = _by_overlap(steps, qs)
-    if step is None and not qs and title:
-        # A page with no boxes (a review page) done again: the same step.
-        step = next((s for s in steps if s["title"] == title and not s["rows"]), None)
+        step = _named(steps, key) or _new_step(steps, key, _text(label, 120))
+    if step is None and title:
+        # Done again after a fix: the same title, and nothing new on it.
+        step = next(
+            (
+                s
+                for s in reversed(steps)
+                if norm(s["title"]) == norm(title)
+                and (qs <= _questions(s["rows"]) if qs else not s["rows"])
+            ),
+            None,
+        )
+    if step is None and qs:
+        step = next(
+            (
+                s
+                for s in reversed(steps)
+                if _same_page(s, rows)
+                and not (s.get("checked") and norm(s["title"]) != norm(title))
+            ),
+            None,
+        )
     if step is None and steps and not steps[-1]["done"]:
-        step = steps[-1]
+        open_ = steps[-1]
+        # The step being filled, unless the owner already checked it.
+        if not open_.get("checked"):
+            step = open_
     if step is None:
         step = _new_step(steps, norm(title) or f"page-{len(steps) + 1}", title)
     if title and step["key"].startswith("page-") and not step["done"]:
@@ -306,15 +425,15 @@ def step_of(sheet: dict | None, key: str | None) -> dict | None:
 
 
 def rows_to_check(sheet: dict | None) -> list[dict[str, Any]]:
-    """Agreements, "only you", guesses and empty boxes, each question once
-    (its latest step's row), most important first."""
-    latest: dict[str, tuple[dict, dict]] = {}
-    for s in _steps(sheet):
-        for r in s["rows"]:
-            if tag_of(r) in CHECK_TAGS:
-                latest.pop(norm(r["q"]), None)
-                latest[norm(r["q"])] = (s, r)
-    out = [{"step": s["key"], "title": s["title"], **r} for s, r in latest.values()]
+    """Agreements, "only you", guesses and empty boxes, every one of them
+    (the sheet already holds one row per step, question and order), most
+    important first."""
+    out = [
+        {"step": s["key"], "title": s["title"], **r}
+        for s in _steps(sheet)
+        for r in s["rows"]
+        if tag_of(r) in CHECK_TAGS
+    ]
     return sorted(out, key=lambda x: CHECK_TAGS.index(tag_of(x) or "empty"))
 
 
@@ -433,14 +552,15 @@ def send(fixes: Any, ids: set[str], now: str) -> list[dict]:
 
 
 def for_claude(sheet: dict | None, fix: dict) -> dict[str, Any]:
-    """A fix as Claude gets it: the box's label and value are the web page's
-    (kept apart from the owner's words, as in spec 030), `to` / `ask` are the
-    owner's, `step` says where the box is, `id` is for ``mark_fixes``."""
+    """A fix as Claude gets it. Only `to` / `ask` are the owner's words; the
+    box's label, its value and the step's name are the web page's text
+    (`box_on_page`, `now_on_page`, `step_on_page`), kept apart, to find the
+    box only (as in spec 030). `id` is for ``mark_fixes``."""
     s = step_of(sheet, fix.get("step"))
     row = find_row(sheet, fix.get("step"), fix.get("q"), fix.get("k", 1))
     out: dict[str, Any] = {
         "id": fix["id"],
-        "step": s["title"] if s else fix.get("step"),
+        "step_on_page": s["title"] if s else "",
         "box_on_page": fix.get("q"),
         "now_on_page": _text((row or {}).get("a", fix.get("now")), 300),
     }
@@ -452,29 +572,37 @@ def for_claude(sheet: dict | None, fix: dict) -> dict[str, Any]:
 
 
 def _same(a: Any, to: Any) -> bool:
+    """The box holds exactly what the owner asked for (case and punctuation
+    aside): "Not Hispanic or Latino" is never "Hispanic or Latino"."""
     na, nt = norm(a), norm(to)
-    if not na or not nt:
-        return False
-    return na == nt or f" {nt} " in f" {na} " or f" {na} " in f" {nt} "
+    return bool(na) and na == nt
+
+
+def _fix_row(steps: list[dict], f: dict) -> dict | None:
+    s = _by_key(steps, f.get("step"))
+    same = [r for r in (s or {}).get("rows", []) if norm(f.get("q")) in _keys(r)]
+    k = f.get("k", 1)
+    return same[k - 1] if 0 < k <= len(same) else None
 
 
 def settle(sheet: dict | None, fixes: Any, now: str) -> tuple[dict, list[dict]]:
-    """A fix is done once its box holds what the owner asked for: the row is
+    """A fix Claude has is done once Job Catcher reads its box holding what
+    the owner asked for (and no longer what it held before): the row is
     marked "You changed it"."""
     out = _fix_list(fixes)
     steps = _steps(sheet)
     changed = False
     for f in out:
-        if f.get("status") not in ("waiting", "sent") or not f.get("to"):
+        if f.get("status") != "sent" or not f.get("to"):
             continue
-        s = _by_key(steps, f.get("step"))
-        same = [
-            r for r in (s or {}).get("rows", []) if norm(r.get("q")) == norm(f.get("q"))
-        ]
-        k = f.get("k", 1)
-        row = same[k - 1] if 0 < k <= len(same) else None
-        if row is not None and _same(row.get("a"), f["to"]):
+        row = _fix_row(steps, f)
+        if (
+            row is not None
+            and _same(row.get("a"), f["to"])
+            and norm(row.get("a")) != norm(f.get("now"))
+        ):
             f.update(status="done", done_at=now)
+            f.pop("claude_done", None)
             row["fixed"] = True
             row["tag"] = tag_of(row)
             changed = True
@@ -486,9 +614,10 @@ def settle(sheet: dict | None, fixes: Any, now: str) -> tuple[dict, list[dict]]:
 def mark(
     sheet: dict | None, fixes: Any, *, done: set[str], gone: set[str], now: str
 ) -> tuple[dict, list[dict], int]:
-    """Claude says which fixes it made, and which boxes it couldn't find."""
+    """Claude says which fixes it made, and which boxes it couldn't find. A
+    change stays "Claude says done" until Job Catcher reads the box holding it
+    (``settle``); the answer itself is never taken from Claude's word."""
     out = _fix_list(fixes)
-    steps = _steps(sheet)
     n = 0
     for f in out:
         if f.get("status") not in ("waiting", "sent"):
@@ -497,21 +626,13 @@ def mark(
             f.update(status="gone", done_at=now)
             n += 1
         elif f.get("id") in done:
-            f.update(status="done", done_at=now)
             n += 1
             if f.get("to"):
-                s = _by_key(steps, f.get("step"))
-                same = [
-                    r
-                    for r in (s or {}).get("rows", [])
-                    if norm(r.get("q")) == norm(f.get("q"))
-                ]
-                k = f.get("k", 1)
-                if 0 < k <= len(same):
-                    row = same[k - 1]
-                    row.update(a=f["to"], fixed=True)
-                    row["tag"] = tag_of(row)
-    return {**(sheet or {}), "steps": steps}, out, n
+                f.update(status="sent", claude_done=now)
+            else:
+                f.update(status="done", done_at=now)  # a question, answered
+    sheet, out = settle(sheet, out, now)
+    return sheet, out, n
 
 
 def check_step(sheet: dict | None, key: str, *, now: str, keep: bool = False) -> dict:

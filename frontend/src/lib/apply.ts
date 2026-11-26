@@ -174,7 +174,7 @@ export interface ApplyMessage {
   /** A box changed while Claude fills (spec 030); its label is the page's. */
   fix?: { box_on_page: string; now_on_page: string; to?: string; ask?: string };
   /** The owner's waiting fixes, delivered together (spec 033). */
-  fixes?: { id: string; step: string; box_on_page: string; now_on_page: string; to?: string; ask?: string }[];
+  fixes?: { id: string; step_on_page: string; box_on_page: string; now_on_page: string; to?: string; ask?: string }[];
 }
 
 export interface JobCatcherStatus {
@@ -307,6 +307,8 @@ export interface RunFix {
   ask?: string | null;
   status: FixStatus;
   at: string;
+  /** Claude says it made the change; done once Job Catcher reads it. */
+  claude_done?: string | null;
 }
 
 export const TAG_LABEL: Record<RowTag, string> = {
@@ -362,6 +364,7 @@ export const waitingFixes = (run: { fixes?: RunFix[] }) => (run.fixes ?? []).fil
 export function fixLine(fix: RunFix): string {
   if (fix.status === "gone") return "Couldn't apply: box gone";
   const what = fix.to ? `→ ${fix.to}` : "Asked Claude";
+  if (fix.status === "sent" && fix.claude_done) return `${what} (Claude says done)`;
   return `${what} (${fix.status})`;
 }
 
@@ -378,9 +381,11 @@ export function sheetFromPages(pages: ApplyPage[]): Sheet {
       const have = new Set(s.rows.map((r) => normQ(r.q)));
       return [...qs].filter((q) => have.has(q)).length / qs.size;
     };
+    // The same page done again: its title with nothing new on it, or a
+    // near-total overlap (never a look-alike page, like an emergency contact).
     let step =
-      [...steps].reverse().find((s) => overlap(s) >= 0.5) ??
-      steps.find((s) => s.title === page.title && !qs.size && !s.rows.length);
+      [...steps].reverse().find((s) => s.title === page.title && (qs.size ? overlap(s) === 1 : !s.rows.length)) ??
+      [...steps].reverse().find((s) => qs.size >= 3 && overlap(s) >= 0.8);
     if (!step) {
       step = { key: `page-${steps.length + 1}`, title: page.title, n: steps.length + 1, done: true, rows: [] };
       steps.push(step);
@@ -412,20 +417,18 @@ export interface CheckRow {
   k: number;
 }
 
-/** Check these first (spec 033): agreements, "only you", guesses and empty
- * boxes, each question once (its latest step's), most important first. */
+/** Check these first (spec 033): every agreement, "only you", guess and
+ * empty box (the sheet holds one row per step, question and order: each
+ * job's "Job Title" and each step's "I agree" count), most important first. */
 export function checkRows(sheet: Sheet): CheckRow[] {
-  const latest = new Map<string, CheckRow>();
+  const out: CheckRow[] = [];
   for (const step of sheet.steps) {
     step.rows.forEach((row, i) => {
       const tag = tagOf(row);
-      if (!tag || !CHECK_TAGS.includes(tag)) return;
-      const key = normQ(row.q);
-      latest.delete(key);
-      latest.set(key, { step, row, k: nthOf(step, i) });
+      if (tag && CHECK_TAGS.includes(tag)) out.push({ step, row, k: nthOf(step, i) });
     });
   }
-  return [...latest.values()].sort((x, y) => CHECK_TAGS.indexOf(tagOf(x.row)!) - CHECK_TAGS.indexOf(tagOf(y.row)!));
+  return out.sort((x, y) => CHECK_TAGS.indexOf(tagOf(x.row)!) - CHECK_TAGS.indexOf(tagOf(y.row)!));
 }
 
 export function stepCounts(step: SheetStep) {
@@ -596,18 +599,6 @@ export const SOURCE_LABEL: Record<AnswerSource, string> = {
   job_catcher: "Job Catcher",
   page: "On the page",
 };
-
-/** The answers to check before Submit (spec 026): what Claude agreed to for
- * you, then its guesses, then boxes left empty. */
-export function checkFirst(pages: ApplyPage[]): { page: ApplyPage; answer: PageAnswer; i: number }[] {
-  const all = latestPages(pages).flatMap((page) => pageAnswers(page).map((answer, i) => ({ page, answer, i })));
-  const rank = ({ answer: a }: { answer: PageAnswer }) =>
-    a.agreement ? 0 : a.guess ? 1 : !a.a.trim() ? 2 : 3;
-  return all.filter((x) => rank(x) < 3).sort((x, y) => rank(x) - rank(y));
-}
-
-/** One answer's place: a page can ask the same question twice (each job's "Job Title"). */
-export const fixKey = (page: number, i: number) => `${page}|${i}`;
 
 /** The pages to review, in order: every page of the latest round, plus the
  * earlier rounds' pages a fix didn't redo. Never merged within a round: many

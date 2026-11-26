@@ -161,6 +161,15 @@ describe("the review", () => {
     );
   });
 
+  it("fixes left when the review was answered in a chat say they weren't sent", async () => {
+    show({
+      ...RUN,
+      review: { ...RUN.review!, decision: "submit", by: "chat", words: "send it" },
+      fixes: [{ id: "a", step: "my information", q: "Prefix", k: 1, now: "Mr.", to: "Ms.", status: "waiting", at: "" }],
+    });
+    expect(await screen.findByText(/1 fix wasn't sent/)).toBeInTheDocument();
+  });
+
   it("can't be changed once decided", async () => {
     show({ ...RUN, review: { ...RUN.review!, decision: "submit" } });
     await screen.findByRole("heading", { name: "Check these first" });
@@ -171,7 +180,7 @@ describe("the review", () => {
     // A step finished twice (after a fix), from a server without the sheet.
     const pages = [
       page(4, "Voluntary Disclosures", [{ q: VET, a: "I don't wish to answer", guess: true }]),
-      page(5, "Page 5", [{ q: VET, a: "I don't wish to answer", guess: true }]),
+      page(5, "Voluntary Disclosures", [{ q: VET, a: "I don't wish to answer", guess: true }]),
     ];
     show({ ...RUN, sheet: undefined, pages });
     await screen.findByRole("heading", { name: "Check these first" });
@@ -184,17 +193,19 @@ describe("the review", () => {
     expect(screen.getAllByRole("button", { name: new RegExp(`^${VET}`) })).toHaveLength(2); // check first + its step
   });
 
-  it("the same question asked on two steps is checked once", () => {
+  it("a page done again is one step; another step asking the same is its own", () => {
     const sheet = sheetFromPages([
       page(1, "Self Identify", [{ q: VET, a: "", guess: false }]),
       page(2, "Voluntary Disclosures", [{ q: "Veteran status?", a: "No" }, { q: "Race", a: "" }]),
-      page(3, "Review", [{ q: VET, a: "" }]),
+      page(3, "Self Identify", [{ q: VET, a: "" }]),
+      page(4, "Review", [{ q: VET, a: "" }]),
     ]);
-    // Page 3 asks the Self Identify question again: the same step, once.
-    expect(sheet.steps.map((s) => s.title)).toEqual(["Self Identify", "Voluntary Disclosures"]);
+    expect(sheet.steps.map((s) => s.title)).toEqual(["Self Identify", "Voluntary Disclosures", "Review"]);
+    // Every box to check shows, each on its own step.
     expect(checkRows(sheet).map((c) => `${c.step.title}: ${c.row.q}`)).toEqual([
       `Self Identify: ${VET}`,
       "Voluntary Disclosures: Race",
+      `Review: ${VET}`,
     ]);
   });
 });

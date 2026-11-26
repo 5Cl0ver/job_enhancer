@@ -2,9 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   type ApplyRun,
   bannerLine,
-  checkFirst,
   currentStep,
   latestPages,
+  checkRows,
   needsYou,
   normQ,
   pageAnswers,
@@ -100,7 +100,7 @@ describe("where an application is", () => {
     const vet = { q: "Veteran status", a: "No", guess: true };
     const sheet = sheetFromPages([
       page(4, "u", { title: "Voluntary Disclosures", answers: [vet] }),
-      page(5, "u", { title: "Page 5", answers: [{ ...vet, guess: false }] }),
+      page(5, "u", { title: "Voluntary Disclosures", answers: [{ ...vet, guess: false }] }),
     ]);
     expect(sheet.steps.map((s) => [s.title, s.rows.length])).toEqual([["Voluntary Disclosures", 1]]);
     expect(tagOf(sheet.steps[0].rows[0])).toBe(null);
@@ -170,21 +170,26 @@ describe("best judgment (spec 026)", () => {
     ]);
   });
 
-  it("puts agreements, then guesses, then empty boxes first", () => {
-    const pages = [
+  it("puts agreements, then guesses, then empty boxes first, every one of them (spec 033)", () => {
+    const sheet = sheetFromPages([
       page(1, "https://a.example/1", {
+        title: "My Experience",
         answers: [
           { q: "First name", a: "Sam" },
-          { q: "Phone ext", a: "" },
+          { q: "Job Title", a: "" },
           { q: "Prefix", a: "Mr.", guess: true },
+          { q: "Job Title", a: "" },
         ],
       }),
-      page(2, "https://a.example/2", { answers: [{ q: "I certify", a: "Yes", agreement: true }] }),
-    ];
-    expect(checkFirst(pages).map((x) => `${x.page.n}:${x.answer.q}`)).toEqual([
-      "2:I certify",
-      "1:Prefix",
-      "1:Phone ext",
+      page(2, "https://a.example/2", { title: "Terms", answers: [{ q: "I agree", a: "Yes", agreement: true }] }),
+      page(3, "https://a.example/3", { title: "Consent", answers: [{ q: "I agree", a: "Yes", agreement: true }] }),
+    ]);
+    expect(checkRows(sheet).map((x) => `${x.step.title}:${x.row.q}:${x.k}`)).toEqual([
+      "Terms:I agree:1",
+      "Consent:I agree:1",
+      "My Experience:Prefix:1",
+      "My Experience:Job Title:1",
+      "My Experience:Job Title:2",
     ]);
   });
 

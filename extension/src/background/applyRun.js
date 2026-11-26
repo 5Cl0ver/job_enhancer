@@ -40,6 +40,7 @@ const MAX_WIDTH = 1200;
 const MAX_BYTES = 390_000;
 const PAINT_MS = 350; // a tab just shown needs a moment to draw
 const LIVE_MS = 3_000;
+const LIVE_AGAIN_MS = 60_000; // an unchanged page is sent again this often (spec 033)
 const BUSY_MS = 1_000; // a fill already going: look for its report this often…
 const BUSY_WAITS = 20; // …for up to 20 s
 const MAX_LIVE = 150;
@@ -450,11 +451,11 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   }
 
   // The live view (spec 026): what was last sent, per run.
-  let live = { run: null, at: 0, sent: "" };
+  let live = { run: null, at: 0, sent: "", sentAt: 0 };
 
   /** Read the run's tab and, when its boxes changed, send them to the app. */
   async function liveTick(data) {
-    if (live.run !== data.run_id) live = { run: data.run_id, at: 0, sent: "" };
+    if (live.run !== data.run_id) live = { run: data.run_id, at: 0, sent: "", sentAt: 0 };
     if (Date.now() - live.at < LIVE_MS) return;
     live.at = Date.now();
     const mine = await runTabs(data.run_id);
@@ -478,10 +479,11 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // The site's own name for the step on screen, when it has one (spec 033).
     const step = read.step ? { step: String(read.step).slice(0, 120) } : {};
     const body = JSON.stringify({ url: tab.url, title: (tab.title || "").slice(0, 200), ...step, boxes });
-    if (body === live.sent) return;
+    // The same page again: only now and then, so the app keeps its step's name.
+    if (body === live.sent && Date.now() - live.sentAt < LIVE_AGAIN_MS) return;
     const res = await api(`/v1/apply/runs/${data.run_id}/live`, { method: "POST", body }).catch(() => null);
     // Sent, or the run moved on (409): either way, not again until it changes.
-    if (res?.ok || res?.status === 409) live.sent = body;
+    if (res?.ok || res?.status === 409) live = { ...live, sent: body, sentAt: Date.now() };
   }
 
   /** Every frame's boxes, and the step name (the top frame's first). An

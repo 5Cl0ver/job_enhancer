@@ -66,6 +66,9 @@ const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|\bsin\b|socia
 // A dropdown's prompt, never one of its choices (spec 033).
 const PLACEHOLDER = /^(?:[-—–_.\s]+|select(?: one| an? option| one or more)?|choose(?: one| an? option)?|please (?:select|choose)(?: one| an? option)?|none selected|no selection)\W*$/i;
 export const MAX_CHOICES = 60;
+// Boxes that take typed words (a datalist, a search box); never a radio or
+// checkbox group, a select, or a dropdown drawn as a button.
+const TYPED = new Set(["text", "combobox", "datalist", "search"]);
 export const CHOICE_CHARS = 120;
 
 /** A box's choices as the form shows them (labels only, capped), from the
@@ -120,7 +123,7 @@ export function pageAnswers(fields, read, filled = null, more = {}) {
     if (choices.length) {
       row.options = choices;
       // A box you can type in that also suggests (a datalist, a search box).
-      if (f.el?.tagName === "INPUT" || f.el?.tagName === "TEXTAREA") row.free = true;
+      if (TYPED.has(f.kind) && f.el?.tagName === "INPUT") row.free = true;
     }
     out.push(row);
     if (out.length >= 120) break;
@@ -162,10 +165,9 @@ export function stepName(doc) {
     const name = el && clean(words(el));
     if (name) return name;
   }
-  // A progress bar that only names the step on show.
-  const bar = doc?.querySelector?.('[data-automation-id="progressBar"]');
-  const text = bar && clean(words(bar));
-  return text && text.length <= 60 ? text : "";
+  // Nothing marks the current step: no name (a bar's whole text, or the
+  // page's heading, would be the same for every step).
+  return "";
 }
 
 /** Does a page's host belong to the run (its own host or a sub-host)? */
