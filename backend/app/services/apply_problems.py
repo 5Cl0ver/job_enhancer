@@ -27,8 +27,9 @@ from app.models.apply import ApplyRun
 KINDS = ("fill", "job_catcher", "tab", "resume", "site", "other")
 MAX_PROBLEMS = 20
 MAX_CHARS = 500
-# Longer texts are cut to this before scrubbing (every caller caps far lower).
-SCRUB_MAX = 20_000
+# Texts are bounded to twice the cap, plus room for a secret straddling the
+# cut, before scrubbing: the patterns stay fast however long the input is.
+SCRUB_ROOM = 256
 
 _REMOVED = "[removed]"
 # "password: hunter2", "token = abc", "security answer is Rex"
@@ -101,7 +102,8 @@ _CODE = re.compile(
     r"(\s*(?:is|was)?[\s:=#-]*)(\d[\d -]{2,10}\d)\b",
     re.I,
 )
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# Starts only where a run of address characters starts (no quadratic retries).
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE = re.compile(
     # Up to two separators between groups ("555-\n0142": a dash and a break).
     r"(?<![\w/])(?:\+?\d{1,3}[\s.-]{0,2})?\(?\d{3}\)?"
@@ -150,9 +152,9 @@ def scrub(text: Any, cap: int = MAX_CHARS, lines: bool = False) -> str:
     longer texts of the Bugs & ideas inbox (spec 032)."""
     # Removed first, cut after: a cut never leaves half an email or card.
     # The whole text is scrubbed at once, so a secret split across a line
-    # break ("password:\nhunter2") is still caught; only absurdly long texts
-    # are bounded first.
-    raw = str(text or "")[:SCRUB_MAX]
+    # break ("password:\nhunter2") is still caught. Long texts are bounded
+    # first, with room past the cap so a secret at the cut is still whole.
+    raw = str(text or "")[: cap * 2 + SCRUB_ROOM]
     if lines:
         kept = [re.sub(r"[^\S\n]+", " ", ln).strip() for ln in raw.splitlines()]
         flat = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()

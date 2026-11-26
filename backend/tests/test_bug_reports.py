@@ -757,3 +757,20 @@ async def test_job_and_run_link_only_when_they_are_the_owners(
     assert da["job"]["own"] is True
     assert db_["job"]["own"] is False
     assert db_["job"]["title"] == "IT Engineer"
+
+
+def test_scrub_stays_fast_on_huge_input():
+    """A pasted page can't stall the server: the text is bounded before the
+    patterns run, and the email pattern can't retry quadratically."""
+    import time
+
+    from app.services.apply_problems import scrub
+
+    for blob in ("a" * 200_000, "aB3" * 70_000, ("word " * 40_000)):
+        start = time.perf_counter()
+        out = scrub(blob, 2000, lines=True)
+        assert time.perf_counter() - start < 0.2
+        assert len(out) <= 2000
+    # A secret right at the cut is still caught whole.
+    text = "x " * 995 + "reach me at alex.rivera@example.com please"
+    assert "example.com" not in scrub(text, 2000)
