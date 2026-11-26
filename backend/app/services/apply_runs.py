@@ -1175,7 +1175,8 @@ def ask_if_sent(run: ApplyRun) -> bool:
 
 
 async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any]:
-    """Is Job Catcher ready on a computer: new enough, and seen lately?"""
+    """Is Job Catcher ready on a computer: new enough, and seen lately? And is
+    it the newest release (`outdated` names an older one, spec 034)?"""
     row = (
         await db.execute(
             select(ExtensionInstall.version, ExtensionInstall.last_seen_at)
@@ -1184,12 +1185,18 @@ async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, 
             .limit(1)
         )
     ).first()
+    # The newest release (spec 034): an older Job Catcher is called out by name
+    # before a run starts, even when it's new enough to work. Cached, and the
+    # last known answer when GitHub can't be reached (never blocks a run).
+    latest = (await releases.latest()).get("version")
     if row is None:
         return {
             "version": None,
             "last_seen_at": None,
             "ready": False,
             "needs": JOB_CATCHER_READY,
+            "latest": latest,
+            "outdated": False,
         }
     version, seen = row
     fresh = _aware(seen) and _now() - _aware(seen) < JOB_CATCHER_SEEN
@@ -1203,6 +1210,8 @@ async def job_catcher_status(db: AsyncSession, user_id: uuid.UUID) -> dict[str, 
         "new_enough": new_enough,
         "seen_lately": bool(fresh),
         "needs": JOB_CATCHER_READY,
+        "latest": latest,
+        "outdated": releases.is_older(version, latest),
         # Reads the page for the live view (spec 026).
         "live": new_enough and not releases.is_older(version, JOB_CATCHER_LIVE),
     }

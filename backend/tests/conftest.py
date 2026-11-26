@@ -5,6 +5,7 @@ authenticated as a regular user (auth dependency overridden); use
 `admin_client` for admin routes and `anon_client` to test 401 behavior.
 """
 
+import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy.ext.asyncio import (
@@ -102,3 +103,14 @@ async def ai_on(monkeypatch):
     from app.config import settings
 
     monkeypatch.setattr(settings, "ai_writing_on", True)
+
+
+@pytest.fixture(autouse=True)
+def _no_github_releases():
+    """Never ask GitHub for the newest Job Catcher in a test: "none known yet"
+    unless a test sets it (test_extension_connect resets the cache itself)."""
+    from app.services import releases
+
+    releases._cache.update(next=float("inf"), value=None, failing=False)
+    yield
+    releases.reset_cache()

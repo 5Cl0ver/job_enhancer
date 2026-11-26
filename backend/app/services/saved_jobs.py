@@ -29,6 +29,7 @@ from app.schemas.saved_job import (
     ApplicationSyncItem,
     ApplicationSyncOutcome,
     ApplicationSyncResult,
+    AppliedJobCreate,
     ListingRename,
     ManualJobCreate,
     SavedJobCreate,
@@ -681,13 +682,17 @@ async def mark_applied(
     title: str,
     company: str,
     saved_job_id: uuid.UUID | None = None,
+    *,
+    company_only: bool = True,
 ) -> bool:
     """Auto-track: the extension saw the user SUBMIT an application — move the
     matching saved job to Applied. Prefers a title+company match; falls back to
     company-only (Indeed's confirmation states just the company) picking the
-    most recent not-yet-applied saved job there. No match → no-op: we never
-    invent tracker entries. With `saved_job_id`, that job or nothing (gone
-    since the caller looked: never a guess at another job)."""
+    most recent not-yet-applied saved job there (unless `company_only` is off:
+    the title is known, so another job at that company is never the one).
+    No match → no-op here (`track_applied` saves the job first when the page
+    said what it is). With `saved_job_id`, that job or nothing (gone since the
+    caller looked: never a guess at another job)."""
     title_norm = normalize(title)
     company_norm = normalize(company)
     sj = None
@@ -723,7 +728,7 @@ async def mark_applied(
             ):
                 sj = own
                 break
-    if sj is None and company_norm:
+    if sj is None and company_norm and company_only:
         # Company-only fallback: prefer a job not already applied, newest first.
         sj = await db.scalar(
             base.where(JobListing.company_normalized == company_norm)
@@ -732,7 +737,12 @@ async def mark_applied(
         )
     if sj is None:
         return False
+    await _set_applied(db, user_id, sj)
+    return True
 
+
+async def _set_applied(db: AsyncSession, user_id: uuid.UUID, sj: SavedJob) -> None:
+    """Applied now (kept if it was already), in the Applied stage."""
     now = datetime.now(UTC)
     if sj.applied_at is None:
         sj.applied_at = now
@@ -745,7 +755,56 @@ async def mark_applied(
         sj.pipeline_stage_id = stage.id
         sj.last_stage_change = now
     await db.flush()
-    return True
+
+
+async def track_applied(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    title: str,
+    company: str,
+    saved_job_id: uuid.UUID | None = None,
+    create: AppliedJobCreate | None = None,
+) -> tuple[bool, bool]:
+    """A submitted application (spec 034): the saved job moves to Applied; a
+    job never saved is saved from what the application page said (`create`)
+    and marked applied, since the user did apply. Returns (matched, created).
+
+    Once only: a second Submit (a double click, the page firing twice) finds
+    the job saved the first time, by its link or its title and company."""
+    if create is None or saved_job_id is not None:
+        return await mark_applied(db, user_id, title, company, saved_job_id), False
+    # Saved before from this very posting (the same link): that one.
+    sj = await db.scalar(
+        select(SavedJob)
+        .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+        .where(SavedJob.user_id == user_id, JobListing.apply_url == create.url)
+        .order_by(SavedJob.created_at.desc())
+        .limit(1)
+    )
+    if sj is not None:
+        await _set_applied(db, user_id, sj)
+        return True, False
+    if await mark_applied(
+        db,
+        user_id,
+        title or create.title,
+        company or create.company,
+        company_only=False,
+    ):
+        return True, False
+    sj = await save_manual_job(
+        db,
+        user_id,
+        ManualJobCreate(
+            url=create.url,
+            title=create.title,
+            company=create.company,
+            location=create.location or "Not specified",
+            origin="extension",
+        ),
+    )
+    await _set_applied(db, user_id, sj)
+    return True, True
 
 
 async def _renamed(

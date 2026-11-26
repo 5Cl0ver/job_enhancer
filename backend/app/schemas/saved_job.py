@@ -78,6 +78,27 @@ class BackfillResult(BaseModel):
     fields: list[str] = []
 
 
+class AppliedJobCreate(BaseModel):
+    """A job read off an application the user just submitted (spec 034)."""
+
+    url: str = Field(min_length=8, max_length=2000)
+    title: str = Field(min_length=1, max_length=500)
+    company: str = Field(min_length=1, max_length=255)
+    location: str = Field(default="Not specified", max_length=255)
+
+    @field_validator("url")
+    @classmethod
+    def _http_only(cls, v: str) -> str:
+        if not v.startswith(("http://", "https://")):
+            raise ValueError("URL must start with http:// or https://")
+        return v
+
+    @field_validator("title", "company", "location", mode="before")
+    @classmethod
+    def _trim(cls, v: object) -> object:
+        return v.strip() if isinstance(v, str) else v
+
+
 class MarkAppliedRequest(BaseModel):
     """Auto-track: the extension saw an application get submitted. At least one
     of title/company is needed (Indeed's confirmation gives only the company)."""
@@ -87,10 +108,16 @@ class MarkAppliedRequest(BaseModel):
     # The saved job itself, when the caller knows it (the side panel's linked
     # job): that one is moved, no matching by name.
     saved_job_id: uuid.UUID | None = None
+    # The job read off the application itself (spec 034, Workday): when no
+    # saved job matches, it's saved from these and marked applied. The user
+    # did apply, so it's tracked.
+    create: AppliedJobCreate | None = None
 
 
 class MarkAppliedResult(BaseModel):
     matched: bool
+    # Saved just now from the application (spec 034): it wasn't in My Jobs.
+    created: bool = False
 
 
 class ApplicationSyncItem(BaseModel):
