@@ -670,8 +670,11 @@ export async function removeChips(input, keep) {
 
 // ---- Files ----------------------------------------------------------------
 
-function writeFile(field, [file]) {
+async function writeFile(field, [file]) {
   if (!(file instanceof File) || !win(field.el).DataTransfer) return { ok: false, reason: "no_data" };
+  // What Workday's card shows BEFORE: a returning applicant's old résumé
+  // there is never taken for ours (spec 029).
+  const before = field.zone ? cardState(field, file) : null;
   try {
     const dt = new (win(field.el).DataTransfer)();
     dt.items.add(file);
@@ -682,7 +685,70 @@ function writeFile(field, [file]) {
     return { ok: false, reason: "rejected" };
   }
   const ok = field.el.files?.length === 1 && field.el.files[0].name === file.name;
+  if (ok && before) await dropIfIgnored(field, file, before);
   return { ok, actual: file.name };
+}
+
+/** The upload card's files as shown: how many, and whether our file's name
+ * is in the card or on the page. */
+function cardState(field, file) {
+  const card = field.zone ? uploadCard(field.zone) : null;
+  const items = [...(card?.querySelectorAll?.("[data-automation-id]") || [])].filter((n) => UPLOADED.test(n.getAttribute("data-automation-id")));
+  return {
+    card,
+    count: items.length,
+    inCard: (card?.textContent || "").includes(file.name),
+    onPage: (field.el.ownerDocument?.body?.textContent || "").includes(file.name),
+  };
+}
+
+// Workday's own drop zone (spec 029).
+const WORKDAY_DROP = /file-upload-drop-zone/i;
+// A file shown as uploaded in Workday's card.
+const UPLOADED = /file-upload-successful|file-upload-item|delete-file/i;
+
+/** The upload card around a drop zone (Workday's "attachments-FileUpload"),
+ * else the zone's parent. */
+function uploadCard(zone) {
+  for (let n = zone.parentElement, i = 0; n && i < 4; n = n.parentElement, i++) {
+    if (/attachments|fileupload/i.test(n.getAttribute?.("data-automation-id") || "")) return n;
+  }
+  return zone.parentElement || zone;
+}
+
+/**
+ * Workday's upload is a React drop zone: when it hasn't taken the file from
+ * the box (its name never shows), drop the file on the zone, the way a person
+ * dragging it would. Only on Workday's zone, and only once.
+ */
+async function dropIfIgnored(field, file, before, { waitMs = 4000 } = {}) {
+  const zone = field.zone;
+  if (!zone?.isConnected || !WORKDAY_DROP.test(zone.getAttribute?.("data-automation-id") || "")) return false;
+  const card = before.card;
+  // Taken: the card re-drawn (the site reacted), one more file than before,
+  // or OUR file's name newly shown. A file that was already there never counts.
+  const took = () => {
+    if (!zone.isConnected || !card?.isConnected) return true;
+    const now = cardState(field, file);
+    return now.count > before.count || (now.inCard && !before.inCard) || (now.onPage && !before.onPage);
+  };
+  for (let waited = 0; waited < waitMs && !took(); waited += 200) await sleep(200);
+  if (took()) return false;
+  const W = win(zone);
+  const dt = new W.DataTransfer();
+  dt.items.add(file);
+  for (const type of ["dragenter", "dragover", "drop"]) {
+    let ev;
+    try {
+      ev = new W.DragEvent(type, { bubbles: true, cancelable: true, composed: true, dataTransfer: dt });
+    } catch {
+      ev = new W.Event(type, { bubbles: true, cancelable: true, composed: true });
+    }
+    // Some engines leave dataTransfer empty on a made-up drag event.
+    if (!ev.dataTransfer) Object.defineProperty(ev, "dataTransfer", { value: dt });
+    zone.dispatchEvent(ev);
+  }
+  return true;
 }
 
 // ---- Reading, snapshot, restore ------------------------------------------
@@ -873,7 +939,7 @@ async function writeFieldNow(field, candidates) {
       case "chips":
         return await writeChips(field, candidates);
       case "file":
-        return writeFile(field, candidates);
+        return await writeFile(field, candidates);
       default:
         return { ok: false, reason: "no_data" };
     }

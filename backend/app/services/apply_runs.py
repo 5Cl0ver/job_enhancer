@@ -69,7 +69,7 @@ from app.models.pipeline_stage import PipelineStage
 from app.models.resume import Resume
 from app.models.saved_job import SavedJob
 from app.models.user import User
-from app.services import apply_resume, master_profile, releases
+from app.services import apply_learn, apply_resume, master_profile, releases
 from app.services import saved_jobs as sj_svc
 from app.services import skipped_sites as sites_svc
 from app.services import tracker as tracker_svc
@@ -215,7 +215,8 @@ def _answers(raw: Any, limit: int = MAX_ANSWERS) -> list[dict[str, Any]]:
         if not isinstance(item, dict):
             continue
         q = _text(item.get("q") or item.get("question"), 300)
-        a = _text(item.get("a") or item.get("answer"), 2000)
+        # A list of choices reads "A, B", never "['A', 'B']" (spec 029).
+        a = _text(apply_learn.answer_text(item.get("a") or item.get("answer")), 2000)
         if not q or SENSITIVE.search(q):
             continue
         row: dict[str, Any] = {"q": q, "a": a}
@@ -726,6 +727,8 @@ async def decide(
         raise ValueError("Say what to fix.")
     run.review = {
         **run.review,
+        # Answers the user changed or asked about are never learned (spec 029).
+        "changed": apply_learn.note_changes(run.review, clean),
         "fixes": clean,
         "pressed_at": None,
         "retry": False,
@@ -744,6 +747,18 @@ async def decide(
     if by == "chat":
         text = f"You told Claude in the chat: “{words}”. {text}"
     _event(run, "decision", text)
+    if decision in ("submit", "self"):
+        # Approved: what Claude filled that Job Catcher couldn't is learned,
+        # so Job Catcher fills it itself next time (spec 029).
+        learned = await apply_learn.learn(db, run)
+        if learned:
+            s = "s" if learned != 1 else ""
+            _event(
+                run,
+                "learned",
+                f"Job Catcher learned {learned} answer{s} Claude gave. "
+                "See Autofill memory (marked From Claude) to change or delete them.",
+            )
     await db.flush()
     return run
 
@@ -1539,6 +1554,8 @@ async def page_done(
             "note": None,
             "by": None,
             "at": None,
+            # What the user changed at earlier reviews: never learned (spec 029).
+            "changed": (run.review or {}).get("changed") or [],
         }
         _set(run, APPLY_REVIEW)
         _event(run, "review", f"Ready for your review (round {rnd}).")
@@ -1628,6 +1645,11 @@ REASONS = {
         "are kept)"
     ),
     "replaced": "A newer page came first",
+    # Spec 029: never an earlier step's report in its place.
+    "no_report": (
+        "Job Catcher filled but got no fresh reading of this page (it may "
+        "still be loading). Call fill_page again, or fill it yourself"
+    ),
     "error": "Job Catcher hit an error on this page",
 }
 

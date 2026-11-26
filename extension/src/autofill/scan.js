@@ -262,29 +262,58 @@ function labelForOption(el) {
  * @property {Element} mark       what to outline
  */
 
-const ZONE =
-  "label, [class*=drop], [class*=upload], [class*=Drop], [class*=Upload], [data-automation-id*=drop], [data-automation-id*=upload]";
+// A drop zone or upload card, by its class or data-automation-id, any case
+// (Workday's "attachments-FileUpload" and "file-upload-drop-zone"; spec 029).
+// (Never a dropdown.)
+const ZONE_NAME = /drop(?![\s_-]?down)|upload/i;
+const DROP_NAME = /drop(?![\s_-]?down)/i;
+const namedBy = (n, re) => re.test(n.getAttribute?.("data-automation-id") || "") || re.test(n.getAttribute?.("class") || "");
+const isZone = (n) => n.tagName === "LABEL" || namedBy(n, ZONE_NAME);
+const isDropZone = (n) => namedBy(n, DROP_NAME);
 const UPLOAD_WORDS =
   /\b(select|choose|browse|upload|attach|add) (a |your )?files?\b|\bupload\b|\bbrowse\b|\battach\b|drop (a |your )?files? here/i;
 
 /**
- * The visible box a file input hides behind (spec 026): a drop zone or label
- * around it, else the nearest container (up to 3 levels up) holding a visible
- * "Select files" / "Upload" button, never one shared with another upload.
+ * The visible box a file input hides behind (spec 026, 029): a drop zone or
+ * label around it, else the nearest container (up to 4 levels up) holding a
+ * drop zone or a visible "Select files" / "Upload" button, never one shared
+ * with another upload. Workday's hidden input may sit inside its drop zone or
+ * beside it in the upload card: either way the drop zone is the box.
  */
 export function uploadZone(el, visible = isVisible) {
-  // Its containers only (Workday's input is itself "file-upload-input-ref").
-  const named = el.parentElement?.closest(ZONE);
-  if (named) return named;
   let node = el.parentElement;
-  for (let depth = 0; node && depth < 3; depth++, node = node.parentElement) {
+  for (let depth = 0; node && depth < 4; depth++, node = node.parentElement) {
     if (node.querySelectorAll("input[type=file]").length > 1) break;
+    if (isZone(node)) {
+      // An upload card around the input: its own drop zone is the box.
+      const drop = isDropZone(node) ? node : [...node.querySelectorAll("*")].find(isDropZone);
+      return drop || node;
+    }
+    const drop = [...node.querySelectorAll("*")].find((n) => isDropZone(n) && visible(n));
+    if (drop) return drop;
     const button = [...node.querySelectorAll("button, [role=button], a")].find(
       (b) => visible(b) && UPLOAD_WORDS.test(textOf(b) || b.getAttribute("aria-label") || ""),
     );
     if (button) return node;
   }
   return null;
+}
+
+/**
+ * The text around an upload box that says what it's for, from the smallest
+ * part of the page (up to 8 levels up) that holds this upload alone and has
+ * words in it: Workday puts "Resume/CV" in the section heading above its
+ * "Upload a file (5MB max)" label (spec 029).
+ */
+const DOC_WORDS = /r[ée]sum[ée]|\bcv\b|curriculum|cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|certific/i;
+export function uploadArea(el) {
+  let node = el.parentElement;
+  for (let depth = 0; node && depth < 8; depth++, node = node.parentElement) {
+    if (node.querySelectorAll("input[type=file]").length > 1) break;
+    const t = textOf(node, 600);
+    if (DOC_WORDS.test(t)) return t.slice(0, 600);
+  }
+  return "";
 }
 
 /**
@@ -340,7 +369,22 @@ export function collectFields(root, opts = {}) {
         const zone = uploadZone(el, visible);
         if (!visible(el) && !(zone && visible(zone))) continue;
         // What the box is for is often only in a heading above its card.
-        add({ id: fieldId(el), kind: "file", el, mark: zone || el, question: questionFor(el), hints: { ...hintsOf(el), context: nearbyText(zone || el, 8) } });
+        // `area`: the part of the page around it that names it ("Resume/CV"
+        // over Workday's "Upload a file"); `zone`: where a drop goes.
+        add({
+          id: fieldId(el),
+          kind: "file",
+          el,
+          mark: zone || el,
+          zone,
+          question: questionFor(el),
+          hints: {
+            ...hintsOf(el),
+            context: nearbyText(zone || el, 8),
+            area: uploadArea(el),
+            automation: el.getAttribute("data-automation-id") || "",
+          },
+        });
         continue;
       }
       if (!visible(el) || el.readOnly) continue;

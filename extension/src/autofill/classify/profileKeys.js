@@ -129,7 +129,31 @@ const SHORT_ONLY = new Set([
   "school", "degree", "field_of_study", "graduation_year",
 ]);
 
+// A phone EXTENSION box ("Phone Extension", "Ext.", Workday's
+// "phone-extension", autocomplete "tel-extension"): never the phone number
+// itself (spec 029: Workday got the whole number in its Extension box).
+// A name or id ENDING in an ext/extension part ("phoneNumber--extension",
+// "phone_ext"), never one that only starts so (ExtJS's "ext-comp-1023").
+const EXT_NAME = /(^|[-_.])ext(ension)?$/i;
+// "ext" or "extension" as a word in the label…
+const EXT_WORD = /\bext\b|\bextension\b/i;
+// …unless the number's box says it takes one: "Phone (incl. ext.)",
+// "Phone number (with extension)".
+const EXT_INCLUDED = /(?:\b(?:incl\.?|includ(?:es|ing)|with|plus|and|or)|[+&])\s*(?:an?\s+|any\s+)?(?:ext|extension)\b/i;
+export function isPhoneExtension(field) {
+  const h = field.hints || {};
+  if (/\btel-extension\b/i.test(h.autocomplete || "")) return true;
+  if ([h.name, h.id].some((v) => v && EXT_NAME.test(v))) return true;
+  const asks = [field.question, h.placeholder].filter(Boolean).join(" ");
+  return EXT_WORD.test(asks) && !EXT_INCLUDED.test(asks);
+}
+
 export function profileKeyFor(field) {
+  const key = profileKeyOf(field);
+  return key === "phone" && isPhoneExtension(field) ? null : key;
+}
+
+function profileKeyOf(field) {
   // Someone else's details (a reference, an emergency contact) aren't yours,
   // and "How did you hear about us (LinkedIn, …)?" isn't your LinkedIn link.
   if (OTHER_PERSON.test(field.question || "") || HEARD_ABOUT.test(field.question || "")) return null;

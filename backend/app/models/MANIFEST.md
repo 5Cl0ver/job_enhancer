@@ -6,7 +6,7 @@ imports every model so Alembic can discover them.
 | File | Model | Purpose | Depends on |
 |---|---|---|---|
 | `__init__.py` | `Base` | Declarative base + model registry for Alembic | — |
-| `user.py` | `User` | Accounts (Supabase Auth: email/password + OAuth). UUID PK, soft-delete via `deleted_at`, `role` (user/admin), `image`, `follow_up_days`. | — |
+| `user.py` | `User` | Accounts (Supabase Auth: email/password + OAuth). UUID PK, soft-delete via `deleted_at`, `role` (user/admin), `image`, `follow_up_days`; `forgotten_answers` (spec 029: question keys whose answer the user deleted, never learned again from Claude). | — |
 | `job_listing.py` | `JobListing` | **Shared** (not per-user) job pool. Deduped on `content_hash` + fuzzy (`company_normalized`, `title_normalized`). Indexes on `posted_at`, `is_expired`. | — |
 | `collection.py` | `Collection` | User folders for saved jobs. `UNIQUE(user_id, name)`; `is_default` protected; `color`, `sort_order`. | `User` |
 | `pipeline_stage.py` | `PipelineStage` | Kanban columns. `UNIQUE(user_id, name)`; `sort_order`; 8 defaults seeded per user; `is_default` blocks deletion. | `User` |
@@ -21,6 +21,7 @@ imports every model so Alembic can discover them.
 | `generated_document.py` | `GeneratedDocument` | AI resume/cover output; `model_used` + `generation_ms` (transparency); `edited_content`. | `User`, `JobListing`, `Resume`, `SavedJob` |
 | `skipped_site.py` | `SkippedSite` | Sites to skip (spec 024): one plain host per row ("learn4good.com", lowercase, no "www."); `UNIQUE(user_id, host)`, ≤100 per user (service); RLS on. | `User` |
 | `apply.py` | `ApplyRun`, `ApplyRequest`, `ApplyPhoto`, `ProfileFact` (spec 022): an application Claude makes for one saved job (questions, pages, review, events as JSON), what it asked Job Catcher to do, Job Catcher's photos of each page, and the things the user told Claude. `resumes.is_master` / `resumes.document_id` mark the master résumé and résumés made for a job. Spec 025: `apply_runs.resume_picked` / `resume_check` (the user's look at the résumé), `users.review_resumes`. Spec 026: `apply_runs.live` (the boxes being filled now) |
+| `custom_answer.py` | `CustomAnswer` | Autofill memory: one remembered answer per (user, normalized question key); usage counts; `source` = "claude" for an answer learned from an approved Apply with Claude run (spec 029, migration `y3c5e7a9b1d2`), null for the user's own. | `User` |
 
 ## Migrations (`alembic/versions/`)
 1. `0001_initial_schema` — core tables

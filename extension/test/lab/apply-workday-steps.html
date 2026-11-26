@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Apply - Tidewell Labs Careers</title>
+    <style>
+      body { font-family: sans-serif; margin: 24px; }
+      .css-zone { border: 2px dashed #999; padding: 16px; }
+      /* Like Workday: the file input itself is never shown. */
+      .css-hidden-input { display: none; }
+      label { display: block; margin-top: 8px; }
+    </style>
+  </head>
+  <body>
+    <!-- An invented one-address application shaped like Workday's guest apply
+         (spec 029). Every step is drawn in place at the SAME address:
+         1. "My Information": names, phone number and a phone EXTENSION box
+            (Workday's ids), Prefix/Suffix dropdowns nobody can answer.
+         2. "My Experience": "Resume/CV" with the hidden file input BESIDE
+            the drop zone in the upload card (not inside it), and a zone that
+            only takes a dropped file (like a React drop zone). -->
+    <div data-automation-id="progressBar"><span id="step-name">My Information</span></div>
+    <main id="step"></main>
+    <button type="button" id="next" data-automation-id="pageFooterNextButton">Save and Continue</button>
+    <p>Uploaded: <span id="got"></span></p>
+    <script>
+      const step = document.getElementById("step");
+      const steps = [
+        `<h2>My Information</h2>
+         <label for="prefix">Prefix</label>
+         <select id="prefix"><option value="">Select One</option><option>Dr.</option><option>Rev.</option></select>
+         <label for="legalName--firstName">First Name</label>
+         <input id="legalName--firstName" name="legalName--firstName" />
+         <label for="legalName--lastName">Last Name</label>
+         <input id="legalName--lastName" name="legalName--lastName" />
+         <label for="email">Email</label>
+         <input id="email" name="email" type="email" />
+         <label for="phoneNumber--phoneNumber">Phone Number</label>
+         <input id="phoneNumber--phoneNumber" name="phoneNumber" data-automation-id="phone-number" type="tel" />
+         <label for="phoneNumber--extension">Phone Extension</label>
+         <input id="phoneNumber--extension" name="extension" data-automation-id="phone-extension" />`,
+        `<h2>My Experience</h2>
+         <section>
+           <h3>Resume/CV</h3>
+           <div data-automation-id="formField-file">
+             <div><label>Upload a file (5MB max)<abbr title="required">*</abbr></label></div>
+             <div data-automation-id="attachments-FileUpload">
+               <div data-automation-id="file-upload-drop-zone" class="css-zone" id="zone">
+                 <p>Drop file here</p><p>or</p>
+                 <button type="button" data-automation-id="select-files" id="pick">Select files</button>
+               </div>
+               <input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="input-3f9a" />
+             </div>
+           </div>
+         </section>
+         <label for="why">Why do you want to work at Tidewell Labs?</label>
+         <textarea id="why"></textarea>`,
+      ];
+      const params = new URLSearchParams(location.search);
+      let at = params.get("step") === "2" ? 1 : 0;
+      // ?change: the box also takes a file set on it (like real Workday's
+      // input); by default only a drop on the zone counts.
+      const takesChange = params.has("change");
+      const uploads = [];
+      // Like a React drop zone: by default a file set on the input alone is
+      // ignored; only a drop on the zone counts. Each upload re-draws the whole
+      // card: the files so far, then a fresh EMPTY zone and input (what made
+      // Job Catcher attach twice).
+      function took(files) {
+        for (const f of files || []) uploads.push(f.name);
+        document.getElementById("got").textContent = uploads.join(", ");
+        const card = document.querySelector("[data-automation-id=attachments-FileUpload]");
+        card.innerHTML =
+          uploads.map((n) => '<div data-automation-id="file-upload-successful">' + n + "</div>").join("") +
+          '<div data-automation-id="file-upload-drop-zone" class="css-zone" id="zone"><p>Drop file here</p>' +
+          '<button type="button" data-automation-id="select-files" id="pick">Select files</button></div>' +
+          '<input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="input-3f9a" />';
+        wireZone();
+      }
+      function wireZone() {
+        const zone = document.getElementById("zone");
+        if (!zone) return;
+        zone.addEventListener("dragover", (e) => e.preventDefault());
+        zone.addEventListener("drop", (e) => {
+          e.preventDefault();
+          took(e.dataTransfer?.files);
+        });
+        if (takesChange) document.getElementById("input-3f9a").addEventListener("change", (e) => took(e.target.files));
+      }
+      function draw() {
+        step.innerHTML = steps[at];
+        document.getElementById("step-name").textContent = at ? "My Experience" : "My Information";
+        wireZone();
+      }
+      document.getElementById("next").addEventListener("click", () => {
+        if (at === steps.length - 1) return; // the last step stays as it is
+        at += 1;
+        draw();
+      });
+      draw();
+    </script>
+  </body>
+</html>

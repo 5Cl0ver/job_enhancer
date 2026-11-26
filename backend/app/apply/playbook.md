@@ -82,6 +82,7 @@ Two or three lines aimed at this job.
 Fill every box yourself and keep going. The user follows along in the app (they watch the boxes fill live) and checks everything at the review, so **only stop for what you truly can't do or know.**
 
 - Open `job.apply_url`.
+- **Stay in ONE tab.** Apply links often open a new tab ("Apply on company website" on LinkedIn, a company's "Apply now"), and a new tab can fall out of your tab group mid-run. Never click a link that opens a new tab (`target="_blank"`): read its address (`href`) and go there in the tab you're in. If the address is hidden or is a redirect (LinkedIn's), still open it in the same tab: copy the redirect address, or read the real one from the page, and navigate there. Only if there's truly no address, click it, then carry on in the new tab and close the old one.
 - **Stop and ask with `need_help` ONLY for:**
   - **Signing in or making an account** (`sign_in` / `sign_up`). For a sign-up, fill the email and the details from the profile. Never type, choose or store a password: the user makes it, and Chrome offers and saves one.
   - **A CAPTCHA** or "I'm not a robot" (`captcha`).
@@ -99,7 +100,7 @@ Fill every box yourself and keep going. The user follows along in the app (they 
   2. Check every box it filled. Fill everything that's left yourself, as above.
   3. Call `page_done(page_url, page_title, answers)` BEFORE you press Next or Continue.
      - `answers` lists every question on the page and what's in it, as `{q, a}`.
-     - Mark what you wrote with `claude: true`, your picks with `guess: true`, and ticked agreements with `agreement: true`.
+     - Mark what you wrote with `claude: true`, your picks with `guess: true`, and ticked agreements with `agreement: true`. Mark them honestly: once the user approves the review, Job Catcher learns the everyday facts you wrote (`claude: true`; never your `guess: true` picks, self-ID, pay, legal or eligibility questions, agreements, essays or anything they changed) and fills them itself next time. A pick is `guess: true` even when you also wrote it.
      - Job Catcher takes photos of the whole page. Wait for the tool to return before you move on: it scrolls the page.
   4. Post one line with `message_user` ("Page 2 of 4 done: My Experience"), then press Next or Continue.
 

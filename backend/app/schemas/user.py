@@ -169,6 +169,9 @@ class CustomAnswerSchema(BaseModel):
     updated_at: datetime | None = None
     use_count: int = 0
     last_used_at: datetime | None = None
+    # "claude": learned from an answer Claude gave (spec 029). Read-only: a
+    # save from the user makes the answer theirs.
+    source: str | None = None
 
     model_config = {"from_attributes": True}
 

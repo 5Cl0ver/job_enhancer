@@ -124,7 +124,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 |---|---|
 | `AppearanceCard.tsx` | Theme picker (Light / Dark / System) via `useTheme` |
 | `ApplicationProfileCard.tsx` | Reusable autofill answers (name, links, etc.) |
-| `SavedAnswersCard.tsx` | Answer Library & insights: learned answers grouped by topic, searchable, with usage stats; edit/delete |
+| `SavedAnswersCard.tsx` | Answer Library & insights: learned answers grouped by topic, searchable, with usage stats; edit/delete; answers learned from Claude's approved runs say "From Claude" (spec 029) |
 | `EmailConnectCard.tsx` | Connect inbox for auto-status detection |
 
 ## `analytics/`

@@ -39,6 +39,8 @@ const MAX_WIDTH = 1200;
 const MAX_BYTES = 390_000;
 const PAINT_MS = 350; // a tab just shown needs a moment to draw
 const LIVE_MS = 3_000;
+const BUSY_MS = 1_000; // a fill already going: look for its report this often…
+const BUSY_WAITS = 20; // …for up to 20 s
 const MAX_LIVE = 150;
 const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|card number|credit card|\bcvv\b|\bcvc\b/i;
 // The best of what each frame says happened to the résumé.
@@ -129,6 +131,15 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     const data = await active();
     if (!data.run_id || !data.resume_id || !tab?.url || tab.id == null) return null;
     return (await isRunTab(data, tab)) ? data.resume_id : null;
+  }
+
+  /** Is an Apply with Claude run open (spec 029)? Then what's typed in any
+   * page is never auto-saved as the user's own answers: Claude may be typing
+   * it, on a site the run hasn't heard of yet (a redirect before the first
+   * fill), and the app learns only what the user approves at the review. */
+  async function inRun() {
+    const data = await active();
+    return !!data.run_id;
   }
 
   /** Is this the application's own tab (and still on its site)? */
@@ -239,15 +250,31 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   }
 
   async function fill(tab) {
+    const started = Date.now();
     const out = await press(tab.id);
-    const session = await fillSession(tab.id).catch(() => ({ frames: {} }));
-    const frames = Object.values(session?.frames || {});
+    const read = () => fillSession(tab.id).catch(() => ({ frames: {} }));
+    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => (f.at || 0) >= started);
+    let session = await read();
+    // Wait for this fill's report (it can land a moment after the press
+    // answers), longer when Keep filling was already filling this step: never
+    // hand back the last step's (spec 029: Workday keeps one address).
+    const waits = out?.busy ? BUSY_WAITS : out?.ok ? 3 : 0;
+    for (let i = 0; i < waits && !fresh(session).length; i++) {
+      await sleep(BUSY_MS);
+      session = await read();
+    }
+    // Only what this fill reported: a frame that didn't fill now (gone with
+    // the last step, or no form in it) never speaks for this page.
+    const frames = fresh(session);
+    // Busy: Keep filling is already filling this step; its report is the answer.
+    const ok = !!out?.ok || !!out?.busy;
+    if (!ok) return { ok: false, reason: out?.problem || "error", filled: [], need: [] };
+    // No report from this fill: say so, never the last step's (spec 029).
+    if (!frames.length) return { ok: false, reason: "no_report", filled: [], need: [] };
     const filled = frames.flatMap((f) => (f.entries || []).map((e) => e.label).filter(Boolean));
     const need = frames.flatMap((f) => (f.need_you || []).map((n) => n.label).filter(Boolean));
     const resume = RESUME_RANK.find((s) => frames.some((f) => f.resume === s)) || null;
-    // Busy: Keep filling is already filling this step; its report is the answer.
-    const ok = !!out?.ok || !!out?.busy;
-    return { ok, reason: ok ? null : out?.problem || "error", filled, need, ...(resume ? { resume } : {}) };
+    return { ok, reason: null, filled, need, ...(resume ? { resume } : {}) };
   }
 
   /** Still the same tab, showing the same page, in the same window? */
@@ -268,7 +295,11 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     const win = now && (await c.windows.get(now.windowId).catch(() => null));
     if (!now || !win) return { reason: "tab_closed" };
     const inUse = async () => (await c.idle?.queryState?.(15).catch(() => null)) === "active";
-    if ((win.state === "minimized" || (!now.active && win.focused)) && (await inUse())) return { reason: "busy" };
+    // Never switch tabs (or restore a window) while the user is acting, in
+    // this window or another (spec 029): their keys and clicks, a file picker
+    // or a drag would land on the wrong tab. Then the page is kept as text.
+    // (Tabs are only ever shown and put back: never moved, grouped or made.)
+    if ((win.state === "minimized" || !now.active) && (await inUse())) return { reason: "busy" };
     const undo = [];
     if (win.state === "minimized") {
       await c.windows.update(win.id, { state: "normal" }).catch(() => {});
@@ -457,5 +488,5 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
   }
 
-  return { tick, event, active, loop, resumeFor };
+  return { tick, event, active, loop, resumeFor, inRun };
 }

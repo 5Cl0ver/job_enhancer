@@ -38,7 +38,7 @@ from app.schemas.user import (
     UserProfile,
     UserUpdate,
 )
-from app.services import allowance
+from app.services import allowance, apply_learn
 from app.services.profile_extract import extract_profile
 from app.services.users import soft_delete_user
 from app.utils.rate_limit import rate_limit_key
@@ -196,6 +196,8 @@ async def upsert_custom_answers(
             existing[item.question_key] = row
         row.question_text = item.question_text
         row.answer = item.answer
+        row.source = None  # saved by the user: theirs now, not Claude's
+    await apply_learn.unforget(db, user.id, [a.question_key for a in data.answers])
     await db.commit()
     rows = await db.scalars(select(CustomAnswer).where(CustomAnswer.user_id == user.id))
     return [CustomAnswerSchema.model_validate(r) for r in rows]
@@ -242,6 +244,8 @@ async def delete_custom_answer(
             CustomAnswer.question_key == question_key,
         )
     )
+    # Deleted stays deleted: Claude's runs never learn it again (spec 029).
+    await apply_learn.forget(db, user.id, question_key)
     await db.commit()
 
 
@@ -433,6 +437,7 @@ async def export_data(
                 "use_count": a.use_count,
                 "updated_at": _dt(a.updated_at),
                 "last_used_at": _dt(a.last_used_at),
+                "source": a.source,
             }
             for a in custom_answers
         ],

@@ -405,3 +405,214 @@ async def test_a_pass_never_overwrites_details_edited_in_the_app(
     assert got["work"][0]["title"] == "My own title"
     again = (await client.post(f"/v1/autofill/resumes/{r.id}/read")).json()
     assert again["work"][0]["company"] == "Tidewell Labs"  # re-read from the file
+
+
+JOB_RESUME = """# Alex Rivera
+Portland, OR · alex@example.com
+
+## WORK EXPERIENCE
+**Platform Engineer** · Northwind Labs | Mar 2023 – Present
+### Cloud
+- Moved the build servers to containers with zero downtime.
+- Cut cloud costs by a third.
+
+## EDUCATION
+**Lakeview College** | *B.S. Computer Science* | 2016 – 2020
+"""
+
+
+async def _job_resume(db: AsyncSession, user: User, *, read_at, edited=False):
+    from app.models.generated_document import GeneratedDocument
+
+    doc = GeneratedDocument(user_id=user.id, document_type="resume", content=JOB_RESUME)
+    db.add(doc)
+    await db.flush()
+    r = Resume(
+        id=uuid.uuid4(),
+        user_id=user.id,
+        filename="Alex Rivera - Résumé.pdf",
+        mime_type="application/pdf",
+        file_size_bytes=4,
+        file_data=b"%PDF",
+        extracted_text="Alex Rivera Platform Engineer",
+        is_active=False,
+        document_id=doc.id,
+        # The master's details, borrowed (spec 022–028): its PDF's broken lines.
+        parsed_history={
+            "work": [
+                {
+                    "title": "Platform Engineer",
+                    "company": "Northwind Labs",
+                    "description": "Moved the build servers to\ncontainers with zero",
+                }
+            ]
+        },
+        parsed_history_at=read_at,
+    )
+    db.add(r)
+    await db.commit()
+    return r
+
+
+async def test_a_job_resume_reads_its_own_details_not_the_masters(
+    client: AsyncClient, db_session, test_user
+):
+    """Spec 029: a résumé made for a job used to carry the master résumé's
+    details, so Workday got the master's PDF text, broken mid-sentence."""
+    from datetime import UTC, datetime, timedelta
+
+    old = datetime.now(tz=UTC) - timedelta(days=30)  # the master's reading
+    r = await _job_resume(db_session, test_user, read_at=old)
+    d = (await client.get(f"/v1/autofill/resumes/{r.id}/details")).json()
+    assert d["read"] is True
+    [job] = d["work"]
+    assert (job["title"], job["company"]) == ("Platform Engineer", "Northwind Labs")
+    assert job["description"] == (
+        "• Moved the build servers to containers with zero downtime.\n"
+        "• Cut cloud costs by a third."
+    )
+    assert d["education"][0]["school"] == "Lakeview College"
+    # Job Catcher's older path asks for the work history the same way.
+    work = (await client.post(f"/v1/ai/work-history?resume_id={r.id}")).json()
+    assert work["entries"][0]["description"].startswith("• Moved the build servers")
+
+
+async def test_details_the_user_edited_on_a_job_resume_are_kept(
+    client: AsyncClient, db_session, test_user
+):
+    from datetime import UTC, datetime, timedelta
+
+    later = datetime.now(tz=UTC) + timedelta(minutes=5)  # edited after it was made
+    r = await _job_resume(db_session, test_user, read_at=later)
+    d = (await client.get(f"/v1/autofill/resumes/{r.id}/details")).json()
+    assert (
+        d["work"][0]["description"]
+        == "Moved the build servers to\ncontainers with zero"
+    )
+
+
+PDF_TEXT = (
+    "EXPERIENCE\n"
+    "Platform Engineer | Northwind Labs | Mar 2020 - Jan 2023\n"
+    "- Kept every secret in a managed key store, with the audit trail in\n"
+    "Cloud Logbook.\n"
+    "- Ran the build servers\n"
+)
+
+
+async def _old_read(db: AsyncSession, user: User, *, work=None) -> Resume:
+    """A résumé read before spec 029: no marks, the old reader's jobs."""
+    from datetime import UTC, datetime
+
+    from app.services import resume_reader_v1
+
+    r = await _resume(db, user, text=PDF_TEXT)
+    r.is_active = True
+    r.parsed_history = {
+        "work": work if work is not None else resume_reader_v1.work(PDF_TEXT),
+        "education": [],
+        "skills": ["SQL"],
+        "certifications": [],
+        "websites": [],
+    }
+    r.parsed_history_at = datetime(2026, 11, 1, tzinfo=UTC)
+    await db.commit()
+    return r
+
+
+async def test_an_old_reading_never_edited_is_read_again_once(
+    client: AsyncClient, db_session, test_user
+):
+    from app.services import resume_reader_v1
+
+    # The old reader lost "Cloud Logbook." (a short wrapped line).
+    old = resume_reader_v1.work(PDF_TEXT)
+    assert "Cloud Logbook" not in old[0]["description"]
+    r = await _old_read(db_session, test_user)
+    d = (await client.get(f"/v1/autofill/resumes/{r.id}/details")).json()
+    assert d["work"][0]["description"] == (
+        "• Kept every secret in a managed key store, with the audit trail in "
+        "Cloud Logbook.\n• Ran the build servers"
+    )
+    assert d["skills"] == ["SQL"]  # the rest is kept as it was
+    await db_session.refresh(r)
+    assert r.parsed_history["reader"] == 2 and "edited" not in r.parsed_history
+
+
+async def test_an_old_reading_the_user_edited_is_never_replaced(
+    client: AsyncClient, db_session, test_user
+):
+    mine = [
+        {
+            "title": "Platform Engineer",
+            "company": "Northwind Labs",
+            "description": "My words",
+        }
+    ]
+    r = await _old_read(db_session, test_user, work=mine)
+    d = (await client.get(f"/v1/autofill/resumes/{r.id}/details")).json()
+    assert d["work"][0]["description"] == "My words"
+    await db_session.refresh(r)
+    assert r.parsed_history["edited"] is True
+    # The bundle and the work history leave it too.
+    b = (await client.get("/v1/autofill/bundle")).json()
+    assert b["history"]["work"][0]["description"] == "My words"
+    assert "edited" not in b["history"] and "reader" not in b["history"]
+
+
+async def test_the_bundle_reads_an_old_usual_resume_again(
+    client: AsyncClient, db_session, test_user
+):
+    await _old_read(db_session, test_user)
+    b = (await client.get("/v1/autofill/bundle")).json()
+    assert "Cloud Logbook." in b["history"]["work"][0]["description"]
+
+
+async def test_details_edited_in_the_app_are_marked_the_users(
+    client: AsyncClient, db_session, test_user
+):
+    r = await _resume(db_session, test_user)
+    body = {"work": [{"title": "Analyst", "company": "Kelso Labs"}]}
+    await client.put(f"/v1/autofill/resumes/{r.id}/details", json=body)
+    await db_session.refresh(r)
+    assert r.parsed_history["edited"] is True
+
+
+async def test_editing_a_job_resume_keeps_the_details_the_user_edited(
+    client: AsyncClient, db_session, test_user
+):
+    """Review: rerender used to replace edited details with a new reading."""
+    from datetime import UTC, datetime
+
+    from app.models.generated_document import GeneratedDocument
+    from app.services import apply_resume
+
+    r = await _job_resume(db_session, test_user, read_at=datetime.now(tz=UTC))
+    doc = await db_session.get(GeneratedDocument, r.document_id)
+    # The user edits the details in the app, then edits the document.
+    body = {"work": [{"title": "Lead Engineer", "company": "Northwind Labs"}]}
+    await client.put(f"/v1/autofill/resumes/{r.id}/details", json=body)
+    doc.edited_content = JOB_RESUME.replace("Cut cloud costs", "Halved cloud costs")
+    await apply_resume.rerender(db_session, doc)
+    await db_session.commit()
+    await db_session.refresh(r)
+    assert r.parsed_history["work"][0]["title"] == "Lead Engineer"
+
+
+async def test_editing_a_job_resume_rereads_details_nobody_edited(
+    db_session, test_user
+):
+    from datetime import UTC, datetime, timedelta
+
+    from app.models.generated_document import GeneratedDocument
+    from app.services import apply_resume
+
+    old = datetime.now(tz=UTC) - timedelta(days=3)
+    r = await _job_resume(db_session, test_user, read_at=old)
+    doc = await db_session.get(GeneratedDocument, r.document_id)
+    doc.edited_content = JOB_RESUME.replace("Cut cloud costs", "Halved cloud costs")
+    await apply_resume.rerender(db_session, doc)
+    await db_session.commit()
+    await db_session.refresh(r)
+    assert "Halved cloud costs" in r.parsed_history["work"][0]["description"]
+    assert r.parsed_history["reader"] == 2

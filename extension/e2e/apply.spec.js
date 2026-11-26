@@ -166,3 +166,80 @@ test("best judgment (spec 026): the run's résumé on a Workday-like page, photo
   await page.close();
   await mine.close();
 });
+
+test("a one-address Workday application (spec 029): only this step's boxes, the phone never in Extension, the résumé dropped beside its zone", async () => {
+  test.setTimeout(240000);
+  const url = lab.url("/lab/apply-workday-steps.html");
+  const host = new URL(url).hostname;
+  api.state.resumes = { "resume-run": { filename: "Wren_Tidewell.pdf", bytes: Buffer.from("%PDF-1.4\n% made for this job\n") } };
+  api.state.applyRun = { run_id: "r1", status: "filling", guard: true, hosts: [host], resume_id: "resume-run", live: false, requests: [] };
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  await page.bringToFront();
+
+  // Step 1, My Information: the phone in its box, never in Phone Extension.
+  api.state.applyRun = { ...api.state.applyRun, requests: [{ id: "s1", kind: "fill", url, page_n: 1 }] };
+  await expect.poll(() => api.calls("/v1/apply/requests/s1/result").length, { timeout: 90000 }).toBe(1);
+  api.state.applyRun = { ...api.state.applyRun, requests: [] };
+  const [{ body: one }] = api.calls("/v1/apply/requests/s1/result");
+  expect(one.ok).toBe(true);
+  expect(one.filled).toEqual(expect.arrayContaining(["First Name", "Phone Number"]));
+  expect(one.filled).not.toContain("Phone Extension");
+  expect(await page.inputValue("#phoneNumber--phoneNumber")).not.toBe("");
+  expect(await page.inputValue("#phoneNumber--extension")).toBe("");
+  expect(one.need).toContain("Prefix");
+
+  // Claude answers what Job Catcher couldn't and moves on: never saved as
+  // the user's own (the app learns only what the user approves at the review).
+  await page.selectOption("#prefix", "Dr.");
+  await page.fill("#legalName--lastName", "Rivera-Stone");
+
+  // Step 2, My Experience, drawn in place at the same address.
+  await page.click("#next");
+  await expect(page.locator("#step-name")).toHaveText("My Experience");
+  api.state.applyRun = { ...api.state.applyRun, requests: [{ id: "s2", kind: "fill", url, page_n: 2 }] };
+  await expect.poll(() => api.calls("/v1/apply/requests/s2/result").length, { timeout: 60000 }).toBe(1);
+  api.state.applyRun = { ...api.state.applyRun, requests: [] };
+  const [{ body: two }] = api.calls("/v1/apply/requests/s2/result");
+  for (const old of ["First Name", "Last Name", "Email", "Phone Number", "Phone Extension", "Prefix"]) {
+    expect(two.filled).not.toContain(old);
+    expect(two.need).not.toContain(old);
+  }
+  expect(two.resume).toBe("attached");
+  // The zone only takes a dropped file, and it got one.
+  await expect.poll(() => page.textContent("#got")).toBe("Wren_Tidewell.pdf");
+
+  expect(api.calls("/v1/users/me/custom-answers").filter((c) => c.method === "PUT")).toHaveLength(0);
+  expect(api.calls("/v1/users/me/application-profile").filter((c) => c.method !== "GET")).toHaveLength(0);
+
+  // A second press after Workday re-drew its card (an empty box again): never a second copy.
+  api.state.applyRun = { ...api.state.applyRun, requests: [{ id: "s3", kind: "fill", url, page_n: 2 }] };
+  await expect.poll(() => api.calls("/v1/apply/requests/s3/result").length, { timeout: 60000 }).toBe(1);
+  api.state.applyRun = { ...api.state.applyRun, requests: [] };
+  expect(api.calls("/v1/apply/requests/s3/result")[0].body.resume).toBe("attached");
+  await page.waitForTimeout(5000); // longer than the drop's wait
+  expect(await page.textContent("#got")).toBe("Wren_Tidewell.pdf");
+  expect(await page.locator("[data-automation-id=file-upload-successful]").count()).toBe(1);
+  await page.close();
+});
+
+test("Workday re-draws its upload card after taking the file: a second press never attaches a second copy (spec 029 review)", async () => {
+  test.setTimeout(180000);
+  const url = lab.url("/lab/apply-workday-steps.html?step=2&change");
+  const host = new URL(url).hostname;
+  api.state.resumes = { "resume-run": { filename: "Wren_Tidewell.pdf", bytes: Buffer.from("%PDF-1.4\n% made for this job\n") } };
+  api.state.applyRun = { run_id: "r1", status: "filling", guard: true, hosts: [host], resume_id: "resume-run", live: false, requests: [] };
+  const page = await ext.context.newPage();
+  await page.goto(url);
+  await page.bringToFront();
+  for (const id of ["d1", "d2"]) {
+    api.state.applyRun = { ...api.state.applyRun, requests: [{ id, kind: "fill", url, page_n: 1 }] };
+    await expect.poll(() => api.calls(`/v1/apply/requests/${id}/result`).length, { timeout: 90000 }).toBe(1);
+    api.state.applyRun = { ...api.state.applyRun, requests: [] };
+    expect(api.calls(`/v1/apply/requests/${id}/result`)[0].body.resume).toBe("attached");
+  }
+  await page.waitForTimeout(5000); // longer than the drop's wait
+  expect(await page.textContent("#got")).toBe("Wren_Tidewell.pdf");
+  expect(await page.locator("[data-automation-id=file-upload-successful]").count()).toBe(1);
+  await page.close();
+});

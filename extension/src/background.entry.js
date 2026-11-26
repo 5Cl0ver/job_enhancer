@@ -1240,8 +1240,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const runResume = await applyRun.resumeFor(tab).catch(() => null);
         if (runResume) {
           // Never the usual résumé in its place: no file, and Claude is told.
+          // Its jobs and schools never come from the usual (master) résumé
+          // either (spec 029): with this one's not loaded, they're read from
+          // it by id (getWorkHistory), else left for Claude.
           const got = await autofill.get({ resumeId: runResume });
-          sendResponse({ ok: true, ...got, ...(got.chosenFailed ? { resume: null } : {}) });
+          const failed = got.chosenFailed ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {};
+          sendResponse({ ok: true, ...got, ...failed, resumeId: runResume });
         } else {
           const { key, choice, resumeId } = await resumeFor(tab);
           const got = await autofill.get({ resumeId });
@@ -1289,13 +1293,20 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "answersNoticed") {
         // Saved straight away (spec 018): what the user answered, when they
         // moved on. Shown in the panel with Edit / Undo; kept for review if
-        // the app can't be reached.
-        if (sender.tab?.id != null) await autoSaveAnswers(sender.tab.id, msg.answers || [], msg.site || "", msg.companyKnown !== false);
+        // the app can't be reached. Never while an Apply with Claude run is open
+        // (spec 029): Claude typed those, and the app learns only what the
+        // user approves at the review.
+        if (sender.tab?.id != null && !(await applyRun.inRun().catch(() => true))) {
+          await autoSaveAnswers(sender.tab.id, msg.answers || [], msg.site || "", msg.companyKnown !== false);
+        }
         sendResponse({ ok: true });
       } else if (msg.type === "profileNoticed") {
         // What the profile was missing is saved; a DIFFERENT value waits for
         // the user's one tap ("Update your profile?"), so a typo never spreads.
-        if (sender.tab?.id != null) await autoSaveProfile(sender.tab.id, msg.fields || {});
+        // Never while an Apply with Claude run is open (spec 029).
+        if (sender.tab?.id != null && !(await applyRun.inRun().catch(() => true))) {
+          await autoSaveProfile(sender.tab.id, msg.fields || {});
+        }
         sendResponse({ ok: true });
       } else if (msg.type === "editSavedAnswer") {
         const out = await saveCustomAnswers([{ question_key: msg.question_key, question_text: msg.question_text, answer: String(msg.answer || "").slice(0, 4000) }]);

@@ -12,18 +12,23 @@
     </style>
   </head>
   <body>
-    <!-- An invented page shaped like a Workday "My Experience" step (spec 026):
-         the résumé's file input is hidden behind a drop zone named only by a
-         data-automation-id and its own "Select files" button. -->
+    <!-- An invented page shaped like a real Workday "My Experience" step
+         (spec 026, 029): the "Resume/CV" heading, then the field's own label
+         "Upload a file (5MB max)*" (which never says résumé), the upload card
+         (attachments-FileUpload), its drop zone and "Select files" button,
+         and the hidden file input (no accept list) inside the drop zone. -->
     <h2>My Experience</h2>
     <section>
-      <div><h3>Resume/CV</h3></div>
-      <div data-automation-id="resumeSection">
-        <div data-automation-id="file-upload-drop-zone" class="css-zone">
-          <p>Drop file here</p>
-          <p>or</p>
-          <button type="button" data-automation-id="select-files" id="pick">Select files</button>
-          <input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="resume" />
+      <h3>Resume/CV</h3>
+      <div data-automation-id="formField-file">
+        <div><label>Upload a file (5MB max)<abbr title="required">*</abbr></label></div>
+        <div data-automation-id="attachments-FileUpload">
+          <div data-automation-id="file-upload-drop-zone" class="css-zone">
+            <p>Drop file here</p>
+            <p>or</p>
+            <button type="button" data-automation-id="select-files" id="pick">Select files</button>
+            <input type="file" multiple class="css-hidden-input" data-automation-id="file-upload-input-ref" id="input-3f9a" />
+          </div>
         </div>
       </div>
       <p>Uploaded: <span id="got"></span></p>
@@ -38,8 +43,8 @@
     </section>
     <button type="button" id="next">Save and Continue</button>
     <script>
-      document.getElementById("pick").addEventListener("click", () => document.getElementById("resume").click());
-      document.getElementById("resume").addEventListener("change", (e) => {
+      document.getElementById("pick").addEventListener("click", () => document.getElementById("input-3f9a").click());
+      document.getElementById("input-3f9a").addEventListener("change", (e) => {
         document.getElementById("got").textContent = [...e.target.files].map((f) => f.name).join(", ");
       });
     </script>
