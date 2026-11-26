@@ -1840,15 +1840,22 @@ async def _tab_shows_other_job(
     # Another saved job's own page (its careers site, its posting).
     page_key = url_key(page_url)
     own_keys = {url_key(u) for u in own_urls}
-    if page_key and page_key not in own_keys:
-        if page_key in {url_key(u) for u in other_urls}:
-            return True
+    if (
+        page_key
+        and page_key not in own_keys
+        and page_key in {url_key(u) for u in other_urls}
+    ):
+        return True
     # Another posting on the same hiring site as the run's own posting.
     page_posting = _posting(page_url)
     own_postings = {p for p in (_posting(u) for u in own_urls) if p}
-    if page_posting and own_postings and page_posting not in own_postings:
-        if any(_host(page_url) == _host(u) for u in own_urls):
-            return True
+    if (
+        page_posting
+        and own_postings
+        and page_posting not in own_postings
+        and any(_host(page_url) == _host(u) for u in own_urls)
+    ):
+        return True
     host = _host(page_url)
     return (
         bool(run.pages)
