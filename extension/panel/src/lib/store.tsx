@@ -8,7 +8,8 @@ import { useClaudeUrlState } from "./claudeUrl";
 
 // `latest`: the newest Job Catcher release, when this one is older (spec 019).
 // `version`: this Job Catcher's own version (the update card says both).
-type Auth = { state: "loading" | "in" | "out"; email: string; latest?: string | null; version?: string };
+// `isOwner`: the app's owner, who gets "Report a problem here" (spec 032).
+type Auth = { state: "loading" | "in" | "out"; email: string; latest?: string | null; version?: string; isOwner?: boolean };
 
 /** One field autofill filled, in one frame of the tab (session.js report). */
 export interface FillEntry {
@@ -264,7 +265,13 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   const refreshAuth = React.useCallback(async () => {
     const res = await send({ type: "authStatus" });
     if (res?.signedIn) {
-      setAuth({ state: "in", email: res.email || "", latest: res.updateAvailable ? res.latest : null, version: res.version || "" });
+      setAuth({
+        state: "in",
+        email: res.email || "",
+        latest: res.updateAvailable ? res.latest : null,
+        version: res.version || "",
+        isOwner: res.isOwner === true,
+      });
       sync.reset();
       sync.check({ force: true });
     } else {

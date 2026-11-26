@@ -12,6 +12,7 @@ import { ThisPage } from "@/views/ThisPage";
 import { MyJobs } from "@/views/MyJobs";
 import { Write } from "@/views/Write";
 import { Settings } from "@/views/Settings";
+import { ReportProblem } from "@/views/Report";
 
 export type View = "page" | "jobs" | "write" | "settings";
 
@@ -119,13 +120,15 @@ export function App() {
       {/* Every view stays mounted and is only hidden, so work in progress (a
           letter just written, a job being checked) survives switching views. */}
       <main className="flex-1 overflow-y-auto px-3 py-3">
-        <div hidden={view !== "page"}>
+        <div hidden={view !== "page"} className="flex flex-col gap-3">
           <ThisPage
             onWrite={(jobListingId) => {
               setWriteFor(jobListingId);
               setView("write");
             }}
           />
+          {/* The owner's "Report a problem here" (spec 032), under whatever the page offers. */}
+          <ReportProblem />
         </div>
         <div hidden={view !== "jobs"}>
           <MyJobs />
