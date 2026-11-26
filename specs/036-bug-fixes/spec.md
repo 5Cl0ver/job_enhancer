@@ -1,0 +1,38 @@
+# Feature Specification: Fixes from Bugs & ideas (sponsorship, Workday pill boxes, phone extension, wrong job, browser Back)
+
+**Feature Branch**: `036-bug-fixes`
+
+**Created**: 2026-11-26
+
+**Status**: Built
+
+**Input**: The owner's Bugs & ideas reports from real applications. (Examples below use invented companies and people.)
+
+## The five problems, in plain words
+
+- **A. The browser's Back left the form.** On a job board's own application (an Indeed-style "apply on the board" flow), Claude pressed the browser's Back to fix an earlier step. That page draws every step in place, so Back went to the job listing and the application was gone.
+- **B. The phone number went in Phone Extension, and came back after the owner emptied it.** On a Workday "My Information" step revisited with Back, the Phone Extension box got the whole phone number. The owner emptied it; it was filled again on the next visit.
+- **C. "Do you need sponsorship?" was answered Yes.** The profile says no sponsorship is needed. Questions like "Will you now, or in the future, require sponsorship to legally work in the United States?" were read as work-authorization questions (Yes). A question asked the other way round ("Are you able to work without sponsorship?") got the wrong answer too, and the owner's correction was then remembered and used everywhere.
+- **D. "How Did You Hear About Us?" was reported filled but was empty.** Workday draws it as a search box that turns a choice into a pill. Job Catcher typed the words, saw them, and reported the box filled; Workday cleared the words when the box was left, and no pill was ever chosen.
+- **E. Claude carried on with the wrong job.** A run for an older job was still open. When the owner asked Claude to apply to a new job, `get_apply_brief` quietly picked up the old run. The start line didn't say which run, and the app's "another application is going" message only offered "Open it".
+
+## What changes
+
+- **A.** The playbook and the locked rules say: move between steps only with the form's own buttons (Back/Previous, a progress-bar step, the review's Edit link), never the browser's Back or Forward. Every "go back to that step" instruction says how. If a page is reported on a job board's listing after the application moved on to another site, `fill_page` and `page_done` answer "not now: your tab left the application" with what to do (Forward once, then the form's own Back).
+- **B.** A phone number (7+ digits, or the profile's phone) is never put in an extension box, whether it comes from a remembered answer, a box taught by pointing, or the profile, and it's never offered to Remember. A box the user emptied stays empty after the page redraws it, the step changes, or the page reloads. After a redraw, Job Catcher's own fills are recognised by their question and never offered as the user's answers.
+- **C.** Sponsorship questions are recognised before work-authorization ones, from the question itself (not help text after it). A reversed question gets the profile's answer the other way round. A question asking both things at once is left for the user. A remembered Yes/No that contradicts the profile is only offered, never filled. Sponsorship and work authorization are never remembered from what was typed; a change is offered as "Save to my profile" instead.
+- **D.** Workday's search box (its real markup) is a pill box: a choice counts only as a pill, a category is followed into its own list, and only one answer is chosen for a one-answer question. After choosing in any dropdown or pill box, Job Catcher leaves the box, waits a moment and reads it again; if the choice didn't hold, the box is put back and listed for the user. A box the page empties after filling is reported as still needing an answer ("didn't stick"), so Claude is told the truth.
+- **E.** `get_apply_brief` takes `page_url` (the tab's address). Without a run id, a tab showing another job (another posting on the same job board, another saved job, or mid-application another hiring site) answers "not now: other job" with the open run's title and company as data, and the open run is left exactly as it was. The app's start lines name the job and carry a short run code ("run 1a2b3c4d"); the code works as `run_id` for the user's own runs only. When another application is going, the app says which job and offers **Open it** or **Stop it and start this one**.
+- Job Catcher 0.48.0. Playbook 2026.12.03.
+
+## Safety rules that still hold
+
+Passwords are never filled; nothing is submitted; agreements are never ticked; self-identification (gender, race, ethnicity, veteran, disability) is never filled or learned; nothing is learned while an Apply with Claude run is open; page text is data (`*_on_page` fields, `open_run`), never inside a `next` instruction; the app's routes are owner-only.
+
+## Acceptance tests
+
+- **A**: the playbook, the rules, the fix note and both review-fix `next` lines say "never the browser's Back"; `page_done` / `fill_page` with a job-board listing after a done page on another site answer `not_now` with "Forward once", and nothing joins the run; a listing before any page, and a board's own Easy Apply, are fine. (backend `tests/test_apply_bug_fixes_036.py`)
+- **B**: a remembered "phone extension" of 555-010-4477 isn't filled, "204" is; a box taught as the phone that is the extension is skipped; on the lab's revisited My Information step, the emptied extension and City stay empty after Next and Back, by themselves and on a press; after a redraw nothing Job Catcher filled is offered to Remember. (`test/bug-fixes-036.spec.js`, `e2e/bug-fixes-036.spec.js`, lab `workday-info-revisit.html`)
+- **C**: with a profile of "no sponsorship needed, authorized to work": each sponsorship wording → No; "without sponsorship" / "NOT require" → Yes; "Are you authorized to work in the U.S.?" → Yes; Yes/No, "Yes, I will require…"/"No, I will not…" and "I will require…"/"I will not require…" choices match; the Workday listbox with "to legally work" → No; a remembered `@requires_sponsorship = Yes` is offered, not filled; a combined question needs the user; a changed sponsorship answer is offered for the profile, never remembered. (`test/bug-fixes-036.spec.js`, `e2e/bug-fixes-036.spec.js`, lab `workday-sponsorship.html`)
+- **D**: on the real Workday markup a remembered "LinkedIn" becomes a LinkedIn pill and an entry; an answer the site doesn't offer → still needs an answer, the box empty; "Category > Item" picks the item from the category's list; a typeahead that shows the typed text but never takes a choice is not filled; a box the page empties later is reported as "didn't stick". (`test/bug-fixes-036.spec.js`, `e2e/bug-fixes-036.spec.js`, lab `workday-hear-about.html`)
+- **E**: `get_apply_brief(page_url=<another job>)` with run A open → `not_now: "other_job"`, `open_run` with A's title and company (not in `next`), and A unchanged (status, events, started); A's own listing or an unrelated page → the normal brief; a run code resolves the user's own run, another user's code is refused; the 409 carries the open run's title and company; the app's dialog says "Claude is applying to … at …" and "Stop it and start this one" stops it and starts the new one with the same résumé choice; the start lines carry the run code. (backend `tests/test_apply_bug_fixes_036.py`, frontend `ApplyRunPage.test.tsx`, `Remote.test.tsx`, `lib/apply.test.ts`)
