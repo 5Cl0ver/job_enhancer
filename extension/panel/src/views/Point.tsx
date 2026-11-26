@@ -38,7 +38,7 @@ const ANSWERS: [key: string, label: string][] = [
 ];
 
 const REFUSED: Record<string, string> = {
-  consent: "That's a checkbox or choice only you can tick (an agreement, a yes/no). Job Catcher never ticks those.",
+  consent: "That's an agreement only you can tick (terms, a privacy policy, \"true and complete\"). Job Catcher never ticks those.",
   sensitive: "That asks about you personally (gender, race, disability, an ID or bank number). Job Catcher never answers those for you.",
   password: "That's a password box. Job Catcher never fills passwords.",
 };

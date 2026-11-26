@@ -1,0 +1,51 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 034): Workday's Application Questions
+     with lone checkboxes. Only the "true and complete" one is an agreement
+     (only the user ticks it); "secondary employment" and "board of
+     directors" are yes/no questions left unticked unless remembered; the
+     required age check is listed; the shift choices (no shared name) are one
+     list. Submit is the final step's button (the test presses it; Job
+     Catcher never does). window.__formData() holds what the PAGE has taken. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Application Questions - Northwind Labs Careers</title>
+    <style>.field { margin: 8px 0; } legend, .q { font-weight: bold; }</style>
+  </head>
+  <body>
+    <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+    <h2>Application Questions</h2>
+    <div class="field" data-automation-id="formField-secondary">
+      <input type="checkbox" id="secondary" />
+      <label for="secondary">I currently have secondary employment</label>
+    </div>
+    <div class="field" data-automation-id="formField-board">
+      <input type="checkbox" id="board" />
+      <label for="board">I serve on a board of directors</label>
+    </div>
+    <div class="field" data-automation-id="formField-age">
+      <input type="checkbox" id="age" aria-required="true" />
+      <label for="age">I am at least 18 years of age <abbr title="required">*</abbr></label>
+    </div>
+    <div class="field" data-automation-id="formField-shifts">
+      <label class="q" data-automation-id="formLabel">Which shifts can you work?</label>
+      <div><input type="checkbox" id="shift-day" /><label for="shift-day">Day</label></div>
+      <div><input type="checkbox" id="shift-evening" /><label for="shift-evening">Evening</label></div>
+      <div><input type="checkbox" id="shift-weekend" /><label for="shift-weekend">Weekend</label></div>
+    </div>
+    <div class="field" data-automation-id="formField-attest">
+      <input type="checkbox" id="attest" />
+      <label for="attest">I certify that the information I have provided is true and complete.</label>
+    </div>
+    <button type="button" data-automation-id="bottom-navigation-next-button" id="submit">Submit</button>
+    <p id="done" hidden>Application submitted</p>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      for (const input of document.querySelectorAll("input")) {
+        input.addEventListener("change", () => (data[input.id] = input.checked));
+      }
+      document.getElementById("submit").addEventListener("click", () => (document.getElementById("done").hidden = false));
+    </script>
+  </body>
+</html>

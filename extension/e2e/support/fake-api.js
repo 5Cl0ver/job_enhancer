@@ -224,14 +224,23 @@ export async function startFakeApi() {
     },
     "POST /v1/saved-jobs/backfill": () => ({ body: { updated: false } }),
     "POST /v1/saved-jobs/mark-applied": (b) => {
-      const job =
+      let job =
         (b?.saved_job_id && state.jobs.find((j) => j.id === b.saved_job_id)) ||
-        state.jobs.find((j) => j.title === b?.title && j.company === b?.company);
+        state.jobs.find((j) => j.title === b?.title && j.company === b?.company) ||
+        (b?.create && state.jobs.find((j) => j.url === b.create.url));
+      // A Workday application never saved (spec 034): saved from the page, then applied.
+      let created = false;
+      if (!job && b?.saved_job_id == null && b?.create) {
+        const n = state.jobs.length + 1;
+        job = { id: `saved-${n}`, job_listing_id: `listing-${n}`, ...b.create, applied_at: null };
+        state.jobs.unshift(job);
+        created = true;
+      }
       if (job) {
         job.applied_at = new Date().toISOString();
         state.jobsVersion++;
       }
-      return { body: { matched: !!job } };
+      return { body: { matched: !!job, created } };
     },
     "POST /v1/saved-jobs/sync-applications": (b) => {
       const apps = b?.applications || [];
@@ -354,6 +363,9 @@ export async function startFakeApi() {
       return { body: { latest: state.latest, update_available: false } };
     },
     "DELETE /v1/extension/tokens/current": () => ({ status: 204 }),
+    "GET /v1/extension/latest": () => ({
+      body: { version: state.latest, notes: "", published_at: null, sha256: null, download_url: "https://example.test/job-catcher.zip" },
+    }),
     // The app's approval page, reduced to what matters: ask the Job Catcher in
     // this browser for its proof, then approve with it.
     "GET /connect": (_b, req) => {

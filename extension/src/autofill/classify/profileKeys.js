@@ -18,9 +18,17 @@ export const PRIVATE =
 export const OTHER_PERSON =
   /\breferences?\b(?! (number|code|id)\b)|emergency contact|\breferr(er|ed by)\b|who referred|\bsupervisor'?s?\b|\bmanager'?s (name|email|phone)|\bspouse\b|\bguardian\b|next of kin/i;
 
-/** Agreeing to terms or attesting to something: only the user can. */
+/**
+ * Agreeing to terms or attesting to something: only the user can. A lone
+ * checkbox is an agreement only when it reads like one (spec 034): agree,
+ * consent, acknowledge, certify, attest, terms, privacy, policy, "I have
+ * read", "true and complete", a signature, an attestation ("I hereby
+ * declare…", "I confirm the information is correct", "to the best of my
+ * knowledge", "By ticking this box…") — and an opt-in to messages ("Text me
+ * updates", "I'd like to receive emails"): agreeing to be contacted.
+ */
 export const CONSENT =
-  /\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy (policy|notice)|consent|acknowledg|attest|certif(y|ication that)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature/i;
+  /\bdeclare\b|\bhereby\b|\bi confirm\b|\bverify\b|\baccurate\b|\bcorrect\b|\bhonest(ly)?\b|\bby (selecting|ticking|checking|clicking|submitting)\b|to the best of my knowledge|\b(text|sms|e-?mail|call|contact|message) me\b|\bopt[\s-]?in\b|\breceive (text|sms|e-?mail|messages|updates|communications|alerts|news)|\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy|\bpolic(y|ies)\b|consent|acknowledg|attest|certif(y|ication that)|true,? (and|&) (complete|correct|accurate)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature|\bsignature\b/i;
 
 /** Essays: a person writes these (Write in the panel helps). */
 export const ESSAY =
@@ -30,17 +38,83 @@ export const ESSAY =
 export const NOISE =
   /cookie|newsletter|subscribe|marketing|notification|preference|personaliz|search jobs|keyword|job alert|captcha|password|promo(tion)? code|coupon/i;
 
-/** Why a field is left alone, or null. Self-ID and consent come first. */
-export function guardReason(question, kind) {
+// An agreement in so many words (any kind of box, or a choice's own label).
+// ("Experience with electronic signature tools?" is not one.)
+const AGREEING =
+  /\bi (agree|accept|certify|attest|acknowledge|authori[sz]e)|signature(?!\s*(tools?|software|platforms?|apps?|solutions?)\b)|\b(agree|accept)\b.*\b(terms|conditions|polic)|background check|authori[sz]e .*(background|credit|drug|check)/i;
+const CHOICES = new Set(["checkbox_list", "radio", "buttons", "select", "combobox"]);
+
+// A choice that IS an agreement, by its phrasing — never a bare word
+// ("Accurate typing", "Contact me later" are ordinary choices).
+export const AGREEMENT_OPTION =
+  /\bi (hereby )?(agree|accept|consent|acknowledge|certify|declare|confirm|attest|authori[sz]e|verify|understand|have read)\b|\bby (ticking|checking|selecting|clicking|submitting)\b|\bterms (of|and|&)\b|\bterms and conditions\b|\bprivacy (policy|notice|statement)\b|to the best of my knowledge|\bhereby\b|\b(e-?|electronic )signature\b/i;
+
+// A choice that declares something about the person (spec 034 review): "Yes,
+// I have a disability", "I am a protected veteran", "I identify as…",
+// "Decline to self-identify" — not "Veteran job fair" or "Military.com".
+const DECLARES = /\bi (am|identify|have|do not|don'?t|choose not|wish not)\b|\bprefer not\b|\bdecline\b|\bnot a (protected )?veteran\b|\bprotected veteran\b|\bwish to (answer|disclose|self)|^\s*(yes|no)\b/i;
+// The answers a self-ID question offers (gender, race, ethnicity).
+const SELF_ID_VALUE =
+  /^\s*(male|female|man|woman|non-?binary|transgender|hispanic or latino|not hispanic or latino|white|black or african american|asian|american indian or alaska native|native hawaiian or other pacific islander|two or more races|disabled|not disabled)\b/i;
+// A question that says nothing about what it asks ("Please select one").
+const VAGUE = /^\W*((please )?(select|choose|check|pick|mark)( one| an option| all that apply| one of the (boxes|options) below)?|)\W*$/i;
+
+/** Is this choice a self-ID answer (given its question)? */
+function selfIdOption(label, question) {
+  const l = String(label || "");
+  if (SELF_ID.test(l) && DECLARES.test(l)) return true;
+  return SELF_ID_VALUE.test(l) && (VAGUE.test(question) || SELF_ID.test(question));
+}
+
+/** Choices that are self-ID answers by themselves ("Hispanic or Latino",
+ * "White", "Disabled"). Two or more in one list make it a self-ID list
+ * whatever its question says ("Which describes you?"). Words that only
+ * mention a topic ("Military.com", "Veteran job fair") don't count. */
+function selfIdList(labels) {
+  return labels.filter((l) => SELF_ID_VALUE.test(l)).length >= 2;
+}
+
+/**
+ * guardReason for a scanned field: its question, its kind, its choices'
+ * labels — and the heading it sits under: a lone "I do not wish to answer"
+ * under "Voluntary Self-Identification" is self-ID (spec 034 review).
+ */
+export function fieldGuard(field) {
+  const guard = guardReason(field?.question || "", field?.kind, (field?.options || []).map((o) => o?.label || ""));
+  if (guard === "sensitive" || guard === "consent") return guard;
+  const around = [field?.hints?.group, field?.hints?.section].filter(Boolean).join(" ");
+  if (around && SELF_ID.test(around)) return "sensitive";
+  return guard;
+}
+
+/**
+ * A choice that must never be ticked or picked for the user: a self-ID
+ * answer, a private number, an agreement by its phrasing.
+ */
+export function untouchableChoice(label, kind = "checkbox_list", question = "") {
+  const l = String(label || "");
+  return selfIdOption(l, question) || PRIVATE.test(l) || AGREEING.test(l) || AGREEMENT_OPTION.test(l);
+}
+
+/**
+ * Why a field is left alone, or null. Self-ID and consent come first. For a
+ * group of choices every option counts too (spec 034 review): a list whose
+ * options declare a disability or a veteran status (or, under a vague
+ * question, offer gender or race values) is self-ID; a list with an
+ * agreement among its options is the user's (never ticked, never learned).
+ * @param {string} question
+ * @param {string} kind
+ * @param {string[]} [options] the choices' labels
+ */
+export function guardReason(question, kind, options = []) {
   const q = String(question || "");
   if (SELF_ID.test(q) || PRIVATE.test(q)) return "sensitive";
+  const labels = CHOICES.has(kind) ? (options || []).map((o) => String(o || "")) : [];
+  if (selfIdList(labels) || labels.some((l) => selfIdOption(l, q) || PRIVATE.test(l))) return "sensitive";
   if ((kind === "checkbox" || kind === "checkbox_list") && CONSENT.test(q)) return "consent";
+  if (labels.some((l) => AGREEMENT_OPTION.test(l) || AGREEING.test(l))) return "consent";
   // Agreeing, in any form (a box, a Yes/No question, a dropdown).
-  if (
-    CONSENT.test(q) &&
-    /\bi (agree|accept|certify|attest|acknowledge|authori[sz]e)|signature|\b(agree|accept)\b.*\b(terms|conditions|polic)|background check|authori[sz]e .*(background|credit|drug|check)/i.test(q)
-  )
-    return "consent";
+  if (CONSENT.test(q) && AGREEING.test(q)) return "consent";
   if (NOISE.test(q)) return "noise";
   if (ESSAY.test(q) && (kind === "textarea" || kind === "editable" || kind === "text")) return "essay";
   return null;

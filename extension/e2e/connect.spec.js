@@ -149,16 +149,33 @@ test("cancel, and a Connect that times out", async () => {
   await panel.close();
 });
 
-test("an older Job Catcher shows Update available with how to update", async () => {
+test("an older Job Catcher shows the update card (Download, How) and NEW on its icon (spec 034)", async () => {
   api.state.latest = "9.9.9";
   await ext.seedSignedIn();
+  const version = await ext.worker.evaluate(() => chrome.runtime.getManifest().version);
   const { panel } = await openPanel();
-  await expect(panel.getByTestId("update-banner")).toContainText("Update available (9.9.9)");
-  const opened = ext.context.waitForEvent("page");
-  await panel.getByRole("button", { name: "How to update" }).click();
-  const page = await opened;
-  expect(page.url()).toBe(`${api.url}/job-catcher#update`);
-  await Promise.all([page.close(), panel.close()]);
+  const card = panel.getByTestId("update-banner");
+  await expect(card).toContainText("Update Job Catcher");
+  await expect(card).toContainText(`You have ${version}, the newest is 9.9.9.`);
+  // The toolbar icon says it on every tab.
+  await expect.poll(() => ext.worker.evaluate(() => chrome.action.getBadgeText({}))).toBe("NEW");
+  await card.getByRole("button", { name: "How" }).click();
+  await expect(card.getByText("Press ↻ on Job Catcher. You stay signed in.")).toBeVisible();
+  // (Never the real download in a test.)
+  await ext.context.route("https://github.com/**", (r) => r.fulfill({ status: 200, contentType: "text/plain", body: "zip" }));
+  const tabs = () => ext.worker.evaluate(async () => (await chrome.tabs.query({})).map((t) => t.pendingUrl || t.url || ""));
+  await card.getByRole("button", { name: "Download" }).click();
+  await expect.poll(async () => (await tabs()).some((u) => u.includes("/releases/latest/download/job-catcher.zip"))).toBe(true);
+  for (const p of ext.context.pages()) if (p.url().includes("github.com")) await p.close().catch(() => {});
+  await panel.close();
+  await ext.context.unroute("https://github.com/**");
+  // Up to date again: no card, no NEW.
+  api.state.latest = version;
+  await ext.worker.evaluate(() => chrome.storage.local.remove("je_hello_at"));
+  const again = await openPanel();
+  await expect.poll(() => ext.worker.evaluate(() => chrome.action.getBadgeText({}))).toBe("");
+  await expect(again.panel.getByTestId("update-banner")).toHaveCount(0);
+  await again.panel.close();
 });
 
 test("one poller: waiting for approval asks the server at most every 2 seconds", async () => {

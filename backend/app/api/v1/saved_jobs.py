@@ -172,13 +172,15 @@ async def mark_applied(
     db: AsyncSession = Depends(get_db),
 ) -> MarkAppliedResult:
     """Auto-track: the extension detected an application SUBMIT on an ATS page.
-    Moves the matching saved job to Applied (sets applied_at). No match → no-op."""
-    matched = await svc.mark_applied(
-        db, user.id, data.title, data.company, data.saved_job_id
+    Moves the matching saved job to Applied (sets applied_at). No match → no-op,
+    unless the application said which job it is (`create`, spec 034): then
+    it's saved from that and marked applied, once."""
+    matched, created = await svc.track_applied(
+        db, user.id, data.title, data.company, data.saved_job_id, data.create
     )
     if matched:
         await db.commit()
-    return MarkAppliedResult(matched=matched)
+    return MarkAppliedResult(matched=matched, created=created)
 
 
 @router.post("/sync-applications", response_model=ApplicationSyncResult)

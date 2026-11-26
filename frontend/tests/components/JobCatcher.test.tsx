@@ -154,10 +154,11 @@ describe("Get Job Catcher page", () => {
     expect(screen.getByText(RELEASE.sha256)).toBeInTheDocument();
   });
 
-  it("tells everyone about the one-time reconnect in 0.35.0", async () => {
+  it("shows what's new in the latest version, never an old version's note (spec 034)", async () => {
     api([]);
     wrap(<JobCatcherPage />);
-    expect(await screen.findByText(/remove the old Job Catcher first/)).toBeInTheDocument();
+    expect(await screen.findByTestId("jc-whats-new")).toHaveTextContent("What's new in 0.35.0: Connect with one press");
+    expect(screen.queryByText(/remove the old Job Catcher first/)).not.toBeInTheDocument();
   });
 
   it("a password sign-in (no pass) still shows as connected, from its hello", async () => {

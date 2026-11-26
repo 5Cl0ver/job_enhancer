@@ -1,7 +1,8 @@
 // Decide what goes in a field: the profile, then a remembered answer, or a
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
-import { answerKey, closestAnswer, isCompanySpecific } from "./classify/answers.js";
-import { OTHER_PERSON, guardReason, profileKeyFor, valueForms } from "./classify/profileKeys.js";
+import { answerKey, closestAnswer, isCompanySpecific, yesNo } from "./classify/answers.js";
+import { formerEmployerAnswer } from "./classify/formerEmployer.js";
+import { OTHER_PERSON, fieldGuard, profileKeyFor, valueForms } from "./classify/profileKeys.js";
 
 /** The keys that make a page look like an application. */
 export const IDENTITY = new Set(["first_name", "last_name", "full_name", "email", "phone"]);
@@ -120,9 +121,11 @@ export const NEAR = 0.6;
  * @returns {{scope: "all"|"site"|"essay", key: string, profileKey?: string} | null}
  */
 export function learnKeyFor(field, site) {
-  const guard = guardReason(field.question, field.kind);
+  const guard = fieldGuard(field);
   if (guard === "essay") return field.key ? { scope: "essay", key: answerKey("essay", site, field.key) } : null;
-  if (guard || field.kind === "file" || field.kind === "checkbox") return null;
+  // A lone checkbox that isn't an agreement is a yes/no question: remembered
+  // like any other (spec 034); agreements never (the guard).
+  if (guard || field.kind === "file") return null;
   // About this company ("desired salary for this role"): this site only —
   // checked before the kind of box, so it never becomes "@desired_salary".
   const profileKey = profileKeyFor(field);
@@ -185,13 +188,40 @@ export function nationalNumber(phone) {
   return s;
 }
 
+// Boxes a former-employer question is answered in (never a text box).
+const CHOICE_KINDS = new Set(["radio", "select", "combobox", "buttons"]);
+
 /**
- * @typedef {{values: Record<string, string[]>, answers: Array<{question_key: string, answer: string}>, resumeFile?: File|null, coverLetterFile?: File|null, coverLetterText?: string}} Copy
+ * A lone checkbox that isn't an agreement: a yes/no question (spec 034).
+ * Ticked when the answer is yes (the job history, or the user's remembered
+ * answer); otherwise left unticked — unticked already says no — and listed
+ * for the user only when the page requires it (`quiet` = not listed).
+ */
+function yesNoBox(field, copy) {
+  const learned = learnedFor(field, copy, null);
+  const yes = (l) => yesNo(l.answer) === "yes" || /^(true|checked|1)$/i.test(String(l.answer).trim());
+  // The user's own answer on THIS site comes first (as for a radio): ticked
+  // for a Yes, left unticked for a No.
+  if (learned?.tier === "site") {
+    return yes(learned) ? { values: ["Yes"], source: "learned", learnKey: learned.question_key } : { skip: "unknown", quiet: true };
+  }
+  const former = formerEmployerAnswer(field.question, copy);
+  if (former === "Yes") return { values: ["Yes"], source: "history", key: "former_employer" };
+  if (former === "No") return { skip: "unknown", quiet: true };
+  // The same box answered on ANOTHER site (spec 034 review): never ticked by
+  // itself — a tick box can attest to something about this application.
+  // A Yes is offered ("Use saved answer"); a No leaves it unticked.
+  if (learned?.tier === "exact") return yes(learned) ? { skip: "unknown", offer: "Yes" } : { skip: "unknown", quiet: true };
+  return field.hints?.required ? { skip: "unknown" } : { skip: "unknown", quiet: true };
+}
+
+/**
+ * @typedef {{values: Record<string, string[]>, answers: Array<{question_key: string, answer: string}>, resumeFile?: File|null, coverLetterFile?: File|null, coverLetterText?: string, company?: string, history?: object}} Copy
  * @returns {{values: Array<string|File>, source: "profile"|"learned", key?: string, learnKey?: string}
  *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person"|"too_long", key?: string}}
  */
 export function resolve(field, copy) {
-  const guard = guardReason(field.question, field.kind);
+  const guard = fieldGuard(field);
   // "Paste your cover letter": the job's letter, when it has one (spec 031);
   // otherwise it stays an essay for the user (or Claude) to write.
   if (guard === "essay" && copy.coverLetterText && isCoverLetterText(field)) {
@@ -210,8 +240,10 @@ export function resolve(field, copy) {
     if (!isResumeUpload(field)) return { skip: "other_file" };
     return copy.resumeFile ? { values: [copy.resumeFile], source: "profile", key: "resume_file" } : { skip: "no_data", key: "resume_file" };
   }
-  // A lone checkbox is almost always an agreement: never ticked for the user.
-  if (field.kind === "checkbox") return { skip: "consent" };
+  // A lone checkbox that reads like an agreement was stopped by the guard
+  // above (only the user ticks those). Any other is a yes/no question
+  // ("I currently have secondary employment", spec 034).
+  if (field.kind === "checkbox") return yesNoBox(field, copy);
   const key = profileKeyFor(field); // never the user's own details for someone else
   // What the user taught beats the profile (spec 020): correct a box once and
   // every site asking it gets the correction.
@@ -230,6 +262,13 @@ export function resolve(field, copy) {
     if (values.length) return { values, source: "profile", key };
   }
   if (learned?.tier === "close") return use(learned);
+  // "Have you previously been employed by Northwind?" (spec 034): from the
+  // job history, when the company is known; the user's own answer for this
+  // company (a site answer, above) wins.
+  if (!key && CHOICE_KINDS.has(field.kind)) {
+    const former = formerEmployerAnswer(field.question, copy);
+    if (former) return { values: [former], source: "history", key: "former_employer" };
+  }
   const offer = learned?.tier === "offer" ? { offer: learned.answer } : {};
   if (key) return { skip: "no_data", key, ...offer };
   // A question about someone else: a remembered answer is fine, a guess from

@@ -324,6 +324,22 @@ export function DidItGo({ run }: { run: ApplyRun }) {
 export function Readiness({ run, open }: { run: ApplyRun; open: boolean }) {
   const jc = run.job_catcher;
   if (!open || !jc) return null;
+  // Out of date comes first (spec 034): fixed bugs keep happening on an old one.
+  if (jc.outdated && jc.version) {
+    return (
+      <section className="space-y-1 rounded-lg border border-amber-500/50 bg-amber-500/5 p-3 text-sm" role="status" data-testid="jc-outdated">
+        <p className="flex items-center gap-1.5 font-medium">
+          <AlertTriangle className="h-4 w-4 text-amber-600" aria-hidden /> Job Catcher {jc.version} is out of date: update before you start.
+        </p>
+        <p>
+          The newest is {jc.latest}. Takes 1 minute, and you stay signed in.{" "}
+          <Link className="underline" to="/job-catcher#update">
+            How to update
+          </Link>
+        </p>
+      </section>
+    );
+  }
   if (jc.ready) {
     return (
       <p className="flex items-center gap-1.5 text-xs text-muted-foreground">

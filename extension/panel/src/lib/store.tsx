@@ -7,7 +7,8 @@ import { appUrl, send, targetTab } from "./chrome";
 import { useClaudeUrlState } from "./claudeUrl";
 
 // `latest`: the newest Job Catcher release, when this one is older (spec 019).
-type Auth = { state: "loading" | "in" | "out"; email: string; latest?: string | null };
+// `version`: this Job Catcher's own version (the update card says both).
+type Auth = { state: "loading" | "in" | "out"; email: string; latest?: string | null; version?: string };
 
 /** One field autofill filled, in one frame of the tab (session.js report). */
 export interface FillEntry {
@@ -15,7 +16,7 @@ export interface FillEntry {
   frameId: number;
   label: string;
   kind: string;
-  source: "profile" | "learned" | "ai";
+  source: "profile" | "learned" | "ai" | "history";
   value: string;
   options: string[];
   can_undo: boolean;
@@ -31,6 +32,22 @@ export interface FillNeed {
   options: string[];
   /** An essay answer saved before, offered with "Use saved answer" (spec 018). */
   saved?: string;
+  /** The profile answer a "Not in your profile yet" box wants (Add to profile, spec 034). */
+  key?: string;
+}
+/** A box that already held the right answer (Chrome's own autofill): "Already filled". */
+export interface FillAlready {
+  id: string;
+  frameId: number;
+  label: string;
+  kind: string;
+  value: string;
+}
+/** A Submit just tracked on this tab (spec 034): saved now (`created`) or moved. */
+export interface Tracked {
+  created: boolean;
+  title: string;
+  at: number;
 }
 /** An answer saved automatically on this tab (spec 018), shown with Edit / Undo. */
 export interface SavedAnswer {
@@ -63,6 +80,8 @@ export interface FillStatus {
   need?: number;
   /** fields the frames could see (0: blind, even after reading again) */
   seen?: number;
+  /** boxes that already held the right answer */
+  already?: number;
   problem?: "signed_out" | "asleep" | "refresh" | "slow";
   at: number;
 }
@@ -70,6 +89,8 @@ export interface FillStatus {
 export interface Presence {
   form: boolean;
   app: boolean;
+  /** An applicant system's Create Account page (spec 034): email only. */
+  signup?: boolean;
   fields: number;
   status: FillStatus | null;
 }
@@ -104,8 +125,10 @@ export type Fill = {
   presence: Presence | null;
   pick: Pick | null;
   saved: SavedAnswer[];
+  already: FillAlready[];
+  tracked: Tracked | null;
 };
-const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null, pick: null, saved: [] };
+const NO_FILL: Fill = { entries: [], needYou: [], suggestions: [], frameIds: [], pending: { answers: [], profile: {} }, keep: false, presence: null, pick: null, saved: [], already: [], tracked: null };
 type Saved = { jobs: SavedJob[]; loaded: boolean; error: string | null };
 type Tab = { id: number | null; url: string; title: string; ctx: PageContext };
 
@@ -153,16 +176,23 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
     if (fillFor.current !== id) return; // the panel moved to another tab
     const frames = (res?.frames || {}) as Record<
       string,
-      { entries?: Omit<FillEntry, "frameId">[]; need_you?: Omit<FillNeed, "frameId">[]; suggestions?: Omit<FillSuggestion, "frameId">[] }
+      {
+        entries?: Omit<FillEntry, "frameId">[];
+        need_you?: Omit<FillNeed, "frameId">[];
+        suggestions?: Omit<FillSuggestion, "frameId">[];
+        already?: Omit<FillAlready, "frameId">[];
+      }
     >;
     const entries: FillEntry[] = [];
     const needYou: FillNeed[] = [];
     const suggestions: FillSuggestion[] = [];
+    const already: FillAlready[] = [];
     for (const [fid, f] of Object.entries(frames)) {
       const frameId = Number(fid);
       for (const e of f.entries || []) entries.push({ ...e, frameId });
       for (const n of f.need_you || []) needYou.push({ ...n, frameId });
       for (const g of f.suggestions || []) suggestions.push({ ...g, frameId });
+      for (const a of f.already || []) already.push({ ...a, frameId });
     }
     setFill({
       entries,
@@ -174,6 +204,8 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
       presence: (res?.presence as Presence) || { form: false, app: false, fields: 0, status: null },
       pick: (res?.pick as Pick) || null,
       saved: (res?.saved as SavedAnswer[]) || [],
+      already,
+      tracked: (res?.tracked as Tracked) || null,
     });
   }, []);
 
@@ -232,7 +264,7 @@ export function PanelProvider({ children }: { children: React.ReactNode }) {
   const refreshAuth = React.useCallback(async () => {
     const res = await send({ type: "authStatus" });
     if (res?.signedIn) {
-      setAuth({ state: "in", email: res.email || "", latest: res.updateAvailable ? res.latest : null });
+      setAuth({ state: "in", email: res.email || "", latest: res.updateAvailable ? res.latest : null, version: res.version || "" });
       sync.reset();
       sync.check({ force: true });
     } else {

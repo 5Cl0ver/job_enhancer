@@ -57,8 +57,14 @@ export function detectContext(url: string, appUrl = ""): PageContext {
     return { kind: "application", site: "Greenhouse", autoTracked: true, indeed: false };
   if (/(^|\.)lever\.co$/i.test(host))
     return { kind: "application", site: "Lever", autoTracked: true, indeed: false };
-  if (/\.myworkdayjobs\.com$/i.test(host) && /\b(apply|application)/i.test(path))
-    return { kind: "application", site: "Workday", autoTracked: true, indeed: false };
+  // Workday: only its apply steps (…/apply, …/apply/applyManually) are an
+  // application; a job page is a job, even one called "Applications
+  // Developer" (spec 034).
+  if (/\.(myworkdayjobs|myworkdaysite)\.com$/i.test(host)) {
+    return /\/(apply|application)(\/|$)/i.test(path)
+      ? { kind: "application", site: "Workday", autoTracked: true, indeed: false }
+      : { kind: "page", site: siteLabel(host) };
+  }
   // The other applicant systems (Paycom, Paylocity, UKG, ADP…): one list,
   // shared with the page (src/autofill/hosts.js). Workday's job listings
   // aren't applications: only its apply path (above) is.

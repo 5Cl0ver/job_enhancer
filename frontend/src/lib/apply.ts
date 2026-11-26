@@ -185,6 +185,9 @@ export interface JobCatcherStatus {
   needs: string;
   /** New enough for the live view, the run's own résumé and the photo fix (spec 026). */
   live?: boolean;
+  /** The newest release, and whether this Job Catcher is older (spec 034). */
+  latest?: string | null;
+  outdated?: boolean;
 }
 
 export interface ApplyEvent {

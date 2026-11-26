@@ -21,9 +21,11 @@ const FLASH_MS = 4000;
 const FRAME_TIMEOUT_MS = 90_000; // an AI pass on a long form can take a while
 
 /**
- * @param {{notify: (tabId: number) => void}} deps  tells the panel to re-read
+ * @param {{notify: (tabId: number) => void, idleBadge?: () => Promise<{text: string, color?: string}>}} deps
+ *   notify: tells the panel to re-read. idleBadge: what the icon shows when
+ *   no fill result is showing ("NEW" for an out-of-date Job Catcher, spec 034).
  */
-export function createFillPresence({ notify }) {
+export function createFillPresence({ notify, idleBadge = async () => ({ text: "" }) }) {
   // One write at a time: frames reporting together must not overwrite each
   // other's read-modify-write.
   let writes = Promise.resolve();
@@ -47,6 +49,8 @@ export function createFillPresence({ notify }) {
     return {
       form: list.some((p) => p.form),
       app: list.some((p) => p.app),
+      // An applicant system's Create Account page (spec 034): email only.
+      signup: list.some((p) => p.signup),
       fields: list.reduce((n, p) => n + (p.fields || 0), 0),
       status: status || null,
     };
@@ -55,9 +59,13 @@ export function createFillPresence({ notify }) {
   async function badge(tabId) {
     if (flashing.has(tabId)) return;
     const { form } = await get(tabId);
+    // An out-of-date Job Catcher says so (spec 034): "NEW" beats the ⚡; only a
+    // fill's result (the flash) shows over it, for a few seconds.
+    const idle = await idleBadge().catch(() => ({ text: "" }));
+    const text = idle.text || (form ? "⚡" : "");
     try {
-      await chrome.action.setBadgeText({ tabId, text: form ? "⚡" : "" });
-      if (form) await chrome.action.setBadgeBackgroundColor({ tabId, color: BADGE.ready });
+      await chrome.action.setBadgeText({ tabId, text });
+      if (text) await chrome.action.setBadgeBackgroundColor({ tabId, color: idle.text ? idle.color || BADGE.problem : BADGE.ready });
     } catch {
       /* the tab closed */
     }
@@ -85,6 +93,7 @@ export function createFillPresence({ notify }) {
         held.frames[frameId] = {
           form: true,
           app: !!presence.app,
+          signup: !!presence.signup,
           fields: Number(presence.fields) || 0,
           inModal: !!presence.inModal,
           at: Date.now(),
@@ -132,7 +141,7 @@ export function createFillPresence({ notify }) {
       await chrome.storage.session.remove([formKey(tabId), statusKey(tabId)]).catch(() => {});
       clearTimeout(flashing.get(tabId));
       flashing.delete(tabId);
-      chrome.action.setBadgeText({ tabId, text: "" }).catch(() => {});
+      await badge(tabId);
       notify(tabId);
     });
   }
@@ -170,7 +179,21 @@ export function createFillPresence({ notify }) {
     }
     probe(tabId);
     await new Promise((r) => setTimeout(r, 700)); // the frames' reports land
-    return { ok: true, frames: results.length, injected: dead.length, ...(await get(tabId)) };
+    // What every frame really sees (spec 034): boxes even on a page that isn't
+    // a form to fill (a sign-in page), so the panel never says "no boxes"
+    // when there are some.
+    const seen = await chrome.scripting
+      .executeScript({ target: { tabId, allFrames: true }, injectImmediately: true, func: () => globalThis.__jecAutofill?.presence?.() ?? null })
+      .catch(() => []);
+    const frames = seen.map((r) => r.result).filter(Boolean);
+    return {
+      ok: true,
+      frames: results.length,
+      injected: dead.length,
+      ...(await get(tabId)),
+      seen: frames.reduce((n, p) => n + (p.fields || 0), 0),
+      password: frames.some((p) => p.password),
+    };
   }
 
   /** "Copy what Job Catcher saw": every frame's scan report (never values). */
@@ -254,6 +277,7 @@ export function createFillPresence({ notify }) {
     const ok = replies.filter((r) => r?.ok);
     const filled = ok.reduce((n, r) => n + (r.filled || 0), 0);
     const need = ok.reduce((n, r) => n + (r.need || 0), 0);
+    const already = ok.reduce((n, r) => n + (r.already || 0), 0);
     const seen = ok.reduce((n, r) => n + (r.seen ?? 1), 0);
     const r = replies.find((x) => x && !x.ok) || {};
     // Already filling (a new step, keep filling): that run reports its own result.
@@ -265,9 +289,9 @@ export function createFillPresence({ notify }) {
     const blind = !retry && !waiting && (ok.length ? seen === 0 && !filled : replies.every((x) => !x || !x.ok));
     if (blind) return { blind: true };
     if (ok.length) {
-      await setStatus(tabId, { phase: "done", filled, need, seen });
-      flash(tabId, String(filled), filled ? BADGE.done : BADGE.problem);
-      return { result: { ok: true, filled, need, seen } };
+      await setStatus(tabId, { phase: "done", filled, need, seen, already });
+      flash(tabId, String(filled), filled || already ? BADGE.done : BADGE.problem);
+      return { result: { ok: true, filled, need, seen, already } };
     }
     const problem = r.signedIn === false ? "signed_out" : r.unreachable ? "asleep" : r.slow ? "slow" : "refresh";
     await setStatus(tabId, { phase: "problem", problem });
@@ -275,5 +299,5 @@ export function createFillPresence({ notify }) {
     return { result: { ok: false, problem, filled: 0, need: 0 } };
   }
 
-  return { get, storePresence, frameStatus, clear, probe, press, readAgain, report };
+  return { get, storePresence, frameStatus, clear, probe, press, readAgain, report, badge };
 }

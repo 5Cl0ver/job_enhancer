@@ -8,6 +8,7 @@ import { ClipboardCopy, MousePointerClick, RefreshCw } from "lucide-react";
 import { Button, InfoBubble, Muted, Textarea } from "@/ui";
 import { HELP } from "@/lib/help";
 import { copyText, send } from "@/lib/chrome";
+import { readAgainSays } from "@/lib/readAgain";
 import { formatReport } from "../../../src/autofill/report.js";
 
 export function Trouble({ tabId, onPoint, quiet = false }: { tabId: number | null; onPoint?: () => void; quiet?: boolean }) {
@@ -22,8 +23,7 @@ export function Trouble({ tabId, onPoint, quiet = false }: { tabId: number | nul
     setRead("");
     const res = await send({ type: "readAgain", tabId });
     setReading(false);
-    if (!res?.ok) setRead("Chrome doesn't let extensions read this page.");
-    else setRead(res.form ? `Read again: found ${res.fields} box${res.fields === 1 ? "" : "es"}.` : "Read again: still no boxes Job Catcher can fill.");
+    setRead(readAgainSays(res));
   }
 
   async function copy() {

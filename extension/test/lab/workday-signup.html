@@ -1,0 +1,44 @@
+<!doctype html>
+<!-- Lab page (invented company, spec 034): Workday's Create Account step.
+     An email box (Workday's is type="text"), two password boxes and the
+     agreement — Job Catcher fills the email only: never a password, never the
+     agreement. window.__formData() holds what the PAGE has taken. -->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Create Account - Northwind Labs Careers</title>
+    <style>.field { margin: 8px 0; } label { display: block; }</style>
+  </head>
+  <body>
+    <h1 data-automation-id="jobPostingHeader">Applications Developer II</h1>
+    <h2 data-automation-id="createAccountHeader">Create Account</h2>
+    <form id="signup" onsubmit="return false">
+      <div class="field" data-automation-id="formField-email">
+        <label for="email">Email Address <abbr title="required">*</abbr></label>
+        <input type="text" id="email" data-automation-id="email" />
+      </div>
+      <div class="field" data-automation-id="formField-password">
+        <label for="password">Password <abbr title="required">*</abbr></label>
+        <input type="password" id="password" data-automation-id="password" />
+      </div>
+      <div class="field" data-automation-id="formField-verifyPassword">
+        <label for="verifyPassword">Verify New Password <abbr title="required">*</abbr></label>
+        <input type="password" id="verifyPassword" data-automation-id="verifyPassword" />
+      </div>
+      <div class="field" data-automation-id="formField-createAccountCheckbox">
+        <input type="checkbox" id="agree" data-automation-id="createAccountCheckbox" />
+        <label for="agree">Yes, I have read and consent to the Terms and Conditions</label>
+      </div>
+      <button type="button" data-automation-id="createAccountSubmitButton">Create Account</button>
+    </form>
+    <script>
+      const data = {};
+      window.__formData = () => JSON.parse(JSON.stringify(data));
+      for (const input of document.querySelectorAll("input")) {
+        const save = () => (data[input.id] = input.type === "checkbox" ? input.checked : input.value);
+        input.addEventListener("input", save);
+        input.addEventListener("change", save);
+      }
+    </script>
+  </body>
+</html>

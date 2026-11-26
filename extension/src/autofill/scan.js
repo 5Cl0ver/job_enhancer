@@ -6,6 +6,7 @@
 // the extension — closed). Frames are NOT walked: each frame runs its own copy
 // of the script, and one press fills them all.
 import { normalizeQuestion } from "./classify/answers.js";
+import { AGREEMENT_OPTION } from "./classify/profileKeys.js";
 import { applicantHost, isApplyUrl } from "./hosts.js";
 import { isOnScreen } from "./visible.js";
 import { uploadKind } from "./resolve.js";
@@ -246,6 +247,48 @@ export function fieldId(el) {
   return ids.get(el);
 }
 
+// A question's own box: Workday's formField wrapper, a fieldset, a group.
+const CHOICE_BOX = '[data-automation-id*="formField"], fieldset, [role=group]';
+const TYPED_BOX = 'input:not([type=checkbox]):not([type=hidden]):not([type=submit]):not([type=button]), select, textarea, [role=combobox]';
+
+/**
+ * The box a nameless checkbox shares with the other choices of its question
+ * (spec 034): its closest question box, when that box holds two or more
+ * checkboxes, nothing to type in, and a question of its own (a legend, a
+ * group name, or a label for the box). Null for a checkbox on its own.
+ *
+ * Never a list with an agreement among its boxes (spec 034 review): each box
+ * stays on its own, so the agreement is guarded by its own words. A list
+ * with a self-ID answer among its boxes ("Yes, I have a disability") IS one
+ * list, so the whole question is the user's (guardReason reads every option).
+ */
+function choiceBox(el) {
+  const box = el.closest?.(CHOICE_BOX);
+  const boxes = box ? [...box.querySelectorAll('input[type="checkbox"]')] : [];
+  if (boxes.length < 2) return null;
+  if (box.querySelector(TYPED_BOX)) return null;
+  if (boxes.some((b) => AGREEMENT_OPTION.test(labelForOption(b)))) return null;
+  const root = box.getRootNode?.() || box.ownerDocument;
+  const legend = box.tagName === "FIELDSET" ? box.querySelector(":scope > legend") : box.querySelector("legend");
+  const named =
+    (legend && textOf(legend)) ||
+    clean(box.getAttribute("aria-label")) ||
+    (box.getAttribute("aria-labelledby") ? byIds(root, box.getAttribute("aria-labelledby")) : "") ||
+    // Workday: "<label>Question</label>" (not any checkbox's own label) as the box's first text.
+    [...box.querySelectorAll("label, [data-automation-id*=label], [data-automation-id*=Label]")].some(
+      (l) => !l.querySelector('input[type="checkbox"]') && !(l.htmlFor && box.querySelector(`#${esc(l.htmlFor)}[type="checkbox"]`)) && textOf(l),
+    );
+  return named ? box : null;
+}
+
+/** Does the page say the box must be answered (required, aria-required, a "*" by its label)? */
+export function isRequired(el) {
+  if (el.required || el.getAttribute?.("aria-required") === "true") return true;
+  const root = el.getRootNode?.() || el.ownerDocument;
+  const label = (el.id && root.querySelector?.(`label[for="${esc(el.id)}"]`)) || el.closest?.("label");
+  return !!label && /[*✱]|\(required\)/i.test(label.textContent || "");
+}
+
 function labelForOption(el) {
   return textOf(el.closest?.("label") || el) || questionFor(el) || clean(el.value);
 }
@@ -346,6 +389,7 @@ export function collectFields(root, opts = {}) {
     maxLength: Number(el.getAttribute?.("maxlength")) || 0,
     section: sectionHeading(el),
     group: groupTitle(el),
+    required: isRequired(el),
   });
 
   for (const el of els) {
@@ -358,7 +402,10 @@ export function collectFields(root, opts = {}) {
       if (type === "radio" || type === "checkbox") {
         if (!choiceVisible(el, visible)) continue;
         const name = el.getAttribute("name") || "";
-        const key = `${type}|${name || fieldId(el)}`;
+        // Workday's checkboxes often have no shared name: the ones in one
+        // question's box are one list (spec 034), never separate lone boxes.
+        const box = !name && type === "checkbox" ? choiceBox(el) : null;
+        const key = `${type}|${name || (box ? `box:${fieldId(box)}` : fieldId(el))}`;
         if (!groups.has(key)) groups.set(key, { type, members: [], root: el.getRootNode() });
         groups.get(key).members.push(el);
         continue;
@@ -553,13 +600,51 @@ function comboQuestion(el) {
   return (legend && textOf(legend)) || questionFor(el);
 }
 
+/** A visible password box on the page (a sign-in or sign-up page). */
+export function passwordShown(doc) {
+  return passwordCount(doc) > 0;
+}
+
+function passwordCount(doc) {
+  return [...(doc?.querySelectorAll?.('input[type="password"]') || [])].filter((el) => isVisible(el)).length;
+}
+
+const EMAILISH = /\be-?mail\b/i;
+// The page says it's making an account (a sign-in page doesn't).
+const CREATING = /\bcreate (an |your |a new )?account\b|\bsign[\s-]?up\b|\bregister\b|\bnew (user|account)\b/i;
+
+/**
+ * An applicant system's Create Account page (spec 034): on an application
+ * host (Workday, Greenhouse…), an email box beside password boxes. Job
+ * Catcher fills the email (and "confirm email") only — never a password.
+ * A job board's sign-in page is never one (not an application host).
+ */
+export function isSignupPage(fields) {
+  const doc = fields[0]?.el?.ownerDocument;
+  if (!doc || !applicantHost(doc.defaultView?.location?.href || "")) return false;
+  if (!passwordShown(doc)) return false;
+  // A register-and-apply form (Taleo, iCIMS, SuccessFactors: name, phone,
+  // city… beside a password) is an application: filled as usual (never the
+  // password). Only a short Create Account page is sign-up only.
+  if (fields.length >= 6) return false;
+  // Creating an account: a password and its repeat, or a heading that says
+  // so. A sign-in page (one password, even with a "Create Account" button
+  // beside it) stays not a form.
+  const creating =
+    passwordCount(doc) >= 2 || [...doc.querySelectorAll("h1, h2, h3, [role=heading]")].some((n) => CREATING.test(n.textContent || ""));
+  if (!creating) return false;
+  return fields.some(
+    (f) => f.kind === "text" && (f.hints?.type === "email" || /\bemail\b/i.test(f.hints?.autocomplete || "") || EMAILISH.test(f.question || "")),
+  );
+}
+
 /** Does this page look like a job application (not a sign-in, a search, or a
  *  page that merely has an upload box)? Two fields the profile answers, at
- *  least one of them about the person (or a résumé upload), and no password. */
+ *  least one of them about the person (or a résumé upload), and no password —
+ *  except an applicant system's Create Account page (spec 034). */
 export function looksLikeApplication(fields, { isIdentity, isMapped }) {
   const root = fields[0]?.el?.ownerDocument;
-  const password = root?.querySelector?.('input[type="password"]');
-  if (password && isVisible(password)) return false;
+  if (passwordShown(root)) return isSignupPage(fields);
   const mapped = fields.filter(isMapped);
   if (mapped.length >= 2 && mapped.some(isIdentity)) return true;
   // A question-only step (Workday's "Application Questions", "Voluntary
@@ -576,13 +661,13 @@ const PERSON_AUTOCOMPLETE = /\b(name|given-name|family-name|email|tel|tel-nation
  * the side panel offers Autofill — never a guess about the address alone:
  * 3+ fillable fields; or 2+ fields the site marks with autocomplete, or on an
  * applicant system; or an application. A visible password box means a sign-in
- * page, unless it's one of the sign-up-and-apply forms with 6+ other fields.
+ * page, unless it's one of the sign-up-and-apply forms with 6+ other fields,
+ * or an applicant system's Create Account page (spec 034).
  */
 export function hasFormHere(fields, { isApplication }) {
   const root = fields[0]?.el?.ownerDocument;
   if (!root) return false;
-  const password = [...root.querySelectorAll('input[type="password"]')].some((el) => isVisible(el));
-  if (password) return fields.length >= 6;
+  if (passwordShown(root)) return fields.length >= 6 || isSignupPage(fields);
   if (fields.length >= 3) return true;
   if (fields.filter((f) => PERSON_AUTOCOMPLETE.test(f.hints?.autocomplete || "")).length >= 2) return true;
   if (fields.length >= 2 && applicantHost(root.defaultView?.location?.href || "")) return true;

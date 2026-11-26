@@ -7,7 +7,7 @@ import {
   useJobCatcherRelease,
   type JobCatcherConnection,
 } from "@/hooks/useJobCatcher";
-import { DOWNLOAD_URL, isOlder } from "@/lib/jobCatcher";
+import { DOWNLOAD_URL, RECENT_MS, isOlder } from "@/lib/jobCatcher";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -21,9 +21,6 @@ import {
 } from "@/components/jobcatcher/InstallArt";
 import { CopyButton, ShareJobCatcherCard } from "@/components/jobcatcher/ShareCard";
 import { InfoBubble } from "@/components/common/InfoBubble";
-
-/** Recently seen: an old copy someone removed long ago doesn't count. */
-const RECENT_MS = 30 * 24 * 3600 * 1000;
 
 const STEPS = [
   { art: UnzipArt, text: "Unzip the download into a folder you'll keep, for example Documents › Job Catcher." },
@@ -66,10 +63,11 @@ export default function JobCatcherPage() {
         </p>
       </div>
 
-      <div role="note" className="rounded-lg border border-amber-500/40 bg-amber-500/10 p-3 text-sm">
-        <span className="font-medium">New in 0.35.0:</span> remove the old Job Catcher first, then load
-        the new folder and press Connect. You'll need to connect once; later updates keep you signed in.
-      </div>
+      {latest && release.data?.notes && (
+        <div role="note" data-testid="jc-whats-new" className="rounded-lg border bg-muted/40 p-3 text-sm">
+          <span className="font-medium">What's new in {latest}:</span> {release.data.notes}
+        </div>
+      )}
 
       <Card>
         <CardContent className="flex flex-col gap-3 pt-6">
@@ -85,12 +83,7 @@ export default function JobCatcherPage() {
                 <Check className="mr-1 h-3 w-3" /> Connected{newestVersion ? ` (${newestVersion})` : ""}
               </Badge>
             )}
-            {latest && (
-              <span className="text-sm text-muted-foreground">
-                Latest version {latest}
-                {release.data?.notes ? `: ${release.data.notes}` : ""}
-              </span>
-            )}
+            {latest && <span className="text-sm text-muted-foreground">Latest version {latest}</span>}
           </div>
           {phone ? <ShareJobCatcherCard /> : (
             <Button asChild size="lg" className="gap-2 self-start">
@@ -150,8 +143,9 @@ export default function JobCatcherPage() {
             <p className="font-medium">Updating</p>
             <p className="text-muted-foreground">
               Download the new zip and unzip it into the same folder, replacing the files. Then
-              press ↻ (reload) on Job Catcher in chrome://extensions. You stay signed in. (Coming
-              from a version before 0.35.0? Remove the old one and connect once instead, as above.)
+              press ↻ (reload) on Job Catcher in chrome://extensions. You stay signed in. Job
+              Catcher checks for a new version every few hours and shows NEW on its icon when one
+              is out.
             </p>
           </div>
           <div>
