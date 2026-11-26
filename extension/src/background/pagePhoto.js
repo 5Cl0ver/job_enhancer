@@ -1,24 +1,28 @@
 // A photo of the visible tab, shrunk for the app: Apply with Claude's page
 // photos (spec 022) and the owner's "Report a problem here" (spec 032) share
 // it. Chrome allows 2 captures a second across the whole extension, so every
-// capture notes its time and `captureSlot` waits for the next free one.
+// capture takes the next free slot first (reserved at once, so two callers at
+// the same moment get different slots) and waits for it.
 
 export const CAPTURE_GAP_MS = 550; // Chrome allows 2 captures a second
 const MAX_WIDTH = 1200;
 const MAX_BYTES = 390_000;
 
-let lastCapture = 0;
+let nextFree = 0;
 
-/** Wait until a capture is allowed again (the last one was ≥ 550 ms ago). */
-export async function captureSlot() {
-  const wait = CAPTURE_GAP_MS - (Date.now() - lastCapture);
-  if (wait > 0) await new Promise((r) => setTimeout(r, wait));
+/** Reserve the next capture slot now; resolves when it comes. */
+export function captureSlot() {
+  const now = Date.now();
+  const at = Math.max(now, nextFree);
+  nextFree = at + CAPTURE_GAP_MS;
+  const wait = at - now;
+  return wait > 0 ? new Promise((r) => setTimeout(r, wait)) : Promise.resolve();
 }
 
 /** The window's visible tab as a JPEG under 400 KB, or null (hidden, minimised). */
 export async function capture(c, windowId) {
+  await captureSlot();
   let url;
-  lastCapture = Date.now();
   try {
     url = await c.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 70 });
   } catch {
@@ -43,4 +47,9 @@ export async function shrink(blob) {
     if (out.size <= MAX_BYTES) return out;
   }
   return null;
+}
+
+/** Tests only: forget the slots taken. */
+export function resetCaptureSlots() {
+  nextFree = 0;
 }

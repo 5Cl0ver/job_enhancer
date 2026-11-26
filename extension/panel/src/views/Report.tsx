@@ -1,12 +1,15 @@
 // "Report a problem here" (spec 032): the app's owner only. A short note on
 // what happened, sent to Bugs & ideas with the page (its site and path, never
 // the query), Job Catcher's version and, if ticked, a picture of the page.
-// It sits under This page and never blocks the rest of the panel.
+// It sits under This page and never blocks the rest of the panel. A note is
+// always about the page it was written on: moving to another page closes the
+// form (the note is kept to send again here).
 import * as React from "react";
 import { Bug, Send } from "lucide-react";
 import { Alert, Button, Field, Textarea } from "@/ui";
 import { send } from "@/lib/chrome";
 import { usePanel } from "@/lib/store";
+import { placeOf } from "../../../src/background/bugReports.js";
 
 const PICTURE_SAYS: Record<string, string> = {
   sent: "Sent to Bugs & ideas, with a picture of the page.",
@@ -16,52 +19,70 @@ const PICTURE_SAYS: Record<string, string> = {
   changed: "Sent to Bugs & ideas, without a picture: the page changed.",
 };
 
+type Said = { tone: "success" | "error" | "info"; text: string };
+
 export function ReportProblem() {
   const { auth, tab } = usePanel();
-  const [open, setOpen] = React.useState(false);
+  const page: string = placeOf(tab.url);
+  // The page the open form is about (null: closed).
+  const [openOn, setOpenOn] = React.useState<string | null>(null);
   const [what, setWhat] = React.useState("");
   const [picture, setPicture] = React.useState(false);
   const [busy, setBusy] = React.useState(false);
-  const [done, setDone] = React.useState<{ ok: boolean; text: string } | null>(null);
-  React.useEffect(() => setDone(null), [tab.url]); // "Sent" was about the last page
+  const [said, setSaid] = React.useState<Said | null>(null);
+
+  // Another page: what was said was about the last one, and an open form
+  // closes rather than send its note with the wrong page.
+  React.useEffect(() => {
+    if (openOn != null && openOn !== page && !busy) {
+      setOpenOn(null);
+      setSaid({ tone: "info", text: "The page changed, so the report closed. Your note is kept: open it again to report this page." });
+    } else if (openOn == null) {
+      setSaid(null);
+    }
+    // Only when the page changes (openOn and busy are read as they are then).
+  }, [page]);
 
   // Owner only, and only on a web page (there's a page to name).
-  if (!auth.isOwner || tab.id == null || !/^https?:\/\//i.test(tab.url)) return null;
+  if (!auth.isOwner || tab.id == null || !page) return null;
 
   async function submit(e: React.FormEvent) {
     e.preventDefault();
-    if (!what.trim() || busy) return;
+    if (!what.trim() || busy || openOn == null) return;
     setBusy(true);
-    setDone(null);
-    const res = await send({ type: "reportProblem", tabId: tab.id, what: what.trim(), picture });
+    setSaid(null);
+    const res = await send({ type: "reportProblem", tabId: tab.id, page: openOn, what: what.trim(), picture });
     setBusy(false);
     if (res?.ok) {
-      setDone({ ok: true, text: PICTURE_SAYS[String(res.picture)] || PICTURE_SAYS.none });
+      setSaid({ tone: "success", text: PICTURE_SAYS[String(res.picture)] || PICTURE_SAYS.none });
       setWhat("");
       setPicture(false);
-      setOpen(false);
+      setOpenOn(null);
     } else {
-      setDone({ ok: false, text: res?.error || "Couldn't send it. Try again." });
+      setSaid({ tone: "error", text: res?.error || "Couldn't send it. Try again." });
     }
   }
 
   return (
     <div className="flex flex-col gap-2 border-t pt-3" data-testid="report-problem">
-      {!open && (
+      {openOn == null && (
         <button
           type="button"
           className="flex cursor-pointer items-center gap-1.5 self-start text-xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
           onClick={() => {
-            setOpen(true);
-            setDone(null);
+            setOpenOn(page);
+            setSaid(null);
           }}
         >
           <Bug className="size-3.5" aria-hidden />
           Report a problem here
         </button>
       )}
-      {open && (
+      {openOn != null && (
         <form className="flex flex-col gap-2" onSubmit={submit} aria-label="Report a problem">
+          <p className="truncate text-[11px] text-muted-foreground" title={openOn}>
+            About {openOn}
+          </p>
           <Field label="What happened?">
             {(id) => (
               <Textarea
@@ -90,13 +111,13 @@ export function ReportProblem() {
               {!busy && <Send />}
               Send
             </Button>
-            <Button type="button" variant="ghost" size="sm" onClick={() => setOpen(false)} disabled={busy}>
+            <Button type="button" variant="ghost" size="sm" onClick={() => setOpenOn(null)} disabled={busy}>
               Cancel
             </Button>
           </div>
         </form>
       )}
-      {done && <Alert tone={done.ok ? "success" : "error"}>{done.text}</Alert>}
+      {said && <Alert tone={said.tone}>{said.text}</Alert>}
     </div>
   );
 }

@@ -5,8 +5,10 @@
 import { describe, expect, it, vi } from "vitest";
 import {
   CAUGHT_EVERY_MS,
+  canRunHere,
   caughtBody,
   createCaughtReporter,
+  fillFailure,
   isSaveFailure,
   ownerReport,
   placeOf,
@@ -127,5 +129,31 @@ describe("Job Catcher's own failures", () => {
     expect(await r.report("crash", PAGE, "x")).toBe(false);
     expect(await r.report("fill_failed", "chrome://newtab", "x")).toBe(false);
     expect(send).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("which failed presses the owner hears about", () => {
+  it("only Job Catcher's own: too slow, or no answer from a page whose reader was there", () => {
+    expect(fillFailure({ problem: "slow", url: PAGE, hadForm: false })).toBe("Autofill took longer than 90 seconds on the page.");
+    expect(fillFailure({ problem: "refresh", url: PAGE, hadForm: true })).toBe("Autofill got no answer from the page.");
+    // No reader ever answered there (it can't run, or never loaded): not a bug.
+    expect(fillFailure({ problem: "refresh", url: PAGE, hadForm: false })).toBeNull();
+    expect(fillFailure({ problem: "signed_out", url: PAGE, hadForm: true })).toBeNull();
+    expect(fillFailure({ problem: "asleep", url: PAGE, hadForm: true })).toBeNull();
+  });
+
+  it("never pages Chrome keeps extensions off: the Web Store, PDFs, browser pages", () => {
+    for (const url of [
+      "https://chromewebstore.google.com/detail/abc",
+      "https://chrome.google.com/webstore/detail/abc",
+      "https://microsoftedge.microsoft.com/addons/detail/abc",
+      "https://acme.example/files/offer.pdf?dl=1",
+      "chrome://extensions",
+    ]) {
+      expect(canRunHere(url)).toBe(false);
+      expect(fillFailure({ problem: "slow", url, hadForm: true })).toBeNull();
+    }
+    expect(canRunHere("https://chrome.google.com/search")).toBe(true);
+    expect(canRunHere(PAGE)).toBe(true);
   });
 });

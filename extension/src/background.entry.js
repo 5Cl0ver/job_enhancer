@@ -15,8 +15,8 @@ import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
 import { createApplyRun } from "./background/applyRun.js";
-import { createCaughtReporter, isSaveFailure, ownerReport, placeOf } from "./background/bugReports.js";
-import { capture, captureSlot } from "./background/pagePhoto.js";
+import { createCaughtReporter, fillFailure, isSaveFailure, ownerReport, placeOf } from "./background/bugReports.js";
+import { capture } from "./background/pagePhoto.js";
 import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
 import { pageId, siteKey } from "./autofill/hosts.js";
@@ -541,21 +541,25 @@ const caught = createCaughtReporter({
   },
 });
 
-// A press that got no answer from the page is Job Catcher's failure (signed
-// out or the app asleep isn't).
-const FILL_PROBLEMS = {
-  refresh: "Autofill got no answer from the page.",
-  slow: "Autofill took longer than 90 seconds on the page.",
-};
-
-/** Press Autofill on a tab (panel, toolbar, shortcut, Claude) and keep a real failure. */
+/**
+ * Press Autofill on a tab (panel, toolbar, shortcut, Claude) and keep a real
+ * failure: a press that took too long, or got no answer from a page whose
+ * reader was there (it had reported a form). Never pages Job Catcher can't
+ * run on (the Web Store, a PDF), signed out or the app asleep.
+ */
 async function pressTab(tabId) {
+  const hadForm = await presence.get(tabId).then(
+    (p) => !!p?.form,
+    () => false,
+  );
   const out = await presence.press(tabId);
-  const said = FILL_PROBLEMS[out?.problem];
-  if (said) {
+  if (out?.problem) {
     chrome.tabs
       .get(tabId)
-      .then((t) => caught.report("fill_failed", t?.url, said))
+      .then((t) => {
+        const said = fillFailure({ problem: out.problem, url: t?.url, hadForm });
+        if (said) caught.report("fill_failed", t?.url, said);
+      })
       .catch(() => {});
   }
   return out;
@@ -1333,35 +1337,46 @@ async function pagePicture(tab) {
   if (!tab?.active) return { reason: "not_showing" };
   const win = await chrome.windows.get(tab.windowId).catch(() => null);
   if (!win || win.state === "minimized") return { reason: "not_showing" };
-  await captureSlot(); // Chrome allows 2 captures a second
-  const shot = await capture(chrome, tab.windowId);
+  const shot = await capture(chrome, tab.windowId); // waits for a free slot (2 a second)
   // Only this page: dropped if the tab or its page changed meanwhile.
   const now = await chrome.tabs.get(tab.id).catch(() => null);
   if (!now?.active || placeOf(now.url) !== placeOf(tab.url)) return { reason: "changed" };
   return shot ? { shot } : { reason: "failed" };
 }
 
-async function reportProblem({ tabId, what, picture }) {
+const NOT_OWNER = "Only the app's owner can send reports from here.";
+
+async function reportProblem({ tabId, what, picture, page }) {
   if (!String(what || "").trim()) return { ok: false, error: "Say what happened." };
   const token = await getValidToken();
   if (!token) return { ok: false, error: "Sign in to Job Catcher first." };
+  // The owner only, before anything is captured (the server checks again).
+  const { je_is_owner } = await chrome.storage.local.get("je_is_owner");
+  if (je_is_owner !== true) return { ok: false, error: NOT_OWNER };
   const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
   if (!tab || !placeOf(tab.url)) return { ok: false, error: "Open the page the problem is on, then report it." };
+  // The panel says which page the note was written on: never another one.
+  if (page != null && placeOf(tab.url) !== page) {
+    return { ok: false, error: "The page changed. Open the report again on this page." };
+  }
   // The picture first: the page as the owner sees it now.
   const photo = picture ? await pagePicture(tab) : { reason: "none" };
   const body = ownerReport({ what, url: tab.url, version: chrome.runtime.getManifest().version, browser: browserName() });
   const auth = { Authorization: `Bearer ${token}` };
+  // Wake a sleeping server with a harmless GET first; the report itself is
+  // sent once (a create is never retried: no duplicate reports).
+  await wakeFetch(`${cfg.API_BASE}/health`, {}).catch(() => null);
   let res;
   try {
-    res = await wakeFetch(`${cfg.API_BASE}/v1/admin/bugs`, {
-      method: "POST",
-      headers: { ...auth, "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
+    res = await fetchWithTimeout(
+      `${cfg.API_BASE}/v1/admin/bugs`,
+      { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      60_000,
+    );
   } catch {
-    return { ok: false, error: UNREACHABLE };
+    return { ok: false, error: `${UNREACHABLE} If it went through, it's in Bugs & ideas already.` };
   }
-  if (res.status === 403) return { ok: false, error: "Only the app's owner can send reports from here." };
+  if (res.status === 403) return { ok: false, error: NOT_OWNER };
   if (res.status === 401) return { ok: false, error: "Job Catcher is signed out. Sign in again, then send." };
   if (!res.ok) return { ok: false, error: friendlyApiError(res.status, await res.text().catch(() => "")) };
   const id = (await res.json().catch(() => null))?.report?.id || null;

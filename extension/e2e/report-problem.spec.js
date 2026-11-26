@@ -116,6 +116,45 @@ test("a report that can't be sent says why, and the panel carries on", async () 
   await Promise.all([tab.close(), panel.close()]);
 });
 
+test("a report is sent once, never retried on a slow or waking server", async () => {
+  api.state.isOwner = true;
+  const { tab, panel } = await pageAndPanel("/lab/posting.html");
+  await panel.getByRole("button", { name: "Report a problem here" }).click();
+  api.override("/v1/admin/bugs", { status: 503, body: { detail: "Waking up" } });
+  await panel.getByLabel("What happened?").fill("Something odd");
+  await panel.getByRole("button", { name: "Send" }).click();
+  await expect(panel.getByRole("alert")).toHaveText("Waking up");
+  expect(api.calls("/v1/admin/bugs")).toHaveLength(1);
+  await Promise.all([tab.close(), panel.close()]);
+});
+
+test("moving to another page closes the form: a note is never sent with the wrong page", async () => {
+  api.state.isOwner = true;
+  const { tab, tabId, panel } = await pageAndPanel("/lab/posting.html");
+  await panel.getByRole("button", { name: "Report a problem here" }).click();
+  await expect(panel.getByText("About localhost/lab/posting.html")).toBeVisible();
+  await panel.getByLabel("What happened?").fill("Save button missing");
+
+  await tab.goto(lab.url("/lab/classic.html"));
+  await expect(panel.getByText("The page changed, so the report closed.", { exact: false })).toBeVisible({ timeout: 10000 });
+  await expect(panel.getByRole("form", { name: "Report a problem" })).toHaveCount(0);
+  // Open again: the note is kept, now about this page.
+  await panel.getByRole("button", { name: "Report a problem here" }).click();
+  await expect(panel.getByText("About localhost/lab/classic.html")).toBeVisible();
+  await expect(panel.getByLabel("What happened?")).toHaveValue("Save button missing");
+  expect(api.state.bugs).toEqual([]);
+
+  // The background checks too: a note written on another page is refused.
+  const res = await ext.bg({ type: "reportProblem", tabId, page: "localhost/lab/posting.html", what: "x", picture: false });
+  expect(res).toEqual({ ok: false, error: "The page changed. Open the report again on this page." });
+  expect(api.calls("/v1/admin/bugs")).toHaveLength(0);
+
+  await panel.getByRole("button", { name: "Send" }).click();
+  await expect(panel.getByText("Sent to Bugs & ideas.", { exact: true })).toBeVisible({ timeout: 15000 });
+  expect(api.state.bugs.map((b) => b.place)).toEqual(["localhost/lab/classic.html"]);
+  await Promise.all([tab.close(), panel.close()]);
+});
+
 test("nobody else sees the link, and the background refuses them too", async () => {
   const { tab, tabId, panel } = await pageAndPanel("/lab/posting.html");
   await expect(panel.getByRole("heading", { name: "Save this job" })).toBeVisible();
@@ -125,6 +164,8 @@ test("nobody else sees the link, and the background refuses them too", async () 
 
   const res = await ext.bg({ type: "reportProblem", tabId, what: "Not mine to send", picture: true });
   expect(res).toEqual({ ok: false, error: "Only the app's owner can send reports from here." });
+  // Refused before any picture is taken or anything is sent.
+  expect(api.calls("/v1/admin/bugs")).toHaveLength(0);
   expect(api.state.bugShots).toEqual([]);
   await Promise.all([tab.close(), panel.close()]);
 });

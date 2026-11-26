@@ -68,6 +68,34 @@ export function isSaveFailure(message) {
   return !!m && !/already in your tracker|already saved|NOT_SIGNED_IN|not signed in|sign in/i.test(m);
 }
 
+// Pages where Chrome never lets an extension's scripts run: a press there
+// failing isn't Job Catcher's bug.
+const NO_SCRIPTS = /^(chromewebstore\.google\.com|chrome\.google\.com\/webstore|microsoftedge\.microsoft\.com\/addons)(\/|$)/i;
+
+/** Can Job Catcher's reader run on this page at all? */
+export function canRunHere(url) {
+  const place = placeOf(url);
+  return !!place && !NO_SCRIPTS.test(place) && !/\.pdf$/i.test(place);
+}
+
+export const FILL_PROBLEMS = {
+  refresh: "Autofill got no answer from the page.",
+  slow: "Autofill took longer than 90 seconds on the page.",
+};
+
+/**
+ * What to tell the owner about a press that failed, or null. Only Job
+ * Catcher's own failures: a press that took too long, or got no answer from
+ * a page whose reader was there (`hadForm`: it had reported a form). Never a
+ * page scripts can't run on, signed out or the app asleep.
+ */
+export function fillFailure({ problem, url, hadForm }) {
+  if (!canRunHere(url)) return null;
+  if (problem === "slow") return FILL_PROBLEMS.slow;
+  if (problem === "refresh" && hadForm) return FILL_PROBLEMS.refresh;
+  return null;
+}
+
 /** The body for POST /v1/bugs/caught. */
 export function caughtBody({ kind, url, message, version }) {
   return {
