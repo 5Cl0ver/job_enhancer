@@ -405,6 +405,64 @@ describe("Bugs & ideas", () => {
     expect(within(report).queryByRole("link")).not.toBeInTheDocument();
   });
 
+  it("shows your AI's reports and Claude's fix waiting for your check (part C)", async () => {
+    const user = userEvent.setup();
+    const fixed: BugDetail = {
+      ...DETAIL,
+      source: "owner_ai",
+      status: "fixed",
+      fixed_in: "PR #71",
+      needs_check: true,
+      events: [
+        {
+          id: "e3",
+          kind: "note",
+          by: "claude",
+          at: "2026-11-26T09:00:00Z",
+          data: { text: "Skipped extension boxes." },
+        },
+        {
+          id: "e4",
+          kind: "status",
+          by: "claude",
+          at: "2026-11-26T09:00:00Z",
+          data: { from: "new", to: "fixed", fixed_in: "PR #71" },
+        },
+      ],
+    };
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/users/me")
+        return Promise.resolve({ id: "u1", role: "admin" });
+      if (path.startsWith("/v1/admin/bugs?"))
+        return Promise.resolve({
+          ...LIST,
+          items: [{ ...BASE, source: "owner_ai", needs_check: true }],
+          total: 1,
+        });
+      return Promise.resolve(fixed);
+    });
+    patch.mockResolvedValue({ ...fixed, needs_check: false });
+    wrap("/admin/bugs?id=b1");
+    const list = await screen.findByRole("list", { name: "Bugs" });
+    const row = within(list).getByRole("button");
+    expect(row).toHaveTextContent("Your AI");
+    expect(row).toHaveTextContent("Needs your check");
+    const report = await screen.findByRole("article");
+    expect(
+      within(report).getByText("Fixed by Claude: needs your check"),
+    ).toBeInTheDocument();
+    expect(within(report).getByText("Your AI")).toBeInTheDocument();
+    expect(
+      within(report).getByText("Skipped extension boxes."),
+    ).toBeInTheDocument();
+    await user.click(within(report).getByRole("button", { name: "Looks fixed" }));
+    await waitFor(() =>
+      expect(patch).toHaveBeenCalledWith("/v1/admin/bugs/b1", {
+        checked: true,
+      }),
+    );
+  });
+
   it("says so when a change, a merge or a link doesn't save", async () => {
     const user = userEvent.setup();
     patch.mockRejectedValue(new Error("offline"));
