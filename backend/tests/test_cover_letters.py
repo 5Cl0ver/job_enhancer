@@ -232,8 +232,10 @@ async def test_not_while_the_user_reviews_the_application(engine, monkeypatch):
         run = await svc.get_run(db, user.id, run_id, lock=True)
         run.status = "review"
         await db.commit()
-    with pytest.raises(ValueError, match="with the user"):
-        await mcp_mod.save_cover_letter(str(run_id), LETTER)
+    # Not now, and what to do instead (spec 033): never an error.
+    out = await mcp_mod.save_cover_letter(str(run_id), LETTER)
+    assert out["ok"] is False and "with the user" in out["not_now"]
+    assert "wait_for_you" in out["next"]
 
 
 @pytest.mark.asyncio

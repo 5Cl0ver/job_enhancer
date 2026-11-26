@@ -138,7 +138,12 @@ async def test_the_app_knows_when_claude_stopped(engine, monkeypatch):
         assert svc.claude_stopped(run) is False
         old = svc._now() - timedelta(minutes=4)
         run.claude_at, run.last_activity_at = old, old
+        # While filling, Claude clicks through pages for minutes without a
+        # call (spec 033): 8 minutes, not 3.
+        assert svc.claude_stopped(run) is False
+        run.claude_at = svc._now() - timedelta(minutes=9)
         assert svc.claude_stopped(run) is True
+        run.claude_at = old
         # The user's turn (a question open) is never "stopped".
         run.status, run.help = "needs_you", {"what": "x", "done_at": None}
         assert svc.claude_stopped(run) is False
@@ -317,7 +322,7 @@ async def test_messages_dont_hide_that_claude_stopped(engine, monkeypatch):
     maker, user, run_id, rid = await _filling(engine, monkeypatch)
     async with maker() as db:
         run = await db.get(ApplyRun, run_id)
-        run.claude_at = svc._now() - timedelta(minutes=5)
+        run.claude_at = svc._now() - timedelta(minutes=9)
         run.events = []
         await db.commit()
         await svc.post_message(db, user.id, run_id, "are you there?")

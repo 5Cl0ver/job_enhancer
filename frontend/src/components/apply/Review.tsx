@@ -1,19 +1,21 @@
 import { useState } from "react";
-import { Loader2, Send, Wrench, MousePointerClick } from "lucide-react";
+import { ChevronDown, Loader2, MousePointerClick, Send, Wrench } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
-import { AnswerBubble, FixSheet, FixTray } from "@/components/apply/Bubbles";
+import { FixTray, RowButton, useFixer } from "@/components/apply/Bubbles";
 import { Pages } from "@/components/apply/Pages";
+import { StepGroup, useOpenSteps } from "@/components/apply/YourApplication";
 import { useDecide, useMarkSent } from "@/hooks/useApply";
 import { useIsPhone } from "@/hooks/useIsPhone";
-import { type ApplyPage, type ApplyRun, type Fix, type PageAnswer, checkFirst, fixKey } from "@/lib/apply";
+import { cn } from "@/lib/utils";
+import { type ApplyRun, checkRows, fixFor, sheetOf, waitingFixes } from "@/lib/apply";
 
 /**
  * The user's call before anything is sent: Submit (Claude presses it), Fix
  * something (Claude fixes and asks again), or I'll submit it myself (on the
  * computer: Job Catcher lifts its Submit block and notices the press).
  */
-export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
+export function Review({ run }: { run: ApplyRun }) {
   const decide = useDecide();
   const sent = useMarkSent();
   const phone = useIsPhone();
@@ -22,14 +24,21 @@ export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
   const [changing, setChanging] = useState(false);
   const review = run.review;
   const decision = changing ? null : review?.decision;
-  const pending = fixes.length;
-  // Fixes the user marked but didn't send would be lost.
+  const pending = waitingFixes(run).length;
+  // Fixes the user added but didn't send would be left behind.
   const dropFixes = () =>
     !pending || window.confirm(`You have ${pending} fix${pending === 1 ? "" : "es"} not sent. Go on without them?`);
   // What the user told Claude in a chat, in their own words (spec 022).
   const told = review?.by === "chat" && review.words && (
     <p className="text-sm">
       You told Claude: <q className="italic">{review.words}</q>
+    </p>
+  );
+  // Fixes left in the tray when the review was answered (in a chat): never
+  // lost without a word.
+  const unsent = pending > 0 && (decision === "submit" || decision === "self") && (
+    <p className="text-sm text-amber-700 dark:text-amber-400">
+      {pending === 1 ? "1 fix wasn't sent" : `${pending} fixes weren't sent`}. Press Change my answer to send them.
     </p>
   );
   // Decided, and Claude hasn't acted on it yet: it can still be changed.
@@ -43,6 +52,7 @@ export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
     return (
       <div className="space-y-2">
         {told}
+        {unsent}
         <p className="text-sm">
           Go to the application's tab and press its <strong>Submit</strong> button. Job Catcher notices and
           moves the job to Applied.
@@ -60,6 +70,7 @@ export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
     return (
       <div className="space-y-2">
         {told}
+        {unsent}
         <p className="text-sm">
           {decision === "submit" ? "You said Submit." : `You asked Claude to fix: ${review?.note ?? ""}`} Claude
           picks it up the next time it checks. If its chat was closed, tell Claude in Chrome to carry on.
@@ -73,7 +84,7 @@ export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
   return (
     <div className="space-y-3">
       <p className="text-sm">
-        Check every page's photos and answers below. Nothing has been sent yet.
+        Check your answers below. Nothing has been sent yet.
         {run.review && run.review.round > 1 && ` (Round ${run.review.round})`}
       </p>
       {!fixing ? (
@@ -120,9 +131,9 @@ export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
             <Button
               disabled={!note.trim() || decide.isPending}
               onClick={() =>
-                // The typed note goes with any bubbles' fixes.
+                // The waiting fixes go with the typed note (the server adds them).
                 decide.mutate(
-                  { runId: run.id, decision: "fix", note: note.trim(), fixes },
+                  { runId: run.id, decision: "fix", note: note.trim() },
                   { onSuccess: () => (setChanging(false), setFixing(false)) },
                 )
               }
@@ -143,70 +154,94 @@ export function Review({ run, fixes = [] }: { run: ApplyRun; fixes?: Fix[] }) {
   );
 }
 
+/** Every page's photos, folded away: the proof, not the list to check. */
+function Photos({ run }: { run: ApplyRun }) {
+  const [open, setOpen] = useState(false);
+  const n = run.pages.reduce((sum, p) => sum + p.photo_ids.length, 0);
+  if (!run.pages.length) return null;
+  return (
+    <section className="rounded-lg border">
+      <button
+        type="button"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+        className="flex min-h-11 w-full items-center justify-between px-4 text-left text-sm font-medium"
+      >
+        Photos of each page{n ? ` (${n})` : ""}
+        <ChevronDown className={cn("h-4 w-4 transition-transform", open && "rotate-180")} aria-hidden />
+      </button>
+      {open && (
+        <div className="border-t p-3">
+          <Pages pages={run.pages} photosOnly />
+        </div>
+      )}
+    </section>
+  );
+}
+
 /**
- * The review (spec 026): the decision buttons, then what to check first
- * (what Claude agreed to for you, its guesses, empty boxes), then every
- * page's photos and answers as bubbles. Tap a bubble to change it or ask
- * Claude about it; the fixes go to Claude together, and the review comes
- * back with them done.
+ * The review (spec 026, built from the one sheet since spec 033): the
+ * decision buttons, then what to check first (each question once), then every
+ * answer grouped by step (one row per question), then the photos. Tap any
+ * answer to change it or ask Claude; the fixes wait in the tray and go to
+ * Claude together with Send fixes.
  */
 export function ReviewBoard({ run }: { run: ApplyRun }) {
-  const decide = useDecide();
-  const [fixes, setFixes] = useState<Map<string, Fix>>(new Map());
-  const [target, setTarget] = useState<{ page: ApplyPage; answer: PageAnswer; i: number } | null>(null);
   const open = run.status === "review" && !run.review?.decision;
-  const first = checkFirst(run.pages);
-  const tap = open ? (page: ApplyPage, answer: PageAnswer, i: number) => setTarget({ page, answer, i }) : undefined;
-  const key = target ? fixKey(target.page.n, target.i) : "";
-  const send = () =>
-    decide.mutate(
-      { runId: run.id, decision: "fix", fixes: [...fixes.values()] },
-      { onSuccess: () => setFixes(new Map()) },
-    );
+  const sheet = sheetOf(run);
+  const first = checkRows(sheet);
+  const fixer = useFixer(run);
+  const steps = useOpenSteps(null);
+  const tap = open ? fixer.open : undefined;
 
   return (
     <div className="space-y-4">
-      <Review run={run} fixes={open ? [...fixes.values()] : []} />
+      <Review run={run} />
       {first.length > 0 && (
-        <section className="space-y-2">
+        <section className="space-y-1">
           <h3 className="text-sm font-semibold">Check these first</h3>
           <p className="text-xs text-muted-foreground">
-            What Claude agreed to for you, its best guesses, and boxes left empty.{open && " Tap one to change it."}
+            What Claude agreed to for you, what only you can answer, its guesses, and boxes left empty.
+            {open && " Tap one to change it."}
           </p>
-          <ul className="space-y-2">
-            {first.map(({ page, answer, i }) => (
-              <li key={fixKey(page.n, i)}>
-                <AnswerBubble
-                  page={page}
-                  answer={answer}
-                  showPage
-                  fix={fixes.get(fixKey(page.n, i))}
-                  onTap={tap && (() => tap(page, answer, i))}
+          <ul className="-mx-3 space-y-0.5" aria-label="Check these first">
+            {first.map(({ step, row, k }) => (
+              <li key={`${step.key}|${row.q}|${k}`}>
+                <RowButton
+                  row={row}
+                  place={step.title}
+                  fix={fixFor(run.fixes, step.key, row.q, k)}
+                  onTap={
+                    tap &&
+                    (() =>
+                      tap({ step: step.key, stepTitle: step.title, q: row.q, a: row.a, k, options: row.options, free: row.free }))
+                  }
                 />
               </li>
             ))}
           </ul>
         </section>
       )}
-      <Pages pages={run.pages} openAll bubbles={{ fixes, onTap: tap }} />
-      {open && (
-        <FixTray count={fixes.size} sending={decide.isPending} onSend={send} onClear={() => setFixes(new Map())} />
+      {sheet.steps.length > 0 && (
+        <section className="space-y-1">
+          <h3 className="text-sm font-semibold">Every answer</h3>
+          <ol className="divide-y rounded-lg border">
+            {sheet.steps.map((step) => (
+              <StepGroup
+                key={step.key}
+                step={step}
+                fixes={run.fixes}
+                open={steps.isOpen(step.key)}
+                onToggle={() => steps.toggle(step.key)}
+                onTap={tap}
+              />
+            ))}
+          </ol>
+        </section>
       )}
-      {decide.isError && <p className="text-sm text-destructive">Couldn't send the fixes. Try again.</p>}
-      <FixSheet
-        key={key}
-        target={target}
-        current={fixes.get(key)}
-        onClose={() => setTarget(null)}
-        onSave={(fix) => setFixes((m) => new Map(m).set(key, fix))}
-        onRemove={() =>
-          setFixes((m) => {
-            const next = new Map(m);
-            next.delete(key);
-            return next;
-          })
-        }
-      />
+      {open && <FixTray run={run} review />}
+      <Photos run={run} />
+      {fixer.sheet}
     </div>
   );
 }

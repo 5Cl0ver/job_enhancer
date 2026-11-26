@@ -43,8 +43,9 @@ async def test_claude_waits_for_your_look_at_the_resume(engine, monkeypatch):
     assert run.resume_check["round"] == 1
 
     # Not on to the application until the user says so.
-    with pytest.raises(ValueError, match="looking over the résumé"):
-        await mcp_mod.fill_page(rid, "https://acme.example/apply/1")
+    out = await mcp_mod.fill_page(rid, "https://acme.example/apply/1")
+    assert out["ok"] is False and "looking over the résumé" in out["not_now"]
+    assert "wait_for_you" in out["next"]
     assert (await mcp_mod.wait_for_you(rid))["ready"] is False
 
     # Change something: Claude gets the note and rewrites.

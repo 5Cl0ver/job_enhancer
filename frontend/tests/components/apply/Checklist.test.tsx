@@ -1,5 +1,4 @@
-// Spec 030: Claude's questions as one checklist, changing a box while Claude
-// fills, and the problems Claude ran into (on the application and for the admin).
+// Spec 030: Claude's questions as one checklist, and the problems Claude ran into (on the application and for the admin).
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -23,7 +22,6 @@ vi.mock("@/lib/api", () => ({
   API_BASE: "http://localhost:8000",
 }));
 
-import { LiveFill } from "@/components/apply/LiveFill";
 import { Problems } from "@/components/apply/Problems";
 import { Questions } from "@/components/apply/Questions";
 import type { ApplyProblem, ApplyRun } from "@/lib/apply";
@@ -138,55 +136,6 @@ describe("Claude's questions as one checklist", () => {
         ],
       }),
     );
-  });
-});
-
-const FILLING: ApplyRun = {
-  ...RUN,
-  status: "filling",
-  live: {
-    url: "https://northwind.example/apply/2",
-    title: "My Information",
-    at: "2026-11-25T10:00:00Z",
-    boxes: [
-      { q: "Prefix", a: "Mr." },
-      { q: "Salary", a: "$90,000", by: "job_catcher" },
-    ],
-  },
-};
-
-describe("change a box while Claude fills", () => {
-  it("tap a box, change it, and it goes to Claude at once", async () => {
-    post.mockResolvedValue(FILLING);
-    wrap(<LiveFill run={FILLING} />);
-    await userEvent.click(screen.getByRole("button", { name: /^Prefix: Mr\./ }));
-    const dialog = screen.getByRole("dialog");
-    expect(within(dialog).getByText("Now: Mr.")).toBeInTheDocument();
-    expect(within(dialog).getByRole("button", { name: "Send to Claude" })).toBeDisabled();
-    await userEvent.type(within(dialog).getByLabelText("Change it to"), "None");
-    await userEvent.click(within(dialog).getByRole("button", { name: "Send to Claude" }));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/live-fix", { q: "Prefix", a: "Mr.", to: "None" }),
-    );
-    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
-    expect(screen.getByText("→ None (sent to Claude)")).toBeInTheDocument();
-  });
-
-  it("or asks Claude about it", async () => {
-    post.mockResolvedValue(FILLING);
-    wrap(<LiveFill run={FILLING} />);
-    await userEvent.click(screen.getByRole("button", { name: /^Salary/ }));
-    await userEvent.click(screen.getByRole("button", { name: "Ask Claude" }));
-    await userEvent.type(screen.getByLabelText("Ask Claude"), "Is that too low?");
-    await userEvent.click(screen.getByRole("button", { name: "Send to Claude" }));
-    await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/live-fix", {
-        q: "Salary",
-        a: "$90,000",
-        ask: "Is that too low?",
-      }),
-    );
-    expect(await screen.findByText("Asked Claude")).toBeInTheDocument();
   });
 });
 

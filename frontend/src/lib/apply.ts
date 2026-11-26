@@ -173,6 +173,8 @@ export interface ApplyMessage {
   read: boolean;
   /** A box changed while Claude fills (spec 030); its label is the page's. */
   fix?: { box_on_page: string; now_on_page: string; to?: string; ask?: string };
+  /** The owner's waiting fixes, delivered together (spec 033). */
+  fixes?: { id: string; step_on_page: string; box_on_page: string; now_on_page: string; to?: string; ask?: string }[];
 }
 
 export interface JobCatcherStatus {
@@ -212,6 +214,11 @@ export interface ApplyRunShort {
   claude_stopped?: boolean;
   /** Submit was pressed but nothing confirmed it: ask the user. */
   ask_if_sent?: boolean;
+  /** Page by page (pauses after each step) or Keep going (spec 033). */
+  mode?: ApplyMode;
+  /** The step the owner is asked to look over, and its name. */
+  paused_step?: string | null;
+  paused_title?: string | null;
 }
 
 export interface ApplyRun extends ApplyRunShort {
@@ -239,6 +246,202 @@ export interface ApplyRun extends ApplyRunShort {
   cover_letter?: { id: string; filename: string } | null;
   /** Claude wrote a letter in this run (even if the job now has none). */
   cover_letter_written?: boolean;
+  /** Every box so far, by step (spec 033). */
+  sheet?: Sheet;
+  /** The owner's changes, waiting for a checkpoint, then sent / done. */
+  fixes?: RunFix[];
+}
+
+// --- Your application (spec 033) -------------------------------------------
+
+export type ApplyMode = "page" | "keep";
+
+export const MODE_LABEL: Record<ApplyMode, string> = { page: "Page by page", keep: "Keep going" };
+
+export type RowTag = "changed" | "agreement" | "only_you" | "guess" | "empty" | "claude" | "profile";
+
+/** One box: the question, what's in it, who put it there, and the form's
+ * own choices when it has them. */
+export interface SheetRow {
+  q: string;
+  a: string;
+  tag?: RowTag | null;
+  by?: "job_catcher";
+  claude?: boolean;
+  guess?: boolean;
+  agreement?: boolean;
+  only_you?: boolean;
+  options?: string[];
+  /** The form also takes typed words. */
+  free?: boolean;
+  fixed?: boolean;
+}
+
+export interface SheetStep {
+  key: string;
+  title: string;
+  n: number;
+  done: boolean;
+  checked?: boolean;
+  rows: SheetRow[];
+}
+
+export interface Sheet {
+  steps: SheetStep[];
+  /** The step being filled now. */
+  current?: string | null;
+}
+
+export type FixStatus = "waiting" | "sent" | "done" | "gone";
+
+/** A change ("to") or a question ("ask") about one box, kept on the run. */
+export interface RunFix {
+  id: string;
+  step: string;
+  q: string;
+  /** Which one, when a step asks the same question twice. */
+  k: number;
+  /** What was in the box when the fix was made. */
+  now: string;
+  to?: string | null;
+  ask?: string | null;
+  status: FixStatus;
+  at: string;
+  /** Claude says it made the change; done once Job Catcher reads it. */
+  claude_done?: string | null;
+  /** The box already held it when the fix was made. */
+  already?: boolean;
+}
+
+export const TAG_LABEL: Record<RowTag, string> = {
+  changed: "You changed it",
+  agreement: "You're agreeing",
+  only_you: "Only you can answer",
+  guess: "Claude guessed",
+  empty: "Left empty",
+  claude: "Claude wrote it",
+  profile: "From your profile",
+};
+
+/** What the owner checks first, most important first. */
+const CHECK_TAGS: RowTag[] = ["agreement", "only_you", "guess", "empty"];
+
+/** A question's key: case, punctuation and "required" marks folded. */
+export function normQ(q: string): string {
+  return q
+    .replace(/\(\s*required\s*\)|\brequired\b|\*/gi, " ")
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}_]+/gu, " ")
+    .trim();
+}
+
+export function tagOf(row: SheetRow): RowTag | null {
+  if (row.tag !== undefined) return row.tag;
+  const empty = !row.a.trim();
+  if (row.fixed) return "changed";
+  if (row.agreement) return "agreement";
+  if (row.only_you && empty) return "only_you";
+  if (row.guess) return "guess";
+  if (empty) return "empty";
+  if (row.claude) return "claude";
+  if (row.by === "job_catcher") return "profile";
+  return null;
+}
+
+/** Which one of its question a row is in its step (1 = the first). */
+export function nthOf(step: SheetStep, i: number): number {
+  const key = normQ(step.rows[i].q);
+  return step.rows.slice(0, i + 1).filter((r) => normQ(r.q) === key).length;
+}
+
+/** The newest fix for one box: a waiting one first, else the latest. */
+export function fixFor(fixes: RunFix[] | undefined, step: string, q: string, k: number): RunFix | undefined {
+  const mine = (fixes ?? []).filter((f) => f.step === step && normQ(f.q) === normQ(q) && (f.k || 1) === k);
+  return mine.find((f) => f.status === "waiting") ?? mine[mine.length - 1];
+}
+
+export const waitingFixes = (run: { fixes?: RunFix[] }) => (run.fixes ?? []).filter((f) => f.status === "waiting");
+
+/** How a fix stands, in a few words: "→ No (waiting)". */
+export function fixLine(fix: RunFix): string {
+  if (fix.status === "gone") return "Couldn't apply: box gone";
+  const what = fix.to ? `→ ${fix.to}` : "Asked Claude";
+  if (fix.status === "sent" && fix.claude_done) return `${what} (Claude says done)`;
+  if (fix.status === "done" && fix.already) return `${what} (already that)`;
+  return `${what} (${fix.status})`;
+}
+
+/** A sheet for a run from an older server: its pages, merged by step and
+ * question. A page done again is the same step, never a second copy. */
+export function sheetFromPages(pages: ApplyPage[]): Sheet {
+  const steps: SheetStep[] = [];
+  for (const page of [...pages].sort((a, b) => a.n - b.n)) {
+    if (page.title === "Confirmation") continue;
+    const answers = pageAnswers(page);
+    const qs = new Set(answers.map((a) => normQ(a.q)).filter(Boolean));
+    const overlap = (s: SheetStep) => {
+      if (!qs.size) return 0;
+      const have = new Set(s.rows.map((r) => normQ(r.q)));
+      return [...qs].filter((q) => have.has(q)).length / qs.size;
+    };
+    // The same page done again: its title with nothing new on it, or a
+    // near-total overlap (never a look-alike page, like an emergency contact).
+    let step =
+      [...steps].reverse().find((s) => s.title === page.title && (qs.size ? overlap(s) === 1 : !s.rows.length)) ??
+      [...steps].reverse().find((s) => qs.size >= 3 && overlap(s) >= 0.8);
+    if (!step) {
+      step = { key: `page-${steps.length + 1}`, title: page.title, n: steps.length + 1, done: true, rows: [] };
+      steps.push(step);
+    }
+    const seen = new Map<string, number>();
+    for (const a of answers) {
+      const key = normQ(a.q);
+      if (!key) continue;
+      const k = (seen.get(key) ?? 0) + 1;
+      seen.set(key, k);
+      const same = step.rows.filter((r) => normQ(r.q) === key);
+      const row: SheetRow = { q: a.q, a: a.a, claude: a.claude, guess: a.guess, agreement: a.agreement, by: a.by };
+      if (same.length >= k) Object.assign(same[k - 1], row);
+      else step.rows.push(row);
+    }
+  }
+  for (const s of steps) for (const r of s.rows) r.tag = tagOf({ ...r, tag: undefined });
+  return { steps, current: steps[steps.length - 1]?.key ?? null };
+}
+
+/** The run's one sheet: the server's, else built from its pages. */
+export function sheetOf(run: ApplyRun): Sheet {
+  return run.sheet?.steps?.length ? run.sheet : sheetFromPages(run.pages);
+}
+
+export interface CheckRow {
+  step: SheetStep;
+  row: SheetRow;
+  k: number;
+}
+
+/** Check these first (spec 033): every agreement, "only you", guess and
+ * empty box (the sheet holds one row per step, question and order: each
+ * job's "Job Title" and each step's "I agree" count), most important first. */
+export function checkRows(sheet: Sheet): CheckRow[] {
+  const out: CheckRow[] = [];
+  for (const step of sheet.steps) {
+    step.rows.forEach((row, i) => {
+      const tag = tagOf(row);
+      if (tag && CHECK_TAGS.includes(tag)) out.push({ step, row, k: nthOf(step, i) });
+    });
+  }
+  return out.sort((x, y) => CHECK_TAGS.indexOf(tagOf(x.row)!) - CHECK_TAGS.indexOf(tagOf(y.row)!));
+}
+
+export function stepCounts(step: SheetStep) {
+  return {
+    filled: step.rows.filter((r) => r.a.trim()).length,
+    toCheck: step.rows.filter((r) => {
+      const t = tagOf(r);
+      return !!t && CHECK_TAGS.includes(t);
+    }).length,
+  };
 }
 
 export const APPLY_LINE = "Apply to my job with the Job Enhancer connector.";
@@ -323,7 +526,7 @@ export function statusLine(run: ApplyRunShort): string {
       if (run.resume_check?.decision === "change") return "Claude is changing your résumé…";
       return "Your résumé is ready to look over";
     case "filling":
-      return "Claude is filling the application…";
+      return run.paused_step ? `Look over ${run.paused_title || "this step"}` : "Claude is filling the application…";
     case "needs_you":
       return run.help?.done_at ? "Claude is picking it up…" : "Claude needs you";
     case "review":
@@ -346,6 +549,8 @@ export function needsYou(run: ApplyRunShort): boolean {
   if (run.status === "resume_review") return !run.resume_check?.decision;
   if (run.status === "needs_you") return !run.help?.done_at;
   if (run.status === "review") return !run.review?.decision;
+  // Page by page (spec 033): a finished step waits for the owner's look.
+  if (run.status === "filling") return !!run.paused_step;
   return false;
 }
 
@@ -356,6 +561,7 @@ export function bannerLine(run: ApplyRunShort): string {
   if (run.status === "needs_you") return `Claude needs you: ${run.help?.what ?? job}`;
   if (run.status === "resume_review") return `Look over your résumé: ${job}`;
   if (run.ask_if_sent) return `Did it go through? ${job}`;
+  if (run.status === "filling" && run.paused_step) return `Look over ${run.paused_title || "this step"}: ${job}`;
   return `Ready for your review: ${job}`;
 }
 
@@ -396,18 +602,6 @@ export const SOURCE_LABEL: Record<AnswerSource, string> = {
   job_catcher: "Job Catcher",
   page: "On the page",
 };
-
-/** The answers to check before Submit (spec 026): what Claude agreed to for
- * you, then its guesses, then boxes left empty. */
-export function checkFirst(pages: ApplyPage[]): { page: ApplyPage; answer: PageAnswer; i: number }[] {
-  const all = latestPages(pages).flatMap((page) => pageAnswers(page).map((answer, i) => ({ page, answer, i })));
-  const rank = ({ answer: a }: { answer: PageAnswer }) =>
-    a.agreement ? 0 : a.guess ? 1 : !a.a.trim() ? 2 : 3;
-  return all.filter((x) => rank(x) < 3).sort((x, y) => rank(x) - rank(y));
-}
-
-/** One answer's place: a page can ask the same question twice (each job's "Job Title"). */
-export const fixKey = (page: number, i: number) => `${page}|${i}`;
 
 /** The pages to review, in order: every page of the latest round, plus the
  * earlier rounds' pages a fix didn't redo. Never merged within a round: many

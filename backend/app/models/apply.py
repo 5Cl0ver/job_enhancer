@@ -68,6 +68,11 @@ APPLY_ENDED = (APPLY_SENT, APPLY_NOT_SENT, APPLY_STOPPED)
 # One open run per user, held by the database too (two quick presses).
 OPEN_SQL = "status IN (" + ", ".join(f"'{s}'" for s in APPLY_OPEN) + ")"
 
+# How Claude goes through the steps (spec 033).
+APPLY_MODE_PAGE = "page"  # pauses after each step for the owner's look
+APPLY_MODE_KEEP = "keep"  # fills every step, fixes at the end
+APPLY_MODES = (APPLY_MODE_PAGE, APPLY_MODE_KEEP)
+
 REQUEST_PHOTO = "photo"
 REQUEST_FILL = "fill"
 REQUEST_PEEK = "peek"  # the screen as it is now, one shot (spec 023)
@@ -163,6 +168,21 @@ class ApplyRun(Base):
     # What went wrong, as Claude reported it for the developer (spec 030):
     # [{id, at, kind, what, page, count}], at most 20 a run.
     problems: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # Spec 033. One growing sheet of every box, by step (services/apply_sheet):
+    # {steps: [{key, title, n, done, checked, rows: [{q, a, tag, …}]}],
+    #  current, check}.
+    sheet: Mapped[dict] = mapped_column(JSON, nullable=False, default=dict)
+    # The owner's changes, waiting for a checkpoint: [{id, step, q, k, now,
+    # to, ask, status: waiting|sent|done|gone, at, sent_at, done_at}].
+    fixes: Mapped[list] = mapped_column(JSON, nullable=False, default=list)
+    # "page" (Page by page: Claude pauses after each step) or "keep".
+    mode: Mapped[str] = mapped_column(
+        String(10), nullable=False, default=APPLY_MODE_PAGE, server_default="page"
+    )
+    # The step the owner is looking over (Page by page), until Continue.
+    paused_step: Mapped[str | None] = mapped_column(String(200))
+    # Job Catcher saw the page change: Claude is working (the stall check).
+    live_changed_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     note: Mapped[str | None] = mapped_column(Text)
     playbook_version: Mapped[str] = mapped_column(String(20), nullable=False)
     created_at: Mapped[datetime] = _now_col()

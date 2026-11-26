@@ -11,6 +11,8 @@ class ApplyStart(BaseModel):
     saved_job_id: uuid.UUID
     # A résumé the user picked (spec 025): Claude skips writing one.
     resume_id: uuid.UUID | None = None
+    # Page by page (the default) or Keep going (spec 033).
+    mode: Literal["page", "keep"] = "page"
 
 
 class AnswerIn(BaseModel):
@@ -42,13 +44,25 @@ class FixIn(BaseModel):
     ask: str | None = Field(default=None, max_length=500)
 
 
-class LiveFixIn(BaseModel):
-    """A box the user tapped in Filling now: change it, or ask Claude (spec 030)."""
+class FixAddIn(BaseModel):
+    """A box the owner tapped in Your application, on any step: change it, or
+    ask Claude about it. It waits on the run for a checkpoint (spec 033)."""
 
+    step: str = Field(min_length=1, max_length=200)
     q: str = Field(min_length=1, max_length=300)
-    a: str = Field(default="", max_length=2000)
+    # Which one, when a step asks the same question twice (each job's title).
+    k: int = Field(default=1, ge=1, le=120)
     to: str | None = Field(default=None, max_length=2000)
     ask: str | None = Field(default=None, max_length=500)
+
+
+class FixEditIn(BaseModel):
+    to: str | None = Field(default=None, max_length=2000)
+    ask: str | None = Field(default=None, max_length=500)
+
+
+class ModeIn(BaseModel):
+    mode: Literal["page", "keep"]
 
 
 class DecisionIn(BaseModel):
@@ -63,6 +77,8 @@ class LiveIn(BaseModel):
     url: str = Field(max_length=2000)
     title: str | None = Field(default=None, max_length=300)
     boxes: list[dict] = Field(default_factory=list, max_length=300)
+    # The site's own name for the step on screen (Workday's progress bar).
+    step: str | None = Field(default=None, max_length=300)
 
 
 class RequestResult(BaseModel):

@@ -3,7 +3,7 @@
 // and the background loop doing the app's requests once each.
 import { describe, it, expect, vi } from "vitest";
 import { Window } from "happy-dom";
-import { confirmationIn, readableText, finalSubmitButton, finalSubmitOfForm, onRunHost, pageAnswers, shotPlan } from "../src/autofill/applyPage.js";
+import { MAX_CHOICES, confirmationIn, readableText, finalSubmitButton, finalSubmitOfForm, onRunHost, pageAnswers, shotPlan, stepName } from "../src/autofill/applyPage.js";
 import { clean } from "../src/extract/util.js";
 import { detectContext } from "../panel/src/lib/context.ts";
 import { startApplyMode } from "../src/autofill/applyMode.js";
@@ -69,6 +69,53 @@ describe("photos and answers", () => {
       { q: "Résumé", a: "Sam - Résumé.pdf" },
       { q: "Skills", a: "Intune, Okta" },
     ]);
+  });
+
+  it("sends each box's real choices, capped, never the prompt (spec 033)", () => {
+    const vet = "Please select your veteran status";
+    const fields = [
+      {
+        id: "v",
+        question: vet,
+        kind: "select",
+        options: ["Select One", "I am a protected veteran", "I am not a protected veteran", "I don't wish to answer"].map((label) => ({ label })),
+      },
+      // Workday's dropdown shows its choices only when opened: the ones the fill saw.
+      { id: "h", question: "How did you hear about us?", kind: "combobox" },
+      { id: "c", question: "Country", kind: "select", options: Array.from({ length: 90 }, (_, i) => ({ label: `Country ${i} ${"x".repeat(200)}` })) },
+      { id: "s", question: "City", kind: "text", el: { tagName: "INPUT" }, options: [{ label: "Portland" }, { label: "Salem" }] },
+      { id: "f", question: "Résumé", kind: "file", el: { files: [] }, options: [{ label: "x" }] },
+      // A radio group's own inputs never take typing.
+      { id: "r", question: "Veteran?", kind: "radio", el: { tagName: "INPUT" }, options: [{ label: "Yes" }, { label: "No" }] },
+    ];
+    const read = (f) => ({ [vet]: "", "How did you hear about us?": "LinkedIn", Country: "", City: "Portland" })[f.question];
+    const got = pageAnswers(fields, read, new Set(["h"]), { choices: new Map([["h", ["Select One", "LinkedIn", "Indeed"]]]) });
+    expect(got[0]).toEqual({ q: vet, a: "", options: ["I am a protected veteran", "I am not a protected veteran", "I don't wish to answer"] });
+    expect(got[1]).toEqual({ q: "How did you hear about us?", a: "LinkedIn", by: "job_catcher", options: ["LinkedIn", "Indeed"] });
+    expect(got[2].options).toHaveLength(MAX_CHOICES);
+    expect(Math.max(...got[2].options.map((o) => o.length))).toBe(120);
+    // A box you can type in that also suggests takes typed words too.
+    expect(got[3]).toEqual({ q: "City", a: "Portland", options: ["Portland", "Salem"], free: true });
+    expect(got[4]).toEqual({ q: "Résumé", a: "" });
+    expect(got[5]).toEqual({ q: "Veteran?", a: "", options: ["Yes", "No"] });
+  });
+
+  it("names the step on screen from the site's progress bar (spec 033)", () => {
+    const workday = page(
+      `<ol data-automation-id="progressBar">
+        <li data-automation-id="progressBarCompletedStep"><label>My Information</label></li>
+        <li data-automation-id="progressBarActiveStep"><label>current step 2 of 6</label><label>My Experience</label></li>
+        <li data-automation-id="progressBarInactiveStep"><label>Application Questions</label></li>
+      </ol>`,
+    );
+    expect(stepName(workday.document)).toBe("My Experience");
+    const marked = page(`<nav><a>Contact</a><a aria-current="step">Step 3 of 4 Work history</a></nav>`);
+    expect(stepName(marked.document)).toBe("Work history");
+    // A bar that doesn't mark its current step names nothing (its whole text
+    // would be the same on every step).
+    const bar = page(`<div data-automation-id="progressBar"><span>Apply for Software Engineer</span></div>`);
+    expect(stepName(bar.document)).toBe("");
+    expect(stepName(page(`<h1>Apply</h1><form><input></form>`).document)).toBe("");
   });
 
   it("knows the run's sites, sub-hosts included", () => {
@@ -431,6 +478,62 @@ describe("the background loop", () => {
       title: "",
       boxes: [{ q: "First name", a: "Sam", by: "job_catcher" }],
     });
+  });
+
+  it("sends an unchanged page again once a minute, so its step stays named (spec 033)", async () => {
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    c.scripting.executeScript = vi.fn().mockResolvedValue([{ result: { step: "My Information", boxes: [{ q: "Name", a: "Sam" }] } }]);
+    const calls = [];
+    let turns = 0;
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push(path);
+      if (path === "/v1/apply/active") {
+        turns++;
+        const body = turns > 40 ? { run_id: null } : { run_id: "r1", hosts: ["acme.example"], live: true, requests: [] };
+        return { ok: true, json: async () => body };
+      }
+      return { ok: true, status: 204, json: async () => ({}) };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const done = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }).loop();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    // About 80 s of turns: the first time, then once more after a minute.
+    expect(calls.filter((p) => p === "/v1/apply/runs/r1/live")).toHaveLength(2);
+  });
+
+  it("sends the step's name and each box's choices with the live view (spec 033)", async () => {
+    const c = fakeChrome();
+    c._session["je_apply_tabs:r1"] = [7];
+    const many = Array.from({ length: 80 }, (_, i) => `Choice ${i}`);
+    c.scripting.executeScript = vi.fn().mockResolvedValue([
+      { result: { step: "Voluntary Disclosures", boxes: [{ q: "Veteran status", a: "", options: many }] } },
+      // A frame from an older page copy answers with just its boxes.
+      { result: [{ q: "Email", a: "s@x", by: "job_catcher" }] },
+    ]);
+    const calls = [];
+    let turns = 0;
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push([init.method || "GET", path, init.body]);
+      if (path === "/v1/apply/active") {
+        turns++;
+        const body = turns > 2 ? { run_id: null } : { run_id: "r1", hosts: ["acme.example"], live: true, requests: [] };
+        return { ok: true, json: async () => body };
+      }
+      return { ok: true, status: 204, json: async () => ({}) };
+    });
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const done = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }).loop();
+    await vi.runAllTimersAsync();
+    await done;
+    vi.useRealTimers();
+    const [sent] = calls.filter(([, p]) => p === "/v1/apply/runs/r1/live");
+    const body = JSON.parse(sent[2]);
+    expect(body.step).toBe("Voluntary Disclosures");
+    expect(body.boxes[0].options).toHaveLength(MAX_CHOICES);
+    expect(body.boxes[1]).toEqual({ q: "Email", a: "s@x", by: "job_catcher" });
   });
 
   it("every tab on the site is locked, but only the application's own tab ends the run", async () => {

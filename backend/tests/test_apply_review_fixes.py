@@ -106,8 +106,11 @@ async def test_help_twice_goes_back_to_the_review(engine, monkeypatch):
 @pytest.mark.asyncio
 async def test_no_resume_save_while_waiting_for_the_user(engine, monkeypatch):
     _, _, _, rid = await _at_review(engine, monkeypatch)
-    with pytest.raises(ValueError, match="waiting for the user"):
-        await mcp_mod.save_resume(rid, "# x")
+    # Not now, and what to do instead: never an error that ends Claude's
+    # turn (spec 033).
+    out = await mcp_mod.save_resume(rid, "# x")
+    assert out["ok"] is False and "waiting for the user" in out["not_now"]
+    assert "wait_for_you" in out["next"]
 
 
 @pytest.mark.asyncio

@@ -36,7 +36,7 @@ function pageJobCompany(doc) {
   }
 }
 import { startApplyMode } from "./autofill/applyMode.js";
-import { pageAnswers } from "./autofill/applyPage.js";
+import { pageAnswers, stepName } from "./autofill/applyPage.js";
 import { editKey, fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
 
 // This copy owns the page (see orphan.js): drop what older copies drew.
@@ -184,6 +184,7 @@ let keepUserOff = false; // switched off in the panel: a press doesn't turn it b
 let usedHere = false; // autofill ran on this page (learning only notices then)
 let lastStep = "";
 let lastCopy = null; // the profile's answers, for noticing typed ones
+const choicesSeen = new Map(); // a dropdown's choices, once the fill opened it (spec 033)
 let taughtHere = []; // boxes the user taught on this site (spec 017)
 let resumeDone = false; // the résumé already went up in this application (spec 018)
 
@@ -663,9 +664,17 @@ globalThis.__jecAutofill = {
   // Apply with Claude (spec 022): every question here with its answer, for
   // the photos' review. Read by the background in every frame.
   answers: () => (isCurrent() ? pageAnswers(session.scan(), readField) : []),
-  // The live view (spec 026): the same, with what Job Catcher filled marked.
-  live: () =>
-    isCurrent() ? pageAnswers(session.scan(), readField, new Set(session.report().entries.map((e) => e.id))) : [],
+  // The live view (spec 026): the same, with what Job Catcher filled marked,
+  // and each box's choices (spec 033), also the ones seen when filling a
+  // dropdown that only shows them when opened (Workday).
+  live: () => {
+    if (!isCurrent()) return [];
+    const report = session.report();
+    for (const e of [...report.entries, ...(report.need_you || [])]) if (e.options?.length) choicesSeen.set(e.id, e.options);
+    return pageAnswers(session.scan(), readField, new Set(report.entries.map((e) => e.id)), { choices: choicesSeen });
+  },
+  // The site's own name for the step on screen (spec 033).
+  step: () => (isCurrent() ? stepName(document) : ""),
 };
 
 // ---- Start ----------------------------------------------------------------
