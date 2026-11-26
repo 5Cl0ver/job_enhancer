@@ -2,7 +2,7 @@
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
 import { answerKey, closestAnswer, isCompanySpecific, yesNo } from "./classify/answers.js";
 import { formerEmployerAnswer } from "./classify/formerEmployer.js";
-import { BOOL_KEYS, OTHER_PERSON, fieldGuard, isPhoneExtension, profileKeyFor, valueForms } from "./classify/profileKeys.js";
+import { LEGAL_KEYS, OTHER_PERSON, fieldGuard, isPhoneExtension, profileKeyFor, valueForms } from "./classify/profileKeys.js";
 
 /**
  * A phone NUMBER where an extension goes (spec 036): an extension is at most
@@ -17,13 +17,14 @@ export function phoneInExtension(field, value, copy = {}) {
 }
 
 /**
- * A remembered Yes/No for a legal fact (sponsorship, work authorization,
- * relocation) that says the opposite of the profile (spec 036): the profile
+ * A remembered Yes/No for a legal fact (sponsorship, work authorization;
+ * never relocation, a preference) that says the opposite of the profile
+ * (spec 036): the profile
  * is the fact, so the remembered one is only offered. With no profile value
  * the remembered one is used.
  */
 function disagreesWithProfile(key, learned, copy) {
-  if (!BOOL_KEYS.has(key)) return false;
+  if (!LEGAL_KEYS.has(key)) return false;
   const mine = (copy.values?.[key] || [])[0];
   if (!mine) return false;
   return yesNo(learned.answer) !== yesNo(mine);

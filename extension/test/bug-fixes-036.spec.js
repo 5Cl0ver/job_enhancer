@@ -144,6 +144,94 @@ describe("C: sponsorship gets the profile's answer, whatever the wording", () =>
     }
   });
 
+  // Every wording from the reviews (spec 036), for someone authorized who
+  // needs no sponsorship. null: left for the user (never a guess).
+  const WORDINGS = [
+    ["Will you now or in the future require sponsorship for employment visa status (e.g., H-1B)?", "No"],
+    ["Will you now, or in the future, require sponsorship to legally work in the United States?", "No"],
+    ["Are you legally authorized to work in the US?", "Yes"],
+    ["Are you legally authorized to work in the United States?", "Yes"],
+    ["Do you have the legal right to work in the United States?", "Yes"],
+    ["Do you have the legal right to work in the country where this job is located?", "Yes"],
+    ["Will you require Kenexa sponsorship to work in the US?", "No"],
+    ["Will you require company sponsorship to work in the US?", "No"],
+    ["Are you able to work without the need for sponsorship now or in the future?", "Yes"],
+    ["Are you able to work in the US without visa sponsorship?", "Yes"],
+    ["Do you need a visa to work?", "No"],
+    ["Do you need a visa to work in the United States?", "No"],
+    ["Will you need visa support to work here?", "No"],
+    ["Do you require visa sponsorship?", "No"],
+    ["Do you now or will you in the future require immigration sponsorship?", "No"],
+    ["Would you need sponsorship?", "No"],
+    ["Visa sponsorship required?", "No"],
+    ["Sponsorship required", "No"],
+    ["Do you NOT require sponsorship?", "Yes"],
+    ["Can you work in the US without requiring sponsorship?", "Yes"],
+    ["Are you eligible to work in the US without sponsorship?", "Yes"],
+    ["Are you currently eligible to work in the U.S. without company sponsorship?", "Yes"],
+    ["Are you authorized to work in the US without sponsorship?", "Yes"],
+    ["Will you be able to work without sponsorship?", "Yes"],
+    ["Are you authorized to work lawfully in the U.S. for any employer without the need for visa sponsorship now or in the future?", "Yes"],
+    ["Is sponsorship not required for you?", "Yes"],
+    ["Is sponsorship required for you to work in the US? We do not sponsor visas.", "No"],
+    ["Will you now or in the future require sponsorship? Note: we cannot sponsor without a visa", "No"],
+    ["Are you authorized to work in the U.S.? We do not provide sponsorship.", "Yes"],
+    ["Are you legally authorized to work in the US, and will you require sponsorship?", null],
+    ["Are you authorized to work in the US? Will you require sponsorship?", null],
+    ["Are you legally eligible to work in the US and do you not require sponsorship?", null],
+    ["Are you legally authorized to work in the United States and not require sponsorship now or in the future?", null],
+    ["Are you legally authorized to work in the U.S. without sponsorship?", "Yes"],
+    ["I will not require sponsorship", "Yes"],
+    ["Do you currently hold, or will you require, sponsorship for an employment visa?", "No"],
+    ["Will you now or in the future need the company to sponsor you for a work visa?", "No"],
+    ["Would you require us to sponsor a visa now or in the future?", "No"],
+    ["Do you require H-1B sponsorship?", "No"],
+    ["Are you a U.S. citizen or permanent resident?", null],
+    ["Work Authorization", "Yes"],
+    ["Will you require visa sponsorship now or in the future (if you do not need sponsorship, select No)?", "No"],
+    ["Will you require visa sponsorship now or in the future? (if you do not need sponsorship, select No)", "No"],
+    ["Will you require sponsorship now or in the future (if you are not sure whether you need sponsorship, select Yes)", "No"],
+    ["Sponsorship - please answer No if you can work without sponsorship", "No"],
+    ["Will you now or in the future require sponsorship (H-1B, TN, etc.) to work without restriction in the US?", "No"],
+    ["Will you require sponsorship to continue working without interruption?", "No"],
+    ["Do you require sponsorship to work in the US? If not, select No.", "No"],
+    ["Visa Sponsorship Required: We are not able to sponsor at this time. Will you require sponsorship?", "No"],
+    ["We are unable to sponsor. Do you need sponsorship?", "No"],
+    ["Will you require sponsorship? *", "No"],
+    ["Do you or will you require sponsorship? Note: candidates who will not need sponsorship are preferred", "No"],
+    ["Would you now or in the future require the company to sponsor your work visa, and if so, which type?", "No"],
+    ["Are you legally authorized to work in the United States (we are unable to sponsor visas for this role)", "Yes"],
+    ["Legally authorized to work in the US. Note: this position is not eligible for sponsorship", "Yes"],
+    ["Work authorization: are you legally authorized to work in the U.S. (sponsorship not available)", "Yes"],
+    ["Are you legally authorized to work in the U.S. (this role does not offer visa sponsorship)?", "Yes"],
+    ["Are you authorized to work in the US for this employer? Sponsorship is not available.", "Yes"],
+    ["Are you legally authorized to work in the United States and not require sponsorship now or in the future?", null],
+    ["Are you authorized to work in the US for this employer? Sponsorship is not available.", "Yes"],
+  ];
+  it.each(WORDINGS)("%s → %s", (q, want) => {
+    const d = resolve(field(q, { kind: "select", options: [{ label: "Yes" }, { label: "No" }] }), copy);
+    if (want === null) expect(d.values).toBeUndefined();
+    else expect(d.values?.[0]).toBe(want);
+  });
+
+  it("a passing mention of sponsorship never makes it a sponsorship question", () => {
+    for (const q of [
+      "Are you legally authorized to work in the U.S. (this role does not offer visa sponsorship)?",
+      "Legally authorized to work in the US. Note: this position is not eligible for sponsorship",
+      "Work authorization: are you legally authorized to work in the U.S. (sponsorship not available)",
+    ]) expect([q, profileKeyFor(field(q))]).toEqual([q, "authorized_to_work"]);
+    for (const q of [
+      "Will you require visa sponsorship now or in the future (if you do not need sponsorship, select No)?",
+      "Sponsorship - please answer No if you can work without sponsorship",
+    ]) expect([q, profileKeyFor(field(q))]).toEqual([q, "requires_sponsorship"]);
+  });
+
+  it("a remembered relocation answer still fills (a preference, not a legal fact)", () => {
+    const q = field("Are you willing to relocate?", { kind: "select", options: [{ label: "Yes" }, { label: "No" }] });
+    const values = profileValues({ ...PROFILE, willing_to_relocate: false });
+    expect(resolve(q, { values, answers: [{ question_key: q.key, answer: "Yes" }] }).values).toEqual(["Yes"]);
+  });
+
   it("each way the choices are worded finds the right one", () => {
     const opts = (...labels) => labels.map((label) => ({ label }));
     expect(matchOption("No", opts("Yes", "No"))).toBe(1);
