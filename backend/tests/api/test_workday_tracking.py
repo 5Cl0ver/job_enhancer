@@ -162,3 +162,184 @@ async def test_no_release_known_is_never_out_of_date(
     await db_session.commit()
     status = await apply_runs.job_catcher_status(db_session, test_user.id)
     assert status["latest"] is None and status["outdated"] is False
+
+
+# ---- PR #67 review ---------------------------------------------------------
+
+
+def test_workday_posting_reads_the_site_and_requisition():
+    from app.services.saved_jobs import workday_posting
+
+    assert workday_posting(POSTING) == ("northwind.wd5.myworkdayjobs.com", "jr-1001")
+    assert workday_posting(POSTING + "/apply/applyManually") == (
+        "northwind.wd5.myworkdayjobs.com",
+        "jr-1001",
+    )
+    shared = (
+        "https://wd3.myworkdaysite.com/en-US/recruiting/cascadia/External/job/X_R-7"
+    )
+    assert workday_posting(shared) == ("wd3.myworkdaysite.com/cascadia", "r-7")
+    assert workday_posting("https://example.com/job/X_R-7") is None
+
+
+@pytest.mark.asyncio
+async def test_the_same_posting_saved_from_another_address_is_the_one(
+    client: AsyncClient,
+):
+    """Saved from a board's link (other title, other company name), applied on
+    Workday: the same site and requisition id find it; nothing is created."""
+    saved = (
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": "https://northwind.wd5.myworkdayjobs.com/External/job/"
+                "Remote/App-Dev-2_JR-1001?source=board",
+                "title": "App Developer 2 (Remote)",
+                "company": "Northwind Labs",
+            },
+        )
+    ).json()
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": CREATE["title"], "company": "Northwind", "create": CREATE},
+    )
+    assert r.json() == {"matched": True, "created": False}
+    jobs = await _jobs(client)
+    assert [j["id"] for j in jobs] == [saved["id"]]
+    assert jobs[0]["applied_at"] is not None
+
+
+@pytest.mark.asyncio
+async def test_a_site_name_company_finds_the_one_job_with_that_title(
+    client: AsyncClient,
+):
+    """A Workday site called "jj": the page's company is just "Jj". The one
+    saved, not-yet-applied job with that exact title is the job — no copy."""
+    saved = (
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": "https://careers.example.test/jobs/77",
+                "title": "Applications Developer II",
+                "company": "Juniper & Jasper Health",
+            },
+        )
+    ).json()
+    create = {
+        **CREATE,
+        "url": CREATE["url"].replace("northwind", "jj"),
+        "company": "Jj",
+    }
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": create["title"], "company": "Jj", "create": create},
+    )
+    assert r.json() == {"matched": True, "created": False}
+    jobs = await _jobs(client)
+    assert [j["id"] for j in jobs] == [saved["id"]]
+
+
+@pytest.mark.asyncio
+async def test_two_saved_jobs_with_that_title_are_never_guessed(client: AsyncClient):
+    for n, company in enumerate(["Juniper & Jasper Health", "JJ Clinics"]):
+        await client.post(
+            "/v1/saved-jobs/manual",
+            json={
+                "url": f"https://careers.example.test/jobs/{n}",
+                "title": "Applications Developer II",
+                "company": company,
+            },
+        )
+    create = {
+        **CREATE,
+        "url": CREATE["url"].replace("northwind", "jj"),
+        "company": "Jj",
+    }
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": create["title"], "company": "Jj", "create": create},
+    )
+    assert r.json() == {"matched": True, "created": True}
+    jobs = await _jobs(client)
+    assert len(jobs) == 3
+    assert sum(1 for j in jobs if j["applied_at"]) == 1
+
+
+@pytest.mark.asyncio
+async def test_a_same_titled_job_at_another_company_is_never_the_one(
+    client: AsyncClient,
+):
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={
+            "url": "https://careers.example.test/jobs/5",
+            "title": "Applications Developer II",
+            "company": "Tidewell Labs",
+        },
+    )
+    create = {
+        **CREATE,
+        "url": CREATE["url"].replace("northwind", "jj"),
+        "company": "Jj",
+    }
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": create["title"], "company": "Jj", "create": create},
+    )
+    assert r.json() == {"matched": True, "created": True}
+
+
+@pytest.mark.asyncio
+async def test_a_job_already_had_is_never_reported_as_created(
+    client: AsyncClient, monkeypatch
+):
+    """save_manual_job hands back a job the user already had (same title,
+    company and place): "Marked applied", not "Saved and marked applied"."""
+    from app.services import saved_jobs
+
+    await client.post(
+        "/v1/saved-jobs/manual",
+        json={**CREATE, "url": "https://careers.example.test/jobs/9"},
+    )
+
+    async def no_match(*_a, **_k):
+        return False
+
+    async def no_title(*_a, **_k):
+        return None
+
+    monkeypatch.setattr(saved_jobs, "mark_applied", no_match)
+    monkeypatch.setattr(saved_jobs, "_only_by_title", no_title)
+    r = await client.post(
+        "/v1/saved-jobs/mark-applied",
+        json={"title": CREATE["title"], "company": "Northwind", "create": CREATE},
+    )
+    assert r.json() == {"matched": True, "created": False}
+    assert len(await _jobs(client)) == 1
+
+
+@pytest.mark.asyncio
+async def test_installs_tell_computers_apart(client: AsyncClient):
+    for install, browser in [
+        ("install-home1", "Chrome 142 (Windows)"),
+        ("install-laptop", "Chrome 141 (macOS)"),
+    ]:
+        await client.post(
+            "/v1/extension/hello",
+            json={"install_id": install, "version": "0.44.0", "browser": browser},
+        )
+    rows = (await client.get("/v1/extension/installs")).json()
+    assert sorted((r["install_id"], r["browser"]) for r in rows) == [
+        ("install-home1", "Chrome 142 (Windows)"),
+        ("install-laptop", "Chrome 141 (macOS)"),
+    ]
+
+
+def test_a_site_name_is_short_for_a_company():
+    from app.services.saved_jobs import short_for
+
+    assert short_for("jj", "Juniper & Jasper Health")
+    assert short_for("acmecorp", "Acme Corp")
+    assert short_for("northwind", "Northwind Labs")
+    assert not short_for("jj", "Tidewell Labs")
+    assert not short_for("x", "Xylo Systems")

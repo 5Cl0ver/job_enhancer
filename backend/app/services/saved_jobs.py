@@ -1,10 +1,11 @@
 """CRUD service for SavedJobs."""
 
 import hashlib
+import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from urllib.parse import quote_plus, urlparse
+from urllib.parse import quote_plus, urlparse, urlsplit
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
@@ -784,6 +785,12 @@ async def track_applied(
     if sj is not None:
         await _set_applied(db, user_id, sj)
         return True, False
+    # The same Workday posting saved from another address (the job page, a
+    # board's link to it): same Workday site, same requisition id.
+    sj = await _same_workday_posting(db, user_id, create.url)
+    if sj is not None:
+        await _set_applied(db, user_id, sj)
+        return True, False
     if await mark_applied(
         db,
         user_id,
@@ -792,6 +799,16 @@ async def track_applied(
         company_only=False,
     ):
         return True, False
+    # The page's company is only the Workday site's name ("Jj" for a site
+    # called jj): the one saved, not-yet-applied job with this exact title
+    # whose company that name could be short for, is this job.
+    sj = await _only_by_title(db, user_id, title or create.title, create.url)
+    if sj is not None:
+        await _set_applied(db, user_id, sj)
+        return True, False
+    before = set(
+        await db.scalars(select(SavedJob.id).where(SavedJob.user_id == user_id))
+    )
     sj = await save_manual_job(
         db,
         user_id,
@@ -804,7 +821,105 @@ async def track_applied(
         ),
     )
     await _set_applied(db, user_id, sj)
-    return True, True
+    # Saved just now, or a job the user already had (same title, company and
+    # place): the panel says "Saved and marked applied" only for a new one.
+    return True, sj.id not in before
+
+
+_WORKDAY_HOST = re.compile(r"\.(myworkdayjobs|myworkdaysite)\.com$", re.I)
+
+
+def workday_posting(url: str | None) -> tuple[str, str] | None:
+    """A Workday posting's (site, requisition id): the host (plus the
+    company's /recruiting/<name> on the shared myworkdaysite.com) and the id
+    ending the job's path (…/job/Portland-OR/Title_JR-1001[/apply…])."""
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower()
+    if not _WORKDAY_HOST.search(host):
+        return None
+    path = re.sub(
+        r"/(apply|application)(/.*)?$", "", parts.path.rstrip("/"), flags=re.I
+    )
+    m = re.search(r"/job/(.+)$", path, re.I)
+    last = m.group(1).split("/")[-1] if m else ""
+    if "_" not in last:
+        return None
+    site = host
+    if host.endswith("myworkdaysite.com"):
+        tenant = re.search(r"/recruiting/([^/]+)", parts.path, re.I)
+        site = f"{host}/{tenant.group(1).lower()}" if tenant else host
+    return site, last.rsplit("_", 1)[1].lower()
+
+
+async def _same_workday_posting(
+    db: AsyncSession, user_id: uuid.UUID, url: str
+) -> SavedJob | None:
+    want = workday_posting(url)
+    if want is None:
+        return None
+    rows = (
+        await db.execute(
+            select(SavedJob, JobListing.apply_url)
+            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .where(
+                SavedJob.user_id == user_id,
+                JobListing.apply_url.ilike(f"%{want[0].split('/')[0]}%"),
+            )
+            .order_by(SavedJob.created_at.desc())
+        )
+    ).all()
+    for sj, link in rows:
+        if (
+            workday_posting(sj.custom_apply_url or link) == want
+            or workday_posting(link) == want
+        ):
+            return sj
+    return None
+
+
+def short_for(site_name: str, company: str) -> bool:
+    """Could a Workday site's name be this company's? "jj" / "Juniper &
+    Jasper", "acmecorp" / "Acme Corp", "northwind" / "Northwind Labs"."""
+    site = re.sub(r"[^a-z0-9]", "", (site_name or "").lower())
+    words = [w for w in re.split(r"[^a-z0-9]+", (company or "").lower()) if w]
+    words = [w for w in words if w != "and"]
+    if len(site) < 2 or not words:
+        return False
+    flat = "".join(words)
+    initials = "".join(w[0] for w in words)
+    return flat.startswith(site) or initials.startswith(site)
+
+
+async def _only_by_title(
+    db: AsyncSession, user_id: uuid.UUID, title: str, url: str
+) -> SavedJob | None:
+    title_norm = normalize(title)
+    where = workday_posting(url)
+    if not title_norm or where is None:
+        return None
+    host = where[0]
+    site_name = host.split("/", 1)[1] if "/" in host else host.split(".")[0]
+    rows = (
+        await db.scalars(
+            select(SavedJob)
+            .options(selectinload(SavedJob.job_listing))
+            .join(JobListing, SavedJob.job_listing_id == JobListing.id)
+            .where(
+                SavedJob.user_id == user_id,
+                SavedJob.applied_at.is_(None),
+                JobListing.title_normalized == title_norm,
+            )
+        )
+    ).all()
+    fits = [
+        sj
+        for sj in rows
+        if short_for(site_name, sj.custom_company or sj.job_listing.company)
+    ]
+    return fits[0] if len(fits) == 1 else None
 
 
 async def _renamed(

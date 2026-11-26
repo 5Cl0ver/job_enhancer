@@ -238,6 +238,9 @@ async def list_tokens(
 
 
 class InstallOut(BaseModel):
+    # Which Job Catcher it is (one per browser profile): the app's update
+    # banner tells computers apart by it (spec 034).
+    install_id: str
     version: str
     browser: str | None
     last_seen_at: datetime
@@ -250,7 +253,12 @@ async def list_installs(
     """Job Catchers that said hello on this account (any sign-in, password
     too): newest first. The app's status chip and update note read this."""
     return [
-        InstallOut(version=i.version, browser=i.browser, last_seen_at=i.last_seen_at)
+        InstallOut(
+            install_id=i.install_id,
+            version=i.version,
+            browser=i.browser,
+            last_seen_at=i.last_seen_at,
+        )
         for i in await svc.installs(db, user.id)
     ]
 
