@@ -76,6 +76,14 @@ export interface BugDetail extends BugRow {
   shots: { id: string; size: number }[];
 }
 
+/** An open report that looks like the same problem (after adding one). */
+export interface BugSimilar {
+  id: string;
+  title: string;
+  status: BugStatus;
+  score: number;
+}
+
 export interface BugList {
   items: BugRow[];
   total: number;

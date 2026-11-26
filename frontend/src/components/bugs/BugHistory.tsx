@@ -47,6 +47,8 @@ export function describe(e: BugEvent): string {
       const field = String(d.field);
       if (field === "checked") return "Looks fixed";
       if (field === "pinned") return d.to ? "Pinned" : "Unpinned";
+      // A service that was down is back (the health watch).
+      if (field === "recovered") return "Back up";
       if (["section", "severity", "type"].includes(field)) {
         return `${FIELD[field]}: ${value(field, d.from)} → ${value(field, d.to)}`;
       }

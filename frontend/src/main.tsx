@@ -4,6 +4,7 @@ import { RouterProvider } from "react-router-dom";
 import { Providers } from "@/providers";
 import { router } from "@/router";
 import { watchPasswordRecovery } from "@/lib/recovery";
+import { installErrorCatcher } from "@/lib/catchErrors";
 import "@fontsource-variable/geist";
 import "@/globals.css";
 
@@ -13,6 +14,8 @@ import "@/globals.css";
 // 3. Render it into the page
 // A password-reset link opens the "choose a new password" page wherever it lands.
 watchPasswordRecovery((path) => void router.navigate(path, { replace: true }));
+// Errors nothing else caught go to the owner's Bugs & ideas (spec 032).
+installErrorCatcher();
 
 ReactDOM.createRoot(document.getElementById("root")!).render(
   <React.StrictMode>

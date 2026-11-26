@@ -1,6 +1,8 @@
 // Spec 032: the owner's Add a bug or idea, from any page. The section is
 // guessed from the page, the context is filled in and shown, saving keeps you
-// on the page, and a failed save keeps what you typed.
+// on the page, and a failed save keeps what you typed. Part B: screenshots
+// (shrunk, sent after the report; a failed one can be tried again) and
+// "Looks like…" for a report that seems the same.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
@@ -9,12 +11,15 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const get = vi.fn();
 const post = vi.fn();
+const upload = vi.fn();
 const toastSuccess = vi.fn();
+const shrink = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
     get: (...a: unknown[]) => get(...a),
     post: (...a: unknown[]) => post(...a),
+    upload: (...a: unknown[]) => upload(...a),
     patch: vi.fn(),
     put: vi.fn(),
     delete: vi.fn(),
@@ -22,6 +27,9 @@ vi.mock("@/lib/api", () => ({
   ApiError: class ApiError extends Error {},
   getAccessToken: vi.fn().mockResolvedValue("token"),
   API_BASE: "http://localhost:8000",
+}));
+vi.mock("@/lib/shrinkImage", () => ({
+  shrinkImage: (...a: unknown[]) => shrink(...a),
 }));
 vi.mock("sonner", () => ({
   toast: { success: (...a: unknown[]) => toastSuccess(...a), error: vi.fn() },
@@ -57,8 +65,25 @@ beforeEach(() => {
     },
   ]);
   post.mockReset();
+  upload.mockReset();
   toastSuccess.mockReset();
+  shrink
+    .mockReset()
+    .mockImplementation(async () => new Blob(["jpeg"], { type: "image/jpeg" }));
+  URL.createObjectURL = vi.fn(() => "blob:preview");
+  URL.revokeObjectURL = vi.fn();
 });
+
+async function openAndType(path: string, title: string) {
+  const user = userEvent.setup();
+  wrap(path);
+  await user.click(screen.getByRole("button", { name: "Add a bug or idea" }));
+  const sheet = await screen.findByRole("dialog");
+  await user.type(within(sheet).getByRole("textbox", { name: "Title" }), title);
+  return { user, sheet };
+}
+
+const photo = () => new File(["png-bytes"], "shot.png", { type: "image/png" });
 
 describe("Add a bug or idea", () => {
   it("guesses the section and fills in the page, device, browser, theme and Job Catcher", async () => {
@@ -257,6 +282,178 @@ describe("Add a bug or idea", () => {
     await user.click(within(sheet).getByRole("button", { name: "Save" }));
     expect(await within(sheet).findByRole("alert")).toHaveTextContent(
       "Title: String should have at most 140 characters.",
+    );
+  });
+});
+
+describe("Screenshots", () => {
+  it("adds one, shows it, and sends it after the report is saved", async () => {
+    post.mockResolvedValue({ report: { id: "r1" }, similar: [] });
+    upload.mockResolvedValue({ id: "s1", size: 4 });
+    const { user, sheet } = await openAndType("/jobs", "Save does nothing");
+    await user.upload(
+      within(sheet).getByLabelText("Add a screenshot"),
+      photo(),
+    );
+    expect(
+      await within(sheet).findByRole("img", { name: "Screenshot 1" }),
+    ).toHaveAttribute("src", "blob:preview");
+    expect(shrink).toHaveBeenCalledTimes(1);
+    expect(within(sheet).getByLabelText("Add another")).toBeInTheDocument();
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1));
+    const [path, file] = upload.mock.calls[0];
+    expect(path).toBe("/v1/admin/bugs/r1/shots");
+    expect((file as Blob).type).toBe("image/jpeg");
+    expect(post.mock.calls[0][1].context.app_version).toBe("dev");
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Added"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("can be removed before saving, and stops at 3", async () => {
+    const { user, sheet } = await openAndType("/jobs", "Three pictures");
+    for (const n of [1, 2, 3]) {
+      await user.upload(
+        within(sheet).getByLabelText(
+          n > 1 ? "Add another" : "Add a screenshot",
+        ),
+        photo(),
+      );
+      await within(sheet).findByRole("img", { name: "Screenshot " + n });
+    }
+    expect(
+      within(sheet).queryByLabelText("Add another"),
+    ).not.toBeInTheDocument();
+    await user.click(
+      within(sheet).getByRole("button", { name: "Remove screenshot 2" }),
+    );
+    expect(within(sheet).getAllByRole("img")).toHaveLength(2);
+    expect(within(sheet).getByLabelText("Add another")).toBeInTheDocument();
+  });
+
+  it("says when a picture can't be used", async () => {
+    shrink.mockResolvedValue(null);
+    const { user, sheet } = await openAndType("/jobs", "Odd picture");
+    await user.upload(
+      within(sheet).getByLabelText("Add a screenshot"),
+      photo(),
+    );
+    expect(await within(sheet).findByRole("alert")).toHaveTextContent(
+      "That picture couldn't be used. Try a JPEG or PNG.",
+    );
+    expect(within(sheet).queryByRole("img")).not.toBeInTheDocument();
+  });
+
+  it("keeps the report when the picture fails, and tries again", async () => {
+    post.mockResolvedValue({ report: { id: "r1" }, similar: [] });
+    upload
+      .mockRejectedValueOnce(new Error("offline"))
+      .mockResolvedValueOnce({ id: "s1", size: 4 });
+    const { user, sheet } = await openAndType("/jobs", "Picture fails");
+    await user.upload(
+      within(sheet).getByLabelText("Add a screenshot"),
+      photo(),
+    );
+    await within(sheet).findByRole("img", { name: "Screenshot 1" });
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog", { name: "Added" });
+    expect(within(dialog).getByRole("alert")).toHaveTextContent(
+      "Added, but the picture didn't upload.",
+    );
+    expect(post).toHaveBeenCalledTimes(1); // the report isn't sent again
+    await user.click(within(dialog).getByRole("button", { name: "Try again" }));
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2));
+    expect(upload.mock.calls[1][0]).toBe("/v1/admin/bugs/r1/shots");
+    await waitFor(() => expect(toastSuccess).toHaveBeenCalledWith("Added"));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+});
+
+describe("Looks like", () => {
+  const similar = [
+    {
+      id: "old1",
+      title: "Phone put in Phone Extension",
+      status: "confirmed",
+      score: 90,
+    },
+  ];
+
+  it("offers a report that seems the same; Same problem merges them", async () => {
+    post.mockImplementation(async (path: string) =>
+      path === "/v1/admin/bugs"
+        ? { report: { id: "new1" }, similar }
+        : { id: "old1" },
+    );
+    const { user, sheet } = await openAndType(
+      "/apply/run1",
+      "Phone in extension box",
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog", { name: "Added" });
+    expect(within(dialog).getByText("Looks like")).toBeInTheDocument();
+    expect(
+      within(dialog).getByText("Phone put in Phone Extension"),
+    ).toBeInTheDocument();
+    expect(within(dialog).getByText("Confirmed")).toBeInTheDocument();
+    await user.click(
+      within(dialog).getByRole("button", {
+        name: "Same problem as Phone put in Phone Extension",
+      }),
+    );
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/admin/bugs/new1/merge", {
+        into_id: "old1",
+      }),
+    );
+    expect(toastSuccess).toHaveBeenCalledWith("Added to the one you had");
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+  });
+
+  it("It's new keeps it as its own report", async () => {
+    post.mockResolvedValue({ report: { id: "new1" }, similar });
+    const { user, sheet } = await openAndType(
+      "/jobs",
+      "Phone in extension box",
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog", { name: "Added" });
+    await user.click(within(dialog).getByRole("button", { name: "It's new" }));
+    await waitFor(() =>
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument(),
+    );
+    expect(post).toHaveBeenCalledTimes(1);
+    // Opened again, it's a fresh form.
+    await user.click(screen.getByRole("button", { name: "Add a bug or idea" }));
+    expect(
+      within(
+        await screen.findByRole("dialog", { name: "Add a bug or idea" }),
+      ).getByRole("textbox", { name: "Title" }),
+    ).toHaveValue("");
+  });
+
+  it("says when the merge fails", async () => {
+    post.mockImplementation(async (path: string) => {
+      if (path === "/v1/admin/bugs") return { report: { id: "new1" }, similar };
+      throw new Error("offline");
+    });
+    const { user, sheet } = await openAndType(
+      "/jobs",
+      "Phone in extension box",
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    const dialog = await screen.findByRole("dialog", { name: "Added" });
+    await user.click(
+      within(dialog).getByRole("button", { name: /Same problem/ }),
+    );
+    expect(await within(dialog).findByRole("alert")).toHaveTextContent(
+      "Couldn't merge them. Try again.",
     );
   });
 });

@@ -20,6 +20,7 @@ import ConnectPage from "@/routes/ConnectPage";
 import ForgotPasswordPage from "@/routes/ForgotPasswordPage";
 import ResetPasswordPage from "@/routes/ResetPasswordPage";
 import WelcomePage from "@/routes/WelcomePage";
+import { CrashScreen } from "@/components/bugs/CrashScreen";
 import { RequireAuth } from "@/routes/RequireAuth";
 import { useIsPhone } from "@/hooks/useIsPhone";
 import { useOnboarding } from "@/hooks/useOnboarding";
@@ -38,20 +39,31 @@ export function Home() {
   return <Navigate to={phone ? "/jobs" : "/search"} replace />;
 }
 
+// A page that breaks shows the crash screen (spec 032) and is reported.
+const crash = <CrashScreen />;
+
 // The app's "map": which URL renders which component.
 // In Next.js this was implicit (folder names). Here it's explicit — you can
 // read the entire routing structure of the app in one place.
 export const router = createBrowserRouter([
   // Public routes (no dashboard shell)
-  { path: "/login", element: <Login /> },
+  { path: "/login", element: <Login />, errorElement: crash },
   // Supabase OAuth (e.g. GitHub) redirects back here.
-  { path: "/auth/callback", element: <AuthCallback /> },
+  { path: "/auth/callback", element: <AuthCallback />, errorElement: crash },
   // Claude connector consent screen (Supabase OAuth server redirects here).
-  { path: "/oauth/consent", element: <OAuthConsent /> },
+  { path: "/oauth/consent", element: <OAuthConsent />, errorElement: crash },
   // Approve a Job Catcher (checks sign-in itself, like the consent screen).
-  { path: "/connect", element: <ConnectPage /> },
-  { path: "/forgot-password", element: <ForgotPasswordPage /> },
-  { path: "/reset-password", element: <ResetPasswordPage /> },
+  { path: "/connect", element: <ConnectPage />, errorElement: crash },
+  {
+    path: "/forgot-password",
+    element: <ForgotPasswordPage />,
+    errorElement: crash,
+  },
+  {
+    path: "/reset-password",
+    element: <ResetPasswordPage />,
+    errorElement: crash,
+  },
   // The Welcome (spec 019): full-page, no sidebar, signed in only.
   {
     path: "/welcome",
@@ -60,30 +72,42 @@ export const router = createBrowserRouter([
         <WelcomePage />
       </RequireAuth>
     ),
+    errorElement: crash,
   },
 
   // Protected app — DashboardLayout renders the sidebar + <Outlet/> for children
   {
     path: "/",
     element: <DashboardLayout />,
+    // The frame itself broke: the whole screen.
+    errorElement: crash,
     children: [
-      { index: true, element: <Home /> },
-      { path: "search", element: <SearchPage /> },
-      // Saved + Tracker are one page now — same jobs, List/Board views.
-      { path: "jobs", element: <MyJobsPage /> },
-      { path: "jobs/:id", element: <JobDetailPage /> },
-      { path: "apply/:runId", element: <ApplyRunPage /> },
-      { path: "saved", element: <Navigate to="/jobs" replace /> },
-      { path: "tracker", element: <Navigate to="/jobs?view=board" replace /> },
-      { path: "matches", element: <MatchesPage /> },
-      { path: "email-updates", element: <EmailUpdatesPage /> },
-      { path: "analytics", element: <AnalyticsPage /> },
-      { path: "ai-apply", element: <AiApplyPage /> },
-      { path: "autofill", element: <AutofillMemoryPage /> },
-      { path: "job-catcher", element: <JobCatcherPage /> },
-      { path: "settings", element: <SettingsPage /> },
-      { path: "admin", element: <AdminPage /> },
-      { path: "admin/bugs", element: <AdminBugsPage /> },
+      {
+        // A page broke: the crash screen in its place, the menu still there.
+        errorElement: crash,
+        children: [
+          { index: true, element: <Home /> },
+          { path: "search", element: <SearchPage /> },
+          // Saved + Tracker are one page now — same jobs, List/Board views.
+          { path: "jobs", element: <MyJobsPage /> },
+          { path: "jobs/:id", element: <JobDetailPage /> },
+          { path: "apply/:runId", element: <ApplyRunPage /> },
+          { path: "saved", element: <Navigate to="/jobs" replace /> },
+          {
+            path: "tracker",
+            element: <Navigate to="/jobs?view=board" replace />,
+          },
+          { path: "matches", element: <MatchesPage /> },
+          { path: "email-updates", element: <EmailUpdatesPage /> },
+          { path: "analytics", element: <AnalyticsPage /> },
+          { path: "ai-apply", element: <AiApplyPage /> },
+          { path: "autofill", element: <AutofillMemoryPage /> },
+          { path: "job-catcher", element: <JobCatcherPage /> },
+          { path: "settings", element: <SettingsPage /> },
+          { path: "admin", element: <AdminPage /> },
+          { path: "admin/bugs", element: <AdminBugsPage /> },
+        ],
+      },
     ],
   },
 
