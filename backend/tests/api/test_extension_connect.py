@@ -328,12 +328,24 @@ async def test_hello_records_the_version_and_the_update_note(
         "browser": "Chrome 142",
     }
     r = await client.post("/v1/extension/hello", json=body)
-    assert r.json() == {"latest": "0.35.0", "update_available": True}
+    assert r.json() == {"latest": "0.35.0", "update_available": True, "is_owner": False}
     r = await client.post("/v1/extension/hello", json=body | {"version": "0.35.0"})
     assert r.json()["update_available"] is False
 
     bad = await client.post("/v1/extension/hello", json=body | {"version": "1;drop"})
     assert bad.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_hello_tells_the_owners_job_catcher_it_is_the_owners(
+    admin_client: AsyncClient,
+):
+    """Spec 032: the owner's Job Catcher shows "Report a problem here"."""
+    r = await admin_client.post(
+        "/v1/extension/hello",
+        json={"install_id": "install-owner1", "version": "0.47.0"},
+    )
+    assert r.json()["is_owner"] is True
 
 
 @pytest.mark.asyncio

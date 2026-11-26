@@ -211,6 +211,22 @@ async def require_admin(
     return user
 
 
+async def require_admin_or_pass(
+    user: Annotated[User, Depends(get_user_or_pass)],
+) -> User:
+    """The owner, signed in to the app or through their own Job Catcher's
+    pass. Only for the two routes Job Catcher's "Report a problem here" uses
+    (spec 032: add a report, add its picture); everything else in admin
+    stays app-session only."""
+    if user.role != "admin":
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Admin role required",
+        )
+    return user
+
+
 # Type aliases for cleaner route signatures
 CurrentUser = Annotated[User, Depends(get_current_user)]
 AdminUser = Annotated[User, Depends(require_admin)]
+AdminOrPass = Annotated[User, Depends(require_admin_or_pass)]
