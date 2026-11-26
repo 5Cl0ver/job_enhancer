@@ -33,7 +33,7 @@ IT systems engineer who keeps 300 laptops and the network running.
 **Network:** Meraki, VLANs
 
 ## WORK EXPERIENCE
-**Logical Position** | *IT Systems Engineer* | Sep 2024 – Present
+**Northwind Labs** | *IT Systems Engineer* | Sep 2024 – Present
 - Moved 200 laptops to Intune with zero lost data.
 - Ran the help desk for 180 people.
 
@@ -64,7 +64,7 @@ async def _setup(engine, monkeypatch):
                 filename="me.pdf",
                 mime_type="application/pdf",
                 file_size_bytes=3,
-                extracted_text="Sam Rivera. Intune, Windows. Logical Position.",
+                extracted_text="Sam Rivera. Intune, Windows. Northwind Labs.",
                 is_active=True,
                 parsed_history={"work": [{"title": "IT Systems Engineer"}]},
             )
@@ -159,7 +159,7 @@ async def test_the_whole_application(engine, monkeypatch):
         [work] = resume.parsed_history["work"]
         assert (work["title"], work["company"]) == (
             "IT Systems Engineer",
-            "Logical Position",
+            "Northwind Labs",
         )
         assert work["description"] == (
             "• Moved 200 laptops to Intune with zero lost data.\n"
