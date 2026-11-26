@@ -101,6 +101,18 @@ describe("which Job Catcher is behind", () => {
     ).toEqual({ version: "0.42.0", latest: "0.45.0", where: "Chrome (macOS)" });
   });
 
+  it("a reinstall on the same browser and system replaces the old copy", () => {
+    expect(
+      outdatedJobCatcher(
+        [
+          { install_id: "new", version: "0.45.0", browser: "Chrome 142 (Windows)", last_seen_at: now() },
+          { install_id: "old", version: "0.42.0", browser: "Chrome 141 (Windows)", last_seen_at: daysAgo(3) },
+        ],
+        "0.45.0",
+      ),
+    ).toBeNull();
+  });
+
   it("ignores one not seen for 30 days, and an unknown release", () => {
     expect(outdatedJobCatcher([{ version: "0.42.0", browser: "Chrome 141", last_seen_at: daysAgo(40) }], "0.45.0")).toBeNull();
     expect(outdatedJobCatcher([{ version: "0.42.0", browser: "Chrome 141", last_seen_at: now() }], null)).toBeNull();

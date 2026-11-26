@@ -74,8 +74,10 @@ export interface OutdatedJobCatcher {
  * The Job Catcher that's behind (spec 034): one install (one browser on one
  * computer) seen in the last 30 days on this account, older than the newest
  * release. Each install is its own: an up-to-date copy on another computer
- * never hides an old one. The newest-seen behind one is named. Null when
- * every recent one is current, or nothing is known.
+ * never hides an old one — but a current copy on the SAME browser and system
+ * seen after it does (Job Catcher was removed and added again: a new install).
+ * The newest-seen behind one is named. Null when every recent one is
+ * current, or nothing is known.
  */
 export function outdatedJobCatcher(
   installs: { install_id?: string; version: string; browser: string | null; last_seen_at: string }[] | undefined,
@@ -85,7 +87,18 @@ export function outdatedJobCatcher(
   if (!latest || !installs?.length) return null;
   const seen = (i: { last_seen_at: string }) => new Date(i.last_seen_at).getTime();
   const recent = installs.filter((i) => now - seen(i) < RECENT_MS);
-  const one = recent.filter((i) => isOlder(i.version, latest)).sort((a, b) => seen(b) - seen(a))[0];
+  const replaced = (i: (typeof recent)[number]) =>
+    recent.some(
+      (o) =>
+        o !== i &&
+        !isOlder(o.version, latest) &&
+        !!browserLabel(o.browser) &&
+        browserLabel(o.browser) === browserLabel(i.browser) &&
+        seen(o) >= seen(i),
+    );
+  const one = recent
+    .filter((i) => isOlder(i.version, latest) && !replaced(i))
+    .sort((a, b) => seen(b) - seen(a))[0];
   if (!one) return null;
   return { version: one.version, latest, where: recent.length > 1 ? browserLabel(one.browser) : "" };
 }
