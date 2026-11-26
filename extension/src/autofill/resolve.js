@@ -2,7 +2,7 @@
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
 import { answerKey, closestAnswer, isCompanySpecific, yesNo } from "./classify/answers.js";
 import { formerEmployerAnswer } from "./classify/formerEmployer.js";
-import { OTHER_PERSON, guardReason, profileKeyFor, valueForms } from "./classify/profileKeys.js";
+import { OTHER_PERSON, fieldGuard, profileKeyFor, valueForms } from "./classify/profileKeys.js";
 
 /** The keys that make a page look like an application. */
 export const IDENTITY = new Set(["first_name", "last_name", "full_name", "email", "phone"]);
@@ -121,7 +121,7 @@ export const NEAR = 0.6;
  * @returns {{scope: "all"|"site"|"essay", key: string, profileKey?: string} | null}
  */
 export function learnKeyFor(field, site) {
-  const guard = guardReason(field.question, field.kind);
+  const guard = fieldGuard(field);
   if (guard === "essay") return field.key ? { scope: "essay", key: answerKey("essay", site, field.key) } : null;
   // A lone checkbox that isn't an agreement is a yes/no question: remembered
   // like any other (spec 034); agreements never (the guard).
@@ -198,15 +198,20 @@ const CHOICE_KINDS = new Set(["radio", "select", "combobox", "buttons"]);
  * for the user only when the page requires it (`quiet` = not listed).
  */
 function yesNoBox(field, copy) {
+  const learned = learnedFor(field, copy, null);
+  const yes = (l) => yesNo(l.answer) === "yes" || /^(true|checked|1)$/i.test(String(l.answer).trim());
+  // The user's own answer on THIS site comes first (as for a radio): ticked
+  // for a Yes, left unticked for a No.
+  if (learned?.tier === "site") {
+    return yes(learned) ? { values: ["Yes"], source: "learned", learnKey: learned.question_key } : { skip: "unknown", quiet: true };
+  }
   const former = formerEmployerAnswer(field.question, copy);
   if (former === "Yes") return { values: ["Yes"], source: "history", key: "former_employer" };
   if (former === "No") return { skip: "unknown", quiet: true };
-  const learned = learnedFor(field, copy, null);
-  if (learned && learned.tier !== "offer") {
-    const yes = yesNo(learned.answer) === "yes" || /^(true|checked|1)$/i.test(String(learned.answer).trim());
-    if (yes) return { values: ["Yes"], source: "learned", learnKey: learned.question_key };
-    return { skip: "unknown", quiet: true };
-  }
+  // The same box answered on ANOTHER site (spec 034 review): never ticked by
+  // itself — a tick box can attest to something about this application.
+  // A Yes is offered ("Use saved answer"); a No leaves it unticked.
+  if (learned?.tier === "exact") return yes(learned) ? { skip: "unknown", offer: "Yes" } : { skip: "unknown", quiet: true };
   return field.hints?.required ? { skip: "unknown" } : { skip: "unknown", quiet: true };
 }
 
@@ -216,7 +221,7 @@ function yesNoBox(field, copy) {
  *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person"|"too_long", key?: string}}
  */
 export function resolve(field, copy) {
-  const guard = guardReason(field.question, field.kind);
+  const guard = fieldGuard(field);
   // "Paste your cover letter": the job's letter, when it has one (spec 031);
   // otherwise it stays an essay for the user (or Claude) to write.
   if (guard === "essay" && copy.coverLetterText && isCoverLetterText(field)) {

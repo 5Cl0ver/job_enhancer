@@ -22,11 +22,13 @@ export const OTHER_PERSON =
  * Agreeing to terms or attesting to something: only the user can. A lone
  * checkbox is an agreement only when it reads like one (spec 034): agree,
  * consent, acknowledge, certify, attest, terms, privacy, policy, "I have
- * read", "true and complete", a signature — and an opt-in to messages
- * ("Text me updates", "I'd like to receive emails"): agreeing to be contacted.
+ * read", "true and complete", a signature, an attestation ("I hereby
+ * declare…", "I confirm the information is correct", "to the best of my
+ * knowledge", "By ticking this box…") — and an opt-in to messages ("Text me
+ * updates", "I'd like to receive emails"): agreeing to be contacted.
  */
 export const CONSENT =
-  /\b(text|sms|e-?mail|call|contact|message) me\b|\bopt[\s-]?in\b|\breceive (text|sms|e-?mail|messages|updates|communications|alerts|news)|\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy|\bpolic(y|ies)\b|consent|acknowledg|attest|certif(y|ication that)|true,? (and|&) (complete|correct|accurate)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature|\bsignature\b/i;
+  /\bdeclare\b|\bhereby\b|\bi confirm\b|\bverify\b|\baccurate\b|\bcorrect\b|\bhonest(ly)?\b|\bby (selecting|ticking|checking|clicking|submitting)\b|to the best of my knowledge|\b(text|sms|e-?mail|call|contact|message) me\b|\bopt[\s-]?in\b|\breceive (text|sms|e-?mail|messages|updates|communications|alerts|news)|\bi (have read|agree|accept|acknowledge|certify|attest|consent|understand|confirm that|authori[sz]e)|\b(agree|accept)\b.*\b(terms|conditions|policy|polic(y|ies))|terms (of|and|&)|terms\b|conditions\b|privacy|\bpolic(y|ies)\b|consent|acknowledg|attest|certif(y|ication that)|true,? (and|&) (complete|correct|accurate)|authori[sz]e .*(background|credit|drug|check|verification)|background check|by (checking|clicking|submitting)|e-?signature|electronic signature|\bsignature\b/i;
 
 /** Essays: a person writes these (Write in the panel helps). */
 export const ESSAY =
@@ -36,17 +38,47 @@ export const ESSAY =
 export const NOISE =
   /cookie|newsletter|subscribe|marketing|notification|preference|personaliz|search jobs|keyword|job alert|captcha|password|promo(tion)? code|coupon/i;
 
-/** Why a field is left alone, or null. Self-ID and consent come first. */
-export function guardReason(question, kind) {
+// An agreement in so many words (any kind of box, or a choice's own label).
+const AGREEING =
+  /\bi (agree|accept|certify|attest|acknowledge|authori[sz]e)|signature|\b(agree|accept)\b.*\b(terms|conditions|polic)|background check|authori[sz]e .*(background|credit|drug|check)/i;
+const CHOICES = new Set(["checkbox_list", "radio", "buttons"]);
+
+/** guardReason for a scanned field: its question, its kind and its choices' labels. */
+export function fieldGuard(field) {
+  return guardReason(field?.question || "", field?.kind, (field?.options || []).map((o) => o?.label || ""));
+}
+
+/**
+ * A choice that must never be ticked or picked for the user: a self-ID
+ * answer, a private number, an agreement (any agreement wording on a tick
+ * box; on a radio or a button, an agreement in so many words).
+ */
+export function untouchableChoice(label, kind = "checkbox_list") {
+  const l = String(label || "");
+  if (SELF_ID.test(l) || PRIVATE.test(l) || AGREEING.test(l)) return true;
+  return (kind === "checkbox_list" || kind === "checkbox") && CONSENT.test(l);
+}
+
+/**
+ * Why a field is left alone, or null. Self-ID and consent come first. For a
+ * group of choices every option counts too (spec 034 review): a list whose
+ * options are about a disability or a veteran status is self-ID whatever its
+ * question says; a list of tick boxes with an agreement among them is the
+ * user's (never ticked, never learned).
+ * @param {string} question
+ * @param {string} kind
+ * @param {string[]} [options] the choices' labels
+ */
+export function guardReason(question, kind, options = []) {
   const q = String(question || "");
   if (SELF_ID.test(q) || PRIVATE.test(q)) return "sensitive";
+  const labels = CHOICES.has(kind) ? (options || []).map((o) => String(o || "")) : [];
+  if (labels.some((l) => SELF_ID.test(l) || PRIVATE.test(l))) return "sensitive";
   if ((kind === "checkbox" || kind === "checkbox_list") && CONSENT.test(q)) return "consent";
+  if (kind === "checkbox_list" && labels.some((l) => CONSENT.test(l))) return "consent";
+  if (labels.some((l) => AGREEING.test(l))) return "consent";
   // Agreeing, in any form (a box, a Yes/No question, a dropdown).
-  if (
-    CONSENT.test(q) &&
-    /\bi (agree|accept|certify|attest|acknowledge|authori[sz]e)|signature|\b(agree|accept)\b.*\b(terms|conditions|polic)|background check|authori[sz]e .*(background|credit|drug|check)/i.test(q)
-  )
-    return "consent";
+  if (CONSENT.test(q) && AGREEING.test(q)) return "consent";
   if (NOISE.test(q)) return "noise";
   if (ESSAY.test(q) && (kind === "textarea" || kind === "editable" || kind === "text")) return "essay";
   return null;

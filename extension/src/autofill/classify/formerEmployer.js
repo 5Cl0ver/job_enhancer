@@ -58,28 +58,39 @@ export function inHistory(company, history) {
 
 // "Previously / ever / before / former … employed / worked / contractor".
 const FORMER =
-  /\b(previously|formerly|ever|before|in the past|prior)\b[^?]*\b(employed|worked|work|contractor|contracted|interned?)\b|\b(employed|worked|contractor|interned?)\b[^?]*\b(previously|formerly|before|in the past|prior)\b|\bformer (employee|contractor|intern|worker|team member|staff)\b|\bcurrent or former\b/i;
+  /\b(previously|formerly|ever|before|in the past|prior)\b[^?]*\b(employed|worked|work|contractor|contracted|intern(?:ed)?)\b|\b(employed|worked|contractor|intern(?:ed)?)\b[^?]*\b(previously|formerly|before|in the past|prior)\b|\bformer (employee|contractor|intern|worker|team member|staff)\b|\bcurrent or former\b/i;
 // About someone else, or about applying (not working) there.
 const NOT_WORK = /\brelatives?\b|\bfamily\b|\bfriends?\b|\bspouse\b|\bpartner\b|\bknow anyone\b|\breferr|\bapplied\b|\binterviewed\b|\bdifferent name\b|\bother name\b|\bgovernment\b|\bmilitary\b/i;
 // "us", "this company", "here": the company the application is for.
 const THIS_COMPANY = /^(us|this (company|organi[sz]ation|employer|firm|business)|our (company|organi[sz]ation|firm|business)|the company)\b/i;
 // A company's name as written: capitalized words, "of"/"and"/"&" between them.
 const NAME = /^([A-Z0-9][\w&.'’-]*(?:\s+(?:(?:of|and|&|the|de)\s+)?[A-Z0-9][\w&.'’-]*)*)/;
+// Employment wording with the company right after it (spec 034 review):
+// "employed by", "employee of", "worked for / at", "been a contractor for",
+// "interned at". Never "worked with" (a tool: "worked with Python").
+const EMPLOYED_BY =
+  /\b(?:employed\s+by|employee\s+of|(?:worked|work|working)\s+(?:for|at)|contractor\s+(?:for|at|with)|contracted\s+(?:for|at|with|by)|intern(?:ed)?\s+(?:for|at))\s+(.+)$/i;
+// Working here, said plainly.
+const HERE = /\b(?:worked|work|employed|been)\s+(?:here|for us)\b|\bwith us\b|\b(?:for|at|by)\s+(?:this|our)\s+(?:company|organi[sz]ation|employer|firm)\b/i;
+// More than one company, or a company's family: not a yes/no about one name.
+const NOT_ONE = /,|\bor\b|\band\b|subsidiar|affiliat|\bparent\b|\bany of its\b|\bcompetitor/i;
 
 /**
  * Is this a "have you worked for this company before?" question, and which
  * company does it ask about? `{company}`: a name it says itself; `{ours:
  * true}`: "us", "this company", "here" (the application's company). Null:
- * not that question.
+ * not that question — a tool ("worked with Python"), a list of companies,
+ * "any of its subsidiaries", a kind of place ("a government agency").
  */
 export function formerEmployerQuestion(question) {
   const q = String(question || "").replace(/\s+/g, " ").trim();
   if (!q || !FORMER.test(q) || NOT_WORK.test(q)) return null;
-  if (/\b(here|with us)\b/i.test(q)) return { ours: true };
-  const m = /\b(?:by|for|at|with|of)\s+(.+)$/i.exec(q.replace(/^.*?\b(employed|worked|work|contractor|contracted|interned?|employee|staff|team member)\b/i, ""));
+  if (HERE.test(q)) return NOT_ONE.test(q.replace(/\bcurrent or former\b/i, "")) ? null : { ours: true };
+  const m = EMPLOYED_BY.exec(q);
   if (!m) return null;
-  const target = m[1].replace(/\?.*$/, "").trim();
+  const target = m[1].replace(/\?.*$/, "").replace(/\s+(before|previously|in the past|as an? .*|at any time.*)$/i, "").trim();
   if (THIS_COMPANY.test(target)) return { ours: true };
+  if (NOT_ONE.test(target)) return null;
   const name = NAME.exec(target)?.[1]?.replace(/[.,'’]+$/, "").trim();
   if (!name || /^(a|an|any|the)$/i.test(name)) return null;
   return { company: name };

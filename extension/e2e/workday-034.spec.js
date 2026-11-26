@@ -139,17 +139,48 @@ test("Application Questions: only the agreement and the required unknown boxes a
   });
   for (const id of ["secondary", "board", "age", "attest"]) await expect(page.locator(`#${id}`)).not.toBeChecked();
 
-  // Ticked "secondary employment" once (anywhere): the next application ticks it.
-  api.state.answers = [{ question_key: "i currently have secondary employment", answer: "Yes" }];
+  // Ticked "secondary employment" on this site: the next application here
+  // ticks it. "Board of directors" was ticked on another site: only offered.
+  api.state.answers = [
+    { question_key: "northwind.wd5.myworkdayjobs.com|i currently have secondary employment", answer: "Yes" },
+    { question_key: "i serve on a board of directors", answer: "Yes" },
+  ];
   api.state.bundleVersion++;
   await ext.worker.evaluate(() => chrome.storage.local.remove("je_autofill"));
   const next = await ext.context.newPage();
   await next.goto(PAGES.questions);
+  const panel = await panelFor(next);
   expect((await ext.autofill(next)).ok).toBe(true);
   await expect(next.locator("#secondary")).toBeChecked();
   await expect(next.locator("#board")).not.toBeChecked();
   await expect(next.locator("#attest")).not.toBeChecked();
-  await Promise.all([page.close(), next.close()]);
+  const board = panel.getByRole("listitem").filter({ hasText: "I serve on a board of directors" });
+  await board.getByRole("button", { name: "Use saved answer" }).click(); // the user's tap
+  await expect(next.locator("#board")).toBeChecked();
+  await expect(next.locator("#attest")).not.toBeChecked();
+  await Promise.all([page.close(), next.close(), panel.close()]);
+});
+
+test("a sign-in on a Workday job page never marks a job applied, and the real Submit still counts", async () => {
+  const signIn = `${JOB}/apply/signIn`;
+  await ext.context.route(signIn, (r) =>
+    r.fulfill({
+      status: 200,
+      contentType: "text/html",
+      body: '<!doctype html><title>Sign In</title><h2>Sign In</h2><form onsubmit="return false"><label>Email Address<input type="text"></label><label>Password<input type="password"></label><button>Sign In</button><button type="button" data-automation-id="bottom-navigation-next-button">Submit</button></form>',
+    }),
+  );
+  const page = await ext.context.newPage();
+  await page.goto(signIn);
+  await page.getByRole("button", { name: "Sign In" }).click();
+  await page.getByRole("button", { name: "Submit" }).click(); // a password showing: not the application's Submit
+  await page.waitForTimeout(1500);
+  expect(api.calls("/v1/saved-jobs/mark-applied")).toHaveLength(0);
+  await page.goto(PAGES.questions); // signed in: the application's own Submit
+  await page.locator("#submit").click();
+  await expect.poll(() => api.calls("/v1/saved-jobs/mark-applied").length, { timeout: 10000 }).toBe(1);
+  await page.close();
+  await ext.context.unroute(signIn);
 });
 
 test("a Workday job page: the panel shows the job by itself, and Save saves it", async () => {

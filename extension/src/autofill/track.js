@@ -3,6 +3,8 @@
 // Workday a job never saved is saved from the page first (spec 034): the user
 // did apply, so it's tracked. Nothing is ever submitted for the user.
 
+import { isOnScreen } from "./visible.js";
+
 const WORKDAY_HOST = /\.(myworkdayjobs|myworkdaysite)\.com$/i;
 
 /** Which applicant system rents this page its form (for reading the job). */
@@ -97,9 +99,31 @@ export function jobInfo(doc, ats, loc) {
   };
 }
 
+/** A password box showing: a sign-in or Create Account step, never the application's Submit. */
+function passwordShowing(doc) {
+  return [...doc.querySelectorAll('input[type="password"]')].some((el) => isOnScreen(el));
+}
+
 /**
- * Call `onSubmit(job)` once when the application is submitted: a form submit,
- * or on Workday the final "Submit" button (a single-page app). On Workday the
+ * Workday's own final Submit (spec 034 review): the button that reads
+ * exactly "Submit" (Workday's bottom-navigation "next" button on the Review
+ * step, or its page-footer submit button), on an application step (…/apply…),
+ * with no password box showing. A sign-in, a Create Account page or a search
+ * box on the job page is never it.
+ */
+export function isWorkdayFinalSubmit(button, doc, loc) {
+  if (!button) return false;
+  const label = (button.textContent || button.value || "").replace(/\s+/g, " ").trim().toLowerCase();
+  if (label !== "submit") return false;
+  const aid = button.getAttribute?.("data-automation-id") || "";
+  if (aid && !/bottom-navigation-next-button|submit/i.test(aid)) return false;
+  return !!workdayAddress(loc.href)?.apply && !passwordShowing(doc);
+}
+
+/**
+ * Call `onSubmit(job)` once when the application is submitted: a form submit
+ * (Greenhouse, Lever…), or on Workday only its own final Submit button (a
+ * single-page app whose sign-in and search forms submit too). On Workday the
  * job carries `create`: what to save it as when it isn't saved yet.
  */
 export function watchForSubmit({ doc = document, loc = location, isCurrent, onSubmit }) {
@@ -117,16 +141,16 @@ export function watchForSubmit({ doc = document, loc = location, isCurrent, onSu
     }
     onSubmit(job);
   };
-  doc.addEventListener("submit", fire, true);
   if (ats === "workday") {
     doc.addEventListener(
       "click",
       (e) => {
-        const b = e.target?.closest?.('button, [role="button"]');
-        const label = (b?.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
-        if (label === "submit") fire();
+        const b = e.target?.closest?.('button, [role="button"], input[type="submit"]');
+        if (isWorkdayFinalSubmit(b, doc, loc)) fire();
       },
       true,
     );
+    return;
   }
+  doc.addEventListener("submit", fire, true);
 }

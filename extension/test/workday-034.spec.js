@@ -22,6 +22,7 @@ import { detectContext } from "../panel/src/lib/context.ts";
 const here = dirname(fileURLToPath(import.meta.url));
 const JOB = "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/Applications-Developer-II_JR-1001";
 const APPLY = `${JOB}/apply/applyManually`;
+const SITE = "northwind.wd5.myworkdayjobs.com";
 
 /** A lab page at an address (its own scripts left out: only the markup counts here). */
 function lab(name, url = APPLY) {
@@ -151,7 +152,7 @@ describe("US3: have you worked here before?", () => {
     expect(d).toMatchObject({ values: ["Yes"], source: "learned" });
   });
 
-  it("the company comes from the Workday site's name when nothing else says it", () => {
+  it("the Workday site's name (only to name an unsaved job, never to answer 'worked here before?')", () => {
     expect(tenantCompany(workdayAddress(APPLY).tenant)).toBe("Northwind");
     expect(tenantCompany(workdayAddress("https://wd3.myworkdaysite.com/en-US/recruiting/cascadia/External/job/X_R1/apply").tenant)).toBe("Cascadia");
   });
@@ -187,28 +188,40 @@ describe("US4: only real agreements are only yours", () => {
     });
   });
 
-  it("a remembered Yes ticks it, on any site; a remembered No leaves it", async () => {
+  it("a Yes remembered on this site ticks it; one from another site is only offered; a No leaves it", async () => {
     const doc = lab("workday-questions.html");
-    await session(doc).fillKnown(
-      copy({ answers: [{ question_key: "i currently have secondary employment", answer: "Yes" }, { question_key: "i serve on a board of directors", answer: "No" }] }),
+    const s = session(doc);
+    await s.fillKnown(
+      copy({
+        answers: [
+          { question_key: `${SITE}|i currently have secondary employment`, answer: "Yes" },
+          { question_key: "i serve on a board of directors", answer: "Yes" }, // answered on another site
+          { question_key: `${SITE}|i am at least 18 years of age`, answer: "No" },
+        ],
+      }),
     );
     expect(doc.querySelector("#secondary").checked).toBe(true);
-    expect(doc.querySelector("#board").checked).toBe(false);
+    expect(doc.querySelector("#board").checked).toBe(false); // never ticked by itself…
+    const board = s.report().need_you.find((n) => n.label === "I serve on a board of directors");
+    expect(board).toMatchObject({ reason: "unknown", saved: "Yes" }); // …offered: "Use saved answer"
+    expect(doc.querySelector("#age").checked).toBe(false);
     expect(doc.querySelector("#attest").checked).toBe(false); // never, whatever was remembered
   });
 
   it("ticking or unticking one is remembered like any other answer; agreements never", async () => {
     const doc = lab("workday-questions.html");
     const s = session(doc);
-    await s.fillKnown(copy({ answers: [{ question_key: "i serve on a board of directors", answer: "Yes" }] }));
+    await s.fillKnown(copy({ answers: [{ question_key: `${SITE}|i serve on a board of directors`, answer: "Yes" }] }));
     expect(doc.querySelector("#board").checked).toBe(true);
     doc.querySelector("#secondary").checked = true; // the user ticks one
     doc.querySelector("#board").checked = false; // and unticks the one Job Catcher ticked
     doc.querySelector("#attest").checked = true; // and the agreement
-    const typed = Object.fromEntries(s.typedAnswers().map((a) => [a.question_key, a.answer]));
-    expect(typed["i currently have secondary employment"]).toBe("Yes");
-    expect(typed["i serve on a board of directors"]).toBe("No");
-    expect(Object.keys(typed).some((k) => k.includes("certify"))).toBe(false);
+    const typed = s.typedAnswers();
+    const of = (k) => typed.filter((a) => a.question_key === k).map((a) => [a.answer, !!a.company]);
+    // Kept for this site (ticked here next time) and for every site (offered there).
+    expect(of("i currently have secondary employment")).toEqual([["Yes", true], ["Yes", false]]);
+    expect(of("i serve on a board of directors")).toEqual([["No", true], ["No", false]]);
+    expect(typed.some((a) => a.question_key.includes("certify"))).toBe(false);
   });
 
   it("a yes/no box can be pointed at and taught; an agreement can't", () => {

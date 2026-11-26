@@ -3,7 +3,7 @@
 // Nothing is ever submitted, nothing the user typed is overwritten, and
 // self-identification, agreements and essays are never touched.
 import { answerKey, isCompanySpecific, normalizeQuestion, yesNo } from "./classify/answers.js";
-import { PRIVATE, guardReason, profileKeyFor } from "./classify/profileKeys.js";
+import { PRIVATE, fieldGuard, profileKeyFor } from "./classify/profileKeys.js";
 import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, eduPart, eduValues, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
@@ -33,9 +33,9 @@ import { canRestore, hasValue, peekOptions, readField, restore, same, snapshot, 
 const STYLE_ID = "jec-fill-style";
 const STYLE = `
 [data-jec-fill] { outline: 2px solid var(--jec-fill) !important; outline-offset: 2px !important; border-radius: 4px; }
-[data-jec-fill="profile"], [data-jec-fill="history"] { --jec-fill: oklch(0.6 0.15 155 / .85); }
+[data-jec-fill="profile"] { --jec-fill: oklch(0.6 0.15 155 / .85); }
 [data-jec-fill="learned"] { --jec-fill: oklch(0.6 0.17 250 / .85); }
-[data-jec-fill="ai"]      { --jec-fill: oklch(0.6 0.2 300 / .9); }
+[data-jec-fill="ai"], [data-jec-fill="history"] { --jec-fill: oklch(0.6 0.2 300 / .9); }
 [data-jec-fill="need"]    { --jec-fill: oklch(0.72 0.16 65 / .9); outline-style: dashed !important; }
 [data-jec-flash] { outline: 3px solid oklch(0.72 0.16 65) !important; outline-offset: 3px !important; transition: outline-color .2s; }
 `;
@@ -108,7 +108,7 @@ export function profileValue(key, value) {
  * 034). Everything else is the user's call ("Notification email").
  */
 export function pointRefusal(field) {
-  const guard = guardReason(field.question, field.kind);
+  const guard = fieldGuard(field);
   if (guard === "sensitive" || guard === "consent") return guard;
   if (field.kind === "unknown_choice") return "consent";
   return "";
@@ -125,7 +125,7 @@ function sectionDecision(field, section, part, entry, copy) {
     // The same guards as everywhere: a declaration, agreement or self-ID box
     // inside a job block is never ticked or typed in (a job's description
     // box may read as an essay question: that one is fine).
-    const guard = guardReason(field.question || "", field.kind);
+    const guard = fieldGuard(field);
     if (guard && !(guard === "essay" && part === "description")) return { skip: guard };
     // "I currently work here" ticked by the page for a job that ended: untick
     // it (a correction: a press only); left unticked otherwise, quietly.
@@ -658,21 +658,17 @@ export function createSession(deps) {
     // A custom question's fix is remembered for next time (FR-014); one about
     // this company ("Have you worked for us before?") for this company only.
     // Never an agreement or a self-ID answer (they're never filled or fixed).
-    if (!profileKeyFor(field) && field.key && field.kind !== "file" && !pointRefusal(field)) {
+    if (!profileKeyFor(field) && field.key && field.kind !== "file" && !pointRefusal(field) && !PRIVATE.test(field.question)) {
       const site = siteKey(doc.location?.href || "");
       const company = isCompanySpecific(field.question);
-      if (!company || site) {
-        await send({
-          type: "saveCustomAnswers",
-          answers: [
-            {
-              question_key: company ? answerKey("site", site, field.key) : field.key,
-              question_text: field.question.slice(0, 500),
-              answer: String(res.actual || value).slice(0, 2000),
-            },
-          ],
-        }).catch(() => null);
-      }
+      const answer = { question_text: field.question.slice(0, 500), answer: String(res.actual || value).slice(0, 2000) };
+      const answers = [];
+      // This company's question: this site only. A tick box: this site (it's
+      // ticked here next time) and, unless about this company, every site
+      // (only offered there). Anything else: every site.
+      if (site && (company || field.kind === "checkbox")) answers.push({ question_key: answerKey("site", site, field.key), ...answer });
+      if (!company) answers.push({ question_key: field.key, ...answer });
+      if (answers.length) await send({ type: "saveCustomAnswers", answers }).catch(() => null);
     }
     return res;
   }
@@ -736,7 +732,7 @@ export function createSession(deps) {
       // fields read as the same question) are never remembered. A lone
       // checkbox that isn't an agreement is a yes/no answer (spec 034).
       if (PRIVATE.test(field.question) || keyCount.get(field.key) > 1) continue;
-      if (field.kind === "checkbox" && guardReason(field.question, field.kind)) continue;
+      if (field.kind === "checkbox" && fieldGuard(field)) continue;
       // Something we filled counts only if the user has since changed it.
       const ours = filled.get(field.id);
       if (field.kind === "checkbox") {
@@ -745,12 +741,12 @@ export function createSession(deps) {
         const ticked = !!field.el.checked;
         if (ours ? (ours.entry.value === "Yes") === ticked : !ticked) continue;
         if (!field.key || field.key.length < 3 || sections.has(field.id)) continue;
-        out.push({
-          question_key: normalizeQuestion(field.question),
-          question_text: field.question.slice(0, 500),
-          answer: ticked ? "Yes" : "No",
-          ...(isCompanySpecific(field.question) ? { company: true } : {}),
-        });
+        const one = { question_key: normalizeQuestion(field.question), question_text: field.question.slice(0, 500), answer: ticked ? "Yes" : "No" };
+        // Kept for this site (ticked here next time) and, unless it's about
+        // this company, for every site — where it's only offered, never
+        // ticked by itself (spec 034 review).
+        out.push({ ...one, company: true });
+        if (!isCompanySpecific(field.question)) out.push(one);
         continue;
       }
       if (ours && readField(field).trim() === ours.entry.value.trim()) continue; // ours, untouched

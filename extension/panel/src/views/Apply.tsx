@@ -29,7 +29,8 @@ const SOURCE: Record<string, { label: string; tone: string }> = {
   profile: { label: "Profile", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
   learned: { label: "Remembered", tone: "bg-sky-500/15 text-sky-700 dark:text-sky-300" },
   ai: { label: "AI · check", tone: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
-  history: { label: "Job history", tone: "bg-emerald-500/15 text-emerald-700 dark:text-emerald-300" },
+  // An answer worked out from the job history (spec 034): shown to check, like the AI's.
+  history: { label: "Job history · check", tone: "bg-violet-500/15 text-violet-700 dark:text-violet-300" },
 };
 
 const WHY: Record<string, string> = {
@@ -69,9 +70,10 @@ export function Apply({
   // An applicant system's Create Account page (spec 034): email only.
   const signup = !!fill.presence?.signup;
   const emailIn = [...entries, ...already].some((e) => /e-?mail/i.test(e.label));
-  const toCheck = entries.filter((e) => e.source === "ai" && !e.fixed);
+  const checkIt = (e: FillEntry) => (e.source === "ai" || e.source === "history") && !e.fixed;
+  const toCheck = entries.filter(checkIt);
   const checkCount = toCheck.length + suggestions.length;
-  const sure = entries.filter((e) => !(e.source === "ai" && !e.fixed));
+  const sure = entries.filter((e) => !checkIt(e));
 
   // The background fills every frame that holds a form and keeps the status
   // line up to date while it works; the result lands there too.

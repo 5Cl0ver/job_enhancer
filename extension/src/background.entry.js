@@ -21,6 +21,7 @@ import { pageId, siteKey } from "./autofill/hosts.js";
 import { bestJobMatch } from "../panel/src/lib/context.ts";
 import { LEARNABLE_PROFILE, profileValue } from "./autofill/session.js";
 import { valueForms } from "./autofill/classify/profileKeys.js";
+import { detectAts } from "./autofill/track.js";
 import { promotions } from "./autofill/promote.js";
 
 importScripts("/config.js");
@@ -165,7 +166,11 @@ function browserName() {
     brands.find((x) => /edge|brave|opera/i.test(x.brand)) ||
     brands.find((x) => /chrome/i.test(x.brand) && !/chromium/i.test(x.brand)) ||
     brands.find((x) => !/not.?a.?brand|chromium/i.test(x.brand));
-  return b ? `${b.brand.replace(/^Microsoft /, "").replace(/^Google /, "")} ${b.version}`.slice(0, 64) : "Chrome";
+  // The computer's system too ("Chrome 142 (Windows)"): the app names which
+  // computer's Job Catcher is out of date (spec 034).
+  const platform = String(navigator.userAgentData?.platform || "").replace(/[^\w .-]/g, "").slice(0, 20);
+  const name = b ? `${b.brand.replace(/^Microsoft /, "").replace(/^Google /, "")} ${b.version}` : "Chrome";
+  return `${name}${platform ? ` (${platform})` : ""}`.slice(0, 64);
 }
 
 async function installId() {
@@ -1109,8 +1114,11 @@ async function markApplied(job, tab = null) {
     const once = `${tab.id}|${job.create?.url || job.title}`;
     if (Date.now() - (recentSubmits.get(once) || 0) < 30_000) return { matched: true, repeat: true };
     recentSubmits.set(once, Date.now());
-    // The saved job this page is (the same posting): that one, no guessing by name.
-    if (!id) id = (await linkedJob(tab).catch(() => null))?.id || null;
+    // On an applicant system's application (Workday, Greenhouse, Lever: its
+    // page only reports its final Submit), the saved job this page is — the
+    // same posting — no guessing by name. Anywhere else (a search box on a
+    // saved job's page) never: the old exact title + company match only.
+    if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab).catch(() => null))?.id || null;
   }
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
     method: "POST",

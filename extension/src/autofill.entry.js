@@ -15,7 +15,7 @@ import { claimPage, runtimeGone, sweepLegacy } from "./orphan.js";
 import { removeUi } from "./ui/onpage.js";
 import { hasValue, readField, shownValue, writingNow, writtenValue } from "./autofill/widgets.js";
 import { isPlaceholderOption } from "./autofill/classify/answers.js";
-import { guardReason, profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
+import { fieldGuard, profileKeyFor, profileValues } from "./autofill/classify/profileKeys.js";
 import { fingerprintOf, matchTaught } from "./autofill/fingerprint.js";
 import { createPicker } from "./autofill/pick.js";
 import { frameReport } from "./autofill/report.js";
@@ -24,7 +24,17 @@ import { companyKnown, siteKey } from "./autofill/hosts.js";
 import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
-import { tenantCompany, watchForSubmit, workdayAddress } from "./autofill/track.js";
+import { watchForSubmit } from "./autofill/track.js";
+import { extractFromJsonLd } from "./extract/jsonld.js";
+
+/** The hiring company in the page's own job data (JSON-LD), or "". */
+function pageJobCompany(doc) {
+  try {
+    return extractFromJsonLd(doc, location.href)?.company || "";
+  } catch {
+    return "";
+  }
+}
 import { startApplyMode } from "./autofill/applyMode.js";
 import { pageAnswers } from "./autofill/applyPage.js";
 import { editKey, fillSections, inWorkdaySection, isWorkdaySections } from "./autofill/sections/index.js";
@@ -274,9 +284,10 @@ async function loadCopy() {
     resumeId: res.resumeId || null,
     coverLetterFile,
     coverLetterText: res.coverLetter?.text || "",
-    // Which company this application is for ("have you worked here before?",
-    // spec 034): the linked saved job's, else the Workday site's own name.
-    company: res.company || tenantCompany(workdayAddress(location.href)?.tenant || ""),
+    // Which company this application is for ("have you worked for us
+    // before?", spec 034): the linked saved job's, else the page's own job
+    // data — never a guess from the site's address ("jj", "pg"…).
+    company: res.company || pageJobCompany(document),
   };
   return lastCopy;
 }
@@ -598,7 +609,7 @@ const picker = createPicker({
       !taughtHereAlready &&
       !(ours && String(ours.value).trim() === value) &&
       field.kind !== "file" &&
-      guardReason(field.question, field.kind) !== "essay" &&
+      fieldGuard(field) !== "essay" &&
       value.length <= 300;
     // Where a correction is remembered (spec 020): for this question on
     // every site, unless it's about this company only. Boxes inside a past

@@ -6,6 +6,7 @@
 // the extension — closed). Frames are NOT walked: each frame runs its own copy
 // of the script, and one press fills them all.
 import { normalizeQuestion } from "./classify/answers.js";
+import { CONSENT } from "./classify/profileKeys.js";
 import { applicantHost, isApplyUrl } from "./hosts.js";
 import { isOnScreen } from "./visible.js";
 import { uploadKind } from "./resolve.js";
@@ -255,11 +256,18 @@ const TYPED_BOX = 'input:not([type=checkbox]):not([type=hidden]):not([type=submi
  * (spec 034): its closest question box, when that box holds two or more
  * checkboxes, nothing to type in, and a question of its own (a legend, a
  * group name, or a label for the box). Null for a checkbox on its own.
+ *
+ * Never a list with an agreement among its boxes (spec 034 review): each box
+ * stays on its own, so the agreement is guarded by its own words. A list
+ * with a self-ID answer among its boxes ("Yes, I have a disability") IS one
+ * list, so the whole question is the user's (guardReason reads every option).
  */
 function choiceBox(el) {
   const box = el.closest?.(CHOICE_BOX);
-  if (!box || box.querySelectorAll('input[type="checkbox"]').length < 2) return null;
+  const boxes = box ? [...box.querySelectorAll('input[type="checkbox"]')] : [];
+  if (boxes.length < 2) return null;
   if (box.querySelector(TYPED_BOX)) return null;
+  if (boxes.some((b) => CONSENT.test(labelForOption(b)))) return null;
   const root = box.getRootNode?.() || box.ownerDocument;
   const legend = box.tagName === "FIELDSET" ? box.querySelector(":scope > legend") : box.querySelector("legend");
   const named =
@@ -594,10 +602,16 @@ function comboQuestion(el) {
 
 /** A visible password box on the page (a sign-in or sign-up page). */
 export function passwordShown(doc) {
-  return [...(doc?.querySelectorAll?.('input[type="password"]') || [])].some((el) => isVisible(el));
+  return passwordCount(doc) > 0;
+}
+
+function passwordCount(doc) {
+  return [...(doc?.querySelectorAll?.('input[type="password"]') || [])].filter((el) => isVisible(el)).length;
 }
 
 const EMAILISH = /\be-?mail\b/i;
+// The page says it's making an account (a sign-in page doesn't).
+const CREATING = /\bcreate (an |your |a new )?account\b|\bsign[\s-]?up\b|\bregister\b|\bnew (user|account)\b/i;
 
 /**
  * An applicant system's Create Account page (spec 034): on an application
@@ -609,6 +623,16 @@ export function isSignupPage(fields) {
   const doc = fields[0]?.el?.ownerDocument;
   if (!doc || !applicantHost(doc.defaultView?.location?.href || "")) return false;
   if (!passwordShown(doc)) return false;
+  // A register-and-apply form (Taleo, iCIMS, SuccessFactors: name, phone,
+  // city… beside a password) is an application: filled as usual (never the
+  // password). Only a short Create Account page is sign-up only.
+  if (fields.length >= 6) return false;
+  // Creating an account: a password and its repeat, or a heading that says
+  // so. A sign-in page (one password, even with a "Create Account" button
+  // beside it) stays not a form.
+  const creating =
+    passwordCount(doc) >= 2 || [...doc.querySelectorAll("h1, h2, h3, [role=heading]")].some((n) => CREATING.test(n.textContent || ""));
+  if (!creating) return false;
   return fields.some(
     (f) => f.kind === "text" && (f.hints?.type === "email" || /\bemail\b/i.test(f.hints?.autocomplete || "") || EMAILISH.test(f.question || "")),
   );

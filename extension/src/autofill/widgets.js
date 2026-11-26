@@ -7,6 +7,7 @@
 // DOM only; happy-dom covers the simple kinds (test/fill-engine.spec.js), the
 // browser lab covers the rest (e2e/autofill-*.spec.js).
 import { isPlaceholderOption, matchOption } from "./classify/answers.js";
+import { untouchableChoice } from "./classify/profileKeys.js";
 import { comboBox, textOf } from "./scan.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -264,9 +265,10 @@ function clickChoice(el) {
 function writeChoice(field, candidates) {
   const options = field.options || [];
   if (field.kind === "checkbox_list") {
-    // "LinkedIn, Referral" → tick each; leave others as they are.
+    // "LinkedIn, Referral" → tick each; leave others as they are. Never an
+    // agreement or a self-ID answer, whatever was asked (spec 034 review).
     const want = candidates[0].split(/\s*[,;]\s*/).filter(Boolean);
-    const picks = want.map((w) => matchOption(w, options)).filter((i) => i >= 0);
+    const picks = want.map((w) => matchOption(w, options)).filter((i) => i >= 0 && !untouchableChoice(options[i].label, "checkbox_list"));
     if (!picks.length) return { ok: false, reason: "no_option" };
     for (const i of picks) if (!options[i].el.checked) clickChoice(options[i].el);
     const actual = readField(field);
@@ -279,6 +281,7 @@ function writeChoice(field, candidates) {
   }
   const i = firstMatch(candidates, options);
   if (i < 0) return { ok: false, reason: "no_option" };
+  if (untouchableChoice(options[i].label, field.kind)) return { ok: false, reason: "consent" };
   clickChoice(options[i].el);
   const actual = readField(field);
   return { ok: same(actual, options[i].label), actual };
