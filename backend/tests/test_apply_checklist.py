@@ -550,7 +550,7 @@ async def test_only_the_admin_sees_the_list(client):
 
 def test_playbook_checklist_fixes_and_problems():
     text = playbook_text()
-    assert APPLY_PLAYBOOK_VERSION == "2026.11.30"
+    assert APPLY_PLAYBOOK_VERSION >= "2026.11.30"  # later specs bump it
     assert "all together" in text and "`only_you: true`" in text
     assert "`report_problem`" in text
     assert "The user can change a box while you fill" in text

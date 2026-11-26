@@ -149,7 +149,11 @@ function writeText(field, [value]) {
     setNativeValue(el, max ? v.slice(0, max) : v);
   }
   const actual = readField(field);
-  return { ok: same(actual, value) || (field.hints?.maxLength && !!actual), actual };
+  // A rich-text box drops paragraph breaks from its text: compare without
+  // any spacing at all, so a letter pasted whole counts as taken (spec 031).
+  const squash = (s) => String(s ?? "").replace(/\s+/g, "").toLowerCase();
+  const kept = field.kind === "editable" && squash(value).length > 0 && squash(actual) === squash(value);
+  return { ok: kept || same(actual, value) || (field.hints?.maxLength && !!actual), actual };
 }
 
 // ---- Dates ---------------------------------------------------------------

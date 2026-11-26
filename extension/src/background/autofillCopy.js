@@ -6,6 +6,7 @@
 // Holds: profile, email, remembered answers (GET /v1/autofill/bundle), and the
 // résumé file (GET /v1/ai/resumes/active/file, fetched again only when the
 // résumé changes). A tailored résumé staged in Write wins over the usual one.
+// The cover letter chosen for a job (spec 031) is fetched fresh for each fill.
 
 const COPY = "je_autofill";
 const RESUME = "je_resume_bytes";
@@ -34,6 +35,8 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
   // Bumped by wipe(): a refresh that started before a sign-out (or another
   // account's sign-in) must never write the old account's data back.
   let generation = 0;
+  // Cover-letter fetches under way (spec 031): never kept after they land.
+  const lettersInFlight = new Map();
 
   async function fetchResume(headers, meta, gen) {
     const { [RESUME]: cached } = await chrome.storage.local.get(RESUME);
@@ -156,6 +159,41 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     return out;
   }
 
+  /**
+   * A cover letter's text and PDF, fetched fresh for every fill: Claude may
+   * save it again under the same id, or the user may edit it in the app, so a
+   * kept copy could be the old text. Frames asking at the same moment share
+   * one fetch. Null when it can't be loaded.
+   */
+  function coverLetter(t, letterId) {
+    const k = `${generation}|${letterId}`;
+    if (!lettersInFlight.has(k)) {
+      lettersInFlight.set(
+        k,
+        fetchLetter(t, letterId).finally(() => lettersInFlight.delete(k)),
+      );
+    }
+    return lettersInFlight.get(k);
+  }
+
+  async function fetchLetter(t, letterId) {
+    const gen = generation;
+    const res = await wakeFetch(`${api}/v1/autofill/cover-letters/${encodeURIComponent(letterId)}`, {
+      headers: { Authorization: `Bearer ${t}` },
+    }).catch(() => null);
+    if (!res?.ok) return null;
+    const body = await res.json().catch(() => null);
+    if (!body || typeof body.text !== "string") return null;
+    if (gen !== generation) return null; // signed out meanwhile
+    return {
+      id: letterId,
+      b64: typeof body.pdf_base64 === "string" ? body.pdf_base64 : "",
+      filename: body.filename || "Cover letter.pdf",
+      mime: "application/pdf",
+      text: body.text,
+    };
+  }
+
   /** Can the chosen résumé be loaded? (The panel checks before using it.) */
   async function canLoad(resumeId) {
     const t = await token();
@@ -167,9 +205,9 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
   /**
    * What autofill fills from, right now. Never waits on the server when a copy
    * is held (it refreshes in the background); the very first time it must.
-   * @returns {Promise<{signedIn: boolean, copy?: object, resume?: object|null, waited?: boolean}>}
+   * @returns {Promise<{signedIn: boolean, copy?: object, resume?: object|null, coverLetter?: object|null, waited?: boolean}>}
    */
-  async function get({ resumeId = null } = {}) {
+  async function get({ resumeId = null, coverLetterId = null } = {}) {
     const t = await token();
     if (!t) return { signedIn: false };
     let { [COPY]: held } = await chrome.storage.local.get(COPY);
@@ -191,12 +229,15 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     const { [RESUME]: usual } = await chrome.storage.local.get(RESUME);
     const r = chosen || staged || usual || null;
     const history = chosen ? chosen.history : held.history;
+    const letter = coverLetterId ? await coverLetter(t, coverLetterId).catch(() => null) : null;
     return {
       signedIn: true,
       waited,
       resumeId: chosen ? resumeId : null,
       copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history },
       resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime } : null,
+      // The job's cover letter (spec 031), or none: its box is left.
+      coverLetter: letter ? { b64: letter.b64, filename: letter.filename, mime: letter.mime, text: letter.text } : null,
       // The chosen résumé couldn't be loaded: this fill used the usual one.
       ...(resumeId && !chosen ? { chosenFailed: true } : {}),
     };

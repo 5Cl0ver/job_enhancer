@@ -43,6 +43,8 @@ PASS_ROUTES = {
     ("POST", "/v1/autofill/resumes/{resume_id}/read"),
     ("POST", "/v1/autofill/promoted"),
     ("GET", "/v1/autofill/resumes/{resume_id}/file"),
+    # The job's cover letter, for Job Catcher to attach or paste (spec 031).
+    ("GET", "/v1/autofill/cover-letters/{letter_id}"),
     ("PUT", "/v1/saved-jobs/{saved_job_id}/resume"),
     ("GET", "/v1/ai/resumes"),
     ("GET", "/v1/ai/resumes/active/file"),

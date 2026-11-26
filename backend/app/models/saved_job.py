@@ -73,6 +73,13 @@ class SavedJob(Base):
     resume_usual: Mapped[bool] = mapped_column(
         Boolean, nullable=False, default=False, server_default="false"
     )
+    # The cover letter Job Catcher attaches (or pastes) for this job (spec
+    # 031): a written document of type "cover_letter"; null = none.
+    cover_letter_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("generated_documents.id", ondelete="SET NULL"),
+        index=True,
+    )
     # How the job got here (see ORIGINS). Null = saved before this was recorded
     # and the app can't tell, so nothing is shown rather than a guess.
     origin: Mapped[str | None] = mapped_column(String(12))

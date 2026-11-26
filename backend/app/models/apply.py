@@ -141,6 +141,13 @@ class ApplyRun(Base):
     document_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("generated_documents.id", ondelete="SET NULL")
     )
+    # The cover letter Claude wrote in this run (spec 031): a second save in
+    # the run replaces it; a letter the user picked is never written over.
+    cover_letter_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("generated_documents.id", ondelete="SET NULL"),
+        index=True,
+    )
     # The user picked an existing résumé at the start (spec 025): no questions,
     # no writing, no résumé review.
     resume_picked: Mapped[bool] = mapped_column(

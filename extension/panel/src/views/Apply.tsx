@@ -41,6 +41,7 @@ const WHY: Record<string, string> = {
   rejected: "The page didn't take it",
   unknown: "New question",
   other_person: "About someone else",
+  too_long: "Too long for this box",
 };
 
 export function Apply({

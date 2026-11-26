@@ -573,6 +573,62 @@ def render_pdf(text: str) -> bytes:
 
     Drawn twice: the first pass counts the pages so the footer can say
     "Page 1 of 2" exactly (a one-page document has no footer)."""
+    return _output(text, _render_markdown)
+
+
+# A cover letter's body (spec 031): a touch larger than a résumé's, with room
+# between paragraphs.
+LETTER_SIZE, LETTER_LH, LETTER_GAP = 10.8, 14.6, 8.0
+
+
+def render_letter_pdf(header: str, body: str, date_line: str = "") -> bytes:
+    """A cover letter in the résumé's look: the same header (name, title line,
+    contact, navy rule) drawn from ``header`` Markdown, then the date and the
+    letter's paragraphs as plain text. A blank line starts a new paragraph; a
+    single line break stays one (a sign-off keeps its two lines)."""
+
+    def draw(pdf, _text: str) -> None:
+        _render_markdown(pdf, header)
+        _render_letter_body(pdf, body, date_line)
+
+    return _output(f"{header}\n\n{date_line}\n\n{body}", draw)
+
+
+def _render_letter_body(pdf, body: str, date_line: str) -> None:
+    from fpdf.enums import XPos, YPos
+
+    family = "Carlito" if "carlito" in pdf.fonts else "Helvetica"
+    k = pdf.k
+    pdf.c_margin = 0
+    if date_line:
+        pdf.set_font(family, "", 9.6)
+        pdf.set_text_color(*MUTED)
+        pdf.cell(0, 12 / k, date_line, new_x=XPos.LMARGIN, new_y=YPos.NEXT)
+        pdf.ln(LETTER_GAP / k)
+    pdf.set_font(family, "", LETTER_SIZE)
+    pdf.set_text_color(*TEXT)
+    gap = False
+    for raw in (body or "").replace("\r\n", "\n").split("\n"):
+        line = _strip_md(raw.strip())
+        if not line:
+            gap = True
+            continue
+        if gap and pdf.get_y() > pdf.t_margin + 0.01:
+            pdf.ln(LETTER_GAP / k)
+        gap = False
+        pdf.multi_cell(
+            0,
+            LETTER_LH / k,
+            line,
+            align="L",
+            new_x=XPos.LMARGIN,
+            new_y=YPos.NEXT,
+        )
+
+
+def _output(text: str, layout) -> bytes:
+    """Draw with ``layout(pdf, text)`` twice (to count pages for the footer);
+    plain text when the template can't lay it out."""
     from fpdf import FPDF
 
     class _Doc(FPDF):
@@ -586,7 +642,7 @@ def render_pdf(text: str) -> bytes:
             self.set_text_color(*MUTED)
             self.cell(0, 10, f"Page {self.page_no()} of {self.total}", align="R")
 
-    def build(total: int, draw=_render_markdown) -> "FPDF":
+    def build(total: int, draw=layout) -> "FPDF":
         pdf = _Doc(format="letter", unit="pt")
         pdf.total = total
         pdf.set_margins(MARGIN_X, MARGIN_Y, MARGIN_X)

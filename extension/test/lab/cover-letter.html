@@ -1,0 +1,24 @@
+<!doctype html>
+<!-- Lab page (invented company): an application with a résumé upload, a
+     cover-letter upload card (its heading says what it's for, the box has no
+     label), a "paste your cover letter" box and an essay. The job's cover
+     letter goes in the two cover-letter boxes only (spec 031). -->
+<html lang="en">
+  <head><meta charset="utf-8" /><title>Apply - Northwind Labs</title>
+    <style>.card { border: 1px solid #ccc; width: 420px; padding: 12px; margin: 6px 0 18px; } .drop { display: block; padding: 18px; border: 2px dashed #999; cursor: pointer; }</style>
+  </head>
+  <body>
+    <h1>Platform Engineer</h1>
+    <p><label for="fn">First Name</label><input id="fn"></p>
+    <p><label for="ln">Last Name</label><input id="ln"></p>
+    <p><label for="em">Email</label><input id="em" type="email"></p>
+    <p><label for="resume">Resume/CV</label><input type="file" id="resume" accept=".pdf,.docx"></p>
+    <div class="section">
+      <div class="section-title">Cover Letter</div>
+      <div class="card"><label class="drop">Drop a file or browse<input type="file" id="letter-file" accept=".pdf,.doc,.docx" hidden></label></div>
+    </div>
+    <p><label for="letter-text">Cover letter (paste it here)</label><textarea id="letter-text" rows="6" cols="60"></textarea></p>
+    <p><label for="else">Anything else you'd like to share (e.g. cover letter)?</label><textarea id="else" rows="3" cols="60"></textarea></p>
+    <p><label for="why">Why do you want to work at Northwind Labs?</label><textarea id="why" rows="4" cols="60"></textarea></p>
+  </body>
+</html>

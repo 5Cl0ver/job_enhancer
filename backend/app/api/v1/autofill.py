@@ -1,5 +1,6 @@
 """Autofill bundle for Job Catcher (spec 015, contracts/autofill-bundle.md)."""
 
+import base64
 import io
 import json
 import uuid
@@ -24,7 +25,8 @@ from app.middleware.auth import get_current_user, get_user_or_pass
 from app.models.resume import Resume
 from app.models.taught_field import TaughtField
 from app.models.user import User
-from app.services import apply_resume, resume_history
+from app.schemas.resume import CoverLetterFileOut
+from app.services import apply_resume, cover_letters, resume_history
 from app.services import autofill_bundle as svc
 from app.services.extension_connect import TOKEN_PREFIX
 from app.utils.content_disposition import file_headers
@@ -450,4 +452,25 @@ async def resume_file(
         io.BytesIO(resume.file_data),
         media_type=resume.mime_type,
         headers=file_headers(resume.filename),
+    )
+
+
+@router.get("/cover-letters/{letter_id}", response_model=CoverLetterFileOut)
+async def cover_letter_file(
+    letter_id: uuid.UUID,
+    user: User = Depends(get_user_or_pass),
+    db: AsyncSession = Depends(get_db),
+) -> CoverLetterFileOut:
+    """The cover letter chosen for a job (spec 031), for Job Catcher: its text
+    for a cover-letter text box and its PDF for a cover-letter upload box.
+    Only the user's own."""
+    doc = await cover_letters.own_letter(db, user.id, letter_id)
+    if doc is None:
+        raise HTTPException(status_code=404, detail="Not found")
+    data, name = await cover_letters.pdf_of(db, doc)
+    return CoverLetterFileOut(
+        id=doc.id,
+        filename=name,
+        text=cover_letters.text_of(doc),
+        pdf_base64=base64.b64encode(data).decode("ascii"),
     )

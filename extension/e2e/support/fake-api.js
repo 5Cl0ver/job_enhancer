@@ -74,6 +74,8 @@ export async function startFakeApi() {
     // The user's other résumés (spec 020): id -> {filename, bytes, details}.
     resumes: {},
     jobResumes: {}, // saved job id -> résumé id (PUT /v1/saved-jobs/:id/resume)
+    // Cover letters (spec 031): id -> {filename, text}.
+    coverLetters: {},
     promoted: false, // one-site answers already made answers for every site (spec 020)
     // Job Catcher Connect (spec 019): the request under way, how long it lasts,
     // the newest version, the hellos received, the id the /connect page asks.
@@ -260,6 +262,13 @@ export async function startFakeApi() {
       if (!r) return { status: 404, body: { detail: "Not found" } };
       return { body: { resume_id: id, filename: r.filename, read: !r.unread, work: [], education: [], skills: [], certifications: [], websites: [], ...(r.unread ? {} : r.details || {}) } };
     },
+    "GET /v1/autofill/cover-letters/:id": (_b, req) => {
+      const id = decodeURIComponent(req.url.split("?")[0].split("/")[4]);
+      const l = state.coverLetters[id];
+      if (!l) return { status: 404, body: { detail: "Not found" } };
+      const pdf = Buffer.from("%PDF-1.4 invented cover letter").toString("base64");
+      return { body: { id, filename: l.filename, text: l.text, pdf_base64: pdf } };
+    },
     "PUT /v1/saved-jobs/:id/resume": (b, req) => {
       const id = decodeURIComponent(req.url.split("/")[3]);
       state.jobResumes[id] = b?.resume_id || (b?.usual ? "usual" : null);
@@ -391,6 +400,7 @@ export async function startFakeApi() {
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/file$/.test(key)) key = "GET /v1/autofill/resumes/:id/file";
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/details$/.test(key)) key = "GET /v1/autofill/resumes/:id/details";
     if (/^PUT \/v1\/saved-jobs\/[^/]+\/resume$/.test(key)) key = "PUT /v1/saved-jobs/:id/resume";
+    if (/^GET \/v1\/autofill\/cover-letters\/[^/]+$/.test(key)) key = "GET /v1/autofill/cover-letters/:id";
     if (/^POST \/v1\/autofill\/resumes\/[^/]+\/read$/.test(key)) key = "POST /v1/autofill/resumes/:id/read";
     if (/^DELETE \/v1\/users\/me\/custom-answers\/[^/]+$/.test(key) && !key.endsWith("/used")) key = "DELETE /v1/users/me/custom-answers/:key";
     const o = overrides.get(path) ?? overrides.get(key);

@@ -93,7 +93,27 @@ class WorkHistoryResponse(BaseModel):
 
 
 class GeneratedDocumentUpdate(BaseModel):
-    edited_content: str = Field(..., min_length=1)
+    edited_content: str = Field(..., min_length=1, max_length=30_000)
+
+
+class CoverLetterItem(BaseModel):
+    """One of the user's cover letters, with the job it was written for."""
+
+    id: uuid.UUID
+    job_listing_id: uuid.UUID | None
+    job_title: str = ""
+    company: str = ""
+    created_at: datetime
+
+
+class CoverLetterFileOut(BaseModel):
+    """A cover letter for Job Catcher: its text (for a text box) and its PDF
+    (for an upload box), in one call."""
+
+    id: uuid.UUID
+    filename: str
+    text: str
+    pdf_base64: str
 
 
 class GeneratedDocumentSchema(BaseModel):

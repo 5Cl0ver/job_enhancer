@@ -201,6 +201,7 @@ describe("parseSummary", () => {
           url: "https://jobs.example/1",
           applied: true,
           resume_id: null,
+          cover_letter_id: null,
         },
       ],
     });

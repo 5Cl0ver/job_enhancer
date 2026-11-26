@@ -384,3 +384,27 @@ describe("look over the résumé (spec 025)", () => {
   });
 });
 
+
+describe("the cover letter on the application page (spec 031)", () => {
+  it("shows the job's letter beside the résumé", async () => {
+    serve({ ...RUN, status: "filling", cover_letter: { id: "cl1", filename: "Alex Rivera - Cover letter.pdf" }, cover_letter_written: true });
+    renderPage();
+    expect(await screen.findByText("Alex Rivera - Cover letter.pdf")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "View Alex Rivera - Cover letter.pdf" })).toBeInTheDocument();
+  });
+
+  it("says None when Claude wrote one but the job now has none", async () => {
+    serve({ ...RUN, status: "filling", cover_letter: null, cover_letter_written: true });
+    renderPage();
+    expect(await screen.findByText(/None for this job/)).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /View .*Cover letter/ })).toBeNull();
+  });
+
+  it("no card when there's no letter at all", async () => {
+    serve({ ...RUN, status: "filling" });
+    renderPage();
+    expect((await screen.findAllByText(/IT Engineer/)).length).toBeGreaterThan(0);
+    expect(screen.queryByText(/None for this job/)).toBeNull();
+    expect(screen.queryByText("Cover letter")).toBeNull();
+  });
+});

@@ -193,6 +193,8 @@ class SavedJobBase(BaseModel):
     track_id: uuid.UUID | None = None
     # The résumé chosen for this job (spec 020); null = the usual one.
     resume_id: uuid.UUID | None = None
+    # The cover letter that goes with this job (spec 031); null = none.
+    cover_letter_id: uuid.UUID | None = None
     # scout | email | extension | claude | search | manual; null = not known.
     origin: str | None = None
     scout: ScoutFit | None = None
@@ -261,6 +263,8 @@ class SavedJobSummary(BaseModel):
     resume_id: uuid.UUID | None = None
     # The user picked "your usual résumé" for this job on purpose.
     resume_usual: bool = False
+    # The cover letter Job Catcher attaches or pastes (spec 031); null = none.
+    cover_letter_id: uuid.UUID | None = None
 
 
 class JobResumeIn(BaseModel):
@@ -269,6 +273,12 @@ class JobResumeIn(BaseModel):
 
     resume_id: uuid.UUID | None = None
     usual: bool = False
+
+
+class JobCoverLetterIn(BaseModel):
+    """Choose the cover letter for one saved job; null = none."""
+
+    cover_letter_id: uuid.UUID | None = None
 
 
 class SavedJobSummaryResponse(BaseModel):
