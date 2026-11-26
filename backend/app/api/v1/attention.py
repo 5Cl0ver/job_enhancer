@@ -7,7 +7,7 @@ from app.database import get_db
 from app.middleware.auth import get_current_user
 from app.models.user import User
 from app.schemas.attention import AttentionOut
-from app.services import email_review, scout_review
+from app.services import bug_reports, email_review, scout_review
 
 router = APIRouter()
 
@@ -20,4 +20,5 @@ async def attention(
     return AttentionOut(
         email_review=await email_review.count_to_review(db, user.id),
         scout_review=await scout_review.count_to_review(db, user.id),
+        bugs_new=(await bug_reports.count_new_bugs(db) if user.role == "admin" else 0),
     )

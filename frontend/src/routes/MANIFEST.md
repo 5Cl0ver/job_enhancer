@@ -6,7 +6,7 @@ React Router **page components** (the app's screens), wired up in
 
 | File | Route | Purpose | Uses |
 |---|---|---|---|
-| `DashboardLayout.tsx` | `/` (layout) | The app frame: desktop sidebar (icons, Email count), or on a phone a top bar + bottom tab bar (`components/layout/PhoneNav`); `<Outlet/>`; wraps children in `RequireAuth`. `/` opens My Jobs on a phone, Find Jobs on a computer | `useAttention`, `useProfile` |
+| `DashboardLayout.tsx` | `/` (layout) | The app frame: desktop sidebar (icons, Email count, the owner's Add a bug or idea and new-bug count on Admin), or on a phone a top bar + bottom tab bar (`components/layout/PhoneNav`); `<Outlet/>`; wraps children in `RequireAuth`. `/` opens My Jobs on a phone, Find Jobs on a computer | `useAttention`, `useProfile` |
 | `RequireAuth.tsx` | (guard) | Redirect to `/login` if no Supabase session | `lib/supabase` |
 | `Login.tsx` | `/login` | Email/password + GitHub sign in/up | `lib/supabase` |
 | `AuthCallback.tsx` | `/auth/callback` | OAuth redirect landing → session → `/search` | `lib/supabase` |
@@ -17,7 +17,8 @@ React Router **page components** (the app's screens), wired up in
 | `AnalyticsPage.tsx` | `/analytics` | Personal stats + chart | `hooks/useAnalytics`, `components/analytics` |
 | `AiApplyPage.tsx` | `/ai-apply` | AI resume/cover letter (final phase) | `hooks/useAI`, `components/ai` |
 | `SettingsPage.tsx` | `/settings` | Data export + account delete; a link to Sites to skip (Claude) | `hooks/useProfile`, `lib/api` |
-| `AdminPage.tsx` | `/admin` | Owner-only dashboard (role-guarded), with Bug reports (spec 030) | `hooks/useAdmin`, `components/admin` |
+| `AdminPage.tsx` | `/admin` | Owner-only dashboard (role-guarded), with the way into Bugs & ideas and its new-bug count | `hooks/useAdmin`, `components/admin` |
+| `AdminBugsPage.tsx` | `/admin/bugs?id=` | Bugs & ideas (spec 032), owner only: the list, and the open report as a side panel (computer) or a sheet (phone) | `hooks/useBugReports`, `components/bugs` |
 | `Placeholder.tsx` | — | Dev stub for un-ported pages (none currently) | — |
 | `JobCatcherPage.tsx` | `/job-catcher` | Get Job Catcher: download, 6-step guide, version and update note, connected computers (spec 019) | `hooks/useJobCatcher`, `components/jobcatcher` |
 | `ConnectPage.tsx` | `/connect?code=` | Approve a Job Catcher with one press; needs the proof from the Job Catcher in this Chrome (spec 019) | `lib/jobCatcher`, `hooks/useJobCatcher` |

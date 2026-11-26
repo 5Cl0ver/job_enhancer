@@ -87,6 +87,7 @@ class TestAttention:
             "tasks_overdue": 0,
             "email_review": 0,
             "scout_review": 0,
+            "bugs_new": 0,
         }
 
     async def test_counts_only_updates_that_need_the_user(

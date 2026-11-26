@@ -16,6 +16,7 @@ read directly from ORM objects.
 | `resume.py` | `ResumeSchema`, `GeneratedDocumentCreate/Update/Schema` |
 | `scout.py` | `TrackCreate`, `TrackUpdate`, `TrackOut`, `SkipRules` (Claude Scout resume types; lists trimmed and de-duplicated); `MissionCreate/Update/Out`, `RunOut`, `FindingOut`, `CaptureIn` (description ≥ 200 chars) |
 | `skipped_site.py` | `SkippedSiteCreate` (`site`, `confirm`), `SkippedSiteOut`, `SkippedSiteAdded` (`already`), `SiteSuggestion` (spec 024) |
+| `bug_reports.py` | Bugs & ideas (spec 032): `BugCreate`, `BugPatch` (`checked` = Looks fixed), `BugBulk`, `BugNoteIn`, `BugLinkIn`, `BugMergeIn`, `BugContext`; unknown sections, severities and statuses are a 422 |
 | `onboarding.py` | `OnboardingOut` (welcome, checklist items with done/required, counts), `OnboardingPatch` |
 
 **How this folder connects:** imported by `api/v1/*` routers as request bodies

@@ -28,10 +28,11 @@ export interface JobCatcherInstall {
 }
 
 /** Job Catchers that said hello on this account (password sign-ins too). */
-export function useJobCatcherInstalls() {
+export function useJobCatcherInstalls(enabled = true) {
   return useQuery<JobCatcherInstall[]>({
     queryKey: ["job-catcher", "installs"],
     queryFn: () => api.get<JobCatcherInstall[]>("/v1/extension/installs"),
+    enabled,
   });
 }
 

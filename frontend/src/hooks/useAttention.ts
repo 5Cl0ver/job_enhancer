@@ -8,6 +8,8 @@ export interface Attention {
   email_review: number;
   /** Jobs Claude Scout picked that are waiting to be ticked and saved. */
   scout_review?: number;
+  /** New bugs in Bugs & ideas; the owner's only, 0 for anyone else. */
+  bugs_new?: number;
 }
 
 /** Counts for the navigation badges. Cheap (three numbers), refreshed every

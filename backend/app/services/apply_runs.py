@@ -26,6 +26,7 @@ SQLAlchemy sees the change.
 """
 
 import asyncio
+import logging
 import re
 import uuid
 from datetime import UTC, datetime, timedelta
@@ -72,6 +73,7 @@ from app.models.user import User
 from app.services import (
     apply_learn,
     apply_resume,
+    bug_reports,
     cover_letters,
     master_profile,
     releases,
@@ -81,6 +83,8 @@ from app.services import saved_jobs as sj_svc
 from app.services import skipped_sites as sites_svc
 from app.services import tracker as tracker_svc
 from app.services.match import match_resume
+
+logger = logging.getLogger(__name__)
 
 STALE_AFTER = timedelta(hours=3)
 PRESSED_WAIT = timedelta(hours=24)
@@ -704,6 +708,15 @@ async def report_problem(
     }
     out = problems_svc.add(run, what, page_url, kind, context)
     await db.flush()
+    problem = out.pop("problem", None)
+    if problem is not None:
+        # The owner's Bugs & ideas inbox gets it too (spec 032). Never at the
+        # cost of Claude's call: a failure there is only logged.
+        try:
+            async with db.begin_nested():
+                await bug_reports.from_run_problem(db, run, problem)
+        except Exception:
+            logger.exception("Couldn't add a run problem to Bugs & ideas")
     return {
         "run_id": str(run.id),
         **out,

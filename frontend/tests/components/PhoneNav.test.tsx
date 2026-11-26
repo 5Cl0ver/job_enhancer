@@ -9,11 +9,14 @@ vi.mock("@/lib/supabase/client", () => ({
 
 import { TabBar, TopBar } from "@/components/layout/PhoneNav";
 
-function renderBar(props: { emailCount?: number; isAdmin?: boolean } = {}, path = "/jobs") {
+function renderBar(
+  props: { emailCount?: number; isAdmin?: boolean; bugsCount?: number } = {},
+  path = "/jobs",
+) {
   return render(
     <MemoryRouter initialEntries={[path]}>
       <TopBar />
-      <TabBar emailCount={props.emailCount ?? 0} isAdmin={props.isAdmin ?? false} />
+      <TabBar emailCount={props.emailCount ?? 0} isAdmin={props.isAdmin ?? false} bugsCount={props.bugsCount} />
     </MemoryRouter>,
   );
 }
@@ -65,6 +68,19 @@ describe("phone tab bar", () => {
     expect(within(await screen.findByRole("dialog")).getByRole("link", { name: "Admin" })).toBeInTheDocument();
   });
 
+  it("shows the owner's new bugs on More and on Admin (spec 032)", async () => {
+    const user = userEvent.setup();
+    renderBar({ isAdmin: true, bugsCount: 3 });
+    expect(screen.getByRole("button", { name: /More/ })).toHaveTextContent("3");
+    await user.click(screen.getByRole("button", { name: /More/ }));
+    expect(within(await screen.findByRole("dialog")).getByRole("link", { name: /Admin/ })).toHaveTextContent("3");
+  });
+
+  it("never shows the bugs count to anyone else", () => {
+    renderBar({ isAdmin: false, bugsCount: 3 });
+    expect(screen.getByRole("button", { name: "More" })).toHaveTextContent(/^More$/);
+  });
+
   it("marks More as the current tab on a page that lives in it", () => {
     renderBar({}, "/settings");
     expect(screen.getByRole("button", { name: "More" })).toHaveClass("text-primary");
@@ -79,6 +95,12 @@ describe("phone top bar", () => {
 
   it("offers a way back from a job's own page", () => {
     renderBar({}, "/jobs/123");
+    expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
+  });
+
+  it("names Bugs & ideas, with a way back to Admin", () => {
+    renderBar({ isAdmin: true }, "/admin/bugs");
+    expect(screen.getByRole("banner")).toHaveTextContent("Bugs & ideas");
     expect(screen.getByRole("button", { name: "Back" })).toBeInTheDocument();
   });
 

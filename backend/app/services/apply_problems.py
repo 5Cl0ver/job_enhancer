@@ -4,8 +4,11 @@ Claude reports what went wrong as it happens (a box it couldn't fill, a Job
 Catcher error, a lost tab, Job Catcher wrongly saying there's no résumé box)
 with the connector's ``report_problem``. Each one is kept on the run with its
 context (the job, the site, the page, Job Catcher's and the playbook's
-versions), shown to the run's owner on the application page and, across every
-run, to the admin as bug reports to mark fixed or ignored and copy for Claude.
+versions) and shown to the run's owner on the application page. Each one also
+becomes a report in the owner's Bugs & ideas inbox (spec 032,
+``services/bug_reports.from_run_problem``), where it's tracked to fixed.
+
+``scrub`` is shared by the inbox, for every source.
 
 Claude's words are never trusted: capped (20 a run, 500 characters each), the
 kind checked against a short list, the page kept without its query or
@@ -15,25 +18,18 @@ or card number removed before it's kept.
 
 import re
 import uuid
-from datetime import UTC, datetime, timedelta
+from datetime import UTC, datetime
 from typing import Any
 from urllib.parse import urlsplit
 
-from sqlalchemy import select
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from app.models.apply import ApplyRun
-from app.models.job_listing import JobListing
-from app.models.saved_job import SavedJob
-from app.models.user import User
 
 KINDS = ("fill", "job_catcher", "tab", "resume", "site", "other")
-STATUSES = ("open", "fixed", "ignored")
 MAX_PROBLEMS = 20
 MAX_CHARS = 500
-# The admin list looks this far back, at this many runs.
-ADMIN_DAYS = 60
-ADMIN_RUNS = 300
+# Texts are bounded to twice the cap, plus room for a secret straddling the
+# cut, before scrubbing: the patterns stay fast however long the input is.
+SCRUB_ROOM = 256
 
 _REMOVED = "[removed]"
 # "password: hunter2", "token = abc", "security answer is Rex"
@@ -106,12 +102,15 @@ _CODE = re.compile(
     r"(\s*(?:is|was)?[\s:=#-]*)(\d[\d -]{2,10}\d)\b",
     re.I,
 )
-_EMAIL = re.compile(r"[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
+# Starts only where a run of address characters starts (no quadratic retries).
+_EMAIL = re.compile(r"(?<![\w.+-])[\w.+-]+@[\w-]+(?:\.[\w-]+)+")
 _PHONE = re.compile(
-    r"(?<![\w/])(?:\+?\d{1,3}[\s.-]?)?\(?\d{3}\)?[\s.-]?\d{3}[\s.-]?\d{4}(?![\w/])"
+    # Up to two separators between groups ("555-\n0142": a dash and a break).
+    r"(?<![\w/])(?:\+?\d{1,3}[\s.-]{0,2})?\(?\d{3}\)?"
+    r"[\s.-]{0,2}\d{3}[\s.-]{0,2}\d{4}(?![\w/])"
 )
-_CARD = re.compile(r"\b(?:\d[ -]?){13,19}\b")
-_SSN = re.compile(r"\b\d{3}-\d{2}-\d{4}\b")
+_CARD = re.compile(r"\b(?:\d[\s-]{0,2}){13,19}\b")
+_SSN = re.compile(r"\b\d{3}-\s?\d{2}-\s?\d{4}\b")
 # Keys and session blobs: 32+ hex, or 32+ base64 with upper, lower and digits.
 # No hyphens or underscores, so job slugs ("Senior-Engineer_R0012345") stay.
 _HEX = re.compile(r"(?<![\w-])[0-9a-fA-F]{32,}(?![\w-])")
@@ -136,9 +135,7 @@ def _password_word(m: re.Match) -> str:
     return f"{m.group(1)}{m.group(2)}{_REMOVED}"
 
 
-def scrub(text: Any) -> str:
-    """One line, capped, with anything secret-looking removed."""
-    out = re.sub(r"\s+", " ", str(text or "")).strip()[:MAX_CHARS]
+def _scrub_line(out: str) -> str:
     out = _SECRET.sub(lambda m: f"{m.group(1)}{m.group(2)}{_REMOVED}", out)
     out = _PASSWORD_WORD.sub(_password_word, out)
     out = _CODE.sub(lambda m: f"{m.group(1)}{m.group(2)}{_REMOVED}", out)
@@ -147,6 +144,23 @@ def scrub(text: Any) -> str:
     out = _SSN.sub(_REMOVED, out)
     out = _PHONE.sub(_REMOVED, out)
     return _blobs(out)
+
+
+def scrub(text: Any, cap: int = MAX_CHARS, lines: bool = False) -> str:
+    """Capped, with anything secret-looking removed. One line, or with
+    ``lines`` its line breaks kept (at most one blank line in a row), for the
+    longer texts of the Bugs & ideas inbox (spec 032)."""
+    # Removed first, cut after: a cut never leaves half an email or card.
+    # The whole text is scrubbed at once, so a secret split across a line
+    # break ("password:\nhunter2") is still caught. Long texts are bounded
+    # first, with room past the cap so a secret at the cut is still whole.
+    raw = str(text or "")[: cap * 2 + SCRUB_ROOM]
+    if lines:
+        kept = [re.sub(r"[^\S\n]+", " ", ln).strip() for ln in raw.splitlines()]
+        flat = re.sub(r"\n{3,}", "\n\n", "\n".join(kept)).strip()
+    else:
+        flat = re.sub(r"\s+", " ", raw).strip()
+    return _scrub_line(flat)[:cap].strip()
 
 
 def host_of(url: str | None) -> str | None:
@@ -178,7 +192,8 @@ def add(
 ) -> dict[str, Any]:
     """Keep one bug report on the run, with its context (job, site, Job
     Catcher and playbook versions). The same one again counts up (and is open
-    again) instead of adding a row; past 20, nothing more is kept."""
+    again) instead of adding a row; past 20, nothing more is kept. What was
+    kept comes back as ``problem``, for the inbox."""
     text = scrub(what)
     if not text:
         raise ValueError("Say what went wrong, in a line.")
@@ -197,87 +212,24 @@ def add(
             status="open",
             page=page or same.get("page"),
         )
+        kept = same
     elif len(problems) >= MAX_PROBLEMS:
         return {"noted": False, "why": f"{MAX_PROBLEMS} problems are already noted."}
     else:
-        problems.append(
-            {
-                "id": uuid.uuid4().hex[:10],
-                "at": at,
-                "kind": kind,
-                "what": text,
-                "page": page,
-                "site": host_of(page) or context.get("site"),
-                "count": 1,
-                "status": "open",
-                "run_id": str(run.id),
-                "job": context.get("job") or "",
-                "job_catcher": context.get("job_catcher"),
-                "playbook": run.playbook_version,
-            }
-        )
+        kept = {
+            "id": uuid.uuid4().hex[:10],
+            "at": at,
+            "kind": kind,
+            "what": text,
+            "page": page,
+            "site": host_of(page) or context.get("site"),
+            "count": 1,
+            "status": "open",
+            "run_id": str(run.id),
+            "job": context.get("job") or "",
+            "job_catcher": context.get("job_catcher"),
+            "playbook": run.playbook_version,
+        }
+        problems.append(kept)
     run.problems = problems
-    return {"noted": True}
-
-
-async def set_status(
-    db: AsyncSession, run_id: uuid.UUID, problem_id: str, status: str
-) -> dict[str, Any]:
-    """The admin marks a bug report open, fixed or ignored."""
-    if status not in STATUSES:
-        raise ValueError("status must be open, fixed or ignored")
-    run = await db.scalar(
-        select(ApplyRun).where(ApplyRun.id == run_id).with_for_update()
-    )
-    problems = [dict(p) for p in (run.problems if run else None) or []]
-    found = next((p for p in problems if p.get("id") == problem_id), None)
-    if found is None:
-        raise LookupError("No such bug report.")
-    found["status"] = status
-    run.problems = problems
-    await db.flush()
-    return found
-
-
-async def admin_list(db: AsyncSession, limit: int = 300) -> list[dict[str, Any]]:
-    """Every run's bug reports, newest first, for the admin (spec 030). Only
-    the columns it needs, never whole runs."""
-    since = _now() - timedelta(days=ADMIN_DAYS)
-    rows = await db.execute(
-        select(
-            ApplyRun.id,
-            ApplyRun.problems,
-            ApplyRun.playbook_version,
-            User.email,
-            SavedJob.custom_title,
-            SavedJob.custom_company,
-            JobListing.title,
-            JobListing.company,
-        )
-        .join(User, User.id == ApplyRun.user_id)
-        .join(SavedJob, SavedJob.id == ApplyRun.saved_job_id)
-        .outerjoin(JobListing, JobListing.id == SavedJob.job_listing_id)
-        .where(ApplyRun.created_at >= since)
-        .order_by(ApplyRun.last_activity_at.desc())
-        .limit(ADMIN_RUNS)
-    )
-    out: list[dict[str, Any]] = []
-    for rid, problems, playbook, email, my_t, my_c, title, company in rows.all():
-        if not problems:
-            continue
-        job = " at ".join(x for x in (my_t or title, my_c or company) if x)
-        for p in problems:
-            out.append(
-                {
-                    "status": "open",
-                    "job": job,
-                    "playbook": playbook,
-                    "site": host_of(p.get("page")),
-                    "job_catcher": None,
-                    **{k: v for k, v in p.items() if v not in (None, "")},
-                    "run_id": str(rid),
-                    "user_email": email,
-                }
-            )
-    out.sort(key=lambda p: p.get("at") or "", reverse=True)
-    return out[:limit]
+    return {"noted": True, "problem": dict(kept)}

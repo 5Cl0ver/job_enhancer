@@ -3,8 +3,6 @@
 user changes a box while Claude fills; Claude notes what went wrong for the
 developer."""
 
-import uuid
-
 import pytest
 from sqlalchemy import select
 
@@ -476,7 +474,9 @@ async def test_report_problem(engine, monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_admin_sees_everyones_problems(admin_client, db_session, admin_user):
+async def test_problems_reach_the_owners_inbox(admin_client, db_session, admin_user):
+    """Spec 032: a run's problems are reports in Bugs & ideas too, linked to
+    the run and the job; the run page still shows them as before."""
     r = await admin_client.post(
         "/v1/saved-jobs/manual",
         json={
@@ -486,61 +486,67 @@ async def test_admin_sees_everyones_problems(admin_client, db_session, admin_use
             "description": "Intune and Okta. " * 50,
         },
     )
+    job_id = r.json()["id"]
     run_id = (
-        await admin_client.post("/v1/apply/runs", json={"saved_job_id": r.json()["id"]})
+        await admin_client.post("/v1/apply/runs", json={"saved_job_id": job_id})
     ).json()["id"]
     await svc.brief(db_session, admin_user, run_id)
-    await svc.report_problem(
+    out = await svc.report_problem(
         db_session, admin_user, run_id, "Lost the tab", PAGE, "tab"
     )
+    assert "problem" not in out  # Claude's answer is as before
     await db_session.commit()
-    rows = (await admin_client.get("/v1/admin/apply-problems")).json()
-    assert len(rows) == 1
-    row = rows[0]
-    assert (row["what"], row["kind"], row["job"], row["user_email"]) == (
+    inbox = (await admin_client.get("/v1/admin/bugs")).json()
+    row = next(i for i in inbox["items"] if i["source"] == "run")
+    assert (row["title"], row["section"], row["severity"], row["status"]) == (
         "Lost the tab",
-        "tab",
-        "IT Engineer at Northwind Labs",
-        "admin@test.dev",
+        "apply",
+        "major",
+        "new",
     )
-    assert row["run_id"] == run_id
-    assert row["status"] == "open" and row["site"] == "acme.wd1.myworkdayjobs.com"
-    assert row["page"] == PAGE and row["playbook"] == APPLY_PLAYBOOK_VERSION
-    # The owner sees them on the application page.
+    report = (await admin_client.get(f"/v1/admin/bugs/{row['id']}")).json()
+    assert report["run"] == {"id": run_id, "own": True}
+    assert report["job"]["own"] is True
+    assert report["job"]["id"] == job_id
+    assert report["job"]["company"] == "Northwind Labs"
+    assert report["place"] == "acme.wd1.myworkdayjobs.com/apply/:id"
+    assert report["context"]["playbook"] == APPLY_PLAYBOOK_VERSION
+    assert "admin@test.dev" not in str(report)  # never who hit it
+    # The owner sees them on the application page, as before.
     run = (await admin_client.get(f"/v1/apply/runs/{run_id}")).json()
     assert run["problems"][0]["what"] == "Lost the tab"
 
-    # Fixed / Ignore.
-    url = f"/v1/admin/apply-problems/{run_id}/{row['id']}"
-    r = await admin_client.patch(url, json={"status": "fixed"})
-    assert r.status_code == 200, r.text
-    assert r.json()["status"] == "fixed"
-    rows = (await admin_client.get("/v1/admin/apply-problems")).json()
-    assert rows[0]["status"] == "fixed"
-    assert (await admin_client.patch(url, json={"status": "done"})).status_code == 422
-    missing = f"/v1/admin/apply-problems/{run_id}/nope"
-    assert (
-        await admin_client.patch(missing, json={"status": "ignored"})
-    ).status_code == 404
-    other = f"/v1/admin/apply-problems/{uuid.uuid4()}/{row['id']}"
-    assert (
-        await admin_client.patch(other, json={"status": "ignored"})
-    ).status_code == 404
-
-    # The same problem again is open again, counted.
-    await svc.report_problem(
-        db_session, admin_user, run_id, "Lost the tab", PAGE, "tab"
-    )
+    # A Job Catcher kind lands in Job Catcher; the same one again counts up.
+    for _ in range(2):
+        await svc.report_problem(
+            db_session, admin_user, run_id, "Said no résumé box", PAGE, "resume"
+        )
     await db_session.commit()
-    rows = (await admin_client.get("/v1/admin/apply-problems")).json()
-    assert (rows[0]["status"], rows[0]["count"]) == ("open", 2)
+    jc = (await admin_client.get("/v1/admin/bugs?section=job_catcher")).json()
+    assert [(i["title"], i["count"]) for i in jc["items"]] == [
+        ("Said no résumé box", 2)
+    ]
 
 
 @pytest.mark.asyncio
-async def test_only_the_admin_sees_the_list(client):
-    assert (await client.get("/v1/admin/apply-problems")).status_code == 403
-    url = f"/v1/admin/apply-problems/{uuid.uuid4()}/abc"
-    assert (await client.patch(url, json={"status": "fixed"})).status_code == 403
+async def test_report_problem_works_when_the_inbox_fails(engine, monkeypatch):
+    """The inbox never costs Claude its call: the problem is still kept on
+    the run, and Claude is told it was noted."""
+    maker, user, run_id, job_id, rid, saved = await _filling(engine, monkeypatch)
+
+    async def broken(*_a, **_k):
+        raise RuntimeError("inbox down")
+
+    monkeypatch.setattr(svc.bug_reports, "from_run_problem", broken)
+    out = await mcp_mod.report_problem(rid, "The tab closed", kind="tab")
+    assert out["noted"] is True and "Carry on" in out["next"]
+    run = await _run(maker, run_id)
+    assert [p["what"] for p in run.problems] == ["The tab closed"]
+
+
+@pytest.mark.asyncio
+async def test_old_admin_routes_are_gone(admin_client):
+    assert (await admin_client.get("/v1/admin/apply-problems")).status_code == 404
 
 
 # --------------------------------------------------------------------------- #

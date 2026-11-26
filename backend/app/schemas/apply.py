@@ -101,9 +101,3 @@ class FactOut(BaseModel):
 
 class FactIn(BaseModel):
     answer: str = Field(min_length=1, max_length=2000)
-
-
-class ProblemStatusIn(BaseModel):
-    """The admin marks a bug report (spec 030)."""
-
-    status: Literal["open", "fixed", "ignored"]
