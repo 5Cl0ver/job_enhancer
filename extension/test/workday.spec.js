@@ -27,7 +27,7 @@ const yearOf = (container) => container.querySelector('[data-automation-id="date
 
 const ENTRY = (over = {}) => ({
   title: "IT Support Technician",
-  company: "Logical Position",
+  company: "Northwind Labs",
   location: "Beaverton, OR",
   description: "Did the thing.",
   start_month: 10,
@@ -66,7 +66,7 @@ describe("Workday work-experience filler", () => {
 
     const b = blocks[0];
     expect(b.title.value).toBe("IT Support Technician");
-    expect(b.company.value).toBe("Logical Position");
+    expect(b.company.value).toBe("Northwind Labs");
     expect(b.location.value).toBe("Beaverton, OR");
     expect(b.role.value).toBe("Did the thing.");
     expect(b.current.checked).toBe(true);

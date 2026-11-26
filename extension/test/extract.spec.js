@@ -74,7 +74,7 @@ describe("extractJob — Indeed Quick-Apply flow (smartapply)", () => {
       "https://smartapply.indeed.com/beta/indeedapply/form/profile-location",
     );
     expect(job.title).toBe("IT Manager/Front End Lead");
-    expect(job.company).toBe("Veriheal");
+    expect(job.company).toBe("Verihealth");
     expect(job.location).toBe("Portland, OR");
     expect(job.is_remote).toBe(true);
     expect(job._via).toBe("indeed-apply");

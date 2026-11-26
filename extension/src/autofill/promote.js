@@ -3,7 +3,7 @@
 //
 // Before 020 "Always use this here" saved a typed answer for one box on one
 // site, so the same question on the next site started over (the user taught
-// "Fabian" for Preferred Name on three sites). Each such answer becomes the
+// "Sam" for Preferred Name on three sites). Each such answer becomes the
 // answer for its question everywhere — once, the most recent winning — except:
 //   - the legal name and email (a "First Name" box somewhere may well have
 //     been a preferred-name box: only a box in a "Preferred name" block counts);

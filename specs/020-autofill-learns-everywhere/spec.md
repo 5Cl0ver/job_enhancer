@@ -7,11 +7,11 @@
 **Status**: Draft
 
 **Input**: The user's rule, from real applications:
-> "A field that says preferred name, Job Catcher should know that field should be Fabian. Say it puts Luis, I click on it with the selector, it shows me Luis, I change it to Fabian, then other applications that field that says preferred name is gonna be Fabian … any question, any field, this is how it should work."
+> "A field that says preferred name, Job Catcher should know that field should be Sam. Say it puts Samuel, I click on it with the selector, it shows me Samuel, I change it to Sam, then other applications that field that says preferred name is gonna be Sam … any question, any field, this is how it should work."
 
 **What happens today:**
 - Job Catcher fills every "Preferred First Name" box with the legal first name, because the profile has no preferred name.
-- The pointer's "Always use this here" saves the answer for that one website only. The user taught "Fabian" on three sites; the fourth site still got the legal name.
+- The pointer's "Always use this here" saves the answer for that one website only. The user taught "Sam" on three sites; the fourth site still got the legal name.
 
 **Bugs seen on real applications:**
 1. **Learning doesn't carry across sites**, for any field.
@@ -19,7 +19,7 @@
 3. **Workday Work Experience:**
    - the title was cut at "(";
    - company and location were empty;
-   - the description held a scrap of the title ("IT Systems & Automation) · Logical Position"), from Workday's own résumé reading;
+   - the description held a scrap of the title ("IT Systems & Automation) · Northwind Labs"), from Workday's own résumé reading;
    - Job Catcher left the whole section to the user.
 4. **Workday Languages:**
    - several dropdown lists were left open, stacked on top of each other, with nothing chosen (Language; Comprehension 1 Beginner – 5 Fluent; "I am fluent");
@@ -40,15 +40,15 @@ What goes where:
   - **Never learned:** self-identification (race, gender, veteran, disability), consent and agreement boxes, passwords, payment details.
 - In the pointer box, the user can choose **Only this site** for a one-off answer.
 - What the user taught **always beats** the profile's general answer and any guess.
-- The "Fabian" answers the user already taught on three sites **apply right away**, with nothing to redo.
+- The "Sam" answers the user already taught on three sites **apply right away**, with nothing to redo.
 
 **Why this priority**: it's the user's core rule for how Job Catcher should feel: answer once, never again.
 
 **Independent Test**:
-- On site A, Job Catcher fills "Preferred First Name" with the legal name. The user points, changes it to "Fabian" and saves.
-- On a different site B, the box labelled "Preferred Name" fills "Fabian".
+- On site A, Job Catcher fills "Preferred First Name" with the legal name. The user points, changes it to "Sam" and saves.
+- On a different site B, the box labelled "Preferred Name" fills "Sam".
 - On site C, "Legal First Name" still gets the legal name.
-- Autofill memory in the app shows the learned answer "Fabian" for preferred name, used on every site.
+- Autofill memory in the app shows the learned answer "Sam" for preferred name, used on every site.
 
 **Acceptance Scenarios**:
 
@@ -57,7 +57,7 @@ What goes where:
 3. **Given** a non-profile question ("How did you hear about us?") corrected on site A, **When** the same or similarly worded question appears on site B, **Then** site B fills the corrected answer.
 4. **Given** a question about one company, **When** it is corrected on that company's site, **Then** other companies never get that answer.
 5. **Given** the user picks **Only this site**, **Then** the answer is used on that site only, and other sites keep the general answer.
-6. **Given** the user already taught "Fabian" on three sites before this feature, **When** the feature arrives, **Then** preferred-name boxes get Fabian on every site with no further action.
+6. **Given** the user already taught "Sam" on three sites before this feature, **When** the feature arrives, **Then** preferred-name boxes get Sam on every site with no further action.
 7. **Given** a self-identification, consent, password or payment box, **Then** nothing typed there is ever learned.
 
 ---
@@ -249,7 +249,7 @@ What the user gets:
 - **SC-001**: After a single correction of any non-excluded question, 100% of later applications on other sites that ask the same question fill the corrected answer.
 - **SC-002**: The user never has to teach the same answer twice. Measured: no question appears in Autofill memory as taught on more than one site with the same answer after promotion.
 - **SC-003**: On the Workday-shaped practice pages, one press fills all job, school and language blocks to match the profile, leaving zero lists open.
-- **SC-004**: On the user's next three real applications, the preferred-name box is "Fabian" without any correction, and legal-name boxes keep the legal name.
+- **SC-004**: On the user's next three real applications, the preferred-name box is "Sam" without any correction, and legal-name boxes keep the legal name.
 - **SC-005**: Autofill on a job with its own résumé uploads that résumé 100% of the time.
 - **SC-006**: No regression: every existing autofill practice page and test still passes.
 

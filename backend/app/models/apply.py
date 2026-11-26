@@ -14,7 +14,7 @@ An **apply photo** is one screenful of an application page, as Job Catcher
 saw it. Deleted 30 days after the run ends.
 
 A **profile fact** is something the user told Claude that their résumé doesn't
-say ("Yes, I used Intune at Logical Position for 200 laptops"). Claude never
+say ("Yes, I used Intune at Northwind Labs for 200 laptops"). Claude never
 asks it again; the user can edit or delete it in Settings › Résumés.
 """
 

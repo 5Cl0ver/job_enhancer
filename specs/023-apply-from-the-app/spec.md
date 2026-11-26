@@ -15,7 +15,7 @@
 
 **What the first real runs showed** (the live run log, 2026-11-25, read only):
 1. **Job Catcher never answered.** All three requests (fill, photo) ended "no answer": the owner's Job Catcher was still 0.39 ("Update available (0.40.0)"). So Claude asked the owner to download and upload the résumé themselves, and no page had a photo. The app never said Job Catcher was out of date.
-2. **Claude's questions had no answer box.** Claude asked about compensation expectations (with the posted range), "Can CFS reach out by SMS? Yes or No", and the current job title. The app only offered "Done, keep going", so the answer had to be typed into the Claude chat on the computer.
+2. **Claude's questions had no answer box.** Claude asked about compensation expectations (with the posted range), "Can Acme reach out by SMS? Yes or No", and the current job title. The app only offered "Done, keep going", so the answer had to be typed into the Claude chat on the computer.
 3. **A reCAPTCHA** opened in a new tab during a redirect. Only the person at the computer can solve it.
 4. **After "Submit", nobody knew if it went.** The run sat at "Claude is pressing Submit" for a minute, and the owner pressed Stop. The app had no way to tell whether the application was sent.
 5. **Claude in Chrome stops at random.** Each check for the owner's answer is one more step for Claude, and the waits are about 25 s, so a few minutes of waiting costs many steps.
@@ -34,7 +34,7 @@ When Claude needs the user, the application page shows:
 "Send to Claude" sends the answer; Claude gets it at once and carries on. For something only the user can do at the computer (a CAPTCHA, a sign-in), the card says so plainly and offers "Done, keep going".
 
 **Acceptance Scenarios**:
-1. **Given** Claude asks "Can CFS reach out by SMS? Yes or No", **When** the user taps "No" on the phone, **Then** Claude's next check returns "No" and it fills that.
+1. **Given** Claude asks "Can Acme reach out by SMS? Yes or No", **When** the user taps "No" on the phone, **Then** Claude's next check returns "No" and it fills that.
 2. **Given** Claude asks for an expected salary, **When** the user types "$120,000" and sends it, **Then** Claude gets the words exactly.
 3. **Given** a CAPTCHA, **When** the card shows, **Then** it says "This one needs you at the computer" and shows the photo of the screen.
 

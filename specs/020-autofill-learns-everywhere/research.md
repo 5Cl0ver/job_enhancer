@@ -19,12 +19,12 @@
 
    | Site | Label | Answer |
    |---|---|---|
-   | talemetry | "preferred name" | Fabian |
-   | greenhouse/affirm | "preferred name" | Fabian |
-   | successfactors | "preferred first name" | Fabian |
-   | latticesemi Workday | **"first name"** | Fabian |
+   | talemetry | "preferred name" | Sam |
+   | greenhouse/affirm | "preferred name" | Sam |
+   | successfactors | "preferred first name" | Sam |
+   | latticesemi Workday | **"first name"** | Sam |
 
-   The Workday one is Workday's *Preferred Name* block, whose boxes are labelled plainly "First Name". Promoting it naively would put Fabian into every legal first-name box.
+   The Workday one is Workday's *Preferred Name* block, whose boxes are labelled plainly "First Name". Promoting it naively would put Sam into every legal first-name box.
 5. **Workday Work Experience:**
    - `workday.js` already fills it and presses Add.
    - It is skipped on automatic steps once Workday pre-filled the rows (`workExperienceTouched`), never corrects pre-filled values, and records nothing for Undo.
@@ -92,7 +92,7 @@
 **Promotion at release** (in the extension when the bundle loads, idempotent):
 - Taught rows with a typed answer whose label (plus section) maps to a non-identity key, or to a plain question, are promoted to the general key.
 - If they disagree, the most recent wins.
-- With the owner's rows, `@preferred_name = Fabian`. The Workday "first name" row only promotes if its section shows *preferred*; otherwise it stays site-only.
+- With the owner's rows, `@preferred_name = Sam`. The Workday "first name" row only promotes if its section shows *preferred*; otherwise it stays site-only.
 
 **Rejected**:
 - Embeddings: none of the tools surveyed use them, and they add latency and cost.

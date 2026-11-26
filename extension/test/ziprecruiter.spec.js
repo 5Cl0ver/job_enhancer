@@ -27,7 +27,7 @@ describe("extractJob on a ZipRecruiter search page", () => {
   it("reads the OPEN job from the right pane, not the search heading", () => {
     expect(job._via).toBe("ziprecruiter");
     expect(job.title).toBe("Data Reporting Specialist");
-    expect(job.company).toBe("RR Donnelley");
+    expect(job.company).toBe("RR Printworks");
     expect(job.location).toBe("Portland, OR");
     expect(job.job_type).toBe("Full-time");
     expect(job.is_remote).toBe(false);

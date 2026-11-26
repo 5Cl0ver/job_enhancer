@@ -34,7 +34,7 @@ describe("readApplications — parse the My jobs list", () => {
 
     const applied = apps[0];
     expect(applied.title).toBe("IT Manager/Front End Lead"); // a11y helper text stripped
-    expect(applied.company).toBe("Veriheal");
+    expect(applied.company).toBe("Verihealth");
     expect(applied.location).toBe("Portland, OR");
     expect(applied.status).toBe("Applied");
     expect(applied.stage).toBe("Applied");
@@ -42,12 +42,12 @@ describe("readApplications — parse the My jobs list", () => {
     expect(applied.jobKey).toBe("13452735e0c7c74a");
 
     // The rejected one maps to the Rejected stage.
-    const rejected = apps.find((a) => a.company === "Electrical Training Institute");
+    const rejected = apps.find((a) => a.company === "Trades Training Institute");
     expect(rejected.status).toBe("Not selected by employer");
     expect(rejected.stage).toBe("Rejected");
 
     // The interview one maps to Interview.
-    const interview = apps.find((a) => a.company === "Nscale");
+    const interview = apps.find((a) => a.company === "Cloudscale");
     expect(interview.stage).toBe("Interview");
   });
 

@@ -240,7 +240,7 @@ export function cleanDescription(s) {
   return cleanMultiline(lines.join("\n"));
 }
 
-/** "careers-nscglobal" (a hiring site's address) → "nscglobal". */
+/** "careers-acmeglobal" (a hiring site's address) → "acmeglobal". */
 function siteless(company) {
   return clean(company).replace(/^(careers?|jobs?)-(?=\w)/i, "").replace(/-careers?$/i, "");
 }

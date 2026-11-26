@@ -81,16 +81,16 @@ async def test_application_profile_empty_then_upsert(client: AsyncClient):
     r = await client.put(
         "/v1/users/me/application-profile",
         json={
-            "first_name": "Fabian",
+            "first_name": "Sam",
             "phone": "555-0100",
-            "linkedin_url": "https://linkedin.com/in/fabian",
+            "linkedin_url": "https://linkedin.com/in/sam",
             "authorized_to_work": True,
             "requires_sponsorship": False,
         },
     )
     assert r.status_code == 200
     body = r.json()
-    assert body["first_name"] == "Fabian"
+    assert body["first_name"] == "Sam"
     assert body["authorized_to_work"] is True
 
     # A later partial save must NOT wipe earlier answers.
@@ -99,7 +99,7 @@ async def test_application_profile_empty_then_upsert(client: AsyncClient):
     )
     body = r.json()
     assert body["city"] == "Los Angeles"
-    assert body["first_name"] == "Fabian"  # still there
+    assert body["first_name"] == "Sam"  # still there
     assert body["requires_sponsorship"] is False  # still there
 
 
@@ -205,9 +205,9 @@ async def test_custom_answers_usage_tracking(client: AsyncClient):
 
 @pytest.mark.asyncio
 async def test_export_includes_application_profile(client: AsyncClient):
-    await client.put("/v1/users/me/application-profile", json={"first_name": "Fabian"})
+    await client.put("/v1/users/me/application-profile", json={"first_name": "Sam"})
     data = (await client.get("/v1/users/me/export")).json()
-    assert data["application_profile"]["first_name"] == "Fabian"
+    assert data["application_profile"]["first_name"] == "Sam"
 
 
 @pytest.mark.asyncio
@@ -229,7 +229,7 @@ async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_sessi
             filename="resume.pdf",
             mime_type="application/pdf",
             file_size_bytes=100,
-            extracted_text="Fabian Example — Los Angeles. (555) 010-0199",
+            extracted_text="Sam Example — Los Angeles. (555) 010-0199",
             is_active=True,
         )
     )
@@ -242,7 +242,7 @@ async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_sessi
         "app.api.v1.users.extract_profile",
         new=AsyncMock(
             return_value={
-                "first_name": "Fabian",
+                "first_name": "Sam",
                 "city": "Los Angeles",
                 "phone": "(555) 010-0199",
             }
@@ -253,7 +253,7 @@ async def test_fill_profile_from_resume(client: AsyncClient, test_user, db_sessi
     assert r.status_code == 200
     body = r.json()
     assert sorted(body["filled"]) == ["city", "first_name"]  # phone NOT in filled
-    assert body["profile"]["first_name"] == "Fabian"
+    assert body["profile"]["first_name"] == "Sam"
     assert body["profile"]["phone"] == "555-867-5309"  # untouched
 
 

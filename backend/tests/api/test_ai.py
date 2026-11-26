@@ -480,7 +480,7 @@ async def test_work_history_parses_active_resume(
             file_size_bytes=10,
             extracted_text=(
                 "EXPERIENCE\n"
-                "IT Support Technician | Logical Position | Oct 2022 - Sep 2024\n"
+                "IT Support Technician | Northwind Labs | Oct 2022 - Sep 2024\n"
             ),
             is_active=True,
         )
@@ -490,7 +490,7 @@ async def test_work_history_parses_active_resume(
     entries = [
         {
             "title": "IT Support Technician",
-            "company": "Logical Position",
+            "company": "Northwind Labs",
             "location": "Beaverton, OR",
             "start_month": 10,
             "start_year": 2022,

@@ -1,7 +1,7 @@
 // Spec 022 part A: Job Catcher saves the whole job, correctly. Each case is one
 // seen in the owner's saved jobs (2026-11-24): LinkedIn descriptions ending in
 // "… more", Indeed titles saved as the tab's name, "ZipRecruiter" saved as a
-// company, a job titled with its company's name, "careers-nscglobal".
+// company, a job titled with its company's name, "careers-acmeglobal".
 import { describe, it, expect } from "vitest";
 import { Window } from "happy-dom";
 import { cleanDescription, cleanTitle, isBoardName, mergeJob, tidyJob } from "../src/extract/util.js";
@@ -85,8 +85,8 @@ describe("companies are never a board, and a title is never just the company", (
   });
 
   it("drops 'careers-' from a company read off the page", () => {
-    expect(mergeJob([{ via: "site", data: { title: "IT Support", company: "careers-nscglobal" } }], "u").company).toBe(
-      "nscglobal",
+    expect(mergeJob([{ via: "site", data: { title: "IT Support", company: "careers-acmeglobal" } }], "u").company).toBe(
+      "acmeglobal",
     );
   });
 
@@ -98,7 +98,7 @@ describe("companies are never a board, and a title is never just the company", (
   it("prefers a real title over one that is the company's name", () => {
     const job = mergeJob(
       [
-        { via: "site", data: { title: "Clark Public Utilities", company: "Clark Public Utilities" } },
+        { via: "site", data: { title: "Cedar Public Utilities", company: "Cedar Public Utilities" } },
         { via: "generic", data: { title: "Network Engineer II" } },
       ],
       "u",
@@ -115,10 +115,10 @@ describe("companies are never a board, and a title is never just the company", (
   it("tidyJob fixes the panel's reads the same way", () => {
     const job = tidyJob({
       title: "IT Support Engineer - Indeed.com",
-      company: "careers-nscglobal",
+      company: "careers-acmeglobal",
       description: "Text.\nShow more",
     });
-    expect(job).toMatchObject({ title: "IT Support Engineer", company: "nscglobal", description: "Text." });
+    expect(job).toMatchObject({ title: "IT Support Engineer", company: "acmeglobal", description: "Text." });
     expect(tidyJob({ title: "X", company: "LinkedIn", description: "" }).company).toBe("");
   });
 

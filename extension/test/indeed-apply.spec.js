@@ -38,7 +38,7 @@ describe("Indeed apply submission detection", () => {
 
   it("scrapes the job identity from the apply header card", () => {
     const header = scrapeApplyHeader(doc);
-    expect(header).toEqual({ title: "Desktop Engineer", company: "Align Communications" });
+    expect(header).toEqual({ title: "Desktop Engineer", company: "Harbor Communications" });
   });
 
   it("does not false-detect on a normal step (no confirmation text)", () => {
@@ -46,10 +46,10 @@ describe("Indeed apply submission detection", () => {
     w.document.write(`
       <div class="ia-JobHeader">
         <h1>Desktop Engineer</h1>
-        <div>Align Communications - Los Angeles, CA</div>
+        <div>Harbor Communications - Los Angeles, CA</div>
       </div>
       <h2>Add your location</h2>`);
     expect(isSubmitted(w.document)).toBe(false);
-    expect(scrapeApplyHeader(w.document).company).toBe("Align Communications");
+    expect(scrapeApplyHeader(w.document).company).toBe("Harbor Communications");
   });
 });
