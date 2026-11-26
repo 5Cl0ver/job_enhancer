@@ -10,6 +10,7 @@ from app.api.v1 import (
     apply,
     attention,
     autofill,
+    bugs,
     collections,
     email,
     extension,
@@ -41,6 +42,7 @@ api_router.include_router(admin.router, prefix="/admin", tags=["Admin"])
 api_router.include_router(
     admin_bugs.router, prefix="/admin/bugs", tags=["Bugs & ideas"]
 )
+api_router.include_router(bugs.router, prefix="/bugs", tags=["Bugs & ideas"])
 api_router.include_router(analytics.router, prefix="/analytics", tags=["Analytics"])
 api_router.include_router(email.router, prefix="/email", tags=["Email"])
 api_router.include_router(attention.router, prefix="/attention", tags=["Attention"])

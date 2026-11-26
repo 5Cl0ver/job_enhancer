@@ -52,8 +52,8 @@ from app.schemas.email_account import (
     UnseenOut,
 )
 from app.schemas.job_link import JobOption, LinkEventRequest
-from app.services import email_accounts as svc
 from app.services import (
+    bug_reports,
     email_recheck,
     email_review,
     email_sync,
@@ -61,6 +61,7 @@ from app.services import (
     email_view,
     job_links,
 )
+from app.services import email_accounts as svc
 from app.services.email_classify import UNSURE
 from app.services.email_imap import ImapAuthError
 from app.services.email_job_names import clean_role, is_sender_person
@@ -237,6 +238,18 @@ async def disconnect_account(
     await db.commit()
 
 
+async def _caught_check(db: AsyncSession, provider: str, reason: str, message: str):
+    """A failed mailbox check, in Bugs & ideas (spec 032): the provider and
+    why only, never the address or any mail."""
+    await bug_reports.catch_safely(
+        db,
+        section="email",
+        kind="email_check",
+        place=f"{provider} {reason}",
+        message=message,
+    )
+
+
 @router.post("/scan", response_model=ScanResult)
 async def scan_inbox(
     user: User = Depends(get_current_user),
@@ -283,14 +296,22 @@ async def scan_inbox(
         except ImapAuthError:
             account.status = STATUS_ERROR
             account.last_error = "Login failed — check your app password."
+            await _caught_check(db, account.provider, "login_failed", "Login failed")
             await db.commit()
             raise HTTPException(status_code=400, detail=account.last_error) from None
         except Exception as exc:
             # Couldn't connect or log in (network, or the server limiting us).
-            if getattr(exc, "reason", None) in email_sync.BACKOFF_REASONS:
+            reason = getattr(exc, "reason", None)
+            if reason in email_sync.BACKOFF_REASONS:
                 email_sync_state.apply_backoff(account, now)
             account.status = STATUS_ERROR
             account.last_error = "Could not reach the mail server."
+            await _caught_check(
+                db,
+                account.provider,
+                reason if isinstance(reason, str) else "unreachable",
+                f"Could not reach the mail server ({type(exc).__name__})",
+            )
             await db.commit()
             raise HTTPException(status_code=502, detail=account.last_error) from None
 

@@ -63,6 +63,8 @@ PASS_ROUTES = {
     ("POST", "/v1/apply/runs/{run_id}/event"),
     ("POST", "/v1/apply/runs/{run_id}/live"),
     ("POST", "/v1/extension/hello"),
+    # Job Catcher's own failures, kept with no user (spec 032).
+    ("POST", "/v1/bugs/caught"),
     ("DELETE", "/v1/extension/tokens/current"),
 }
 

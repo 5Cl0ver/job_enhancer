@@ -174,6 +174,43 @@ async def check_service_health(db: AsyncSession) -> list[ServiceStatus]:
     return statuses
 
 
+# Each service's state at the last health watch ("up" or "down"). After a
+# restart it's empty, and the outage reports themselves say what was down.
+_health_last: dict[str, str] = {}
+
+
+async def health_watch(session_factory) -> None:
+    """Every 15 minutes (spec 032): the Admin health checks, and a service
+    turning down is one caught report per outage; coming back adds a line to
+    its history. JSearch is only counted, never pinged. Never raises."""
+    from app.services import bug_reports
+
+    try:
+        now: dict[str, str] = {}
+        async with session_factory() as db:
+            for s in await check_service_health(db):
+                down = s.status == "down"
+                before = _health_last.get(s.name)
+                try:
+                    # Memory says nothing changed: no need to look.
+                    if before != ("down" if down else "up"):
+                        async with db.begin_nested():
+                            going = await bug_reports.outage_open(db, s.name)
+                            if down and not going:
+                                await bug_reports.service_down(db, s.name, s.detail)
+                            elif going and not down:
+                                await bug_reports.service_up(db, s.name)
+                except Exception:  # noqa: BLE001 — never report the reporting
+                    logger.warning("Health watch: %s not noted", s.name, exc_info=True)
+                    continue
+                now[s.name] = "down" if down else "up"
+            await db.commit()
+        # Only once it's kept: a failed write is tried again next time.
+        _health_last.update(now)
+    except Exception:  # noqa: BLE001
+        logger.warning("Health watch failed", exc_info=True)
+
+
 # --------------------------------------------------------------------------- #
 # The owner's user list (spec 019 part C, US7)
 # --------------------------------------------------------------------------- #
