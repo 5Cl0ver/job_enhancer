@@ -15,6 +15,8 @@ import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
 import { createApplyRun } from "./background/applyRun.js";
+import { createCaughtReporter, fillFailure, isSaveFailure, ownerReport, placeOf } from "./background/bugReports.js";
+import { capture } from "./background/pagePhoto.js";
 import { sameBox } from "./autofill/fingerprint.js";
 import { answerKey } from "./autofill/classify/answers.js";
 import { pageId, siteKey } from "./autofill/hosts.js";
@@ -131,7 +133,8 @@ const TEN_YEARS = 10 * 365 * 24 * 3600;
 
 async function storePass(token, email) {
   const { je_email: before } = await chrome.storage.local.get("je_email");
-  await chrome.storage.local.remove("je_refresh");
+  // Owner or not is the app's to say again (the hello below), per account.
+  await chrome.storage.local.remove(["je_refresh", "je_is_owner"]);
   await chrome.storage.local.set({
     je_token: token,
     je_expires: Math.floor(Date.now() / 1000) + TEN_YEARS,
@@ -205,8 +208,16 @@ async function hello(force = false) {
   }).catch(() => null);
   if (res?.ok) {
     const d = await res.json().catch(() => ({}));
+    await storeOwner(d.is_owner === true);
     await storeLatest(typeof d.latest === "string" ? d.latest : null);
   }
+}
+
+/** The app's owner sees "Report a problem here" (spec 032); the server checks again on every report. */
+async function storeOwner(isOwner) {
+  const { je_is_owner: before } = await chrome.storage.local.get("je_is_owner");
+  await chrome.storage.local.set({ je_is_owner: isOwner });
+  if (isOwner !== !!before) chrome.runtime.sendMessage({ type: "authChanged" }).catch(() => {});
 }
 
 /** The newest version, as the app said: kept, and shown when this one is older. */
@@ -513,6 +524,47 @@ const presence = createFillPresence({
   idleBadge: () => updateBadge(),
 });
 
+// Job Catcher's own failures, for the owner's Bugs & ideas (spec 032): the
+// kind, the page's site and path, Job Catcher's own words and its version;
+// one per kind and page every 10 minutes, never retried, never throwing.
+const caught = createCaughtReporter({
+  version: chrome.runtime.getManifest().version,
+  storage: chrome.storage.session,
+  send: async (body) => {
+    const token = await getValidToken();
+    if (!token) return;
+    await fetchWithTimeout(
+      `${cfg.API_BASE}/v1/bugs/caught`,
+      { method: "POST", headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      15_000,
+    );
+  },
+});
+
+/**
+ * Press Autofill on a tab (panel, toolbar, shortcut, Claude) and keep a real
+ * failure: a press that took too long, or got no answer from a page whose
+ * reader was there (it had reported a form). Never pages Job Catcher can't
+ * run on (the Web Store, a PDF), signed out or the app asleep.
+ */
+async function pressTab(tabId) {
+  const hadForm = await presence.get(tabId).then(
+    (p) => !!p?.form,
+    () => false,
+  );
+  const out = await presence.press(tabId);
+  if (out?.problem) {
+    chrome.tabs
+      .get(tabId)
+      .then((t) => {
+        const said = fillFailure({ problem: out.problem, url: t?.url, hadForm });
+        if (said) caught.report("fill_failed", t?.url, said);
+      })
+      .catch(() => {});
+  }
+  return out;
+}
+
 // Apply with Claude (spec 022): photos, fill on request, the Submit block.
 const applyRun = createApplyRun({
   api: async (path, init = {}) => {
@@ -528,7 +580,7 @@ const applyRun = createApplyRun({
       },
     });
   },
-  press: (tabId) => presence.press(tabId),
+  press: (tabId) => pressTab(tabId),
   fillSession: (tabId) => getFillSession(tabId),
 });
 
@@ -896,7 +948,7 @@ try {
   chrome.commands.onCommand.addListener(async (command) => {
     if (command !== "autofill") return;
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tab?.id) presence.press(tab.id); // the badge shows how it went
+    if (tab?.id) pressTab(tab.id); // the badge shows how it went
   });
 } catch {
   /* commands API unavailable */
@@ -1277,6 +1329,69 @@ async function listSavedLegacy(token) {
   return { signedIn: true, changed: true, version: null, jobs };
 }
 
+// ---- "Report a problem here" (spec 032): the owner's only -------------------
+// What happened, the page (site and path only), the version, and a picture of
+// the visible page if asked: never another tab, never a tab switch.
+
+async function pagePicture(tab) {
+  if (!tab?.active) return { reason: "not_showing" };
+  const win = await chrome.windows.get(tab.windowId).catch(() => null);
+  if (!win || win.state === "minimized") return { reason: "not_showing" };
+  const shot = await capture(chrome, tab.windowId); // waits for a free slot (2 a second)
+  // Only this page: dropped if the tab or its page changed meanwhile.
+  const now = await chrome.tabs.get(tab.id).catch(() => null);
+  if (!now?.active || placeOf(now.url) !== placeOf(tab.url)) return { reason: "changed" };
+  return shot ? { shot } : { reason: "failed" };
+}
+
+const NOT_OWNER = "Only the app's owner can send reports from here.";
+
+async function reportProblem({ tabId, what, picture, page }) {
+  if (!String(what || "").trim()) return { ok: false, error: "Say what happened." };
+  const token = await getValidToken();
+  if (!token) return { ok: false, error: "Sign in to Job Catcher first." };
+  // The owner only, before anything is captured (the server checks again).
+  const { je_is_owner } = await chrome.storage.local.get("je_is_owner");
+  if (je_is_owner !== true) return { ok: false, error: NOT_OWNER };
+  const tab = tabId != null ? await chrome.tabs.get(tabId).catch(() => null) : null;
+  if (!tab || !placeOf(tab.url)) return { ok: false, error: "Open the page the problem is on, then report it." };
+  // The panel says which page the note was written on: never another one.
+  if (page != null && placeOf(tab.url) !== page) {
+    return { ok: false, error: "The page changed. Open the report again on this page." };
+  }
+  // The picture first: the page as the owner sees it now.
+  const photo = picture ? await pagePicture(tab) : { reason: "none" };
+  const body = ownerReport({ what, url: tab.url, version: chrome.runtime.getManifest().version, browser: browserName() });
+  const auth = { Authorization: `Bearer ${token}` };
+  // Wake a sleeping server with a harmless GET first; the report itself is
+  // sent once (a create is never retried: no duplicate reports).
+  await wakeFetch(`${cfg.API_BASE}/health`, {}).catch(() => null);
+  let res;
+  try {
+    res = await fetchWithTimeout(
+      `${cfg.API_BASE}/v1/admin/bugs`,
+      { method: "POST", headers: { ...auth, "Content-Type": "application/json" }, body: JSON.stringify(body) },
+      60_000,
+    );
+  } catch {
+    return { ok: false, error: `${UNREACHABLE} If it went through, it's in Bugs & ideas already.` };
+  }
+  if (res.status === 403) return { ok: false, error: NOT_OWNER };
+  if (res.status === 401) return { ok: false, error: "Job Catcher is signed out. Sign in again, then send." };
+  if (!res.ok) return { ok: false, error: friendlyApiError(res.status, await res.text().catch(() => "")) };
+  const id = (await res.json().catch(() => null))?.report?.id || null;
+  let pictureSent = photo.reason || "none";
+  if (photo.shot && id) {
+    const up = await fetchWithTimeout(`${cfg.API_BASE}/v1/admin/bugs/${encodeURIComponent(id)}/shots`, {
+      method: "POST",
+      headers: { ...auth, "Content-Type": "image/jpeg" },
+      body: photo.shot,
+    }).catch(() => null);
+    pictureSent = up?.ok ? "sent" : "failed";
+  }
+  return { ok: true, id, picture: pictureSent };
+}
+
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   (async () => {
     try {
@@ -1284,13 +1399,14 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // Another account's copy must never fill this one's forms.
         const { je_email: before } = await chrome.storage.local.get("je_email");
         await login(msg.email, msg.password);
+        await chrome.storage.local.remove("je_is_owner"); // the hello says again
         if ((before || "").toLowerCase() !== (msg.email || "").toLowerCase()) await autofill.wipe();
         autofill.refresh();
         hello(true).catch(() => {});
         sendResponse({ ok: true });
       } else if (msg.type === "authStatus") {
         const token = await getValidToken();
-        const { je_email, je_latest } = await chrome.storage.local.get(["je_email", "je_latest"]);
+        const { je_email, je_latest, je_is_owner } = await chrome.storage.local.get(["je_email", "je_latest", "je_is_owner"]);
         if (token) hello().catch(() => {});
         const version = chrome.runtime.getManifest().version;
         sendResponse({
@@ -1300,6 +1416,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           version,
           latest: je_latest || null,
           updateAvailable: isOlder(version, je_latest),
+          isOwner: !!token && je_is_owner === true,
         });
       } else if (msg.type === "connectStart") {
         sendResponse(await connect.start());
@@ -1313,7 +1430,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else if (msg.type === "signOut") {
         await revokePass();
-        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email", "je_staged_resume", SAVED_CACHE]);
+        await chrome.storage.local.remove(["je_token", "je_expires", "je_refresh", "je_email", "je_is_owner", "je_staged_resume", SAVED_CACHE]);
         await autofill.wipe();
         sendResponse({ ok: true });
       } else if (msg.type === "checkSaved") {
@@ -1410,6 +1527,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: await autofill.refresh() });
       } else if (msg.type === "sessionUpdate") {
         if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
+        // A résumé that didn't go into its box: the owner hears (spec 032).
+        if (msg.session?.resume === "failed") {
+          caught.report("resume_failed", sender.url || sender.tab?.url, "The résumé didn't go into the upload box.");
+        }
         sendResponse({ ok: true });
       } else if (msg.type === "answersNoticed") {
         // Saved straight away (spec 018): what the user answered, when they
@@ -1579,7 +1700,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "pressAutofill") {
         // The panel's Autofill button (or the page, for a tab id it knows).
         const tabId = msg.tabId ?? sender.tab?.id;
-        sendResponse(tabId != null ? await presence.press(tabId) : { ok: false, problem: "refresh" });
+        sendResponse(tabId != null ? await pressTab(tabId) : { ok: false, problem: "refresh" });
       } else if (msg.type === "startPick") {
         await startPick(msg.tabId);
         sendResponse({ ok: true });
@@ -1730,8 +1851,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse(out.error ? { ok: false, error: out.error } : { ok: true, ...out });
       } else if (msg.type === "listSaved") {
         sendResponse({ ok: true, ...(await listSaved(msg.version || null)) });
+      } else if (msg.type === "reportProblem") {
+        sendResponse(await reportProblem(msg));
       } else if (msg.type === "saveJob") {
-        const saved = await saveJob(msg.job);
+        let saved;
+        try {
+          saved = await saveJob(msg.job);
+        } catch (e) {
+          // A real failure (not "already saved", not signed out): the owner hears.
+          // The page saved from (a Save button), else the posting's own address (the panel).
+          const page = placeOf(sender.tab?.url) ? sender.tab.url : msg.job?.url;
+          if (isSaveFailure(e?.message)) caught.report("save_failed", page, e.message || "Save failed");
+          throw e;
+        }
         sendResponse({ ok: true, saved });
         // If a page (content-script) card triggered it, tell the side panel to
         // update its list. (Panel-initiated saves update themselves.)

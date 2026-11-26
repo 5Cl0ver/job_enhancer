@@ -85,6 +85,12 @@ export async function startFakeApi() {
     latest: null,
     hellos: [],
     extensionId: "",
+    // Bugs & ideas (spec 032): is this the app's owner, the reports and
+    // pictures "Report a problem here" sent, and Job Catcher's own failures.
+    isOwner: false,
+    bugs: [],
+    bugShots: [], // {id, type, bytes}
+    caught: [],
   };
   const log = []; // {method, path, body, at}
   const overrides = new Map(); // path -> {status, body, delay} | (req, body) => {status, body}
@@ -360,7 +366,7 @@ export async function startFakeApi() {
     },
     "POST /v1/extension/hello": (b) => {
       state.hellos.push(b);
-      return { body: { latest: state.latest, update_available: false } };
+      return { body: { latest: state.latest, update_available: false, is_owner: state.isOwner } };
     },
     "DELETE /v1/extension/tokens/current": () => ({ status: 204 }),
     "GET /v1/extension/latest": () => ({
@@ -398,6 +404,23 @@ export async function startFakeApi() {
     "POST /v1/apply/requests/:id/result": () => ({ body: { status: "done" } }),
     "POST /v1/apply/runs/:id/event": () => ({ body: { status: "review" } }),
     "POST /v1/apply/runs/:id/live": () => ({ status: 204 }),
+    // ---- Bugs & ideas (spec 032) ----
+    "POST /v1/admin/bugs": (b) => {
+      if (!state.isOwner) return { status: 403, body: { detail: "Admin role required" } };
+      const report = { id: `bug-${state.bugs.length + 1}`, ...b };
+      state.bugs.push(report);
+      return { status: 201, body: { report, similar: [] } };
+    },
+    "POST /v1/admin/bugs/:id/shots": (_b, req) => {
+      if (!state.isOwner) return { status: 403, body: { detail: "Admin role required" } };
+      const id = req.url.split("/")[4];
+      state.bugShots.push({ id, type: req.headers["content-type"], bytes: Number(req.headers["content-length"] || 0) });
+      return { status: 201, body: { id: `shot-${state.bugShots.length}`, size: 1 } };
+    },
+    "POST /v1/bugs/caught": (b) => {
+      state.caught.push(b);
+      return { status: 202, body: { kept: true } };
+    },
   };
 
   const server = createServer(async (req, res) => {
@@ -408,6 +431,7 @@ export async function startFakeApi() {
     if (/^GET \/v1\/ai\/documents\/[^/]+\/pdf$/.test(key)) key = "GET /v1/ai/documents/:id/pdf";
     const apply = key.match(/^POST \/v1\/apply\/(requests|runs)\/[^/]+\/(claim|photo|result|event|live)$/);
     if (apply) key = `POST /v1/apply/${apply[1]}/:id/${apply[2]}`;
+    if (/^POST \/v1\/admin\/bugs\/[^/]+\/shots$/.test(key)) key = "POST /v1/admin/bugs/:id/shots";
     if (/^DELETE \/v1\/autofill\/taught\/[^/]+$/.test(key)) key = "DELETE /v1/autofill/taught/:id";
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/file$/.test(key)) key = "GET /v1/autofill/resumes/:id/file";
     if (/^GET \/v1\/autofill\/resumes\/[^/]+\/details$/.test(key)) key = "GET /v1/autofill/resumes/:id/details";

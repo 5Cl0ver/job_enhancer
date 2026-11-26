@@ -65,6 +65,10 @@ PASS_ROUTES = {
     ("POST", "/v1/extension/hello"),
     # Job Catcher's own failures, kept with no user (spec 032).
     ("POST", "/v1/bugs/caught"),
+    # The owner's "Report a problem here": a report and its picture. The
+    # route itself still refuses anyone but the owner (spec 032).
+    ("POST", "/v1/admin/bugs"),
+    ("POST", "/v1/admin/bugs/{report_id}/shots"),
     ("DELETE", "/v1/extension/tokens/current"),
 }
 

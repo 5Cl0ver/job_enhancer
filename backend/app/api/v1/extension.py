@@ -59,6 +59,9 @@ class HelloIn(BaseModel):
 class HelloOut(BaseModel):
     latest: str | None
     update_available: bool
+    # The app's owner: their Job Catcher shows "Report a problem here" (spec
+    # 032). The server checks again on every report.
+    is_owner: bool = False
 
 
 @router.post("/hello", response_model=HelloOut)
@@ -76,6 +79,7 @@ async def hello(
     return HelloOut(
         latest=info["version"],
         update_available=releases.is_older(data.version, info["version"]),
+        is_owner=user.role == "admin",
     )
 
 

@@ -29,15 +29,13 @@
 // Extension API calls on each turn keep the service worker awake while a run
 // is open (Chrome resets its idle timer on every extension call).
 import { CHOICE_CHARS, MAX_CHOICES, onRunHost, shotPlan } from "../autofill/applyPage.js";
+import { CAPTURE_GAP_MS, capture as captureTab } from "./pagePhoto.js";
 
 const OPEN_TTL = 2_000;
 const IDLE_TTL = 60_000;
 const RETRY_MS = 3_000;
 const TRUST_MS = 90_000; // how long a last answer stands while the app can't be reached
 const LOOP_MS = 2_000;
-const CAPTURE_GAP_MS = 550; // Chrome allows 2 captures a second
-const MAX_WIDTH = 1200;
-const MAX_BYTES = 390_000;
 const PAINT_MS = 350; // a tab just shown needs a moment to draw
 const LIVE_MS = 3_000;
 const LIVE_AGAIN_MS = 60_000; // an unchanged page is sent again this often (spec 033)
@@ -422,33 +420,8 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return up?.ok ? { ok: true } : { ok: false, reason: "error" };
   }
 
-  async function capture(windowId) {
-    let url;
-    try {
-      url = await c.tabs.captureVisibleTab(windowId, { format: "jpeg", quality: 70 });
-    } catch {
-      return null; // the window is hidden or minimised
-    }
-    const blob = await (await fetch(url)).blob();
-    return shrink(blob);
-  }
-
-  /** At most 1200 px wide and under the app's 400 KB, as JPEG. */
-  async function shrink(blob) {
-    if (typeof OffscreenCanvas === "undefined" || typeof createImageBitmap === "undefined") {
-      return blob.size <= MAX_BYTES ? blob : null;
-    }
-    const img = await createImageBitmap(blob);
-    const scale = Math.min(1, MAX_WIDTH / img.width);
-    const canvas = new OffscreenCanvas(Math.round(img.width * scale), Math.round(img.height * scale));
-    canvas.getContext("2d").drawImage(img, 0, 0, canvas.width, canvas.height);
-    img.close?.();
-    for (const quality of [0.6, 0.45, 0.3]) {
-      const out = await canvas.convertToBlob({ type: "image/jpeg", quality });
-      if (out.size <= MAX_BYTES) return out;
-    }
-    return null;
-  }
+  /** The window's visible tab, shrunk (shared with "Report a problem here"). */
+  const capture = (windowId) => captureTab(c, windowId);
 
   // The live view (spec 026): what was last sent, per run.
   let live = { run: null, at: 0, sent: "", sentAt: 0 };

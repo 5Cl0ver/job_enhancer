@@ -1,5 +1,7 @@
 """Bugs & ideas endpoints (spec 032): the owner's inbox. Every route needs
-the owner (admin); anyone else gets 403 and sees nothing.
+the owner (admin); anyone else gets 403 and sees nothing. Adding a report and
+its screenshot also take the owner's Job Catcher pass (``AdminOrPass``), for
+Job Catcher's "Report a problem here"; the rest are app-session only.
 
 Screenshots come as the raw picture (``image/jpeg``, ``image/png`` or
 ``image/webp``), checked by their first bytes, at most 1 MB and 3 a report,
@@ -12,7 +14,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
-from app.middleware.auth import AdminUser
+from app.middleware.auth import AdminOrPass, AdminUser
 from app.models.user import User
 from app.schemas.bug_reports import (
     BugBulk,
@@ -77,10 +79,12 @@ async def list_bugs(
 
 @router.post("", status_code=201)
 async def add_bug(
-    data: BugCreate, _user: AdminUser, db: AsyncSession = Depends(get_db)
+    data: BugCreate, _user: AdminOrPass, db: AsyncSession = Depends(get_db)
 ) -> dict[str, Any]:
     """The owner's Add a bug or idea, with up to 3 open reports that look
-    like the same problem (``similar``), for the owner to merge or not."""
+    like the same problem (``similar``), for the owner to merge or not. The
+    owner's Job Catcher sends its "Report a problem here" here too, with its
+    pass."""
     try:
         report = await svc.create(db, data.model_dump(), source="owner")
     except ValueError as exc:
@@ -258,10 +262,11 @@ async def split_bug(
 async def add_shot(
     report_id: uuid.UUID,
     request: Request,
-    _user: AdminUser,
+    _user: AdminOrPass,
     db: AsyncSession = Depends(get_db),
 ) -> dict[str, Any]:
-    """A screenshot, sent as the picture itself."""
+    """A screenshot, sent as the picture itself (from the app, or the
+    owner's Job Catcher with its pass)."""
     mime = request.headers.get("content-type", "").split(";")[0].strip().lower()
     if mime not in svc.SHOT_TYPES:
         raise HTTPException(status_code=415, detail="Send a JPEG, PNG or WebP picture.")
