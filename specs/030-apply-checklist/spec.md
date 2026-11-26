@@ -19,6 +19,7 @@ In **Filling now**, the user taps a line. A small pop-up offers **Change it to�
 - It goes to Claude at once, in its next tool result (the `from_user` it already reads).
 - Claude changes the box on the page (going back a page if needed), or answers the question with a message.
 - The line shows "→ new answer (sent to Claude)" until the box changes.
+- Only the user's own words are the message. The box's label and value come from the web page: they're taken from Job Catcher's live view (a box that isn't on it is refused) and given to Claude apart, marked as page text, never as instructions.
 - The review's answer bubbles (spec 026) stay as they are.
 
 **Acceptance:**
@@ -32,7 +33,9 @@ Claude sends its questions **together**, each with its best guess filled in and 
 - Rows Claude marks **only you can answer** (experience, years with a tool, degrees, sign-ins…) come first and are highlighted; their box is empty unless Claude had a real guess.
 - One button: **Looks good, go**. Empty rows are skipped ("1 left empty: Claude skips it.").
 - It works before the résumé (the listing's gaps) and while filling (facts a page asks for). After a checklist while filling, Claude goes back to filling.
-- Answers are still kept as "things you told Claude".
+- Answers are still kept as "things you told Claude", except a guess the user left as it was: it's used for this job only.
+- While the checklist is out, Claude can't fill or finish a page (it waits for the answers), and can't send a new checklist over answers it hasn't picked up.
+- After the answers, the run goes back to where it was: filling, or writing (a first résumé, or the change the user asked for, then their look again).
 - Truly blocking things (sign in, CAPTCHA, a human check, a file) stay single "Claude needs you" cards.
 
 **Acceptance:**
@@ -49,11 +52,24 @@ Claude calls `report_problem` as soon as something goes wrong: a box it couldn't
 1. A reported problem shows on the run, with its kind, time, page and how many times.
 2. Only the admin sees the list across runs; a regular user gets 403.
 
+### User Story 4 - Bug reports for the developer (Priority: P2)
+
+The owner asked for "auto bug reports that Claude finds, so I can feed them back to you, in a dedicated section of the admin dashboard".
+
+- The admin page has a **Bug reports** section: grouped by kind (Job Catcher, Résumé, Lost tab, Site, A box it couldn't fill, Other), newest first, with counts.
+- Each report keeps its context, stored with it: run, job (title and company), site, page (no query), Job Catcher version, playbook version, time.
+- Each has a status: open, fixed or ignored. **Fixed** and **Ignore** buttons (and **Open again**). Open ones show by default; a toggle shows all. The same problem again is open again.
+- **Copy for Claude** copies one report as Markdown ("# Bug report: Job Catcher on northwind.example", Run / Job / Site / Job Catcher / Playbook / When, "## What happened", "## Page"); **Copy all open** copies every open one under one heading with a count. "Copied" shows; if the clipboard is blocked, a box with the text appears to copy by hand.
+
+**Acceptance:**
+1. Marking a report Fixed hides it from the open list; a wrong id is a 404; a regular user gets 403.
+2. Copy all open gives "# Open bug reports (2)" and both reports.
+
 ### Edge Cases
 
 - **The same problem twice**: counted ("2 times"), not repeated.
 - **More than 20 problems** in a run: the rest aren't kept; Claude is told and carries on.
-- **A password or code in a problem**: removed before it's kept ("password: [removed]"); long tokens, card numbers and SSNs too; the page is kept without its query.
+- **A password or code in a problem**: removed before it's kept ("password: [removed]", "password hunter2", "code 482913"); emails, phone, card and SSN numbers and long key blobs too. The page is kept without its query; its path (job slugs like Senior-Engineer_R0012345) stays.
 - **A fix for a box on a page Claude already left**: Claude goes back to it, or the user fixes it at the review.
 - **Many fixes Claude hasn't read**: at most 30 waiting; then "Claude hasn't read your last changes yet".
 - **A chat answer** already saved is never sent back as skipped.
@@ -66,7 +82,8 @@ Claude calls `report_problem` as soon as something goes wrong: a box it couldn't
 - **FR-004**: After a checklist asked while filling, `wait_for_you` returns that checklist's answers and sends Claude back to filling.
 - **FR-005**: The app shows the newest checklist only, only-you first, with **Looks good, go**.
 - **FR-006**: `report_problem(run_id, what, page_url?, kind?)`: kind in fill / job_catcher / tab / resume / site / other (else other); ≤500 chars; ≤20 a run; secrets removed; page without query.
-- **FR-007**: The run view carries `problems`; `GET /v1/admin/apply-problems` (admin only) lists them across runs (last 60 days).
+- **FR-007**: The run view carries `problems`; `GET /v1/admin/apply-problems` (admin only) lists them across runs (last 60 days), reading only the columns it needs; `PATCH /v1/admin/apply-problems/{run_id}/{id}` (admin only) sets open / fixed / ignored.
+- **FR-009**: Each problem is stored with a short id and its context (run, job, site, Job Catcher and playbook versions); the admin's Bug reports group, filter, mark and copy them as Markdown.
 - **FR-008**: The playbook tells Claude to batch questions with best guesses, apply mid-fill changes, keep blocking things as help, and report problems; version 2026.11.30.
 
 ## Success Criteria

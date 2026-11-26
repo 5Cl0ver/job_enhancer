@@ -7,8 +7,12 @@ The migration `y3b4c5d6e7f9_apply_problems` comes after 029's `y3c5e7a9b1d2`. It
 ```json
 [{"id": "3f9a1c0b2d", "at": "2026-11-25T10:07:30+00:00", "kind": "job_catcher",
   "what": "Job Catcher said no résumé box, but there is one",
-  "page": "https://northwind.example/apply/2", "count": 2}]
+  "page": "https://northwind.example/apply/2", "site": "northwind.example",
+  "count": 2, "status": "open", "run_id": "…", "job": "IT Engineer at Northwind Labs",
+  "job_catcher": "0.42.0", "playbook": "2026.11.30"}]
 ```
+
+- `status`: open | fixed | ignored (the admin sets it; the same problem again is open again).
 
 - `kind`: fill | job_catcher | tab | resume | site | other.
 - `what` ≤ 500 chars, secrets removed; `page` without query or fragment (or null).
@@ -23,14 +27,18 @@ The migration `y3b4c5d6e7f9_apply_problems` comes after 029's `y3c5e7a9b1d2`. It
 ```
 
 - `guess` ≤ 500 chars; `choices` ≤ 4, each ≤ 80; `batch` starts at 1 (old rows have none = 1).
+- `from`: the run's status when the checklist began (filling, writing or reading): where it goes back to.
+- `guessed`: the user left Claude's guess as it was; used for this run, no `fact_id`.
 - ≤ 12 a batch, ≤ 30 a run. Starting a new batch marks the last one's unanswered questions skipped.
 
 ## `apply_runs.messages[]` (existing, new optional field)
 
 ```json
-{"id": "…", "by": "you", "text": "Change “Prefix” (now “Mr.”) to “None”.",
- "at": "…", "read": false, "fix": {"q": "Prefix", "a": "Mr.", "to": "None"}}
+{"id": "…", "by": "you", "text": "Change it to “None”.",
+ "at": "…", "read": false,
+ "fix": {"box_on_page": "Prefix", "now_on_page": "Mr.", "to": "None"}}
 ```
 
-- `fix` has `to` (≤ 2000) and/or `ask` (≤ 500); `a` ≤ 300. Never for password-like questions.
+- `text` is only the user's words. `box_on_page` / `now_on_page` are page text, from the live view (the box must be on it).
+- `fix` has `to` (≤ 2000) and/or `ask` (≤ 500).
 - At most 30 unread fixes at once.

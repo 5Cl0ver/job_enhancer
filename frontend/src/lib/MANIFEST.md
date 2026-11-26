@@ -21,6 +21,7 @@ Shared utilities and external-service clients.
 | `jobCatcher.ts` | Job Catcher's pinned id, the download URL, `askProof()` for Connect, `isOlder()`. |
 | `help.ts` | `HELP`: the words in every ⓘ bubble (what it is, why it helps, what it needs), in one place. |
 | `apply.ts` | Apply with Claude (spec 022): run types, the six steps (`STEPS`, `currentStep`), `statusLine` / `needsYou` / `bannerLine`, `pageAnswers` (Job Catcher's reading, Claude's writing marked), `latestPages`, `APPLY_LINE`; spec 030: checklist fields on questions, `openBatch`, `ApplyProblem` / `PROBLEM_KIND`. |
+| `bugReport.ts` | Bug reports (spec 030): `bugReport` (one problem as Markdown for Claude), `allOpenReport` (every open one under one heading), `utcTime`. |
 | `emailSections.ts` | A job's emails in sections (spec 027): `sectionOf`, `groupBySection`, `latestLine`, `isNew` (pure, tested) |
 
 **How this folder connects:** `api.ts` is called by every hook in `hooks/`;

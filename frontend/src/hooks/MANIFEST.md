@@ -12,7 +12,7 @@ optimistic updates where useful.
 | `useTracker.ts` | `usePipelineStages`, `useKanbanJobs`, `useMoveJobStage`, `useCreateStage`, `useDeleteStage` | `/v1/pipeline-stages` |
 | `useSavedSearches.ts` | `useSavedSearches`, `useCreateSavedSearch`, `useDeleteSavedSearch`, `useNewMatches`, `useMarkMatchesSeen` | `/v1/saved-searches` |
 | `useAnalytics.ts` | `useAnalyticsSummary` | `GET /v1/analytics/summary` |
-| `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers`, `useApplyProblems` (spec 030) | `/v1/admin/*` |
+| `useAdmin.ts` | `useAdminStats`, `useServiceHealth`, `useAdminUsers`, `useApplyProblems`, `useSetProblemStatus` (bug reports, spec 030) | `/v1/admin/*` |
 | `useAI.ts` | `useResumes`, `useUploadResume`, `useGenerateDocument`, `useJobDocuments`, `useGeneratedDocument`, `useUpdateDocument` | `/v1/ai/*` |
 | `useProfile.ts` | `useProfile` | `GET /v1/users/me` |
 | `useAttention.ts` | `useAttention` (counts for the nav badges; refreshed each minute and after any email action) | `GET /v1/attention` |

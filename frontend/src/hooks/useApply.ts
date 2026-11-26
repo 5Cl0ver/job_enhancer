@@ -101,7 +101,11 @@ function useRunAction<T>(path: (vars: T) => string, body: (vars: T) => unknown =
 }
 
 export const useAnswerQuestions = () =>
-  useRunAction<{ runId: string; answers: { id: string; answer?: string; skipped?: boolean }[]; done: boolean }>(
+  useRunAction<{
+    runId: string;
+    answers: { id: string; answer?: string; skipped?: boolean; guessed?: boolean }[];
+    done: boolean;
+  }>(
     (v) => `/v1/apply/runs/${v.runId}/answers`,
     (v) => ({ answers: v.answers, done: v.done }),
   );

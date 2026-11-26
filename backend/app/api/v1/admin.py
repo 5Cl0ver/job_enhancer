@@ -2,13 +2,14 @@
 
 import uuid
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Body, Depends, HTTPException, Path, Query
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.database import get_db
 from app.middleware.auth import require_admin
 from app.models.user import User
+from app.schemas.apply import ProblemStatusIn
 from app.schemas.user import AdminUserRow, AdminUserUpdate, AllowancesIn, UserProfile
 from app.services import admin_service, allowance, apply_problems
 from app.services.users import soft_delete_user
@@ -124,10 +125,27 @@ async def put_allowances(
 
 @router.get("/apply-problems")
 async def get_apply_problems(
-    limit: int = Query(100, ge=1, le=300),
+    limit: int = Query(300, ge=1, le=300),
     _user: User = Depends(require_admin),
     db: AsyncSession = Depends(get_db),
 ) -> list[dict]:
-    """What Claude ran into during applications, everyone's, newest first
-    (spec 030), so the developer can fix it."""
+    """Bug reports: what Claude ran into during applications, everyone's,
+    newest first (spec 030), so the developer can fix it."""
     return await apply_problems.admin_list(db, limit)
+
+
+@router.patch("/apply-problems/{run_id}/{problem_id}")
+async def set_apply_problem(
+    run_id: uuid.UUID,
+    problem_id: str = Path(max_length=20),
+    data: ProblemStatusIn = Body(...),
+    _user: User = Depends(require_admin),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Mark a bug report open, fixed or ignored."""
+    try:
+        out = await apply_problems.set_status(db, run_id, problem_id, data.status)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await db.commit()
+    return out

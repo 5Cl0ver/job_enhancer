@@ -28,3 +28,19 @@
 - [X] T010 [P] backend/tests/test_apply_checklist.py (tools, service, routes, admin, playbook, migration)
 - [X] T011 [P] frontend/tests/components/apply/Checklist.test.tsx; ApplyRunPage tests updated for the checklist
 - [X] T012 MANIFEST files
+
+## Phase 6: Review fixes (PR #62)
+
+- [X] T013 A guess left as it was is sent `guessed` and not kept as a thing told (frontend Questions.tsx, backend `record_answers`)
+- [X] T014 `fill_page` / `page_done` refused while the checklist is out; playbook says wait
+- [X] T015 Answers go back to where asking began (`from` on each question): filling, or the résumé change
+- [X] T016 No new checklist over answers Claude hasn't picked up
+- [X] T017 Live fixes: only the user's words in the message; box label and value from the live view, apart, marked as page text
+- [X] T018 Stronger scrub (bare codes, "password X", emails, phones), job slugs kept in pages; admin list reads only the columns it needs
+
+## Phase 7: US4, Bug reports
+
+- [X] T019 [US4] Context and status on each report; `PATCH /v1/admin/apply-problems/{run_id}/{id}` in backend/app/services/apply_problems.py and backend/app/api/v1/admin.py
+- [X] T020 [US4] `bugReport` / `allOpenReport` Markdown in frontend/src/lib/bugReport.ts
+- [X] T021 [US4] `BugReportsCard` (grouped, open / all, Fixed / Ignore, Copy for Claude, Copy all open, manual copy box) in frontend/src/components/admin/BugReportsCard.tsx
+- [X] T022 [P] [US4] Tests: backend/tests/test_apply_checklist.py, frontend/tests/lib/bugReport.test.ts, frontend/tests/components/BugReports.test.tsx

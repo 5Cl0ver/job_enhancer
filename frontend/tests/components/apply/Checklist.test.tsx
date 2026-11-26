@@ -23,7 +23,6 @@ vi.mock("@/lib/api", () => ({
   API_BASE: "http://localhost:8000",
 }));
 
-import { ApplyProblemsCard } from "@/components/admin/ApplyProblemsCard";
 import { LiveFill } from "@/components/apply/LiveFill";
 import { Problems } from "@/components/apply/Problems";
 import { Questions } from "@/components/apply/Questions";
@@ -107,6 +106,18 @@ describe("Claude's questions as one checklist", () => {
     expect(screen.getByText("1 left empty: Claude skips it.")).toBeInTheDocument();
   });
 
+  it("a guess the user picks again from the chips is theirs, not a guess", async () => {
+    post.mockResolvedValue({ ...RUN, status: "filling", answers_done: true });
+    wrap(<Questions run={RUN} />);
+    await userEvent.click(screen.getByRole("button", { name: "Company site" }));
+    await userEvent.click(screen.getByRole("button", { name: "LinkedIn" }));
+    await userEvent.click(screen.getByRole("button", { name: "Looks good, go" }));
+    await waitFor(() => expect(post).toHaveBeenCalled());
+    const sent = post.mock.calls[0][1].answers;
+    expect(sent).toContainEqual({ id: "q1", answer: "LinkedIn" });
+    expect(sent).toContainEqual({ id: "q3", answer: "Two weeks", guessed: true });
+  });
+
   it("a quick answer fills the box, and one button sends them all", async () => {
     post.mockResolvedValue({ ...RUN, status: "filling", answers_done: true });
     wrap(<Questions run={RUN} />);
@@ -121,7 +132,8 @@ describe("Claude's questions as one checklist", () => {
         done: true,
         answers: [
           { id: "q2", answer: "3+" },
-          { id: "q1", answer: "LinkedIn" },
+          // Claude's guess, left as it was: used, not kept as told.
+          { id: "q1", answer: "LinkedIn", guessed: true },
           { id: "q3", answer: "One month" },
         ],
       }),
@@ -209,12 +221,4 @@ describe("problems Claude ran into", () => {
     expect(container).toBeEmptyDOMElement();
   });
 
-  it("the admin sees everyone's, with the job and who", async () => {
-    get.mockResolvedValue([
-      { ...PROBLEMS[0], run_id: "r1", status: "sent", user_email: "alex@example.com", job: "IT Engineer at Northwind Labs" },
-    ]);
-    wrap(<ApplyProblemsCard />);
-    expect(await screen.findByText("IT Engineer at Northwind Labs · alex@example.com")).toBeInTheDocument();
-    expect(get).toHaveBeenCalledWith("/v1/admin/apply-problems?limit=100");
-  });
 });

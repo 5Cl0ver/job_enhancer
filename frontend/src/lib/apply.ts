@@ -32,9 +32,12 @@ export interface ApplyQuestion {
   only_you?: boolean;
   /** Which checklist it came in; the newest is the one on screen. */
   batch?: number;
+  /** The user left Claude's guess as it was: used, not kept as told. */
+  guessed?: boolean;
 }
 
-/** Something that went wrong, as Claude reported it (spec 030). */
+/** Something that went wrong, as Claude reported it (spec 030): a bug
+ * report, with its context. */
 export interface ApplyProblem {
   id: string;
   at: string;
@@ -42,14 +45,20 @@ export interface ApplyProblem {
   what: string;
   page: string | null;
   count: number;
+  status?: "open" | "fixed" | "ignored";
+  site?: string | null;
+  run_id?: string;
+  job?: string;
+  job_catcher?: string | null;
+  playbook?: string | null;
 }
 
 export const PROBLEM_KIND: Record<ApplyProblem["kind"], string> = {
-  fill: "A box",
   job_catcher: "Job Catcher",
-  tab: "The tab",
-  resume: "The résumé",
-  site: "The site",
+  resume: "Résumé",
+  tab: "Lost tab",
+  site: "Site",
+  fill: "A box it couldn't fill",
   other: "Other",
 };
 
@@ -151,6 +160,8 @@ export interface ApplyMessage {
   text: string;
   at: string;
   read: boolean;
+  /** A box changed while Claude fills (spec 030); its label is the page's. */
+  fix?: { box_on_page: string; now_on_page: string; to?: string; ask?: string };
 }
 
 export interface JobCatcherStatus {

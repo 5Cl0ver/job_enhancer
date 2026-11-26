@@ -17,6 +17,8 @@ class AnswerIn(BaseModel):
     id: str = Field(max_length=40)
     answer: str | None = Field(default=None, max_length=2000)
     skipped: bool = False
+    # Claude's guess, left as it was (spec 030): used, not kept as told.
+    guessed: bool = False
 
 
 class AnswersIn(BaseModel):
@@ -99,3 +101,9 @@ class FactOut(BaseModel):
 
 class FactIn(BaseModel):
     answer: str = Field(min_length=1, max_length=2000)
+
+
+class ProblemStatusIn(BaseModel):
+    """The admin marks a bug report (spec 030)."""
+
+    status: Literal["open", "fixed", "ignored"]

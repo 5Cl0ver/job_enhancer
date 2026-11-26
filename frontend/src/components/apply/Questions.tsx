@@ -9,6 +9,7 @@ import { type ApplyQuestion, type ApplyRun, openBatch } from "@/lib/apply";
 /** `touched`: the user changed it here, so a newer answer from the chat
  * never overwrites it (and an untouched one always follows the server). */
 type Draft = { text: string; touched: boolean; from: string | null };
+type Outgoing = { id: string; answer?: string; skipped?: boolean; guessed?: boolean };
 
 const draftOf = (q: ApplyQuestion): Draft => ({ text: q.answer ?? q.guess ?? "", touched: false, from: q.answer });
 
@@ -45,13 +46,16 @@ export function Questions({ run }: { run: ApplyRun }) {
 
   // Only what the user changed here, or left unanswered: an answer already
   // saved (from the chat, say) is never sent back as "skipped".
-  const outgoing = list.flatMap((q) => {
+  const outgoing = list.flatMap((q): Outgoing[] => {
     const d = drafts[q.id] ?? draftOf(q);
     if (!d.touched && q.answer) return [];
     const text = d.text.trim();
-    return [text ? { id: q.id, answer: text } : { id: q.id, skipped: true }];
+    if (!text) return [{ id: q.id, skipped: true }];
+    // Claude's guess, left as it was: used for this job, not kept as told.
+    const guessed = !d.touched && !!q.guess && text === q.guess;
+    return [guessed ? { id: q.id, answer: text, guessed: true } : { id: q.id, answer: text }];
   });
-  const empty = outgoing.filter((a) => "skipped" in a).length;
+  const empty = outgoing.filter((a) => a.skipped).length;
   const send = () => answer.mutate({ runId: run.id, done: true, answers: outgoing });
 
   if (!open) {
