@@ -526,7 +526,9 @@ async def test_mark_applied_company_only_fallback(client: AsyncClient):
     assert r.status_code == 200
     assert r.json()["matched"] is True
     saved = (await client.get("/v1/saved-jobs/")).json()
-    sj = next(s for s in saved if s["job_listing"]["company"] == "Harbor Communications")
+    sj = next(
+        s for s in saved if s["job_listing"]["company"] == "Harbor Communications"
+    )
     assert sj["applied_at"] is not None
 
 
