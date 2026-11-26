@@ -45,6 +45,8 @@ import {
   type BugDraft,
   SECTION_LABEL,
   SOURCE_LABEL,
+  saveErrorText,
+  stepsCheck,
   stepsFrom,
   timesText,
 } from "@/lib/bugs";
@@ -66,6 +68,9 @@ function Field({
     </div>
   );
 }
+
+const jobName = (job: { title: string; company: string }) =>
+  [job.title, job.company].filter(Boolean).join(" at ") || "The job";
 
 function draftOf(r: Detail): BugDraft {
   return {
@@ -137,13 +142,17 @@ function EditSheet({
           />
           {update.isError && (
             <p role="alert" className="text-sm text-destructive">
-              Couldn't save, try again.
+              {saveErrorText(update.error)}
             </p>
           )}
           <DialogFooter>
             <Button
               type="submit"
-              disabled={!draft.title.trim() || update.isPending}
+              disabled={
+                !draft.title.trim() ||
+                stepsCheck(draft.steps).tooLong !== null ||
+                update.isPending
+              }
               className="w-full md:w-auto"
             >
               {update.isPending && (
@@ -299,6 +308,11 @@ export function BugDetail({
           </DropdownMenuContent>
         </DropdownMenu>
       </div>
+      {update.isError && !editing && (
+        <p role="alert" className="text-sm text-destructive">
+          {saveErrorText(update.error)}
+        </p>
+      )}
       {manual !== null && <ManualCopy text={manual} onClose={clearManual} />}
 
       {r.actual && (
@@ -350,23 +364,28 @@ export function BugDetail({
           </ul>
           {(r.run || r.job) && (
             <p className="mt-2 flex flex-wrap gap-x-3 gap-y-1">
-              {r.job && (
-                <Link
-                  to={`/jobs/${r.job.id}`}
-                  className="text-primary underline-offset-4 hover:underline"
-                >
-                  {[r.job.title, r.job.company].filter(Boolean).join(" at ") ||
-                    "The job"}
-                </Link>
-              )}
-              {r.run && (
-                <Link
-                  to={`/apply/${r.run.id}`}
-                  className="text-primary underline-offset-4 hover:underline"
-                >
-                  The run
-                </Link>
-              )}
+              {r.job &&
+                (r.job.own ? (
+                  <Link
+                    to={`/jobs/${r.job.id}`}
+                    className="text-primary underline-offset-4 hover:underline"
+                  >
+                    {jobName(r.job)}
+                  </Link>
+                ) : (
+                  <span>{jobName(r.job)} (someone else's job)</span>
+                ))}
+              {r.run &&
+                (r.run.own ? (
+                  <Link
+                    to={`/apply/${r.run.id}`}
+                    className="text-primary underline-offset-4 hover:underline"
+                  >
+                    The run
+                  </Link>
+                ) : (
+                  <span>Someone else's run</span>
+                ))}
             </p>
           )}
         </Field>
@@ -384,6 +403,12 @@ export function BugDetail({
         hint="This one goes into the one you pick and its count is added. You can split it back."
         startType={r.type}
         exclude={[r.id]}
+        error={
+          merge.isError
+            ? (merge.error as Error).message ||
+              "Couldn't merge them. Try again."
+            : null
+        }
         onPick={(intoId) =>
           merge.mutate(
             { id: r.id, intoId },

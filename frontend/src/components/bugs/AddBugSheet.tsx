@@ -20,7 +20,9 @@ import {
   type BugDraft,
   browserName,
   sectionForPath,
+  stepsCheck,
   stepsFrom,
+  saveErrorText,
 } from "@/lib/bugs";
 import { cn } from "@/lib/utils";
 
@@ -70,7 +72,7 @@ export function AddBugSheet({
 
   const save = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!shown.title.trim()) return;
+    if (!shown.title.trim() || stepsCheck(shown.steps).tooLong !== null) return;
     const { page, ...ctx } = context;
     add.mutate(
       {
@@ -142,13 +144,17 @@ export function AddBugSheet({
           </div>
           {add.isError && (
             <p role="alert" className="text-sm text-destructive">
-              Couldn't save, try again.
+              {saveErrorText(add.error)}
             </p>
           )}
           <DialogFooter>
             <Button
               type="submit"
-              disabled={!shown.title.trim() || add.isPending}
+              disabled={
+                !shown.title.trim() ||
+                stepsCheck(shown.steps).tooLong !== null ||
+                add.isPending
+              }
               className="w-full md:w-auto"
             >
               {add.isPending && (

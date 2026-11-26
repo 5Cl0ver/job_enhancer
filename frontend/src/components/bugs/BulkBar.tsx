@@ -21,19 +21,24 @@ export function BulkBar({
   type,
   onCopy,
   onDone,
+  onApplied,
 }: {
   ids: string[];
   type: BugType;
   onCopy: () => void;
   onDone: () => void;
+  /** After a change: the selection is cleared (the rows may have moved). */
+  onApplied: () => void;
 }) {
   const bulk = useBulkBugs();
   const apply = (body: { status?: BugStatus; section?: BugSection }) =>
     bulk.mutate(
       { ids, ...body },
       {
-        onSuccess: ({ changed }) =>
-          toast.success(changed === 1 ? "1 changed" : `${changed} changed`),
+        onSuccess: ({ changed }) => {
+          toast.success(changed === 1 ? "1 changed" : `${changed} changed`);
+          onApplied();
+        },
       },
     );
   return (

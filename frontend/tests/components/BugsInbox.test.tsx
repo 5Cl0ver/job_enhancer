@@ -91,8 +91,13 @@ const DETAIL: BugDetail = {
   ...BASE,
   steps: ["Open the job", "Press Apply"],
   expected: "It attaches",
-  run: { id: "run-1" },
-  job: { id: "job-1", title: "IT Engineer", company: "Northwind Labs" },
+  run: { id: "run-1", own: true },
+  job: {
+    id: "job-1",
+    title: "IT Engineer",
+    company: "Northwind Labs",
+    own: true,
+  },
   links: [],
   shots: [],
   events: [
@@ -201,7 +206,7 @@ describe("Bugs & ideas", () => {
       within(sections).getByRole("button", { name: /Job Catcher 1/ }),
     ).toBeInTheDocument();
     expect(listCalls()[0]).toBe(
-      "/v1/admin/bugs?type=bug&status=open&limit=200",
+      "/v1/admin/bugs?type=bug&status=open&limit=100&offset=0",
     );
   });
 
@@ -230,7 +235,7 @@ describe("Bugs & ideas", () => {
     await user.click(screen.getByRole("radio", { name: /Ideas/ }));
     await waitFor(() =>
       expect(listCalls().at(-1)).toBe(
-        "/v1/admin/bugs?type=idea&status=open&limit=200",
+        "/v1/admin/bugs?type=idea&status=open&limit=100&offset=0",
       ),
     );
   });
@@ -332,10 +337,104 @@ describe("Bugs & ideas", () => {
     await user.click(screen.getByRole("button", { name: "Copy 2 for Claude" }));
     const text = writeText.mock.calls[0][0] as string;
     expect(text.startsWith("# 2 bugs from Bugs & ideas")).toBe(true);
-    expect(text).toContain("## 1. Bug: Blocker seen five times");
-    expect(text).toContain("## 2. Bug: Minor seen once");
+    expect(text).toContain(
+      "## 1. Bug in Job Catcher, blocker\n\n```text\nBlocker seen five times\n```",
+    );
+    expect(text).toContain("## 2. Bug in Email updates, minor");
     expect(text).toContain("```text\nSaid no résumé box\n```");
     expect(toastSuccess).toHaveBeenCalledWith("Copied 2");
+  });
+
+  it("pages with Show more, and says when a copy is only the first page", async () => {
+    const user = userEvent.setup();
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/users/me")
+        return Promise.resolve({ id: "u1", role: "admin" });
+      if (path.startsWith("/v1/admin/bugs?")) {
+        const offset = new URLSearchParams(path.split("?")[1]).get("offset");
+        const page = offset === "0" ? [ROWS[0]] : [ROWS[1]];
+        return Promise.resolve({ ...LIST, items: page, total: 2 });
+      }
+      return Promise.resolve([]);
+    });
+    wrap();
+    const list = await screen.findByRole("list", { name: "Bugs" });
+    expect(within(list).getAllByRole("button")).toHaveLength(1);
+    expect(
+      screen.getByRole("button", { name: "Copy first 1 for Claude" }),
+    ).toBeInTheDocument();
+    await user.click(
+      screen.getByRole("button", { name: "Show more (1 left)" }),
+    );
+    await waitFor(() =>
+      expect(within(list).getAllByRole("button")).toHaveLength(2),
+    );
+    expect(listCalls().at(-1)).toContain("offset=1");
+    expect(
+      screen.getByRole("button", { name: "Copy 2 for Claude" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: /Show more/ }),
+    ).not.toBeInTheDocument();
+  });
+
+  it("names someone else's job and run without linking to them", async () => {
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/users/me")
+        return Promise.resolve({ id: "u1", role: "admin" });
+      if (path.startsWith("/v1/admin/bugs?")) return Promise.resolve(LIST);
+      return Promise.resolve({
+        ...DETAIL,
+        run: { id: "run-9", own: false },
+        job: {
+          id: "job-9",
+          title: "IT Engineer",
+          company: "Northwind Labs",
+          own: false,
+        },
+      });
+    });
+    wrap("/admin/bugs?id=b1");
+    const report = await screen.findByRole("article");
+    expect(
+      within(report).getByText(
+        "IT Engineer at Northwind Labs (someone else's job)",
+      ),
+    ).toBeInTheDocument();
+    expect(within(report).getByText("Someone else's run")).toBeInTheDocument();
+    expect(within(report).queryByRole("link")).not.toBeInTheDocument();
+  });
+
+  it("says so when a change, a merge or a link doesn't save", async () => {
+    const user = userEvent.setup();
+    patch.mockRejectedValue(new Error("offline"));
+    post.mockRejectedValue(new Error("That report is gone or already merged."));
+    wrap("/admin/bugs?id=b1");
+    const report = await screen.findByRole("article");
+    await user.click(within(report).getByRole("button", { name: "Pin" }));
+    expect(await within(report).findByRole("alert")).toHaveTextContent(
+      "Couldn't save, try again.",
+    );
+
+    await user.click(within(report).getByRole("button", { name: "More" }));
+    await user.click(
+      await screen.findByRole("menuitem", { name: "Same as another…" }),
+    );
+    const picker = await screen.findByRole("dialog", {
+      name: "Same as another report",
+    });
+    await user.click(await within(picker).findByText("Minor seen once"));
+    expect(await within(picker).findByRole("alert")).toHaveTextContent(
+      "That report is gone or already merged.",
+    );
+    await user.keyboard("{Escape}");
+
+    await user.click(within(report).getByRole("button", { name: "Link one" }));
+    const linker = await screen.findByRole("dialog", { name: "Link a report" });
+    await user.click(await within(linker).findByText("Minor seen once"));
+    expect(
+      await within(report).findByText("Couldn't link them. Try again."),
+    ).toBeInTheDocument();
   });
 
   it("selects several to change their status or copy them", async () => {
@@ -350,6 +449,12 @@ describe("Bugs & ideas", () => {
     }
     const bar = screen.getByRole("region", { name: "Selected reports" });
     expect(bar).toHaveTextContent("2 selected");
+    await user.click(
+      within(bar).getByRole("button", { name: "Copy 2 for Claude" }),
+    );
+    expect(writeText.mock.calls.at(-1)?.[0]).toContain(
+      "## 2. Bug in Email updates, minor\n\n```text\nMinor seen once\n```",
+    );
     await user.selectOptions(
       within(bar).getByRole("combobox", { name: "Set status" }),
       "wont_fix",
@@ -360,12 +465,8 @@ describe("Bugs & ideas", () => {
         status: "wont_fix",
       }),
     );
-    await user.click(
-      within(bar).getByRole("button", { name: "Copy 2 for Claude" }),
-    );
-    expect(writeText.mock.calls.at(-1)?.[0]).toContain(
-      "## 2. Bug: Minor seen once",
-    );
+    // Changed: the selection is cleared (the rows may have left the list).
+    await waitFor(() => expect(bar).toHaveTextContent("0 selected"));
     // Selecting doesn't open a report.
     expect(get).not.toHaveBeenCalledWith("/v1/admin/bugs/b1");
   });

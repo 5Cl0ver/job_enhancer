@@ -22,6 +22,7 @@ export function ReportPicker({
   exclude,
   startType,
   onPick,
+  error,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -30,11 +31,15 @@ export function ReportPicker({
   exclude: string[];
   startType: BugType;
   onPick: (id: string) => void;
+  /** Why the last pick didn't work, shown in the sheet. */
+  error?: string | null;
 }) {
   const [type, setType] = useState<BugType>(startType);
   const [q, setQ] = useState("");
   const { data, isLoading } = useBugList({ type, status: "all", q }, open);
-  const rows = (data?.items ?? []).filter((r) => !exclude.includes(r.id));
+  const rows = (data?.pages.flatMap((p) => p.items) ?? []).filter(
+    (r) => !exclude.includes(r.id),
+  );
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="md:max-w-md">
@@ -61,6 +66,11 @@ export function ReportPicker({
             className="pl-8"
           />
         </div>
+        {error && (
+          <p role="alert" className="text-sm text-destructive">
+            {error}
+          </p>
+        )}
         {isLoading ? (
           <Loader2
             className="mx-auto h-5 w-5 animate-spin text-muted-foreground"

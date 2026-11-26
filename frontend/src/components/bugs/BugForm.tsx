@@ -10,6 +10,9 @@ import {
   SECTION_LABEL,
   SEVERITIES,
   SEVERITY_LABEL,
+  STEP_MAX,
+  STEPS_MAX,
+  stepsCheck,
 } from "@/lib/bugs";
 import { cn } from "@/lib/utils";
 
@@ -81,6 +84,7 @@ export function BugForm({
   // Steps are optional: one tap away, so the form stays short.
   const [stepsOpen, setShowSteps] = useState(false);
   const showSteps = stepsOpen || !!draft.steps;
+  const check = stepsCheck(draft.steps);
   return (
     <div className="grid gap-3">
       <Segmented
@@ -143,7 +147,26 @@ export function BugForm({
             rows={2}
             autoFocus={!draft.steps}
             onChange={(e) => set("steps", e.target.value)}
+            aria-describedby={id("steps-note")}
+            aria-invalid={check.tooLong !== null}
           />
+          <p
+            id={id("steps-note")}
+            className={cn(
+              "text-xs",
+              check.tooLong !== null
+                ? "text-destructive"
+                : check.tooMany
+                  ? "text-amber-700 dark:text-amber-300"
+                  : "text-muted-foreground",
+            )}
+          >
+            {check.tooLong !== null
+              ? `Step ${check.tooLong} is over ${STEP_MAX} characters. Make it shorter or split it.`
+              : check.tooMany
+                ? `Only the first ${STEPS_MAX} steps are kept.`
+                : `Up to ${STEPS_MAX} steps, ${STEP_MAX} characters each.`}
+          </p>
         </div>
       ) : (
         <button

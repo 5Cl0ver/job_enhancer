@@ -2,7 +2,13 @@
  * TanStack Query hooks for Bugs & ideas (spec 032), the owner's inbox.
  * Every change refreshes the lists, the open report and the Admin badge.
  */
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  keepPreviousData,
+  useInfiniteQuery,
+  useMutation,
+  useQuery,
+  useQueryClient,
+} from "@tanstack/react-query";
 import { api } from "@/lib/api";
 import type {
   BugContext,
@@ -18,11 +24,15 @@ import type {
 
 const KEY = ["admin", "bugs"] as const;
 
-export function bugListPath(f: BugFilters, limit = 200): string {
+/** How many reports a page of the list holds ("Show more" adds the next). */
+export const PAGE = 100;
+
+export function bugListPath(f: BugFilters, limit = PAGE, offset = 0): string {
   const q = new URLSearchParams({
     type: f.type,
     status: f.status,
     limit: String(limit),
+    offset: String(offset),
   });
   if (f.section) q.set("section", f.section);
   if (f.severity && f.type === "bug") q.set("severity", f.severity);
@@ -33,13 +43,20 @@ export function bugListPath(f: BugFilters, limit = 200): string {
   return `/v1/admin/bugs?${q}`;
 }
 
+/** One tab of the inbox, a page at a time; the counts come with each page. */
 export function useBugList(filters: BugFilters, enabled = true) {
-  return useQuery<BugList>({
+  return useInfiniteQuery({
     queryKey: [...KEY, "list", filters],
-    queryFn: () => api.get<BugList>(bugListPath(filters)),
+    queryFn: ({ pageParam }) =>
+      api.get<BugList>(bugListPath(filters, PAGE, pageParam)),
+    initialPageParam: 0,
+    getNextPageParam: (last: BugList, pages: BugList[]) => {
+      const loaded = pages.reduce((n, p) => n + p.items.length, 0);
+      return loaded < last.total && last.items.length > 0 ? loaded : undefined;
+    },
     staleTime: 30_000,
     enabled,
-    placeholderData: (prev) => prev,
+    placeholderData: keepPreviousData,
   });
 }
 

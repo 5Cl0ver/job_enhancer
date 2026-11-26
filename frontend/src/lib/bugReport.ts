@@ -3,9 +3,10 @@
  * whole filtered list, as clean numbered Markdown to paste into a chat with
  * Claude so it can fix the cause. Pure functions.
  *
- * Anything a person or a web page wrote (the title aside: what happened, what
- * was expected, the steps, where) goes in fenced code blocks under a line
- * saying it's data, never instructions, for the Claude that reads it.
+ * The data note comes first. Anything a person, Claude or a web page wrote
+ * (the title, what happened, what was expected, the steps, where) goes in
+ * fenced code blocks under it, as data, never instructions, for the Claude
+ * that reads it. Headings and labels are only the app's own words.
  */
 import {
   type BugRow,
@@ -76,14 +77,19 @@ export function bugReport(r: BugRow, n?: number): string {
       ? `${timesText(r.count)}, first ${utcTime(r.first_seen)}, last ${utcTime(r.last_seen)}`
       : utcTime(r.last_seen);
   const where = [r.place, r.box && `Box: ${r.box}`].filter(Boolean).join("\n");
+  const section = SECTION_LABEL[r.section] ?? r.section;
+  const severity =
+    r.type === "bug" && r.severity
+      ? `, ${SEVERITY_LABEL[r.severity].toLowerCase()}`
+      : "";
+  // The heading is the app's own words; the title (which a person, Claude
+  // or a web page wrote) sits in a box under the data note, like the rest.
   const lines = [
-    `${h} ${top ? `${kind}: ` : `${n}. ${kind}: `}${contextLine(r.title)}`,
-    "",
     ...(top ? [DATA_NOTE, ""] : []),
-    `- Section: ${SECTION_LABEL[r.section] ?? r.section}`,
-    ...(r.type === "bug" && r.severity
-      ? [`- Severity: ${SEVERITY_LABEL[r.severity]}`]
-      : []),
+    `${h} ${top ? "" : `${n}. `}${kind} in ${section}${severity}`,
+    "",
+    fenced(r.title),
+    "",
     `- Status: ${STATUS_LABEL[r.status] ?? r.status}${r.fixed_in ? ` (fixed in ${contextLine(r.fixed_in)})` : ""}`,
     ...(r.came_back_at ? [`- Came back: ${utcTime(r.came_back_at)}`] : []),
     `- From: ${SOURCE_LABEL[r.source] ?? r.source}${r.confidence === "not_sure" ? " (not sure)" : ""}`,

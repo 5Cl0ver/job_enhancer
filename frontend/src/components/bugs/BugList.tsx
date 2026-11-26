@@ -238,13 +238,26 @@ export function BugList({
   onOpen: (id: string) => void;
 }) {
   const q = useSettled(filters.q);
-  const { data, isLoading, isError, refetch } = useBugList({ ...filters, q });
+  const {
+    data,
+    isLoading,
+    isError,
+    refetch,
+    hasNextPage,
+    fetchNextPage,
+    isFetchingNextPage,
+  } = useBugList({ ...filters, q });
   const [filtering, setFiltering] = useState(false);
   const [selecting, setSelecting] = useState(false);
   const [picked, setPicked] = useState<Set<string>>(new Set());
   const { copy, manual, clearManual } = useCopy();
-  const items = data?.items ?? [];
-  const counts = data?.counts;
+  const items = data?.pages.flatMap((p) => p.items) ?? [];
+  const counts = data?.pages[0]?.counts;
+  const total = data?.pages[0]?.total ?? 0;
+  // Only rows still in the list stay selected (a change or a filter can
+  // move one out).
+  const shownIds = new Set(items.map((r) => r.id));
+  const chosen = [...picked].filter((id) => shownIds.has(id));
   const extra = extraFilters(filters);
 
   const change = (f: BugFilters) => {
@@ -363,11 +376,14 @@ export function BugList({
             : filters.status === "all"
               ? "All"
               : STATUS_LABEL[filters.status]}
-          {data ? ` · ${data.total}` : ""} · most important first
+          {data ? ` · ${total}` : ""} · most important first
         </p>
         {items.length > 0 && !selecting && (
           <Button variant="ghost" size="sm" onClick={() => copyRows(items)}>
-            <Copy aria-hidden /> Copy {items.length} for Claude
+            <Copy aria-hidden />
+            {items.length < total
+              ? `Copy first ${items.length} for Claude`
+              : `Copy ${items.length} for Claude`}
           </Button>
         )}
       </div>
@@ -409,12 +425,26 @@ export function BugList({
           ))}
         </ul>
       )}
+      {hasNextPage && (
+        <Button
+          variant="outline"
+          className="w-full"
+          disabled={isFetchingNextPage}
+          onClick={() => fetchNextPage()}
+        >
+          {isFetchingNextPage && (
+            <Loader2 className="animate-spin" aria-hidden />
+          )}
+          Show more ({total - items.length} left)
+        </Button>
+      )}
 
       {selecting && (
         <BulkBar
-          ids={[...picked]}
+          ids={chosen}
           type={filters.type}
-          onCopy={() => copyRows(items.filter((r) => picked.has(r.id)))}
+          onCopy={() => copyRows(items.filter((r) => chosen.includes(r.id)))}
+          onApplied={() => setPicked(new Set())}
           onDone={() => {
             setSelecting(false);
             setPicked(new Set());

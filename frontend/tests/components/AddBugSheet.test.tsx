@@ -198,4 +198,65 @@ describe("Add a bug or idea", () => {
       }),
     ).toHaveValue("Lost my words");
   });
+  it("says when a step is too long or there are too many, before saving", async () => {
+    const user = userEvent.setup();
+    wrap("/jobs");
+    await user.click(screen.getByRole("button", { name: "Add a bug or idea" }));
+    const sheet = await screen.findByRole("dialog");
+    await user.type(
+      within(sheet).getByRole("textbox", { name: "Title" }),
+      "Long steps",
+    );
+    await user.click(
+      within(sheet).getByRole("button", { name: "+ Add steps" }),
+    );
+    const steps = within(sheet).getByRole("textbox", { name: /Steps/ });
+    expect(
+      within(sheet).getByText("Up to 12 steps, 300 characters each."),
+    ).toBeInTheDocument();
+    await user.click(steps);
+    await user.paste("x".repeat(301));
+    expect(
+      within(sheet).getByText(
+        "Step 1 is over 300 characters. Make it shorter or split it.",
+      ),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Save" })).toBeDisabled();
+    await user.clear(steps);
+    await user.paste(
+      Array.from({ length: 13 }, (_, i) => `Step ${i + 1}`).join(
+        String.fromCharCode(10),
+      ),
+    );
+    expect(
+      within(sheet).getByText("Only the first 12 steps are kept."),
+    ).toBeInTheDocument();
+    expect(within(sheet).getByRole("button", { name: "Save" })).toBeEnabled();
+  });
+
+  it("shows the server's reason when it refuses the text", async () => {
+    const user = userEvent.setup();
+    post.mockRejectedValue({
+      status: 422,
+      message: JSON.stringify({
+        detail: [
+          {
+            loc: ["body", "title"],
+            msg: "String should have at most 140 characters",
+          },
+        ],
+      }),
+    });
+    wrap("/jobs");
+    await user.click(screen.getByRole("button", { name: "Add a bug or idea" }));
+    const sheet = await screen.findByRole("dialog");
+    await user.type(
+      within(sheet).getByRole("textbox", { name: "Title" }),
+      "Too long",
+    );
+    await user.click(within(sheet).getByRole("button", { name: "Save" }));
+    expect(await within(sheet).findByRole("alert")).toHaveTextContent(
+      "Title: String should have at most 140 characters.",
+    );
+  });
 });

@@ -56,6 +56,13 @@ export function BugLinks({
           ))}
         </ul>
       )}
+      {(link.isError || unlink.isError) && (
+        <p role="alert" className="text-xs text-destructive">
+          {link.isError
+            ? "Couldn't link them. Try again."
+            : "Couldn't unlink them. Try again."}
+        </p>
+      )}
       <ReportPicker
         open={picking}
         onOpenChange={setPicking}

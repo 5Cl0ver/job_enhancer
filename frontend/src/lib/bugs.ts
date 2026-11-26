@@ -67,8 +67,10 @@ export interface BugEvent {
 }
 
 export interface BugDetail extends BugRow {
-  run: { id: string } | null;
-  job: { id: string; title: string; company: string } | null;
+  /** `own`: the owner's own run or job, so it can be opened; another
+   * user's is named, never linked. */
+  run: { id: string; own: boolean } | null;
+  job: { id: string; title: string; company: string; own: boolean } | null;
   events: BugEvent[];
   links: { id: string; title: string; type: BugType; status: BugStatus }[];
   shots: { id: string; size: number }[];
@@ -204,12 +206,66 @@ export function browserName(ua: string): string {
 }
 
 /** "Steps" as typed: one a line, numbers the owner typed taken off. */
-export function stepsFrom(text: string): string[] {
+export const STEPS_MAX = 12;
+export const STEP_MAX = 300;
+
+function stepLines(text: string): string[] {
   return text
     .split("\n")
     .map((line) => line.replace(/^\s*(\d+[.)]|[-*•])\s*/, "").trim())
-    .filter(Boolean)
-    .slice(0, 12);
+    .filter(Boolean);
+}
+
+export function stepsFrom(text: string): string[] {
+  return stepLines(text).slice(0, STEPS_MAX);
+}
+
+/** What's wrong with the typed steps, said before saving: a step that's too
+ * long stops the save; past 12, the rest are left out (and the form says so). */
+export function stepsCheck(text: string): {
+  tooLong: number | null;
+  tooMany: boolean;
+} {
+  const lines = stepLines(text);
+  const long = lines.findIndex((line) => line.length > STEP_MAX);
+  return {
+    tooLong: long === -1 ? null : long + 1,
+    tooMany: lines.length > STEPS_MAX,
+  };
+}
+
+const FIELD_NAME: Record<string, string> = {
+  title: "Title",
+  actual: "What happened",
+  expected: "What you expected",
+  steps: "Steps",
+  section: "Section",
+  severity: "Severity",
+  fixed_in: "Fixed in",
+  place: "Where",
+};
+
+/** A failed save in plain words: the server's reason when it refused the
+ * text (422), or "Couldn't save, try again." */
+export function saveErrorText(err: unknown): string {
+  const e = err as { status?: number; message?: string } | null;
+  if (e?.status === 422 && e.message) {
+    try {
+      const body = JSON.parse(e.message) as {
+        detail?: { loc?: unknown[]; msg?: string }[];
+      };
+      const first = Array.isArray(body.detail) ? body.detail[0] : undefined;
+      if (first?.msg) {
+        const field = (first.loc ?? []).find(
+          (part) => typeof part === "string" && part in FIELD_NAME,
+        ) as string | undefined;
+        return `${field ? `${FIELD_NAME[field]}: ` : ""}${first.msg}.`;
+      }
+    } catch {
+      return e.message; // already a sentence from the server
+    }
+  }
+  return "Couldn't save, try again.";
 }
 
 /** "3 times" / "once". */
