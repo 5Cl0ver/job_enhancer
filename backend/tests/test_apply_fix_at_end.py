@@ -38,6 +38,9 @@ INFO = [
     {"q": "Last Name", "a": "Rivera", "by": "job_catcher"},
     {"q": "Prefix", "a": "", "options": ["Select One", "Mr.", "Ms.", "Dr."]},
 ]
+# Claude's word on the step: a pick, so Page by page stops for a look (a step
+# with nothing to look at doesn't stop, spec 038).
+GUESSED = [*INFO[:2], {**INFO[2], "guess": True}]
 
 
 @pytest.fixture(autouse=True)
@@ -342,7 +345,7 @@ async def test_page_by_page_pauses_and_sends_the_step_s_fixes_on_continue(
     await _mode(maker, user, run_id, "page")
     await _live(maker, user, run_id, INFO, "My Information")
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": INFO})
-    out = await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
+    out = await mcp_mod.page_done(rid, PAGE, "My Information", GUESSED)
     assert "wait_for_you" in out["next"] and "Don't press Next" in out["next"]
     view = await _view(maker, run_id)
     assert view["paused_step"] == "my information"
@@ -406,12 +409,15 @@ async def test_page_by_page_pauses_and_sends_the_step_s_fixes_on_continue(
     out = await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
     assert "press Next" in out["next"]
     assert (await _run(maker, run_id)).paused_step is None
-    # The next step pauses.
+    # The next step pauses (it has a pick on it).
     await _live(
         maker, user, run_id, [{"q": "Job Title", "a": "IT Engineer"}], "My Experience"
     )
     out = await mcp_mod.page_done(
-        rid, PAGE, "My Experience", [{"q": "Job Title", "a": "IT Engineer"}]
+        rid,
+        PAGE,
+        "My Experience",
+        [{"q": "Job Title", "a": "IT Engineer", "guess": True}],
     )
     assert (await _run(maker, run_id)).paused_step == "my experience"
 
@@ -422,7 +428,7 @@ async def test_switching_to_keep_going_while_paused_carries_on(engine, monkeypat
     await _mode(maker, user, run_id, "page")
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": INFO})
     await _live(maker, user, run_id, INFO, "My Information")
-    await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
+    await mcp_mod.page_done(rid, PAGE, "My Information", GUESSED)
     async with maker() as db:
         await svc.add_fix(
             db, user.id, run_id, {"step": "my information", "q": "Prefix", "to": "Dr."}
@@ -1073,7 +1079,7 @@ async def test_step_names_are_never_instructions(engine, monkeypatch):
     rows = [{"q": "First Name", "a": "Sam"}]
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": rows})
     await _live(maker, user, run_id, rows, evil)
-    out = await mcp_mod.page_done(rid, PAGE, "Step", rows)
+    out = await mcp_mod.page_done(rid, PAGE, "Step", [{**rows[0], "guess": True}])
     assert out["step_on_page"] == evil and evil not in out["next"]
     async with maker() as db:
         await svc.add_fix(

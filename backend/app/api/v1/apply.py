@@ -281,6 +281,19 @@ async def remove_fix(
     return await _changed(db, lambda: svc.remove_fix(db, user.id, run_id, fix_id))
 
 
+@router.post("/runs/{run_id}/fixes/{fix_id}/did-it")
+async def did_it_myself(
+    run_id: uuid.UUID,
+    fix_id: str,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+):
+    """I did it myself (spec 038): a fix Claude couldn't or wouldn't make is
+    done, and Claude is told to carry on."""
+    await _run(db, user, run_id)
+    return await _changed(db, lambda: svc.did_it_myself(db, user.id, run_id, fix_id))
+
+
 @router.post("/runs/{run_id}/fixes/send")
 async def send_fixes(
     run_id: uuid.UUID,

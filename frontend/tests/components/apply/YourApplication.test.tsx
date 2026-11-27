@@ -268,6 +268,97 @@ describe("Page by page: the step check (spec 033)", () => {
     await waitFor(() => expect(server.calls.some((c) => c.path === "/v1/apply/runs/r1/continue")).toBe(true));
     expect(server.now().fixes?.[0].status).toBe("sent");
     await waitFor(() => expect(screen.queryByRole("heading", { name: /look it over/ })).not.toBeInTheDocument());
+    // Spec 038: it says whether Claude got it.
+    expect(screen.getByRole("status")).toHaveTextContent("Sent to Claude…");
+  });
+});
+
+describe("after Continue: did it reach Claude? (spec 038)", () => {
+  const check = (extra: Partial<NonNullable<Sheet["check"]>>) => ({
+    ...RUN,
+    mode: "page" as const,
+    sheet: {
+      ...SHEET,
+      check: { step: "my information", title: "My Information", at: new Date().toISOString(), read: false, ...extra },
+    },
+  });
+
+  it("sent, until Claude gets it", async () => {
+    show(check({}), "check");
+    expect(await screen.findByRole("status")).toHaveTextContent("Sent to Claude…");
+  });
+
+  it("Claude got it", async () => {
+    show(check({ read: true, read_at: new Date().toISOString() }), "check");
+    expect(await screen.findByRole("status")).toHaveTextContent("Claude got it.");
+  });
+
+  it("not picked up after 2 minutes: what to tell Claude", async () => {
+    show(check({ at: new Date(Date.now() - 3 * 60_000).toISOString() }), "check");
+    expect(await screen.findByRole("status")).toHaveTextContent(
+      "Claude hasn't picked this up. In the chat, tell it: carry on",
+    );
+  });
+
+  it("gone once Claude fills the next step", async () => {
+    show(check({ read: true, moved_on: true }), "check");
+    await waitFor(() => expect(server.calls.length).toBeGreaterThan(0));
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+});
+
+describe("fixes Claude couldn't make (spec 038)", () => {
+  const declined = {
+    ...RUN,
+    fixes: [
+      {
+        id: "f1",
+        step: "my information",
+        q: "Prefix",
+        k: 1,
+        now: "Mr.",
+        to: "Dr.",
+        status: "declined" as const,
+        why: "The form only offers Mr. or Ms.",
+        at: "",
+      },
+    ],
+  };
+
+  it("says why, and I did it myself tells Claude", async () => {
+    show(declined);
+    await screen.findByRole("region", { name: "Your application" });
+    await userEvent.click(within(list()).getByRole("button", { name: /^My Information/ }));
+    expect(within(list()).getByText("Claude didn't do this: The form only offers Mr. or Ms.")).toBeInTheDocument();
+    await userEvent.click(within(list()).getByRole("button", { name: /^Prefix:/ }));
+    const sheet = screen.getByRole("dialog");
+    await userEvent.click(within(sheet).getByRole("button", { name: "I did it myself" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).not.toBeInTheDocument());
+    expect(server.calls.some((c) => c.method === "POST" && c.path === "/v1/apply/runs/r1/fixes/f1/did-it")).toBe(true);
+    expect(await within(list()).findByText("→ Dr. (you did it)")).toBeInTheDocument();
+  });
+
+  it("a tick box says Claude only ticks optional boxes when asked", async () => {
+    const consent = {
+      ...RUN,
+      sheet: {
+        ...SHEET,
+        steps: [
+          ...SHEET.steps.slice(0, 2),
+          { ...SHEET.steps[2], rows: [...SHEET.steps[2].rows, { q: "Send me texts about this job", a: "No", tag: null }] },
+        ],
+      },
+    };
+    show(consent);
+    await userEvent.click(await screen.findByRole("button", { name: /^Send me texts about this job:/ }));
+    expect(
+      within(screen.getByRole("dialog")).getByText(
+        "Claude never ticks optional boxes (texts, marketing) by itself. Ask here and it will.",
+      ),
+    ).toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("dialog")).getByRole("button", { name: "Cancel" }));
+    await userEvent.click(screen.getByRole("button", { name: /^City:/ }));
+    expect(within(screen.getByRole("dialog")).queryByText(/never ticks optional boxes/)).not.toBeInTheDocument();
   });
 });
 

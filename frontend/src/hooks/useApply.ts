@@ -162,6 +162,11 @@ export const useRemoveFix = () =>
     api.delete<ApplyRun>(`/v1/apply/runs/${v.runId}/fixes/${v.fixId}`),
   );
 
+/** I did it myself (spec 038): a fix Claude couldn't make is done, and
+ * Claude is told to carry on. */
+export const useDidItMyself = () =>
+  useRunAction<{ runId: string; fixId: string }>((v) => `/v1/apply/runs/${v.runId}/fixes/${v.fixId}/did-it`);
+
 /** Send now (or the review's Send fixes): every waiting fix goes to Claude. */
 export const useSendFixes = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/fixes/send`);
 
