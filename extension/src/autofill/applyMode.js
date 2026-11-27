@@ -101,11 +101,11 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
 
   // One report per kind per press (a press is a click and maybe a submit).
   const lastSent = {};
-  const report = (type) => {
+  const report = (type, more = {}) => {
     const now = Date.now();
     if (now - (lastSent[type] || 0) < 1500) return;
     lastSent[type] = now;
-    send({ type, url: win.location.href });
+    send({ type, url: win.location.href, ...more });
     if (type === "applySubmitPressed") watchAfterSubmit();
   };
 
@@ -172,7 +172,7 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (Date.now() >= pendingUntil) return false;
     event.preventDefault();
     event.stopImmediatePropagation();
-    report("applyBlocked");
+    report("applyBlocked", { reason: "pending" });
     return true;
   };
 

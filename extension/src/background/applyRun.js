@@ -187,7 +187,7 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     return { active: onSite, guard: onSite && !!data.guard, watch };
   }
 
-  async function event(kind, tab, url, words) {
+  async function event(kind, tab, url, words, reason) {
     const data = await active();
     if (!data.run_id || tab?.id == null) return;
     // A blocked press anywhere on the site is worth telling Claude; a press
@@ -199,7 +199,7 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
       method: "POST",
       // A confirmation is the tab's (a form embedded from another site says
       // it inside a frame of the application's page).
-      body: JSON.stringify({ kind, url: kind === "confirmation_seen" ? tab.url : url || tab.url, ...(words ? { words } : {}) }),
+      body: JSON.stringify({ kind, url: kind === "confirmation_seen" ? tab.url : url || tab.url, ...(words ? { words } : {}), ...(reason ? { reason } : {}) }),
     }).catch(() => null);
     state.at = 0; // a press can end the run: ask again next time
   }

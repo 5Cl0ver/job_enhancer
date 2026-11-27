@@ -104,7 +104,10 @@ class ExtensionEvent(BaseModel):
     url: str | None = Field(default=None, max_length=2000)
     # The confirmation's own words ("Thank you for applying"), spec 023; for
     # submit_failed, the error the page shows (spec 037).
+    # blocked_submit: "pending" = Job Catcher's own hold while a press goes
+    # through, never the user's lock (spec 037).
     words: str | None = Field(default=None, max_length=300)
+    reason: Literal["pending"] | None = None
 
 
 class HelpDoneIn(BaseModel):

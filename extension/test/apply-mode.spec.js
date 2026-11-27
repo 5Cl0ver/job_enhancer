@@ -265,7 +265,8 @@ describe("the Submit lock on the page", () => {
     await vi.advanceTimersByTimeAsync(5000);
     doc.getElementById("wd-submit").click(); // too soon: stopped
     expect(reached).toBe(1);
-    expect(sent.filter((x) => x.type === "applyBlocked")).toHaveLength(1);
+    // Job Catcher's own hold, never the user's lock (the app words it so).
+    expect(sent.filter((x) => x.type === "applyBlocked")).toEqual([expect.objectContaining({ reason: "pending" })]);
     await vi.advanceTimersByTimeAsync(16_000); // turned down at 20 s
     expect(sent.filter((x) => x.type === "applySubmitFailed")).toHaveLength(1);
     doc.getElementById("wd-submit").click(); // the one retry

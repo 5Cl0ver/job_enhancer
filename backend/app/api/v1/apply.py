@@ -497,7 +497,7 @@ async def extension_event(
     await _run(db, user, run_id)
     try:
         run = await svc.extension_event(
-            db, user.id, run_id, data.kind, data.url, data.words
+            db, user.id, run_id, data.kind, data.url, data.words, data.reason
         )
     except ValueError as exc:
         raise _bad(exc) from exc

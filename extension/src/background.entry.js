@@ -1452,7 +1452,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // site included); the frame's own address only goes in the log.
         sendResponse(await applyRun.tick(sender.tab));
       } else if (msg.type === "applyBlocked") {
-        await applyRun.event("blocked_submit", sender.tab, msg.url);
+        // "pending": Job Catcher's own hold while a press goes through (spec 037).
+        await applyRun.event("blocked_submit", sender.tab, msg.url, undefined, msg.reason === "pending" ? "pending" : undefined);
         sendResponse({ ok: true });
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);

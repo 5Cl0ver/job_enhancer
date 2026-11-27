@@ -14,6 +14,7 @@ import pytest
 import app.mcp_server as mcp_mod
 from app.schemas.apply import ExtensionEvent, RequestResult
 from app.services import apply_runs as svc
+from app.services.apply_playbook import APPLY_PLAYBOOK_VERSION, playbook_text
 from tests.test_mcp_apply import _job_catcher, _run, _setup
 
 PAGE = "https://acme.wd1.myworkdayjobs.com/apply/1"
@@ -283,3 +284,52 @@ async def test_job_catcher_hears_when_each_request_was_made(engine, monkeypatch)
         await db.commit()
         [req] = (await svc.extension_state(db, user.id))["requests"]
     assert req["kind"] == "fill" and req["created_at"].endswith("+00:00")
+
+
+@pytest.mark.asyncio
+async def test_a_press_held_back_while_the_first_goes_through_says_so(
+    engine, monkeypatch
+):
+    """Job Catcher's own ~25 s hold after a press (spec 037) is never told to
+    Claude as "the user hasn't decided yet": the user did decide."""
+    maker, user, run_id, rid = await _submitting(engine, monkeypatch)
+    async with maker() as db:
+        await svc.extension_event(
+            db, user.id, run_id, "blocked_submit", PAGE, reason="pending"
+        )
+        await db.commit()
+    run = await _run(maker, run_id)
+    assert run.events[-1]["text"] == (
+        "Job Catcher held back a second Submit press while the first was "
+        "still going through."
+    )
+    out = await mcp_mod.wait_for_you(rid)
+    assert out["submit_blocked"] is True
+    assert "hasn't decided" not in out["next"]
+    assert out["next"].startswith(
+        "Job Catcher stopped a second Submit press: the first one is still "
+        "going through."
+    )
+
+
+@pytest.mark.asyncio
+async def test_a_press_stopped_after_submit_was_pressed_says_it_was_pressed(
+    engine, monkeypatch
+):
+    maker, user, run_id, rid = await _submitting(engine, monkeypatch)
+    await _event(maker, user, run_id, "submit_pressed")
+    await _event(maker, user, run_id, "blocked_submit")
+    out = await mcp_mod.wait_for_you(rid)
+    assert out["submit_blocked"] is True
+    assert "hasn't decided" not in out["next"]
+    assert out["next"].startswith(
+        "Job Catcher stopped your Submit press: Submit was already pressed."
+    )
+
+
+def test_the_playbook_says_what_cover_letter_and_unverified_mean():
+    text = playbook_text()
+    assert APPLY_PLAYBOOK_VERSION == "2026.12.05"
+    assert 'One box for both ("Resume / Cover Letter")' in text
+    assert "`cover_letter` (attached / unverified / no_box / no_file / failed)" in text
+    assert "`unverified` means Job Catcher put the file in" in text

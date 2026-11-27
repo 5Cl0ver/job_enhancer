@@ -1228,8 +1228,22 @@ def _blocked_line(run: ApplyRun) -> str | None:
         {**e, "told": True} if e.get("kind") == "blocked_submit" else e
         for e in run.events or []
     ]
+    # Job Catcher's own hold while a press goes through (spec 037): the user
+    # did decide; it's the second press that waits.
+    if any(e.get("pending") for e in new):
+        return (
+            "Job Catcher stopped a second Submit press: the first one is still "
+            "going through. Don't press Submit again; look at the page, then "
+            "call wait_for_you."
+        )
     if not _guarded(run):
         return None
+    if run.status == APPLY_SUBMITTING:
+        # Locked again because it was pressed (spec 037), not for a decision.
+        return (
+            "Job Catcher stopped your Submit press: Submit was already pressed. "
+            "Never press it again on your own; call wait_for_you."
+        )
     then = (
         "Call wait_for_you for their decision."
         if run.status == APPLY_REVIEW
@@ -3848,6 +3862,7 @@ async def extension_event(
     kind: str,
     url: str | None,
     words: str | None = None,
+    reason: str | None = None,
 ) -> ApplyRun:
     run = await _locked(db, user_id, run_id)
     if run.status not in APPLY_OPEN:
@@ -3866,7 +3881,16 @@ async def extension_event(
     on_site = not host or any(
         host == h or host.endswith(f".{h}") for h in run.apply_hosts or []
     )
-    if kind == "blocked_submit":
+    if kind == "blocked_submit" and reason == "pending":
+        # Job Catcher's own hold after a press, while it goes through (spec 037).
+        _event(
+            run,
+            "blocked_submit",
+            "Job Catcher held back a second Submit press while the first was "
+            "still going through.",
+        )
+        run.events = [*run.events[:-1], {**run.events[-1], "pending": True}]
+    elif kind == "blocked_submit":
         _event(
             run,
             "blocked_submit",
