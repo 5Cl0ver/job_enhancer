@@ -37,14 +37,24 @@ const RETRY_MS = 3_000;
 const TRUST_MS = 90_000; // how long a last answer stands while the app can't be reached
 const LOOP_MS = 2_000;
 const PAINT_MS = 350; // a tab just shown needs a moment to draw
+// A photo while the user is busy in another tab (spec 037): look again this
+// often, for up to ~30 s, for the tab showing or the user stepping away.
+const IN_USE_MS = 2_000;
+const IN_USE_LOOKS = 15;
 const LIVE_MS = 3_000;
 const LIVE_AGAIN_MS = 60_000; // an unchanged page is sent again this often (spec 033)
-const BUSY_MS = 1_000; // a fill already going: look for its report this often…
-const BUSY_WAITS = 20; // …for up to 20 s
+const BUSY_MS = 1_000; // a fill still going: look for its report this often…
+// …for as long as the app keeps the same fill going for Claude (its FILL_GOING,
+// 3 min from the request), a little less (spec 037).
+const FILL_BUDGET_MS = 170_000;
+const FILL_LEAST_MS = 30_000; // …but never less than this from the claim
+// A photo while a fill is going on its tab: wait this long for it to end.
+const FILLING_MS = 1_000;
+const FILLING_LOOKS = 30;
 const MAX_LIVE = 150;
 const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|card number|credit card|\bcvv\b|\bcvc\b/i;
-// The best of what each frame says happened to the résumé.
-const RESUME_RANK = ["attached", "failed", "no_file", "no_box"];
+// The best of what each frame says happened to the résumé (and the cover letter, spec 037).
+const RESUME_RANK = ["attached", "unverified", "failed", "no_file", "no_box"];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -73,11 +83,15 @@ function hostOf(url) {
  *   chrome?: typeof chrome,
  * }} deps
  */
-export function createApplyRun({ api, press, fillSession, chrome: c = globalThis.chrome }) {
+export function createApplyRun({ api, press, fillSession, onRunFill = async () => {}, filling = () => false, chrome: c = globalThis.chrome }) {
   let state = { at: 0, ttl: IDLE_TTL, data: { run_id: null }, okAt: 0 };
   let asking = null;
   let looping = false;
   const done = new Set(); // request ids answered here (claimed, or taken elsewhere)
+  const handling = new Set(); // request ids being handled right now
+  const fillingTabs = new Set(); // tabs a fill request is filling now
+  /** Is a fill going on this tab (Claude's, or a press)? Never photographed then. */
+  const fillingNow = (tabId) => fillingTabs.has(tabId) || !!filling(tabId);
 
   async function active(force = false) {
     if (!force && Date.now() - state.at < state.ttl) return state.data;
@@ -133,6 +147,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return (await isRunTab(data, tab)) ? data.resume_id : null;
   }
 
+  /** The open run's id when this is its tab (spec 037: a file tried for one
+   * run never counts for another), else null. */
+  async function runFor(tab) {
+    const data = await active();
+    if (!data.run_id || !tab?.url || tab.id == null) return null;
+    return (await isRunTab(data, tab)) ? data.run_id : null;
+  }
+
   /** Is an Apply with Claude run open (spec 029)? Then what's typed in any
    * page is never auto-saved as the user's own answers: Claude may be typing
    * it, on a site the run hasn't heard of yet (a redirect before the first
@@ -172,19 +194,19 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return { active: onSite, guard: onSite && !!data.guard, watch };
   }
 
-  async function event(kind, tab, url, words) {
+  async function event(kind, tab, url, words, reason) {
     const data = await active();
     if (!data.run_id || tab?.id == null) return;
     // A blocked press anywhere on the site is worth telling Claude; a press
     // that ends the run as sent must come from the application's own tab.
     const ok = kind === "blocked_submit" ? onRunHost(hostOf(tab.url || ""), data.hosts) : await isRunTab(data, tab);
     if (!ok) return;
-    if (kind === "submit_pressed") state.at = 0; // hear the app's "watch" at once
+    if (kind === "submit_pressed" || kind === "submit_failed") state.at = 0; // hear the app's "watch" (or lock) at once
     await api(`/v1/apply/runs/${data.run_id}/event`, {
       method: "POST",
       // A confirmation is the tab's (a form embedded from another site says
       // it inside a frame of the application's page).
-      body: JSON.stringify({ kind, url: kind === "confirmation_seen" ? tab.url : url || tab.url, ...(words ? { words } : {}) }),
+      body: JSON.stringify({ kind, url: kind === "confirmation_seen" ? tab.url : url || tab.url, ...(words ? { words } : {}), ...(reason ? { reason } : {}) }),
     }).catch(() => null);
     state.at = 0; // a press can end the run: ask again next time
   }
@@ -198,8 +220,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
         const data = await active(true);
         if (!data.run_id) break;
         for (const req of data.requests || []) {
-          if (done.has(req.id)) continue;
-          await handle(req, data).catch(() => {});
+          if (done.has(req.id) || handling.has(req.id)) continue;
+          handling.add(req.id);
+          const job = handle(req, data)
+            .catch(() => {})
+            .finally(() => handling.delete(req.id));
+          // A fill can wait minutes for its page (spec 037): the next
+          // requests (photos) never wait behind it.
+          if (req.kind !== "fill") await job;
         }
         if (data.live) await liveTick(data).catch(() => {});
         await sleep(LOOP_MS);
@@ -224,7 +252,15 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     if (!claimed.ok) return; // taken elsewhere, or gone
     await addRunTab(data.run_id, tab.id);
     try {
-      if (req.kind === "fill") return await finish(req, await fill(tab));
+      if (req.kind === "fill") {
+        await onRunFill(tab.id, data.run_id).catch(() => {});
+        fillingTabs.add(tab.id);
+        try {
+          return await finish(req, await fill(tab, req));
+        } finally {
+          fillingTabs.delete(tab.id);
+        }
+      }
       if (req.kind === "peek") return await finish(req, await peekShot(req, tab));
       return await finish(req, await photos(req, tab));
     } catch {
@@ -257,32 +293,53 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return tabs.find((t) => t.active && t.windowId === focused?.id && t.url && hostOf(t.url) === host) || null;
   }
 
-  async function fill(tab) {
+  async function fill(tab, req = {}) {
     const started = Date.now();
+    // Never past the app's own wait for this fill: FILL_BUDGET_MS from when it
+    // was asked, by its age as the app counts it (never its clock against
+    // this computer's), and never less than FILL_LEAST_MS from now.
+    const age = Number(req.age_s);
+    const left = Number.isFinite(age) && age > 0 ? FILL_BUDGET_MS - age * 1000 : FILL_BUDGET_MS;
+    const until = started + Math.max(FILL_LEAST_MS, left);
     const out = await press(tab.id);
     const read = () => fillSession(tab.id).catch(() => ({ frames: {} }));
-    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => (f.at || 0) >= started);
+    // A frame's fill report since this press, by when it last FILLED: a
+    // panel action's report (a Fix, an Undo) is never a fill's, and never
+    // hides the fill before it.
+    const filledAt = (f) => (f.action ? f.fillAt || 0 : (f.fillAt ?? f.at ?? 0));
+    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => filledAt(f) >= started);
     let session = await read();
-    // Wait for this fill's report (it can land a moment after the press
-    // answers), longer when Keep filling was already filling this step: never
-    // hand back the last step's (spec 029: Workday keeps one address).
-    const waits = out?.busy ? BUSY_WAITS : out?.ok ? 3 : 0;
+    // Still going (spec 037): Keep filling was already filling this step
+    // (busy), or the page outlasted the press's wait (slow, a long Workday
+    // step). The page keeps filling: wait for ITS report, as long as the app
+    // keeps this fill going for Claude, never handing back the last step's
+    // (spec 029: Workday keeps one address).
+    const going = !!out?.busy || out?.problem === "slow";
+    const waits = going ? Math.ceil(Math.max(0, until - Date.now()) / BUSY_MS) : out?.ok ? 3 : 0;
     for (let i = 0; i < waits && !fresh(session).length; i++) {
+      await sleep(BUSY_MS);
+      session = await read();
+    }
+    // A late fill: its other frames a moment more, then the best of every
+    // frame, as for a press that answered in time.
+    for (let i = 0; going && i < 2 && fresh(session).length; i++) {
       await sleep(BUSY_MS);
       session = await read();
     }
     // Only what this fill reported: a frame that didn't fill now (gone with
     // the last step, or no form in it) never speaks for this page.
     const frames = fresh(session);
-    // Busy: Keep filling is already filling this step; its report is the answer.
-    const ok = !!out?.ok || !!out?.busy;
+    // Busy or slow: the fill still going reports for this page; its report is the answer.
+    const ok = !!out?.ok || !!out?.busy || (out?.problem === "slow" && frames.length > 0);
     if (!ok) return { ok: false, reason: out?.problem || "error", filled: [], need: [] };
     // No report from this fill: say so, never the last step's (spec 029).
     if (!frames.length) return { ok: false, reason: "no_report", filled: [], need: [] };
     const filled = frames.flatMap((f) => (f.entries || []).map((e) => e.label).filter(Boolean));
     const need = frames.flatMap((f) => (f.need_you || []).map((n) => n.label).filter(Boolean));
-    const resume = RESUME_RANK.find((s) => frames.some((f) => f.resume === s)) || null;
-    return { ok, reason: null, filled, need, ...(resume ? { resume } : {}) };
+    const best = (key) => RESUME_RANK.find((s) => frames.some((f) => f[key] === s)) || null;
+    const resume = best("resume");
+    const letter = best("cover_letter");
+    return { ok: true, reason: null, filled, need, ...(resume ? { resume } : {}), ...(letter ? { cover_letter: letter } : {}) };
   }
 
   /** Still the same tab, showing the same page, in the same window? */
@@ -294,20 +351,34 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   /**
    * Show the application's tab for a photo (spec 026): make it the tab
    * showing in its window, restoring a minimised window. Never while the user
-   * is typing in that window (their keys would land in the form): then it's
-   * "busy" and the page is kept as text. `restore` puts back what was
-   * showing, unless the user has moved on since.
+   * is typing in that window (their keys would land in the form): then it
+   * waits a while for the tab to show or the user to step away, and after
+   * that it's "busy" and the page is kept as text. `restore` puts back what
+   * was showing, unless the user has moved on since.
    */
   async function showFor(tab) {
-    const now = await c.tabs.get(tab.id).catch(() => null);
-    const win = now && (await c.windows.get(now.windowId).catch(() => null));
+    let now = null;
+    let win = null;
+    const look = async () => {
+      now = await c.tabs.get(tab.id).catch(() => null);
+      win = now && (await c.windows.get(now.windowId).catch(() => null));
+    };
+    await look();
     if (!now || !win) return { reason: "tab_closed" };
     const inUse = async () => (await c.idle?.queryState?.(15).catch(() => null)) === "active";
+    const hidden = () => win.state === "minimized" || !now.active;
     // Never switch tabs (or restore a window) while the user is acting, in
     // this window or another (spec 029): their keys and clicks, a file picker
-    // or a drag would land on the wrong tab. Then the page is kept as text.
+    // or a drag would land on the wrong tab. Look again every 2 s for ~30 s
+    // (spec 037): the photo is taken as soon as the tab shows (the user
+    // clicked it) or the user stops; then it's "busy", the page kept as text.
     // (Tabs are only ever shown and put back: never moved, grouped or made.)
-    if ((win.state === "minimized" || !now.active) && (await inUse())) return { reason: "busy" };
+    for (let looks = 0; hidden() && (await inUse()); looks++) {
+      if (looks >= IN_USE_LOOKS) return { reason: "busy" };
+      await sleep(IN_USE_MS);
+      await look();
+      if (!now || !win) return { reason: "tab_closed" };
+    }
     const undo = [];
     if (win.state === "minimized") {
       await c.windows.update(win.id, { state: "normal" }).catch(() => {});
@@ -338,7 +409,18 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return idle === "locked" ? "locked" : "hidden";
   }
 
+  /** A fill going on the tab (spec 037): wait for it, up to ~30 s. True when done. */
+  async function fillDone(tab) {
+    for (let looks = 0; fillingNow(tab.id); looks++) {
+      if (looks >= FILLING_LOOKS) return false;
+      await sleep(FILLING_MS);
+    }
+    return true;
+  }
+
   async function photos(req, tab) {
+    // Never shown or scrolled mid-fill: the answers are kept.
+    if (!(await fillDone(tab))) return { ok: false, reason: "filling", answers: await readAnswers(tab.id) };
     const shown = await showFor(tab);
     if (!shown.tab) {
       // In use: no photo now, but the page's questions and answers still go.
@@ -397,6 +479,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
 
   /** The screen as it is now: one photo, never scrolled (spec 023). */
   async function peekShot(req, tab) {
+    if (!(await fillDone(tab))) return { ok: false, reason: "filling" };
     const shown = await showFor(tab);
     if (!shown.tab) return { ok: false, reason: shown.reason };
     try {
@@ -444,6 +527,8 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
         q: String(b.q).slice(0, 300),
         a: String(b.a ?? "").slice(0, 300),
         ...(b.by ? { by: b.by } : {}),
+        // A box the form requires (spec 037).
+        ...(b.required === true ? { required: true } : {}),
         // The form's choices (spec 033), capped like the page side does.
         ...(Array.isArray(b.options) && b.options.length
           ? { options: b.options.slice(0, MAX_CHOICES).map((o) => String(o).slice(0, CHOICE_CHARS)), ...(b.free ? { free: true } : {}) }
@@ -492,5 +577,5 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
   }
 
-  return { tick, event, active, loop, resumeFor, inRun, coverLetterFor };
+  return { tick, event, active, loop, resumeFor, inRun, coverLetterFor, runFor };
 }

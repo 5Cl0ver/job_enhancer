@@ -87,15 +87,27 @@ class RequestResult(BaseModel):
     filled: list[str] = Field(default_factory=list, max_length=200)
     need: list[str] = Field(default_factory=list, max_length=200)
     answers: list[dict] = Field(default_factory=list, max_length=200)
-    # fill: what happened to the résumé on this page (spec 026).
-    resume: Literal["attached", "no_box", "no_file", "failed"] | None = None
+    # fill: what happened to the résumé on this page (spec 026), and to the
+    # cover letter (spec 037). "unverified": put in, but the page didn't show it.
+    resume: Literal["attached", "unverified", "no_box", "no_file", "failed"] | None = (
+        None
+    )
+    cover_letter: (
+        Literal["attached", "unverified", "no_box", "no_file", "failed"] | None
+    ) = None
 
 
 class ExtensionEvent(BaseModel):
-    kind: Literal["blocked_submit", "submit_pressed", "confirmation_seen"]
+    kind: Literal[
+        "blocked_submit", "submit_pressed", "submit_failed", "confirmation_seen"
+    ]
     url: str | None = Field(default=None, max_length=2000)
-    # The confirmation's own words ("Thank you for applying"), spec 023.
+    # The confirmation's own words ("Thank you for applying"), spec 023; for
+    # submit_failed, the error the page shows (spec 037).
+    # blocked_submit: "pending" = Job Catcher's own hold while a press goes
+    # through, never the user's lock (spec 037).
     words: str | None = Field(default=None, max_length=300)
+    reason: Literal["pending"] | None = None
 
 
 class HelpDoneIn(BaseModel):

@@ -15,7 +15,10 @@
      window.__formData() holds what the PAGE has taken; window.__maxOpen() the
      most lists ever open at once; window.__redraw() rebuilds the job rows with
      the same values (Workday's Back, a resumed draft). ?preticked=1: Workday
-     ticked "I currently work here" on row 1, which hides its To date. -->
+     ticked "I currently work here" on row 1, which hides its To date.
+     Skills (spec 037): ?slowSkills=<ms> the results come that much later (a
+     server-side search); ?autopick Workday picks a lone result by itself,
+     whatever it is; no result shows "No Items". -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -68,7 +71,10 @@
       const counts = { work: 0, edu: 0, lang: 0, url: 0 };
       const LANGS = ["Afrikaans","Albanian","Arabic","Armenian","Basque","Bengali","Bulgarian","Catalan","Chinese (Mandarin)","Croatian","Czech","Danish","Dutch","English","Estonian","Finnish","French","German","Greek","Gujarati","Hebrew","Hindi","Hungarian","Icelandic","Indonesian","Irish","Italian","Japanese","Korean","Latvian","Lithuanian","Malay","Norwegian","Persian","Polish","Portuguese","Punjabi","Romanian","Russian","Serbian","Slovak","Slovene","Somali","Spanish","Swahili","Swedish","Tagalog","Tamil","Thai","Turkish","Ukrainian","Urdu","Vietnamese","Welsh"];
       const LEVELS = ["1 - Beginner","2 - Classroom Study","3 - Intermediate","4 - Advanced","5 - Fluent"];
-      const SKILLS = ["Python","Python Scripting","TypeScript","JavaScript","SQL","Azure","Azure DevOps","PowerShell","Jira","Confluence","REST APIs","GitHub Actions","Customer Service","Troubleshooting","Networking","Linux","Windows Server","Active Directory","Intune","HubSpot"];
+      const SKILLS = ["Python","Python Scripting","TypeScript","JavaScript","SQL","Azure","Azure DevOps","PowerShell","Jira","Confluence","REST APIs","GitHub Actions","Customer Service","Troubleshooting","Networking","Linux","Windows Server","Active Directory","Intune","HubSpot","Microsoft 365 Copilot for Sales","Office 365","Windows 10","Windows 11","Amazon Web Services (AWS)","Kubernetes (Container Orchestration)"];
+      const params = new URLSearchParams(location.search);
+      const slowSkills = Number(params.get("slowSkills") || 0);
+      const autopick = params.has("autopick");
       const SCHOOLS = ["Harborview Community College","Harborview State University","Salem Technical Institute"];
       const DEGREES = ["High School Diploma","Associate's Degree","Bachelor's Degree","Master's Degree"];
 
@@ -187,6 +193,7 @@
           input.value = "";
         };
         let popped = null;
+        let asked = 0; // only the latest search's results ever show
         input.addEventListener("keydown", (e) => {
           if (e.key === "Escape") return popped?.close();
           if (e.key !== "Enter") return;
@@ -194,11 +201,20 @@
           popped?.close();
           const q = input.value.trim().toLowerCase();
           const hits = catalog.filter((c) => c.toLowerCase().includes(q));
-          if (hits.length === 1 && hits[0].toLowerCase() === q) return add(hits[0]); // Workday picks a single exact match itself
-          popped = popupFor(input, hits.length ? hits : [], (label) => {
-            add(label);
-            popped.close();
-          }, { virtual: hits.length > 8 });
+          const n = ++asked;
+          const results = () => {
+            if (n !== asked) return;
+            // Workday picks a single exact match itself (?autopick: any lone result).
+            if (hits.length === 1 && (autopick || hits[0].toLowerCase() === q)) return add(hits[0]);
+            popped = popupFor(input, hits, (label) => {
+              add(label);
+              popped.close();
+            }, { virtual: hits.length > 8 });
+            if (!hits.length) popped.pop.insertAdjacentHTML("beforeend", "<p>No Items.</p>");
+          };
+          const slow = input.id === "skills" ? slowSkills : 0;
+          if (slow) setTimeout(results, slow);
+          else results();
         });
       }
 
@@ -270,7 +286,7 @@
       for (const btn of document.querySelectorAll('[data-automation-id="add-button"]')) btn.addEventListener("click", () => addRow(btn.dataset.kind));
       // Workday's own résumé reading filled one job, wrongly.
       addRow("work", { title: "Platform Engineer", desc: "Cloud &amp; Tooling) · Brightfold Labs" });
-      if (new URLSearchParams(location.search).get("preticked")) {
+      if (params.get("preticked")) {
         const cb = document.getElementById("w1-current");
         cb.checked = true;
         cb.dispatchEvent(new Event("change"));

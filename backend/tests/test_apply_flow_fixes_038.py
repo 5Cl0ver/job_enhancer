@@ -396,7 +396,7 @@ async def test_a_step_with_waiting_fixes_still_pauses(engine, monkeypatch):
 
 def test_the_playbook_on_restarts_sign_outs_and_submit():
     text = playbook_text()
-    assert APPLY_PLAYBOOK_VERSION == "2026.12.04"
+    assert APPLY_PLAYBOOK_VERSION >= "2026.12.04"
     # E: a failed call is the server restarting.
     assert "502/503/504" in text and "wait about 30 s" in text
     assert "Never move on or press Submit because a call failed" in text

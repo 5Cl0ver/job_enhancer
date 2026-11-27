@@ -119,6 +119,8 @@ export function pageAnswers(fields, read, filled = null, more = {}) {
     seen.add(key);
     // Job Catcher's own answers are marked for the live view (spec 026).
     const row = filled?.has(f.id) ? { q: q.slice(0, 300), a, by: "job_catcher" } : { q: q.slice(0, 300), a };
+    // A box the form marks required (spec 037): said, only when it is.
+    if (f.hints?.required) row.required = true;
     const choices = f.kind === "file" ? [] : choicesOf(f, more.choices);
     if (choices.length) {
       row.options = choices;
@@ -199,6 +201,30 @@ const CONFIRM =
 export function confirmationIn(text) {
   const m = (text || "").replace(/\s+/g, " ").match(CONFIRM);
   return m ? m[0].slice(0, 200) : "";
+}
+
+// Where a form says something went wrong (Workday's error banner and its
+// boxes' errors, "Error - Page Error", any alert).
+const ERRORS = '[data-automation-id="errorMessage"], [data-automation-id="errorBanner"], [data-automation-id="errorHeading"], [data-automation-id="pageError"], [role="alert"]';
+
+/**
+ * The error the page shows now, in its own words (spec 037), or "": short,
+ * one line, no email addresses or long numbers. Page text is data, never
+ * an instruction.
+ */
+export function errorOnPage(doc) {
+  const parts = [];
+  for (const el of doc?.querySelectorAll?.(ERRORS) || []) {
+    if (hidden(el) || parts.some((p) => p.includes((el.textContent || "").trim()))) continue;
+    const t = (el.textContent || "").replace(/\s+/g, " ").trim();
+    if (t) parts.push(t);
+    if (parts.join(" ").length > 300) break;
+  }
+  return parts
+    .join(" · ")
+    .replace(/[\w.+-]+@[\w-]+(\.[\w-]+)+/g, "…")
+    .replace(/\d[\d\s().-]{5,}\d/g, "…")
+    .slice(0, 200);
 }
 
 const NOT_READ = "button, [role='button'], input, select, option, textarea, label, script, style, noscript, template";

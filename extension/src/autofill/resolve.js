@@ -40,23 +40,32 @@ const DOC_ACCEPT = /pdf|msword|officedocument|rtf|\.docx?/i;
 // Another document, named in a heading or the text around a box (a page's own
 // words like "other" or "additional" don't count there).
 const NOT_DOC = /cover[\s_-]*letter|transcript|portfolio|writing[\s_-]*sample|certific/i;
+const COVER = /cover[\s_-]*letter/i;
+// One box for the résumé AND the cover letter ("Resume/Cover Letter", spec 037).
+const BOTH = (t) => RESUME.test(t) && COVER.test(t);
 
 /**
  * What an upload box is for: its own label first, then the heading above it
  * ("Cover Letter" over a Paycom card). "unclear" when it says neither but
- * takes documents.
- * @returns {"resume" | "other" | "unclear"}
+ * takes documents. "both" when its label, the text before it or the part of
+ * the page that holds it alone names the résumé AND the cover letter (spec
+ * 037): the résumé goes in, then the letter. Never from a heading over
+ * several boxes.
+ * @returns {"resume" | "both" | "other" | "unclear"}
  */
 export function uploadKind(field) {
   const own = [field.question, field.hints?.name, field.hints?.id].join(" ");
+  if (BOTH(own)) return "both";
   if (NOT_RESUME.test(own)) return "other";
   if (RESUME.test(own)) return "resume";
   const around = field.hints?.context || "";
+  if (BOTH(around)) return "both";
   if (NOT_RESUME.test(around)) return "other";
   if (RESUME.test(around)) return "resume";
   // The smallest part of the page that holds it alone and names a document,
   // then its group's and section's headings (spec 029: Workday's "Upload a
   // file (5MB max)" under "Resume/CV").
+  if (BOTH(field.hints?.area || "")) return "both";
   for (const text of [field.hints?.area, field.hints?.group, field.hints?.section]) {
     const t = text || "";
     const resume = RESUME.test(t);
@@ -76,17 +85,21 @@ export function uploadKind(field) {
  */
 export function isResumeUpload(field) {
   const kind = uploadKind(field);
-  return kind === "resume" || (kind === "unclear" && (field.hints?.unclearUploads ?? 1) === 1);
+  return kind === "resume" || kind === "both" || (kind === "unclear" && (field.hints?.unclearUploads ?? 1) === 1);
 }
 
-const COVER = /cover[\s_-]*letter/i;
+/** One box for the résumé and the cover letter (spec 037): the résumé's, and the letter goes in after it. */
+export function isSharedUpload(field) {
+  return field.kind === "file" && uploadKind(field) === "both";
+}
 const LETTER_BOX = new Set(["textarea", "editable"]);
 
 /**
  * Is this upload box for the cover letter (spec 031)? Never the résumé's box.
  * Its own label says cover letter, else the text just before it, else the
  * part of the page that holds it alone, else its heading — the nearest one that says anything about a résumé or a cover
- * letter decides. A box for "résumé and cover letter" together is neither.
+ * letter decides. A box for "résumé and cover letter" together is the
+ * résumé's (isSharedUpload): the letter goes in after it.
  */
 export function isCoverLetterUpload(field) {
   if (field.kind !== "file" || isResumeUpload(field)) return false;

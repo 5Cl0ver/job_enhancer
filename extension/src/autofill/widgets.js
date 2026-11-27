@@ -232,13 +232,105 @@ async function writeChips(field, items) {
     }
     return { ok: false, reason: "no_option", actual: chipsOf(field.el).join(", ") };
   }
+  // Skills (spec 037): only the site's own entry for each one (exact, or the
+  // same but for case, spaces and punctuation, or a known other name), never a
+  // longer one that starts the same; at most ~30 s for the whole box. What
+  // the site doesn't offer is said (`notAdded`), never dropped silently.
+  const end = Date.now() + CHIP_WAITS.budgetMs;
   let added = 0;
-  for (const item of items.slice(0, 30)) {
-    const res = await searchPick(field.el, item);
-    if (res.ok) added++;
+  let had = 0;
+  const skipped = [];
+  for (const item of items) {
+    const name = String(item ?? "").trim();
+    if (!name) continue;
+    if (Date.now() > end) {
+      skipped.push(name);
+      continue;
+    }
+    const got = await pickSkill(field.el, name, end);
+    if (got === "added") added++;
+    else if (got === "already") had++;
+    else skipped.push(name);
   }
   const actual = chipsOf(field.el).join(", ");
-  return added ? { ok: true, actual } : { ok: false, reason: "no_option", actual };
+  const more = skipped.length ? { notAdded: skipped } : {};
+  if (added) return { ok: true, actual, ...more };
+  if (had) return { ok: true, already: true, actual, ...more };
+  return { ok: false, reason: "no_option", actual, ...more };
+}
+
+/** How long a skill search waits for the site's results, and the whole box (tests shorten them). */
+export const CHIP_WAITS = { resultsMs: 2500, budgetMs: 30_000 };
+
+// The same skill, said another way (both ways round).
+const SKILL_ALIASES = [
+  ["M365", "Microsoft 365"],
+  ["O365", "Office 365"],
+  ["AD", "Active Directory"],
+];
+// Letters and digits of any language (and + #: "C++", "C#"), nothing else.
+const squash = (s) => String(s ?? "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, "");
+
+/** The ways a label names a skill: itself, without a trailing "(qualifier)"
+ * ("Python (Programming Language)"), and the acronym in its brackets
+ * ("Amazon Web Services (AWS)"). Never an empty one. */
+function skillForms(label) {
+  const t = String(label ?? "").trim();
+  const forms = [t];
+  const m = /^(.*?)\s*\(([^()]+)\)\s*$/.exec(t);
+  if (m) {
+    forms.push(m[1]);
+    if (/^[\p{Lu}\p{N}.+#&-]{2,10}$/u.test(m[2].trim())) forms.push(m[2]);
+  }
+  return forms.map(squash).filter(Boolean);
+}
+
+/** Do a skill and a site's entry name the same thing (spec 037)? */
+export function sameSkill(a, b) {
+  const fb = skillForms(b);
+  return skillForms(a).some((x) => fb.includes(x));
+}
+
+/**
+ * The ways to look a skill up: itself and its other names; then, for
+ * "Windows 10/11" (a shared start, then one part or the other), each part
+ * on its own ("Windows 10", "Windows 11"). "TCP/IP" and "CI/CD" stay whole.
+ * @returns {{names: string[], parts: string[]}}
+ */
+export function skillWordings(skill) {
+  const s = String(skill ?? "").trim();
+  const names = [s];
+  for (const pair of SKILL_ALIASES) {
+    const i = squash(s) ? pair.findIndex((a) => squash(a) === squash(s)) : -1;
+    if (i >= 0) names.push(pair[1 - i]);
+  }
+  const m = /^(.*\s)([\w.+#]+)\s*\/\s*([\w.+#]+)$/.exec(s);
+  const parts = m && m[1].trim() ? [`${m[1]}${m[2]}`, `${m[1]}${m[3]}`] : [];
+  return { names, parts };
+}
+
+/** One skill: "added", "already" (a chip already), or "" (not offered). */
+async function pickSkill(input, skill, end) {
+  const { names, parts } = skillWordings(skill);
+  const has = (n) => chipsOf(input).some((c) => sameSkill(n, c));
+  if (names.some(has)) return "already";
+  const wait = () => Math.max(0, Math.min(CHIP_WAITS.resultsMs, end - Date.now()));
+  for (const name of names) {
+    if (Date.now() > end) return "";
+    const res = await searchPick(input, name, { wait: wait(), strict: true, also: names });
+    if (res.ok) return res.already ? "already" : "added";
+  }
+  let any = "";
+  for (const part of parts) {
+    if (Date.now() > end) break;
+    if (has(part)) {
+      any ||= "already";
+      continue;
+    }
+    const res = await searchPick(input, part, { wait: wait(), strict: true });
+    if (res.ok) any = "added";
+  }
+  return any;
 }
 
 // ---- Native dropdowns ----------------------------------------------------
@@ -637,9 +729,13 @@ export function chipsOf(input) {
  * A result that is a category (Workday's "Social Media", spec 036) opens its
  * own list: the item is chosen there. "Social Media > LinkedIn" says both:
  * the item is searched first, else the category, then the item in it.
+ * `strict` (skills, spec 037): only an entry that IS the term (case, spaces
+ * and punctuation aside, or one of `also`, its other names), at every level;
+ * the wait ends as soon as the results show without it ("No Items"); a chip
+ * Workday adds by itself that isn't the term is taken off again.
  * @returns {Promise<{ok: boolean, already?: boolean, reason?: string, actual?: string}>}
  */
-export function searchPick(input, term, { wait = 1500 } = {}) {
+export function searchPick(input, term, { wait = 1500, strict = false, also = [] } = {}) {
   return oneAtATime(async () => {
     const doc = input.ownerDocument;
     const path = String(term || "")
@@ -652,6 +748,10 @@ export function searchPick(input, term, { wait = 1500 } = {}) {
     await closeOpenLists(doc);
     const count = () => chipsOf(input).length;
     const had = count();
+    const chipsBefore = chipsOf(input);
+    // Strict: the entry is the term itself (or one of its other names).
+    const same = (label, name) => [name, ...also].some((n) => sameSkill(n, label));
+    const match = (name, opts) => (strict ? opts.findIndex((o) => same(o.label, name)) : firstMatch([name], opts));
     const field = { el: input };
     const before = new Set(visibleOptions(field).map((o) => o.el));
     const search = (text) => {
@@ -676,10 +776,18 @@ export function searchPick(input, term, { wait = 1500 } = {}) {
         let opts = [];
         let i = -1;
         const end = Date.now() + wait;
+        let shownAt = 0;
         while (Date.now() < end && count() === had) {
           opts = fresh();
-          i = opts.length ? firstMatch([name], opts) : -1;
+          i = opts.length ? match(name, opts) : -1;
           if (i >= 0) break;
+          // Strict: the results are in and it isn't there (or Workday says
+          // "No Items"): stop looking.
+          if (strict && noItems(doc)) break;
+          if (strict && opts.length) {
+            shownAt ||= Date.now();
+            if (Date.now() - shownAt > 300) break;
+          }
           await sleep(60);
         }
         if (count() > had) return i >= 0 ? opts[i].label : want; // Workday chose a single match itself
@@ -701,12 +809,26 @@ export function searchPick(input, term, { wait = 1500 } = {}) {
       search(path[0]);
       picked = await choose(path);
     }
-    const ok = count() > had;
+    let ok = count() > had;
+    // Strict: a chip that isn't the term (Workday chose a lone result by
+    // itself: "Microsoft 365 Copilot for Sales" for "Microsoft 365") comes off.
+    if (strict && ok) {
+      const added = chipsOf(input).filter((c) => !chipsBefore.includes(c));
+      const right = added.filter((c) => same(c, want));
+      if (right.length < added.length) await removeChips(input, [...chipsBefore, ...right]);
+      ok = right.length > 0;
+      picked = ok ? right[0] : "";
+    }
     // Text left in the box (no match, or a page that keeps it) is cleared.
     if (input.value) setNativeValue(input, "", { blur: false });
     await closeOpenLists(doc, 300);
     return ok ? { ok: true, actual: picked || want } : { ok: false, reason: "no_option" };
   });
+}
+
+/** Workday's "No Items" (or a site's "No results") in an open result list. */
+function noItems(doc) {
+  return openPopups(doc).some((p) => /\bno (items|results|matches)\b/i.test(p.textContent || ""));
 }
 
 /** Remove chips that weren't there before (Undo for a search prompt). */
@@ -723,35 +845,138 @@ export async function removeChips(input, keep) {
 }
 
 // ---- Files ----------------------------------------------------------------
+// A file counts as attached when the page shows it took it (spec 037): the
+// box holds it on a plain page, or the upload card lists one more file or
+// its name. Workday takes the file from its box, EMPTIES the box and lists the
+// file a few seconds later: an emptied box is never a failure. When nothing
+// says either way it's "unverified", and never attached again.
 
-async function writeFile(field, [file]) {
-  if (!(file instanceof File) || !win(field.el).DataTransfer) return { ok: false, reason: "no_data" };
-  // What Workday's card shows BEFORE: a returning applicant's old résumé
-  // there is never taken for ours (spec 029).
-  const before = field.zone ? cardState(field, file) : null;
+/** How long an upload card gets to list a file (tests shorten it). */
+export const FILE_WAITS = { listMs: 8000, stepMs: 200 };
+
+async function writeFile(field, files) {
+  const file = files.find((f) => f instanceof File);
+  if (!file || !win(field.el).DataTransfer) return { ok: false, reason: "no_data" };
+  // What the card shows BEFORE: a returning applicant's old résumé there is
+  // never taken for ours (spec 029).
+  const before = cardState(field, file);
+  const el = field.el;
   try {
-    const dt = new (win(field.el).DataTransfer)();
+    const dt = new (win(el).DataTransfer)();
+    // A plain box that takes several files keeps what it holds (the résumé,
+    // then the cover letter in a box for both, spec 037).
+    if (el.multiple && !before.card) for (const f of el.files || []) if (f.name !== file.name) dt.items.add(f);
     dt.items.add(file);
-    field.el.files = dt.files;
-    fire(field.el, "Event", "input");
-    fire(field.el, "Event", "change");
+    el.files = dt.files;
+    fire(el, "Event", "input");
+    fire(el, "Event", "change");
   } catch {
     return { ok: false, reason: "rejected" };
   }
-  const ok = field.el.files?.length === 1 && field.el.files[0].name === file.name;
-  if (ok && before) await dropIfIgnored(field, file, before);
-  return { ok, actual: file.name };
+  const holds = () => el.isConnected && [...(el.files || [])].some((f) => f.name === file.name);
+  const took = () => tookFile(field, file, before);
+  // A plain box (no upload card) that holds it: taken.
+  if (!before.card && holds()) return { ok: true, actual: file.name };
+  if (await waitFor(took, FILE_WAITS.listMs)) return { ok: true, actual: file.name };
+  // Workday's React drop zone that ignored the box (the box still holds it,
+  // nothing listed): one drop, the way a person dragging it would.
+  if (holds() && dropOn(field, file) && (await waitFor(took, FILE_WAITS.listMs))) return { ok: true, actual: file.name };
+  // Maybe up, maybe not: never "failed", never tried again.
+  return { ok: false, reason: "unverified", actual: file.name };
 }
 
-/** The upload card's files as shown: how many, and whether our file's name
- * is in the card or on the page. */
+async function waitFor(test, ms) {
+  for (let waited = 0; ; waited += FILE_WAITS.stepMs) {
+    if (test()) return true;
+    if (waited >= ms) return false;
+    await sleep(FILE_WAITS.stepMs);
+  }
+}
+
+/** Did the page take the file: the card re-drawn (the site reacted), one
+ * more file than before, or OUR file's name newly shown. A file that was
+ * already there never counts. */
+function tookFile(field, file, before) {
+  if (before.card && (!before.card.isConnected || (field.zone && !field.zone.isConnected))) return true;
+  const now = cardState(field, file);
+  return now.count > before.count || now.named > before.named || (now.onPage && !before.onPage);
+}
+
+/** The upload card a file box sits in: Workday's around its drop zone, else
+ * an ancestor named like one; null for a plain box. */
+function cardOf(field) {
+  if (field.zone) return uploadCard(field.zone);
+  for (let n = field.el?.parentElement, i = 0; n && i < 4; n = n.parentElement, i++) {
+    if (/attachments|fileupload/i.test(n.getAttribute?.("data-automation-id") || "")) return n;
+  }
+  return null;
+}
+
+const uploadedItems = (card) => [...(card?.querySelectorAll?.("[data-automation-id]") || [])].filter((n) => UPLOADED.test(n.getAttribute("data-automation-id")));
+
+/** A file's name as a list shows it: case, spaces, Workday's "Successfully
+ * Uploaded!", its size and its Delete button don't count. */
+const fileName = (t) =>
+  String(t ?? "")
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/successfully uploaded!?|\b(delete|remove)\b/g, " ")
+    .replace(/\(?\s*\d+(\.\d+)?\s*(bytes|[kmg]?b)\s*\)?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** The part of the page that lists this box's files: Workday's card, else
+ * the box's surroundings that hold it alone. */
+function listOf(field) {
+  const card = cardOf(field);
+  if (card) return card;
+  let node = field.el?.parentElement;
+  for (let i = 0; node?.parentElement && i < 3 && node.parentElement.querySelectorAll("input[type=file]").length === 1; i++) node = node.parentElement;
+  return node || null;
+}
+
+/** How many entries of a list show exactly this file name (never a part of
+ * one: "CV.pdf" is not "Old CV.pdf"). */
+function listedTimes(list, name) {
+  const want = fileName(name);
+  if (!list || !want) return 0;
+  const items = uploadedItems(list);
+  const entries = items.length ? items : [list];
+  let n = 0;
+  for (const item of entries) {
+    if ([item, ...item.querySelectorAll("*")].some((el) => fileName(el.textContent) === want)) n++;
+  }
+  return n;
+}
+
+/**
+ * Does this box's list show a file of exactly this name (spec 037)? Workday's
+ * card lists it; another site shows its name by the box. The whole name,
+ * never a part of one. `loose` (only for a file Job Catcher itself put
+ * there): its name anywhere in the list ("Uploaded: resume.pdf"), or
+ * shortened ("Sam_Rivera_Nor….pdf").
+ */
+export function fileListed(field, name, { loose = false } = {}) {
+  const list = listOf(field);
+  if (listedTimes(list, name) > 0) return true;
+  if (!loose || !list) return false;
+  const want = fileName(name);
+  if (!want) return false;
+  if (fileName(list.textContent).includes(want)) return true;
+  return [list, ...list.querySelectorAll("*")].some((el) => {
+    const [head, tail, ...more] = fileName(el.textContent).split(/…|\.\.\.(?=\S)/);
+    return !more.length && tail !== undefined && head.length >= 4 && want.startsWith(head) && want.endsWith(tail);
+  });
+}
+
+/** The upload card's files as shown: how many, how many with our file's
+ * name, and whether its name is on the page. */
 function cardState(field, file) {
-  const card = field.zone ? uploadCard(field.zone) : null;
-  const items = [...(card?.querySelectorAll?.("[data-automation-id]") || [])].filter((n) => UPLOADED.test(n.getAttribute("data-automation-id")));
+  const card = cardOf(field);
   return {
     card,
-    count: items.length,
-    inCard: (card?.textContent || "").includes(file.name),
+    count: uploadedItems(card).length,
+    named: listedTimes(card, file.name),
     onPage: (field.el.ownerDocument?.body?.textContent || "").includes(file.name),
   };
 }
@@ -771,23 +996,12 @@ function uploadCard(zone) {
 }
 
 /**
- * Workday's upload is a React drop zone: when it hasn't taken the file from
- * the box (its name never shows), drop the file on the zone, the way a person
- * dragging it would. Only on Workday's zone, and only once.
+ * Drop the file on Workday's zone, the way a person dragging it would: only
+ * on Workday's own zone, only once per write. True when dropped.
  */
-async function dropIfIgnored(field, file, before, { waitMs = 4000 } = {}) {
+function dropOn(field, file) {
   const zone = field.zone;
   if (!zone?.isConnected || !WORKDAY_DROP.test(zone.getAttribute?.("data-automation-id") || "")) return false;
-  const card = before.card;
-  // Taken: the card re-drawn (the site reacted), one more file than before,
-  // or OUR file's name newly shown. A file that was already there never counts.
-  const took = () => {
-    if (!zone.isConnected || !card?.isConnected) return true;
-    const now = cardState(field, file);
-    return now.count > before.count || (now.inCard && !before.inCard) || (now.onPage && !before.onPage);
-  };
-  for (let waited = 0; waited < waitMs && !took(); waited += 200) await sleep(200);
-  if (took()) return false;
   const W = win(zone);
   const dt = new W.DataTransfer();
   dt.items.add(file);

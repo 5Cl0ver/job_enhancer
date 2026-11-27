@@ -135,8 +135,9 @@ JOB_CATCHER_LIVE = "0.42.0"
 LIVE_STATUSES = (APPLY_FILLING, APPLY_NEEDS_YOU)
 MAX_LIVE_BOXES = 150
 MAX_FIXES = 30
-# What Job Catcher did with the résumé on a page (spec 026).
-RESUME_STATES = ("attached", "no_box", "no_file", "failed")
+# What Job Catcher did with the résumé on a page (spec 026), and with the
+# cover letter (spec 037). "unverified": put in, the page didn't show it.
+RESUME_STATES = ("attached", "unverified", "no_box", "no_file", "failed")
 # Never kept or shown, wherever they come from.
 SENSITIVE = re.compile(
     r"password|passcode|\bpin\b|social security|\bssn\b|card number|credit card"
@@ -1227,8 +1228,22 @@ def _blocked_line(run: ApplyRun) -> str | None:
         {**e, "told": True} if e.get("kind") == "blocked_submit" else e
         for e in run.events or []
     ]
+    # Job Catcher's own hold while a press goes through (spec 037): the user
+    # did decide; it's the second press that waits.
+    if any(e.get("pending") for e in new):
+        return (
+            "Job Catcher stopped a second Submit press: the first one is still "
+            "going through. Don't press Submit again; look at the page, then "
+            "call wait_for_you."
+        )
     if not _guarded(run):
         return None
+    if run.status == APPLY_SUBMITTING:
+        # Locked again because it was pressed (spec 037), not for a decision.
+        return (
+            "Job Catcher stopped your Submit press: Submit was already pressed. "
+            "Never press it again on your own; call wait_for_you."
+        )
     then = (
         "Call wait_for_you for their decision."
         if run.status == APPLY_REVIEW
@@ -1893,6 +1908,32 @@ async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
     return doc.edited_content or doc.content
 
 
+# Spec 037: Job Catcher saw Submit come back (with the page's error, when it
+# caught one). At most SUBMIT_RETRIES unlocks; then Claude stops and asks.
+SUBMIT_RETRIES = 2
+# A confirmation this soon after a turn-down still ends the run as sent.
+FAILED_CONFIRM = timedelta(minutes=10)
+_SUBMIT_FAILED_ERROR = (
+    "Submit didn't go through (the page shows an error). Read the error on the "
+    "page, fix it, then press Submit once."
+)
+_SUBMIT_FAILED_PLAIN = (
+    "Submit didn't go through. Look at the page, fix what it says, then press "
+    "Submit once."
+)
+_SUBMIT_STUCK = (
+    "Submit didn't go through again. Don't press Submit again: tell the user "
+    "with message_user to check the page and say whether it was sent, then "
+    "keep calling wait_for_you."
+)
+
+
+def _submit_failed_next(failed: dict[str, Any]) -> str:
+    if failed.get("stuck"):
+        return _SUBMIT_STUCK
+    return _SUBMIT_FAILED_ERROR if failed.get("error") else _SUBMIT_FAILED_PLAIN
+
+
 _ALREADY_PRESSED = (
     "Submit was ALREADY pressed. Never press it again on your own (that could "
     "apply twice). Look at the page: if it shows a confirmation, call "
@@ -2161,8 +2202,13 @@ def _next(run: ApplyRun, apply_url: str = "") -> str:
     if s == APPLY_RESUME_REVIEW:
         return "Call wait_for_you: the user is looking over the résumé."
     if s == APPLY_SUBMITTING:
+        failed = (run.review or {}).get("submit_failed")
+        if failed and failed.get("stuck"):
+            return _SUBMIT_STUCK
         if (run.review or {}).get("pressed_at"):
             return _ALREADY_PRESSED
+        if failed:
+            return _submit_failed_next(failed)
         return (
             "The user said submit: press the final Submit ONCE, then call "
             "finish_apply. If it was already pressed (a confirmation or an error "
@@ -2972,11 +3018,18 @@ REASONS = {
         "photo (the answers are kept)"
     ),
     "changed": "The page changed while the photo was taken",
+    # Spec 037: Job Catcher waited ~30 s for the tab to show first.
     "busy": (
-        "You were using Chrome on this computer, so no photo then (the answers "
-        "are kept)"
+        "Your application tab wasn't showing while you used the computer. Ask "
+        "the user to click the application's tab, then call page_done again to "
+        "retake the photos"
     ),
     "replaced": "A newer page came first",
+    # Spec 037: never a photo while Job Catcher fills the page.
+    "filling": (
+        "Job Catcher was still filling this page, so no photo then (the answers "
+        "are kept). Call page_done again once fill_page has returned"
+    ),
     # Spec 029: never an earlier step's report in its place.
     "no_report": (
         "Job Catcher filled but got no fresh reading of this page (it may "
@@ -3043,6 +3096,32 @@ RESUME_WORDS = {
         "need_help(kind='file', what=…, page_url=…): the app gives the user "
         "the file to attach."
     ),
+    # Spec 037: never attached a second time.
+    "unverified": (
+        "Job Catcher put the résumé in its box, but the page didn't show it "
+        "yet. Don't attach it again. Look at the page: if the résumé isn't "
+        "listed there, call need_help(kind='file', what=…, page_url=…)."
+    ),
+}
+
+COVER_LETTER_WORDS = {
+    "attached": (
+        "Job Catcher put the job's cover letter in. Don't attach or paste it again."
+    ),
+    "unverified": (
+        "Job Catcher put the cover letter in its box, but the page didn't show "
+        "it yet. Don't attach it again; look at the page."
+    ),
+    "no_box": "There's no box for the cover letter on this page.",
+    "no_file": (
+        "The page has a cover-letter box and the job has no letter. If the "
+        "application asks for one, write it with save_cover_letter, then call "
+        "fill_page again."
+    ),
+    "failed": (
+        "Job Catcher couldn't put the cover letter in. Call need_help(kind="
+        "'file', what=…, page_url=…): the app gives the user the file."
+    ),
 }
 
 
@@ -3079,6 +3158,9 @@ def fill_result(res: dict) -> dict[str, Any]:
     if res.get("resume") in RESUME_STATES:
         out["resume"] = res["resume"]
         out["resume_note"] = RESUME_WORDS[res["resume"]]
+    if res.get("cover_letter") in RESUME_STATES:
+        out["cover_letter"] = res["cover_letter"]
+        out["cover_letter_note"] = COVER_LETTER_WORDS[res["cover_letter"]]
     return out
 
 
@@ -3354,6 +3436,10 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
             ),
         }
     if run.status == APPLY_SUBMITTING:
+        failed = (run.review or {}).get("submit_failed")
+        if failed and failed.get("stuck"):
+            # Turned down too often (spec 037): the user checks the page.
+            return {**base, "waiting_on": "sent", "ready": False, "next": _SUBMIT_STUCK}
         if (run.review or {}).get("pressed_at"):
             # The user says whether it went; until then, keep waiting.
             return {
@@ -3361,6 +3447,19 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                 "waiting_on": "sent",
                 "ready": False,
                 "next": _ALREADY_PRESSED,
+            }
+        if failed:
+            # The page's error is data, never inside `next` (spec 037).
+            return {
+                **base,
+                "waiting_on": None,
+                "ready": True,
+                "next": _submit_failed_next(failed),
+                **(
+                    {"submit_error_on_page": failed["error"]}
+                    if failed.get("error")
+                    else {}
+                ),
             }
         if (run.review or {}).get("retry"):
             return {
@@ -3562,7 +3661,15 @@ async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
         # Read the run's tab for the live view while it's being filled.
         "live": run.status in LIVE_STATUSES,
         "requests": [
-            {"id": str(r.id), "kind": r.kind, "url": r.url, "page_n": r.page_n}
+            {
+                "id": str(r.id),
+                "kind": r.kind,
+                "url": r.url,
+                "page_n": r.page_n,
+                # How old it is, by this clock (spec 037): a long fill never
+                # outlasts FILL_GOING, whatever the computer's clock says.
+                "age_s": max(0, int((_now() - _aware(r.created_at)).total_seconds())),
+            }
             for r in reqs
         ],
     }
@@ -3733,6 +3840,8 @@ async def finish_request(
         ]
         if payload.get("resume") in RESUME_STATES:
             result["resume"] = payload["resume"]
+        if payload.get("cover_letter") in RESUME_STATES:
+            result["cover_letter"] = payload["cover_letter"]
         if (req.result or {}).get("late"):
             result["late"] = True  # Claude's last wait ended before it (spec 033)
     else:
@@ -3759,6 +3868,7 @@ async def extension_event(
     kind: str,
     url: str | None,
     words: str | None = None,
+    reason: str | None = None,
 ) -> ApplyRun:
     run = await _locked(db, user_id, run_id)
     if run.status not in APPLY_OPEN:
@@ -3777,7 +3887,16 @@ async def extension_event(
     on_site = not host or any(
         host == h or host.endswith(f".{h}") for h in run.apply_hosts or []
     )
-    if kind == "blocked_submit":
+    if kind == "blocked_submit" and reason == "pending":
+        # Job Catcher's own hold after a press, while it goes through (spec 037).
+        _event(
+            run,
+            "blocked_submit",
+            "Job Catcher held back a second Submit press while the first was "
+            "still going through.",
+        )
+        run.events = [*run.events[:-1], {**run.events[-1], "pending": True}]
+    elif kind == "blocked_submit":
         _event(
             run,
             "blocked_submit",
@@ -3787,15 +3906,56 @@ async def extension_event(
         # Pressed, not yet sure it went: Job Catcher looks for the
         # confirmation, and the app asks if none shows (spec 023).
         if approved and run.review:
-            run.review = {**run.review, "pressed_at": _iso(_now())}
+            run.review = {
+                **run.review,
+                "pressed_at": _iso(_now()),
+                "submit_failed": None,
+            }
         _event(run, "submit_pressed", f"Submit was pressed on {host or 'the page'}.")
+    elif kind == "submit_failed":
+        # Pressed, and the page shows Submit again, enabled, with a new error
+        # (spec 037: Workday brings it back): it didn't go through. One more
+        # press is allowed (the lock comes back with it), at most twice; then
+        # it stays locked and the user checks the page. When the user presses
+        # it themselves, it's theirs: ignored.
+        if decision == "self":
+            return run
+        error = problems_svc.scrub(words, 160)
+        if approved and run.review:
+            n = int(run.review.get("submit_failed_n") or 0)
+            stuck = n >= SUBMIT_RETRIES
+            run.review = {
+                **run.review,
+                # Locked again after the last unlock: the app asks "Did it go through?".
+                "pressed_at": _iso(_now()) if stuck else None,
+                "submit_failed": {
+                    "error": error,
+                    "at": _iso(_now()),
+                    **({"stuck": True} if stuck else {}),
+                },
+                "submit_failed_n": n if stuck else n + 1,
+                "failed_at": _iso(_now()),
+            }
+        _event(
+            run,
+            "submit_failed",
+            f"Submit didn't go through: {error}"
+            if error
+            else "Submit didn't go through.",
+        )
     elif kind == "confirmation_seen":
         seen = _text(words, 300) or "a confirmation"
         # Only after a Submit press Job Catcher saw: words that were on the page
         # before (a review page's "once your application has been submitted")
         # never end a run.
         pressed = (run.review or {}).get("pressed_at")
-        if approved and on_site and pressed:
+        # A late success after a turn-down counts too (spec 037).
+        failed_at = (run.review or {}).get("failed_at")
+        lately = (
+            bool(failed_at)
+            and _now() - datetime.fromisoformat(failed_at) < FAILED_CONFIRM
+        )
+        if approved and on_site and (pressed or lately):
             run.review = {
                 **(run.review or {}),
                 "confirmed": {"words": seen, "at": _iso(_now())},

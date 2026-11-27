@@ -3,7 +3,7 @@
 // résumé box Workday hides (input inside or beside its drop zone, labelled
 // "Upload a file" under a "Resume/CV" heading), only the current step's boxes
 // in a fill's report, and never the phone number in a Phone Extension box.
-import { describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -11,7 +11,7 @@ import { collectFields, uploadZone } from "../src/autofill/scan.js";
 import { isResumeUpload, resolve, uploadKind } from "../src/autofill/resolve.js";
 import { isPhoneExtension, profileKeyFor } from "../src/autofill/classify/profileKeys.js";
 import { createSession } from "../src/autofill/session.js";
-import { writeField } from "../src/autofill/widgets.js";
+import { FILE_WAITS, writeField } from "../src/autofill/widgets.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const parse = (html) => new DOMParser().parseFromString(html, "text/html");
@@ -28,6 +28,11 @@ function stepTwo() {
 }
 
 describe("Workday's résumé box (bug 2)", () => {
+  // The upload card's wait (8 s in a browser), short here.
+  const waits = { ...FILE_WAITS };
+  beforeEach(() => Object.assign(FILE_WAITS, { listMs: 300, stepMs: 20 }));
+  afterEach(() => Object.assign(FILE_WAITS, waits));
+
   it("the real layout: the input inside the drop zone, labelled only 'Upload a file' under 'Resume/CV'", () => {
     const doc = parse(noScripts(lab("apply-workday.html")));
     const box = collectFields(doc, { visible }).find((f) => f.kind === "file");
@@ -68,13 +73,15 @@ describe("Workday's résumé box (bug 2)", () => {
     let dropped = "";
     doc.querySelector("#zone").addEventListener("drop", (e) => {
       dropped = [...(e.dataTransfer?.files || [])].map((f) => f.name).join(",");
+      // The card lists it once it took it.
+      doc.querySelector("[data-automation-id=attachments-FileUpload]").insertAdjacentHTML("afterbegin", `<div data-automation-id="file-upload-successful">${dropped}</div>`);
     });
     const box = collectFields(doc, { visible }).find((f) => f.kind === "file");
     const file = new File(["%PDF"], "alex-rivera.pdf", { type: "application/pdf" });
     const res = await writeField(box, [file]);
     expect(res.ok).toBe(true);
     expect(dropped).toBe("alex-rivera.pdf");
-  }, 10_000);
+  });
 
   it("an old résumé already in Workday's card is never taken for ours (verification)", async () => {
     // A returning applicant: last year's file is in the card; the zone
@@ -89,9 +96,11 @@ describe("Workday's résumé box (bug 2)", () => {
     });
     const box = collectFields(doc, { visible }).find((f) => f.kind === "file");
     expect(box?.zone?.id).toBe("zone");
-    await writeField(box, [new File(["%PDF"], "Alex_Rivera_Northwind.pdf", { type: "application/pdf" })]);
+    const res = await writeField(box, [new File(["%PDF"], "Alex_Rivera_Northwind.pdf", { type: "application/pdf" })]);
     expect(dropped).toBe("Alex_Rivera_Northwind.pdf");
-  }, 10_000);
+    // Nothing listed it after the drop: maybe up, never "failed".
+    expect(res).toMatchObject({ ok: false, reason: "unverified" });
+  });
 
   it("one more file in the card than before counts as taken: no drop (verification)", async () => {
     const doc = parse(`<section><h3>Resume/CV</h3><div data-automation-id="attachments-FileUpload" id="card">
