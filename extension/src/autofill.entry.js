@@ -253,10 +253,11 @@ function check() {
 
 // ---- Filling ----------------------------------------------------------------
 
-function report() {
+/** `action`: after a panel action (Fix, Undo, Use…), never a fill's report (spec 037). */
+function report({ action = false } = {}) {
   const r = session.report();
   lastReport = { filled: r.entries.length, need: r.need_you.length, already: (r.already || []).length };
-  send({ type: "sessionUpdate", session: r });
+  send({ type: "sessionUpdate", session: action ? { ...r, action: true } : r });
   return r;
 }
 
@@ -354,7 +355,8 @@ async function fill(auto) {
   // On an automatic step of an application it already went up in: never again.
   const skipFiles = auto && resumeDone;
   // The file boxes already tried on this tab (a reload, an update): never again (spec 037).
-  session.seedTried((await send({ type: "getFilesTried" }))?.tried);
+  const files = await send({ type: "getFilesTried" });
+  session.seedTried(files?.tried, files?.run || "");
   if (!skipFiles && (await session.uploadResume(copy, { auto }))) {
     resumeDone = true;
     send({ type: "resumeUploaded" });
@@ -514,7 +516,7 @@ try {
         return { ok: false };
       };
       act().then((r) => {
-        if (!["show", "typed", "keep"].includes(msg.action)) report();
+        if (!["show", "typed", "keep"].includes(msg.action)) report({ action: true });
         reply(r);
       });
       return true;
@@ -655,7 +657,7 @@ async function fillPickedNow({ fieldId: id, profile_key, answer }) {
   if (!values.length) return { ok: false, reason: "no_data" };
   const res = await session.fillPicked(field, values, profile_key ? "profile" : "learned");
   usedHere = true;
-  report();
+  report({ action: true });
   return { ok: !!res.ok, reason: res.reason, actual: res.ok ? String(res.actual ?? "") : "" };
 }
 

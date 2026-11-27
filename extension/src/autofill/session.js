@@ -39,6 +39,10 @@ const RECHECK = new Set(["combobox", "chips"]);
 // unticked is an answer; never a file: Workday re-draws its box empty).
 const MUST_HOLD = new Set(["combobox", "chips", "select", "text", "textarea", "editable"]);
 
+// How long a file try the page didn't confirm stays locked (spec 037): long
+// enough for its list to catch up, short enough for a redo after a sign-in.
+const UNVERIFIED_MS = 3 * 60_000;
+
 const STYLE_ID = "jec-fill-style";
 const STYLE = `
 [data-jec-fill] { outline: 2px solid var(--jec-fill) !important; outline-offset: 2px !important; border-radius: 4px; }
@@ -217,10 +221,13 @@ export function createSession(deps) {
   let resumeState = null;
   /** The cover letter on this page, the same way (spec 037); null when neither a letter nor its box. */
   let coverState = null;
-  /** Each file box tried on each step (spec 037), by fileKey: "attached" or
-   * "unverified". One try per box per step, on a press or by itself: a site
-   * that empties its box after taking the file (Workday) never gets two. */
+  /** Each file box tried on each step of this run (spec 037), by fileKey:
+   * {s: "attached" | "unverified", at}. A site that empties its box after
+   * taking the file (Workday) never gets two: "attached" holds while the
+   * list shows the file (gone = safe to put in again), "unverified" for a
+   * few minutes. */
   const tried = new Map();
+  let runId = ""; // the Apply with Claude run this tab is filling, if any
   /** uploadResume has run: the résumé's boxes are its own (fillKnown never tries them again). */
   let uploadRan = false;
   /** Where the résumé went up, and its name: a site may swap its box for the
@@ -544,27 +551,31 @@ export function createSession(deps) {
   /** Which box on which step, for "tried once" (spec 037): Workday keeps one
    * address for every step, so its step's name counts too. */
   function fileKey(field, what) {
-    const at = `${doc.location?.host || ""}${doc.location?.pathname || ""}`;
-    return [at, stepName(doc), uploadKind(field), field.key || "", what].join("|");
+    const at = String(doc.location?.href || "").split("#")[0];
+    return [runId, at, stepName(doc), uploadKind(field), field.key || "", what].join("|");
   }
 
   /**
-   * Attach one file to a box, once per box per step (spec 037): never when
-   * its list already shows it (a second press, a fresh Job Catcher), never
-   * again after a try the page didn't confirm ("unverified").
+   * Attach one file to a box, once per box per step (spec 037): never again
+   * while its list shows the file Job Catcher put there (a second press, a
+   * fresh Job Catcher), nor for a few minutes after a try the page didn't
+   * confirm ("unverified"). A same-name file Job Catcher never put there (a
+   * returning applicant's old one, spec 029) never stops ours.
    * @returns {Promise<{state: "attached"|"unverified"|"failed", wrote: boolean}>}
    */
   async function attachFile(field, file, what, source = "profile") {
     const k = fileKey(field, what);
     const keep = (state) => {
-      tried.set(k, state);
-      deps.onFileTried?.(k, state);
+      const rec = { s: state, at: Date.now() };
+      tried.set(k, rec);
+      deps.onFileTried?.(k, rec);
     };
-    if (fileListed(field, file.name)) {
-      if (tried.get(k) !== "attached") keep("attached");
+    const rec = tried.get(k);
+    if (rec && fileListed(field, file.name)) {
+      if (rec.s !== "attached") keep("attached");
       return { state: "attached", wrote: false };
     }
-    if (tried.has(k)) return { state: tried.get(k), wrote: false };
+    if (rec?.s === "unverified" && Date.now() - rec.at < UNVERIFIED_MS) return { state: "unverified", wrote: false };
     const res = await fillOne(field, [file], source);
     if (res.ok) {
       keep("attached");
@@ -617,7 +628,9 @@ export function createSession(deps) {
     // site re-draws its upload box empty afterwards (Workday, spec 029).
     if (resumeShown()) return state("attached");
     if (!boxes.length) return state("no_box");
-    if (boxes.some((f) => f.el.files?.length || filled.has(f.id))) return state("attached");
+    // A box holding a file (a plain one keeps it). One Job Catcher filled
+    // whose list no longer shows it is tried again (attachFile, spec 037).
+    if (boxes.some((f) => f.el.files?.length)) return state("attached");
     if (!copy.resumeFile) return state("no_file");
     for (const field of boxes) {
       if (declined.has(field.id)) continue;
@@ -861,10 +874,14 @@ export function createSession(deps) {
     }
   }
 
-  /** What the background kept for this tab (spec 037): a fresh Job Catcher
-   * (a reload, an update) never tries a box again either. */
-  function seedTried(held) {
-    for (const [k, v] of Object.entries(held || {})) if ((v === "attached" || v === "unverified") && !tried.has(k)) tried.set(k, v);
+  /** What the background kept for this tab, and the run it's for (spec
+   * 037): a fresh Job Catcher (a reload, an update) never tries a box again
+   * either; another run starts afresh. */
+  function seedTried(held, run = "") {
+    runId = run || "";
+    for (const [k, v] of Object.entries(held || {})) {
+      if ((v?.s === "attached" || v?.s === "unverified") && Number.isFinite(v.at) && !tried.has(k)) tried.set(k, { s: v.s, at: v.at });
+    }
   }
 
   function show(id) {

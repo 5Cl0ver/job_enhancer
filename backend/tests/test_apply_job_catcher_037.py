@@ -211,5 +211,75 @@ async def test_submit_failed_before_any_press_was_counted(engine, monkeypatch):
     run = await _run(maker, run_id)
     assert run.events[-1]["text"] == "Submit didn't go through."
     out = await mcp_mod.wait_for_you(rid)
-    assert "Read the error on the page" in out["next"]
+    # No error was captured: never "the page shows an error".
+    assert "shows an error" not in out["next"]
+    assert out["next"] == (
+        "Submit didn't go through. Look at the page, fix what it says, then "
+        "press Submit once."
+    )
     assert "submit_error_on_page" not in out
+
+
+@pytest.mark.asyncio
+async def test_a_late_confirmation_after_a_turn_down_still_ends_the_run_as_sent(
+    engine, monkeypatch
+):
+    maker, user, run_id, rid = await _submitting(engine, monkeypatch)
+    await _event(maker, user, run_id, "submit_failed", "Error - Page Error")
+    async with maker() as db:
+        await svc.extension_event(
+            db, user.id, run_id, "confirmation_seen", PAGE, "Thank you for applying"
+        )
+        await db.commit()
+    run = await _run(maker, run_id)
+    assert run.status == "sent"
+
+
+@pytest.mark.asyncio
+async def test_submit_failed_is_ignored_when_the_user_submits_it_themselves(
+    engine, monkeypatch
+):
+    maker, user, run_id, _ = await _setup(engine, monkeypatch)
+    rid = str(run_id)
+    await mcp_mod.get_apply_brief(rid)
+    _job_catcher(monkeypatch, maker, user.id, photos=1)
+    await mcp_mod.ready_for_review(rid, PAGE, "Review", [])
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id, lock=True)
+        await svc.decide(db, run, "self", None, by="app")
+        await db.commit()
+    await _event(maker, user, run_id, "submit_pressed")
+    pressed = (await _run(maker, run_id)).review["pressed_at"]
+    await _event(maker, user, run_id, "submit_failed", "Error - Page Error")
+    run = await _run(maker, run_id)
+    assert run.review["pressed_at"] == pressed
+    assert not run.review.get("submit_failed")
+    assert all(e["kind"] != "submit_failed" for e in run.events)
+
+
+@pytest.mark.asyncio
+async def test_at_most_two_unlocks_then_claude_stops_and_asks(engine, monkeypatch):
+    maker, user, run_id, rid = await _submitting(engine, monkeypatch)
+    for _ in range(2):
+        state = await _event(maker, user, run_id, "submit_failed", "Error - Page Error")
+        assert state["guard"] is False
+        await _event(maker, user, run_id, "submit_pressed")
+    state = await _event(maker, user, run_id, "submit_failed", "Error - Page Error")
+    assert state["guard"] is True  # no third unlock
+    out = await mcp_mod.wait_for_you(rid)
+    assert out["ready"] is False
+    assert "Don't press Submit again" in out["next"]
+    assert "check the page" in out["next"]
+
+
+@pytest.mark.asyncio
+async def test_job_catcher_hears_when_each_request_was_made(engine, monkeypatch):
+    """A long fill never outlasts the app's own wait for it (FILL_GOING)."""
+    maker, user, run_id, _ = await _setup(engine, monkeypatch)
+    rid = str(run_id)
+    await mcp_mod.get_apply_brief(rid)
+    async with maker() as db:
+        await svc.fill_request(db, user, rid, PAGE)
+        await db.commit()
+        [req] = (await svc.extension_state(db, user.id))["requests"]
+    assert req["kind"] == "fill" and req["created_at"].endswith("+00:00")

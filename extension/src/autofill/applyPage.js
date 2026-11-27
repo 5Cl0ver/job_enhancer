@@ -119,6 +119,8 @@ export function pageAnswers(fields, read, filled = null, more = {}) {
     seen.add(key);
     // Job Catcher's own answers are marked for the live view (spec 026).
     const row = filled?.has(f.id) ? { q: q.slice(0, 300), a, by: "job_catcher" } : { q: q.slice(0, 300), a };
+    // A box the form marks required (spec 037): said, only when it is.
+    if (f.hints?.required) row.required = true;
     const choices = f.kind === "file" ? [] : choicesOf(f, more.choices);
     if (choices.length) {
       row.options = choices;

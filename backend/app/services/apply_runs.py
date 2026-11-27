@@ -1894,11 +1894,31 @@ async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
     return doc.edited_content or doc.content
 
 
-# Spec 037: Job Catcher saw Submit come back with an error.
-_SUBMIT_FAILED = (
+# Spec 037: Job Catcher saw Submit come back (with the page's error, when it
+# caught one). At most SUBMIT_RETRIES unlocks; then Claude stops and asks.
+SUBMIT_RETRIES = 2
+# A confirmation this soon after a turn-down still ends the run as sent.
+FAILED_CONFIRM = timedelta(minutes=10)
+_SUBMIT_FAILED_ERROR = (
     "Submit didn't go through (the page shows an error). Read the error on the "
     "page, fix it, then press Submit once."
 )
+_SUBMIT_FAILED_PLAIN = (
+    "Submit didn't go through. Look at the page, fix what it says, then press "
+    "Submit once."
+)
+_SUBMIT_STUCK = (
+    "Submit didn't go through again. Don't press Submit again: tell the user "
+    "with message_user to check the page and say whether it was sent, then "
+    "keep calling wait_for_you."
+)
+
+
+def _submit_failed_next(failed: dict[str, Any]) -> str:
+    if failed.get("stuck"):
+        return _SUBMIT_STUCK
+    return _SUBMIT_FAILED_ERROR if failed.get("error") else _SUBMIT_FAILED_PLAIN
+
 
 _ALREADY_PRESSED = (
     "Submit was ALREADY pressed. Never press it again on your own (that could "
@@ -2168,10 +2188,13 @@ def _next(run: ApplyRun, apply_url: str = "") -> str:
     if s == APPLY_RESUME_REVIEW:
         return "Call wait_for_you: the user is looking over the résumé."
     if s == APPLY_SUBMITTING:
+        failed = (run.review or {}).get("submit_failed")
+        if failed and failed.get("stuck"):
+            return _SUBMIT_STUCK
         if (run.review or {}).get("pressed_at"):
             return _ALREADY_PRESSED
-        if (run.review or {}).get("submit_failed"):
-            return _SUBMIT_FAILED
+        if failed:
+            return _submit_failed_next(failed)
         return (
             "The user said submit: press the final Submit ONCE, then call "
             "finish_apply. If it was already pressed (a confirmation or an error "
@@ -3394,6 +3417,10 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
             ),
         }
     if run.status == APPLY_SUBMITTING:
+        failed = (run.review or {}).get("submit_failed")
+        if failed and failed.get("stuck"):
+            # Turned down too often (spec 037): the user checks the page.
+            return {**base, "waiting_on": "sent", "ready": False, "next": _SUBMIT_STUCK}
         if (run.review or {}).get("pressed_at"):
             # The user says whether it went; until then, keep waiting.
             return {
@@ -3402,14 +3429,13 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                 "ready": False,
                 "next": _ALREADY_PRESSED,
             }
-        failed = (run.review or {}).get("submit_failed")
         if failed:
             # The page's error is data, never inside `next` (spec 037).
             return {
                 **base,
                 "waiting_on": None,
                 "ready": True,
-                "next": _SUBMIT_FAILED,
+                "next": _submit_failed_next(failed),
                 **(
                     {"submit_error_on_page": failed["error"]}
                     if failed.get("error")
@@ -3616,7 +3642,14 @@ async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
         # Read the run's tab for the live view while it's being filled.
         "live": run.status in LIVE_STATUSES,
         "requests": [
-            {"id": str(r.id), "kind": r.kind, "url": r.url, "page_n": r.page_n}
+            {
+                "id": str(r.id),
+                "kind": r.kind,
+                "url": r.url,
+                "page_n": r.page_n,
+                # A long fill never outlasts FILL_GOING from here (spec 037).
+                "created_at": _iso(r.created_at),
+            }
             for r in reqs
         ],
     }
@@ -3850,15 +3883,28 @@ async def extension_event(
             }
         _event(run, "submit_pressed", f"Submit was pressed on {host or 'the page'}.")
     elif kind == "submit_failed":
-        # Pressed, and the page still shows Submit with an error 20 s on
+        # Pressed, and the page shows Submit again, enabled, with a new error
         # (spec 037: Workday brings it back): it didn't go through. One more
-        # press is allowed (the lock comes back with it).
+        # press is allowed (the lock comes back with it), at most twice; then
+        # it stays locked and the user checks the page. When the user presses
+        # it themselves, it's theirs: ignored.
+        if decision == "self":
+            return run
         error = problems_svc.scrub(words, 160)
         if approved and run.review:
+            n = int(run.review.get("submit_failed_n") or 0)
+            stuck = n >= SUBMIT_RETRIES
             run.review = {
                 **run.review,
-                "pressed_at": None,
-                "submit_failed": {"error": error, "at": _iso(_now())},
+                # Locked again after the last unlock: the app asks "Did it go through?".
+                "pressed_at": _iso(_now()) if stuck else None,
+                "submit_failed": {
+                    "error": error,
+                    "at": _iso(_now()),
+                    **({"stuck": True} if stuck else {}),
+                },
+                "submit_failed_n": n if stuck else n + 1,
+                "failed_at": _iso(_now()),
             }
         _event(
             run,
@@ -3873,7 +3919,13 @@ async def extension_event(
         # before (a review page's "once your application has been submitted")
         # never end a run.
         pressed = (run.review or {}).get("pressed_at")
-        if approved and on_site and pressed:
+        # A late success after a turn-down counts too (spec 037).
+        failed_at = (run.review or {}).get("failed_at")
+        lately = (
+            bool(failed_at)
+            and _now() - datetime.fromisoformat(failed_at) < FAILED_CONFIRM
+        )
+        if approved and on_site and (pressed or lately):
             run.review = {
                 **(run.review or {}),
                 "confirmed": {"words": seen, "at": _iso(_now())},

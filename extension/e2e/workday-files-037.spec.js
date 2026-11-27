@@ -118,7 +118,7 @@ test("Workday Skills: only the site's own entries, other names and 'Windows 10/1
   test.setTimeout(180000);
   api.state.answers = [];
   api.state.taught = [];
-  api.state.history = { work: [], education: [], certifications: [], websites: [], skills: ["Microsoft 365", "O365", "AD", "Windows 10/11", "Intune", "Cobol"] };
+  api.state.history = { work: [], education: [], certifications: [], websites: [], skills: ["Microsoft 365", "O365", "AD", "Windows 10/11", "Intune", "AWS", "Kubernetes", "Cobol"] };
   api.state.bundleVersion++;
   await ext.worker.evaluate(async () => {
     await chrome.storage.local.remove(["je_autofill"]);
@@ -131,7 +131,8 @@ test("Workday Skills: only the site's own entries, other names and 'Windows 10/1
   expect(res.ok).toBe(true);
   const chips = page.locator('[data-automation-id="formField-skills"] [data-automation-id="selectedItem"]');
   // Never "Microsoft 365 Copilot for Sales" for "Microsoft 365".
-  await expect(chips).toHaveText(["Office 365", "Active Directory", "Windows 10", "Windows 11", "Intune"]);
+  // Workday's qualified entries count: "Amazon Web Services (AWS)" for AWS.
+  await expect(chips).toHaveText(["Office 365", "Active Directory", "Windows 10", "Windows 11", "Intune", "Amazon Web Services (AWS)", "Kubernetes (Container Orchestration)"]);
   expect(res.ms).toBeLessThan(60000);
   const tabId = await ext.tabIdOf(page);
   const s = await ext.bg({ type: "getFillSession", tabId });

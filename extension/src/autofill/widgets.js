@@ -268,7 +268,28 @@ const SKILL_ALIASES = [
   ["O365", "Office 365"],
   ["AD", "Active Directory"],
 ];
-const squash = (s) => String(s ?? "").toLowerCase().replace(/[^a-z0-9+#]+/g, "");
+// Letters and digits of any language (and + #: "C++", "C#"), nothing else.
+const squash = (s) => String(s ?? "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, "");
+
+/** The ways a label names a skill: itself, without a trailing "(qualifier)"
+ * ("Python (Programming Language)"), and the acronym in its brackets
+ * ("Amazon Web Services (AWS)"). Never an empty one. */
+function skillForms(label) {
+  const t = String(label ?? "").trim();
+  const forms = [t];
+  const m = /^(.*?)\s*\(([^()]+)\)\s*$/.exec(t);
+  if (m) {
+    forms.push(m[1]);
+    if (/^[\p{Lu}\p{N}.+#&-]{2,10}$/u.test(m[2].trim())) forms.push(m[2]);
+  }
+  return forms.map(squash).filter(Boolean);
+}
+
+/** Do a skill and a site's entry name the same thing (spec 037)? */
+export function sameSkill(a, b) {
+  const fb = skillForms(b);
+  return skillForms(a).some((x) => fb.includes(x));
+}
 
 /**
  * The ways to look a skill up: itself and its other names; then, for
@@ -280,7 +301,7 @@ export function skillWordings(skill) {
   const s = String(skill ?? "").trim();
   const names = [s];
   for (const pair of SKILL_ALIASES) {
-    const i = pair.findIndex((a) => squash(a) === squash(s));
+    const i = squash(s) ? pair.findIndex((a) => squash(a) === squash(s)) : -1;
     if (i >= 0) names.push(pair[1 - i]);
   }
   const m = /^(.*\s)([\w.+#]+)\s*\/\s*([\w.+#]+)$/.exec(s);
@@ -291,8 +312,8 @@ export function skillWordings(skill) {
 /** One skill: "added", "already" (a chip already), or "" (not offered). */
 async function pickSkill(input, skill, end) {
   const { names, parts } = skillWordings(skill);
-  const have = chipsOf(input).map(squash);
-  if (names.some((n) => have.includes(squash(n)))) return "already";
+  const has = (n) => chipsOf(input).some((c) => sameSkill(n, c));
+  if (names.some(has)) return "already";
   const wait = () => Math.max(0, Math.min(CHIP_WAITS.resultsMs, end - Date.now()));
   for (const name of names) {
     if (Date.now() > end) return "";
@@ -302,7 +323,7 @@ async function pickSkill(input, skill, end) {
   let any = "";
   for (const part of parts) {
     if (Date.now() > end) break;
-    if (chipsOf(input).map(squash).includes(squash(part))) {
+    if (has(part)) {
       any ||= "already";
       continue;
     }
@@ -729,7 +750,7 @@ export function searchPick(input, term, { wait = 1500, strict = false, also = []
     const had = count();
     const chipsBefore = chipsOf(input);
     // Strict: the entry is the term itself (or one of its other names).
-    const same = (label, name) => [name, ...also].some((n) => squash(n) === squash(label));
+    const same = (label, name) => [name, ...also].some((n) => sameSkill(n, label));
     const match = (name, opts) => (strict ? opts.findIndex((o) => same(o.label, name)) : firstMatch([name], opts));
     const field = { el: input };
     const before = new Set(visibleOptions(field).map((o) => o.el));
@@ -836,8 +857,6 @@ export const FILE_WAITS = { listMs: 8000, stepMs: 200 };
 async function writeFile(field, files) {
   const file = files.find((f) => f instanceof File);
   if (!file || !win(field.el).DataTransfer) return { ok: false, reason: "no_data" };
-  // Already listed (a second press, a fresh Job Catcher after a reload): never again.
-  if (fileListed(field, file.name)) return { ok: true, already: true, actual: file.name };
   // What the card shows BEFORE: a returning applicant's old résumé there is
   // never taken for ours (spec 029).
   const before = cardState(field, file);
@@ -880,7 +899,7 @@ async function waitFor(test, ms) {
 function tookFile(field, file, before) {
   if (before.card && (!before.card.isConnected || (field.zone && !field.zone.isConnected))) return true;
   const now = cardState(field, file);
-  return now.count > before.count || (now.inCard && !before.inCard) || (now.onPage && !before.onPage);
+  return now.count > before.count || now.named > before.named || (now.onPage && !before.onPage);
 }
 
 /** The upload card a file box sits in: Workday's around its drop zone, else
@@ -895,26 +914,58 @@ function cardOf(field) {
 
 const uploadedItems = (card) => [...(card?.querySelectorAll?.("[data-automation-id]") || [])].filter((n) => UPLOADED.test(n.getAttribute("data-automation-id")));
 
-/**
- * Is a file of this name already in this box's list (spec 037)? Workday's
- * card lists it; another site shows its name by the box.
- */
-export function fileListed(field, name) {
-  if (!name) return false;
+/** A file's name as a list shows it: case, spaces, Workday's "Successfully
+ * Uploaded!", its size and its Delete button don't count. */
+const fileName = (t) =>
+  String(t ?? "")
+    .normalize("NFC")
+    .toLowerCase()
+    .replace(/successfully uploaded!?|\b(delete|remove)\b/g, " ")
+    .replace(/\(?\s*\d+(\.\d+)?\s*(bytes|[kmg]?b)\s*\)?/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+/** The part of the page that lists this box's files: Workday's card, else
+ * the box's surroundings that hold it alone. */
+function listOf(field) {
   const card = cardOf(field);
-  if (card && uploadedItems(card).some((n) => (n.textContent || "").includes(name))) return true;
-  const near = field.zone ? "" : field.hints?.area || "";
-  return near.includes(name);
+  if (card) return card;
+  let node = field.el?.parentElement;
+  for (let i = 0; node?.parentElement && i < 3 && node.parentElement.querySelectorAll("input[type=file]").length === 1; i++) node = node.parentElement;
+  return node || null;
 }
 
-/** The upload card's files as shown: how many, and whether our file's name
- * is in the card or on the page. */
+/** How many entries of a list show exactly this file name (never a part of
+ * one: "CV.pdf" is not "Old CV.pdf"). */
+function listedTimes(list, name) {
+  const want = fileName(name);
+  if (!list || !want) return 0;
+  const items = uploadedItems(list);
+  const entries = items.length ? items : [list];
+  let n = 0;
+  for (const item of entries) {
+    if ([item, ...item.querySelectorAll("*")].some((el) => fileName(el.textContent) === want)) n++;
+  }
+  return n;
+}
+
+/**
+ * Does this box's list show a file of exactly this name (spec 037)? Workday's
+ * card lists it; another site shows its name by the box. The whole name,
+ * never a part of one.
+ */
+export function fileListed(field, name) {
+  return listedTimes(listOf(field), name) > 0;
+}
+
+/** The upload card's files as shown: how many, how many with our file's
+ * name, and whether its name is on the page. */
 function cardState(field, file) {
   const card = cardOf(field);
   return {
     card,
     count: uploadedItems(card).length,
-    inCard: (card?.textContent || "").includes(file.name),
+    named: listedTimes(card, file.name),
     onPage: (field.el.ownerDocument?.body?.textContent || "").includes(file.name),
   };
 }

@@ -510,7 +510,9 @@ function storeFillSession(tabId, frameId, session) {
   fillWrites = fillWrites.catch(() => {}).then(async () => {
     const key = fillKey(tabId);
     const { [key]: held = { frames: {} } } = await chrome.storage.session.get(key);
-    held.frames[frameId] = { ...session, at: Date.now() };
+    // `fillAt`: when this frame last reported a FILL (a panel action's report keeps it).
+    const prev = held.frames[frameId];
+    held.frames[frameId] = { ...session, at: Date.now(), fillAt: session.action ? prev?.fillAt : Date.now() };
     await chrome.storage.session.set({ [key]: held });
     chrome.runtime.sendMessage({ type: "sessionChanged", tabId }).catch(() => {});
   });
@@ -582,6 +584,13 @@ const applyRun = createApplyRun({
   },
   press: (tabId) => pressTab(tabId),
   fillSession: (tabId) => getFillSession(tabId),
+  // A fill for another run than the one this tab's file tries were for: they
+  // don't count any more (spec 037).
+  onRunFill: async (tabId, runId) => {
+    const k = filesKey(tabId);
+    const { [k]: held } = await chrome.storage.session.get(k);
+    if (held && (held.run || "") !== runId) await chrome.storage.session.remove(k);
+  },
 });
 
 async function getFillSession(tabId) {
@@ -1689,24 +1698,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // so a press, a step filled by itself or a fresh Job Catcher never
         // attaches it again. Never the file or its name.
         const tabId = sender.tab?.id;
-        if (tabId != null && typeof msg.key === "string" && msg.key.length <= 600) {
+        if (tabId != null && typeof msg.key === "string" && msg.key.length <= 2600) {
           const k = filesKey(tabId);
           const site = siteOf(sender.tab?.url || "");
+          const run = (await applyRun.runFor(sender.tab).catch(() => null)) || "";
           const { [k]: held } = await chrome.storage.session.get(k);
-          const tried = held?.site === site && Date.now() - (held.at || 0) < KEEP_MS ? { ...held.tried } : {};
-          if (msg.state === "attached" || msg.state === "unverified") tried[msg.key] = msg.state;
+          const same = held?.site === site && (held.run || "") === run && Date.now() - (held.at || 0) < KEEP_MS;
+          const tried = same ? { ...held.tried } : {};
+          const state = msg.state || {};
+          if ((state.s === "attached" || state.s === "unverified") && Number.isFinite(state.at)) tried[msg.key] = { s: state.s, at: state.at };
           else delete tried[msg.key];
           const keys = Object.keys(tried);
           for (const old of keys.slice(0, Math.max(0, keys.length - 40))) delete tried[old];
-          await chrome.storage.session.set({ [k]: { site, at: Date.now(), tried } });
+          await chrome.storage.session.set({ [k]: { site, run, at: Date.now(), tried } });
         }
         sendResponse({ ok: true });
       } else if (msg.type === "getFilesTried") {
+        // Only this application's, for the run this tab is filling (if any).
         const tabId = sender.tab?.id;
         const k = filesKey(tabId);
+        const run = (await applyRun.runFor(sender.tab).catch(() => null)) || "";
         const { [k]: held } = tabId != null ? await chrome.storage.session.get(k) : {};
-        const fresh = held?.site === siteOf(sender.tab?.url || "") && Date.now() - (held.at || 0) < KEEP_MS;
-        sendResponse({ ok: true, tried: fresh ? held.tried : {} });
+        const fresh = held?.site === siteOf(sender.tab?.url || "") && (held.run || "") === run && Date.now() - (held.at || 0) < KEEP_MS;
+        sendResponse({ ok: true, tried: fresh ? held.tried : {}, run });
       } else if (msg.type === "getKeepFilling") {
         const tabId = sender.tab?.id;
         const { [keepKey(tabId)]: keep } = tabId != null ? await chrome.storage.session.get(keepKey(tabId)) : {};

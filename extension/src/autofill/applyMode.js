@@ -9,9 +9,11 @@
 //   the user: the user's own "I'll submit it myself" lifts the lock first);
 // - once it isn't, a Submit that really went (its form sent, the page moved
 //   on, a confirmation, or the button gone a while with no error) is
-//   reported, so a "submit it myself" run ends as sent; one that didn't (the
-//   button back with an error, Workday's way) is reported as not gone
-//   through, with the page's error (spec 037);
+//   reported, so a "submit it myself" run ends as sent; one the page turned
+//   down (the button back, enabled, with a new error: Workday's way) is
+//   reported as not gone through, with the page's error (spec 037). While a
+//   press's outcome is pending, Job Catcher stops another Submit press itself;
+//   a late success is still reported for ~2 minutes;
 // - in the top frame, scrolls on request so the background can photograph a
 //   long page screen by screen (the page, or its main scrolling box), then
 //   puts the scroll back.
@@ -29,12 +31,17 @@ import {
 const TICK_MS = 3000;
 const HIDDEN_TICK_MS = 10_000;
 // A Submit with no form of its own (Workday): looked at this often after the
-// press; gone this long with no error = sent; still there after the last =
-// it didn't go through (spec 037: Workday disables it while sending, then
-// brings it back with an error).
+// press; gone this long with no error = sent; back and enabled with a new
+// error after SUBMIT_FAILED_MS = it didn't go through (spec 037: Workday
+// disables it while sending, then brings it back with an error). A late
+// success (a confirmation, a new address) is watched for PRESS_WATCH_MS.
 const SUBMIT_LOOK_MS = 500;
 const SUBMIT_GONE_MS = 5000;
 const SUBMIT_FAILED_MS = 20_000;
+const PRESS_WATCH_MS = 120_000;
+// After a press, another Submit press waits this long (or until the page says
+// it didn't go through): the app's lock can take a few seconds to arrive.
+const PENDING_MS = 25_000;
 const WATCH_MS = 20_000; // after a Submit, how long to look for the confirmation
 const WATCH_EVERY_MS = 2000;
 
@@ -105,50 +112,68 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
   /**
    * Sent, really (spec 037): the page moved on, a confirmation showed, or
    * every final Submit is gone for 5 s with no error showing. Disabled
-   * doesn't count (Workday disables it while it sends, then brings it back on
-   * an error). Still there after 20 s with no confirmation: it didn't go
-   * through, and the page's error goes with that.
+   * doesn't count (Workday disables it while it sends). Turned down: 20 s on,
+   * Submit is showing, enabled, with a new error on the page; anything else
+   * (still sending, just gone, no error) says nothing and keeps watching. A
+   * late success is reported for ~2 minutes, after a turn-down too.
    */
-  let watchingPress = false;
+  let watchId = 0; // a new press starts a new watch
+  let pendingUntil = 0; // another Submit press waits until then
   const reportWhenGone = (button) => {
-    if (watchingPress) return;
-    watchingPress = true;
+    const id = ++watchId;
     const href = win.location.href;
     const errorBefore = errorOnPage(doc);
     const words = before;
     const t0 = Date.now();
     let goneSince = 0;
+    let failedSent = false;
     const shownBox = (el) => el.isConnected && !el.hidden && (typeof el.checkVisibility !== "function" || el.checkVisibility());
     // The button, or the same button drawn again (Workday re-draws it): the
     // same words, in the same form (or none).
     const label = (el) => (el.value || el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
     const formOf = (el) => el.form || el.closest?.("form") || null;
     const again = (b) => label(b) === label(button) && formOf(b) === formOf(button) && !!finalSubmitButton(b);
-    const submitShown = () => shownBox(button) || [...doc.querySelectorAll("button, [role='button'], input[type='submit']")].some((b) => shownBox(b) && again(b));
+    const shownSubmits = () => [button, ...doc.querySelectorAll("button, [role='button'], input[type='submit']")].filter((b) => shownBox(b) && (b === button || again(b)));
+    const enabled = (b) => !b.disabled && b.getAttribute("aria-disabled") !== "true";
     const look = () => {
-      if (!live() || !active || guard) return (watchingPress = false);
+      if (id !== watchId || !live() || !active) return;
       const now = Date.now();
       const said = shownNow();
+      if (win.location.href !== href || (said && said !== words)) {
+        pendingUntil = 0;
+        report("applySubmitPressed");
+        if (said && said !== words) lookForConfirmation();
+        return;
+      }
+      // Sent, and the app has locked Submit again: its watch takes it from here.
+      if (guard) return;
       const error = errorOnPage(doc);
       const newError = !!error && error !== errorBefore;
-      if (win.location.href !== href || (said && said !== words)) {
-        watchingPress = false;
-        return report("applySubmitPressed");
-      }
-      if (!submitShown()) {
+      const submits = shownSubmits();
+      if (!submits.length && !failedSent) {
         goneSince ||= now;
         if (now - goneSince >= SUBMIT_GONE_MS && !newError) {
-          watchingPress = false;
+          pendingUntil = 0;
           return report("applySubmitPressed");
         }
       } else goneSince = 0;
-      if (now - t0 >= SUBMIT_FAILED_MS) {
-        watchingPress = false;
-        return send({ type: "applySubmitFailed", url: win.location.href, ...(newError ? { error } : {}) });
+      if (!failedSent && now - t0 >= SUBMIT_FAILED_MS && newError && submits.some(enabled)) {
+        failedSent = true;
+        pendingUntil = 0; // known now: one more press may go
+        send({ type: "applySubmitFailed", url: win.location.href, error });
       }
-      setTimeout(look, SUBMIT_LOOK_MS);
+      if (now - t0 < PRESS_WATCH_MS) setTimeout(look, SUBMIT_LOOK_MS);
     };
     setTimeout(look, SUBMIT_LOOK_MS);
+  };
+
+  /** A Submit press while the last one's outcome is pending: stopped here. */
+  const stopIfPending = (event) => {
+    if (Date.now() >= pendingUntil) return false;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    report("applyBlocked");
+    return true;
   };
 
   const onClick = (event) => {
@@ -160,7 +185,10 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
       event.preventDefault();
       event.stopImmediatePropagation();
       report("applyBlocked");
+    } else if (stopIfPending(event)) {
+      return;
     } else if (!(button.form && (button.type || "").toLowerCase() === "submit")) {
+      pendingUntil = Date.now() + PENDING_MS;
       reportWhenGone(button); // a real submit button's form reports via its submit event
     }
   };
@@ -173,8 +201,11 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
       event.preventDefault();
       event.stopImmediatePropagation();
       report("applyBlocked");
+    } else if (stopIfPending(event)) {
+      return;
     } else if (event.target?.checkValidity?.() !== false) {
       // A form with a required box left empty isn't sent: no report.
+      pendingUntil = Date.now() + PENDING_MS;
       report("applySubmitPressed");
     }
   };

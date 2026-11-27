@@ -12,7 +12,7 @@ import { collectFields } from "../src/autofill/scan.js";
 import { isCoverLetterUpload, isResumeUpload, isSharedUpload, uploadKind } from "../src/autofill/resolve.js";
 import { createSession } from "../src/autofill/session.js";
 import { Window } from "happy-dom";
-import { CHIP_WAITS, FILE_WAITS, fileListed, skillWordings, writeField } from "../src/autofill/widgets.js";
+import { CHIP_WAITS, FILE_WAITS, fileListed, sameSkill, skillWordings, writeField } from "../src/autofill/widgets.js";
 
 const here = dirname(fileURLToPath(import.meta.url));
 const parse = (html) => new DOMParser().parseFromString(html, "text/html");
@@ -87,14 +87,72 @@ describe("the résumé on Workday (bug 1)", () => {
     expect(page.uploads).toHaveLength(1);
   });
 
-  it("a fresh Job Catcher (a reload) with the file already listed: nothing attached, attached", async () => {
+  it("a fresh Job Catcher (a reload) after ours went up: nothing attached, attached", async () => {
+    const doc = stepTwo();
+    const page = likeWorkday(doc);
+    const kept = {};
+    const copy = { values: {}, answers: [], resumeFile: resumeFile() };
+    await session(doc, kept).uploadResume(copy);
+    const fresh = session(doc);
+    fresh.seedTried(kept);
+    expect(await fresh.uploadResume(copy)).toBe(false);
+    expect(fresh.report().resume).toBe("attached");
+    expect(page.uploads).toEqual(["Sam_Rivera_Northwind.pdf"]);
+  });
+
+  it("a file of the same name already in the card, never ours (a returning applicant's): ours goes in (spec 029 kept)", async () => {
     const doc = stepTwo();
     const page = likeWorkday(doc);
     doc.querySelector("[data-automation-id=attachments-FileUpload]").insertAdjacentHTML("afterbegin", '<div data-automation-id="file-upload-successful">Sam_Rivera_Northwind.pdf</div>');
     const s = session(doc);
-    expect(await s.uploadResume({ values: {}, answers: [], resumeFile: resumeFile() })).toBe(false);
+    expect(await s.uploadResume({ values: {}, answers: [], resumeFile: resumeFile() })).toBe(true);
     expect(s.report().resume).toBe("attached");
-    expect(page.uploads).toEqual([]);
+    expect(page.uploads).toEqual(["Sam_Rivera_Northwind.pdf"]);
+  });
+
+  it("ours went up, then is gone from the card (removed, a Page Error): a press puts it in again", async () => {
+    const doc = stepTwo();
+    const page = likeWorkday(doc);
+    const s = session(doc);
+    const copy = { values: {}, answers: [], resumeFile: resumeFile() };
+    await s.uploadResume(copy);
+    for (const n of doc.querySelectorAll("[data-automation-id=file-upload-successful]")) n.remove();
+    await s.uploadResume(copy);
+    expect(page.uploads).toHaveLength(2);
+    expect(s.report().resume).toBe("attached");
+  });
+
+  it("an 'unverified' try is locked for ~3 minutes only", async () => {
+    const doc = stepTwo();
+    const page = likeWorkday(doc, { list: false });
+    const kept = {};
+    const copy = { values: {}, answers: [], resumeFile: resumeFile() };
+    await session(doc, kept).uploadResume(copy);
+    const [k] = Object.keys(kept);
+    const fresh = session(doc);
+    fresh.seedTried({ [k]: { ...kept[k], at: Date.now() - 4 * 60_000 } });
+    await fresh.uploadResume(copy);
+    expect(page.uploads).toHaveLength(2);
+  });
+
+  it("a try is kept for this address (query too) and this run only", async () => {
+    const doc = stepTwo();
+    const page = likeWorkday(doc, { list: false });
+    const kept = {};
+    const copy = { values: {}, answers: [], resumeFile: resumeFile() };
+    const first = session(doc, kept);
+    first.seedTried({}, "run-a");
+    await first.uploadResume(copy);
+    expect(Object.keys(kept)[0]).toContain(doc.location.href.split("#")[0]);
+    expect(Object.keys(kept)[0]).toContain("run-a");
+    const same = session(doc);
+    same.seedTried(kept, "run-a");
+    await same.uploadResume(copy);
+    expect(page.uploads).toHaveLength(1);
+    const other = session(doc);
+    other.seedTried(kept, "run-b");
+    await other.uploadResume(copy);
+    expect(page.uploads).toHaveLength(2);
   });
 
   it("a card that lists it late (but in time): attached, never dropped on too", async () => {
@@ -122,7 +180,7 @@ describe("the résumé on Workday (bug 1)", () => {
     expect(page.uploads).toHaveLength(1);
     expect(page.drops()).toBe(0);
     // The background keeps what was tried for the tab: a reloaded Job Catcher reads it.
-    expect(Object.values(kept)).toEqual(["unverified"]);
+    expect(Object.values(kept).map((v) => v.s)).toEqual(["unverified"]);
     const fresh = session(doc);
     fresh.seedTried(kept);
     await fresh.uploadResume(copy);
@@ -147,10 +205,16 @@ describe("the résumé on Workday (bug 1)", () => {
     expect(drops).toBe(1);
   });
 
-  it("knows a file listed in its card, and only by its own name", () => {
+  it("knows a file listed in its card by its whole name, never a part of one", () => {
     const doc = stepTwo();
-    doc.querySelector("[data-automation-id=attachments-FileUpload]").insertAdjacentHTML("afterbegin", '<div data-automation-id="file-upload-successful">Sam_Rivera_2023.pdf</div>');
+    doc.querySelector("[data-automation-id=attachments-FileUpload]").insertAdjacentHTML(
+      "afterbegin",
+      '<div data-automation-id="file-upload-successful">Successfully Uploaded! <span>Old CV.pdf</span> <span>12.3 KB</span></div>' +
+        '<div data-automation-id="file-upload-item"><span>sam_rivera_2023.PDF</span><span>(240 KB)</span><button>Delete</button></div>',
+    );
     const box = collectFields(doc, { visible }).find((f) => f.kind === "file");
+    expect(fileListed(box, "Old CV.pdf")).toBe(true);
+    expect(fileListed(box, "CV.pdf")).toBe(false);
     expect(fileListed(box, "Sam_Rivera_2023.pdf")).toBe(true);
     expect(fileListed(box, "Sam_Rivera_Northwind.pdf")).toBe(false);
   });
@@ -330,6 +394,26 @@ describe("Workday Skills (bug 4)", () => {
     await writeField(m.field, ["Python"]);
     expect(m.chips()).toEqual(["Python"]);
   }, 10_000);
+
+  it("Workday's qualified entries: a trailing qualifier and an acronym in brackets (spec 037 review)", () => {
+    expect(sameSkill("Python", "Python (Programming Language)")).toBe(true);
+    expect(sameSkill("AWS", "Amazon Web Services (AWS)")).toBe(true);
+    expect(sameSkill("Amazon Web Services", "Amazon Web Services (AWS)")).toBe(true);
+    expect(sameSkill("Python", "Python Scripting")).toBe(false);
+    expect(sameSkill("Programming Language", "Python (Programming Language)")).toBe(false);
+    // Letters of any language count; nothing at all never matches.
+    expect(sameSkill("日本語", "中文")).toBe(false);
+    expect(sameSkill("Español", "español")).toBe(true);
+    expect(sameSkill("—", "–")).toBe(false);
+    expect(sameSkill("C#", "C++")).toBe(false);
+  });
+
+  it("picks Workday's qualified entry for the skill, never another one (spec 037 review)", async () => {
+    const m = skillsBox(["Python (Programming Language)", "Python Scripting", "Amazon Web Services (AWS)", "Kubernetes (Container Orchestration)"], { autopick: true });
+    const res = await writeField(m.field, ["Python", "AWS", "Kubernetes"]);
+    expect(m.chips()).toEqual(["Python (Programming Language)", "Amazon Web Services (AWS)", "Kubernetes (Container Orchestration)"]);
+    expect(res.notAdded).toBeUndefined();
+  });
 
   it("'No Items' ends the wait at once", async () => {
     const m = skillsBox(CATALOG);

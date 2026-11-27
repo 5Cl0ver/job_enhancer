@@ -71,6 +71,19 @@ describe("photos and answers", () => {
     ]);
   });
 
+  it("marks a box the form requires, and only those (spec 037 review)", () => {
+    const fields = [
+      { question: "Phone Number", kind: "text", hints: { required: true } },
+      { question: "Phone Extension", kind: "text", hints: {} },
+      { question: "Why Tidewell?", kind: "textarea" },
+    ];
+    expect(pageAnswers(fields, () => "")).toEqual([
+      { q: "Phone Number", a: "", required: true },
+      { q: "Phone Extension", a: "" },
+      { q: "Why Tidewell?", a: "" },
+    ]);
+  });
+
   it("sends each box's real choices, capped, never the prompt (spec 033)", () => {
     const vet = "Please select your veteran status";
     const fields = [
@@ -215,6 +228,67 @@ describe("the Submit lock on the page", () => {
     const failed = sent.filter((x) => x.type === "applySubmitFailed");
     expect(failed).toHaveLength(1);
     expect(failed[0].error).toBe("Error - Page Error. Contact … or call ….");
+    m.stop();
+  });
+
+  it("still sending (disabled) after 20 s, or back with no error: nothing said, still watching (spec 037 review)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const slow = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    const btn = slow.win.document.getElementById("wd-submit");
+    btn.addEventListener("click", () => (btn.disabled = true));
+    btn.click();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(slow.sent.filter((x) => x.type === "applySubmitFailed")).toHaveLength(0);
+    // ...and a success 40 s on is still reported.
+    slow.win.document.getElementById("banner").innerHTML = "<h2>Thank you for applying</h2>";
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(slow.sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
+    slow.m.stop();
+    const quiet = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    quiet.win.document.getElementById("wd-submit").click();
+    await vi.advanceTimersByTimeAsync(30_000);
+    vi.useRealTimers();
+    expect(quiet.sent.filter((x) => x.type === "applySubmitFailed")).toHaveLength(0);
+    quiet.m.stop();
+  });
+
+  it("while a press's outcome is pending another Submit press is stopped; once turned down, one more goes (spec 037 review)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const { win, sent, m } = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    const doc = win.document;
+    let reached = 0;
+    doc.getElementById("wd-submit").addEventListener("click", () => {
+      reached++;
+      setTimeout(() => (doc.getElementById("banner").innerHTML = '<div data-automation-id="errorMessage">Error - Page Error</div>'), 3000);
+    });
+    doc.getElementById("wd-submit").click();
+    await vi.advanceTimersByTimeAsync(5000);
+    doc.getElementById("wd-submit").click(); // too soon: stopped
+    expect(reached).toBe(1);
+    expect(sent.filter((x) => x.type === "applyBlocked")).toHaveLength(1);
+    await vi.advanceTimersByTimeAsync(16_000); // turned down at 20 s
+    expect(sent.filter((x) => x.type === "applySubmitFailed")).toHaveLength(1);
+    doc.getElementById("wd-submit").click(); // the one retry
+    vi.useRealTimers();
+    expect(reached).toBe(2);
+    m.stop();
+  });
+
+  it("a late success after a turn-down is still reported (spec 037 review)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const { win, sent, m } = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    const doc = win.document;
+    doc.getElementById("wd-submit").addEventListener("click", () => {
+      doc.getElementById("banner").innerHTML = '<div data-automation-id="errorMessage">Error - Page Error</div>';
+    });
+    doc.getElementById("wd-submit").click();
+    await vi.advanceTimersByTimeAsync(21_000);
+    expect(sent.filter((x) => x.type === "applySubmitFailed")).toHaveLength(1);
+    doc.getElementById("banner").innerHTML = "<h2>Thank you for applying</h2>";
+    await vi.advanceTimersByTimeAsync(40_000);
+    vi.useRealTimers();
+    expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
+    expect(sent.filter((x) => x.type === "applyConfirmed")).toHaveLength(1);
     m.stop();
   });
 
@@ -532,6 +606,51 @@ describe("the background loop", () => {
     expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: true, reason: null, filled: ["Why Tidewell?"], need: [], cover_letter: "attached" });
   });
 
+  it("a photo never waits behind a long fill (spec 037 review)", async () => {
+    const c = fakeChrome();
+    const calls = [];
+    let served = 0;
+    const api = vi.fn(async (path, init = {}) => {
+      calls.push([init.method || "GET", path, init.body]);
+      if (path === "/v1/apply/active") {
+        served++;
+        const requests = served === 1 ? [{ id: "f1", kind: "fill", url: URL1, page_n: 2 }] : [{ id: "q1", kind: "photo", url: URL1, page_n: 2 }];
+        return { ok: true, json: async () => (served > 3 ? { run_id: null } : { run_id: "r1", guard: true, hosts: ["acme.example"], requests }) };
+      }
+      return { ok: true, json: async () => ({}) };
+    });
+    let reads = 0;
+    const fillSession = vi.fn(async () => (++reads < 60 ? { frames: {} } : { frames: { 0: { entries: [{ label: "Skills" }], need_you: [], at: Date.now() } } }));
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: c }));
+    const results = calls.filter(([, p]) => p.endsWith("/result")).map(([, p]) => p);
+    expect(results).toEqual(["/v1/apply/requests/q1/result", "/v1/apply/requests/f1/result"]);
+  });
+
+  it("a long fill never waits past the app's own wait: from when the request was made (spec 037 review)", async () => {
+    const made = new Date(Date.now() - 160_000).toISOString(); // asked 160 s ago
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2, created_at: made }]);
+    const fillSession = vi.fn().mockResolvedValue({ frames: {} });
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: fakeChrome() }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).reason).toBe("slow");
+    expect(fillSession.mock.calls.length).toBeLessThan(20); // ~10 s left, not 170
+  });
+
+  it("a late fill: every frame's report, never a panel action's (spec 037 review)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    let reads = 0;
+    const fillSession = vi.fn(async () => {
+      reads++;
+      const frames = {};
+      // A Fix from the panel meanwhile: a report, but not this fill's.
+      if (reads >= 5) frames[2] = { entries: [{ label: "Fixed in the panel" }], need_you: [], at: Date.now(), action: true };
+      if (reads >= 30) frames[0] = { entries: [{ label: "First Name" }], need_you: [], resume: "unverified", at: Date.now(), fillAt: Date.now() };
+      if (reads >= 31) frames[3] = { entries: [{ label: "Why Tidewell?" }], need_you: [], resume: "attached", at: Date.now(), fillAt: Date.now() };
+      return { frames };
+    });
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: fakeChrome() }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: true, reason: null, filled: ["First Name", "Why Tidewell?"], need: [], resume: "attached" });
+  });
+
   it("never switches tabs while the user is busy in another window (spec 029)", async () => {
     const c = fakeChrome({ tabActive: false, idle: "active" });
     c._win.focused = false; // the user is working in another window
@@ -626,7 +745,7 @@ describe("the background loop", () => {
     c.scripting.executeScript = vi.fn().mockResolvedValue([
       { result: { step: "Voluntary Disclosures", boxes: [{ q: "Veteran status", a: "", options: many }] } },
       // A frame from an older page copy answers with just its boxes.
-      { result: [{ q: "Email", a: "s@x", by: "job_catcher" }] },
+      { result: [{ q: "Email", a: "s@x", by: "job_catcher" }, { q: "Phone Number", a: "", required: true }] },
     ]);
     const calls = [];
     let turns = 0;
@@ -649,6 +768,8 @@ describe("the background loop", () => {
     expect(body.step).toBe("Voluntary Disclosures");
     expect(body.boxes[0].options).toHaveLength(MAX_CHOICES);
     expect(body.boxes[1]).toEqual({ q: "Email", a: "s@x", by: "job_catcher" });
+    // A box the form requires says so (spec 037 review).
+    expect(body.boxes[2]).toEqual({ q: "Phone Number", a: "", required: true });
   });
 
   it("every tab on the site is locked, but only the application's own tab ends the run", async () => {

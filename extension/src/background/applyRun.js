@@ -79,11 +79,12 @@ function hostOf(url) {
  *   chrome?: typeof chrome,
  * }} deps
  */
-export function createApplyRun({ api, press, fillSession, chrome: c = globalThis.chrome }) {
+export function createApplyRun({ api, press, fillSession, onRunFill = async () => {}, chrome: c = globalThis.chrome }) {
   let state = { at: 0, ttl: IDLE_TTL, data: { run_id: null }, okAt: 0 };
   let asking = null;
   let looping = false;
   const done = new Set(); // request ids answered here (claimed, or taken elsewhere)
+  const handling = new Set(); // request ids being handled right now
 
   async function active(force = false) {
     if (!force && Date.now() - state.at < state.ttl) return state.data;
@@ -137,6 +138,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     const data = await active();
     if (!data.run_id || !data.resume_id || !tab?.url || tab.id == null) return null;
     return (await isRunTab(data, tab)) ? data.resume_id : null;
+  }
+
+  /** The open run's id when this is its tab (spec 037: a file tried for one
+   * run never counts for another), else null. */
+  async function runFor(tab) {
+    const data = await active();
+    if (!data.run_id || !tab?.url || tab.id == null) return null;
+    return (await isRunTab(data, tab)) ? data.run_id : null;
   }
 
   /** Is an Apply with Claude run open (spec 029)? Then what's typed in any
@@ -204,8 +213,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
         const data = await active(true);
         if (!data.run_id) break;
         for (const req of data.requests || []) {
-          if (done.has(req.id)) continue;
-          await handle(req, data).catch(() => {});
+          if (done.has(req.id) || handling.has(req.id)) continue;
+          handling.add(req.id);
+          const job = handle(req, data)
+            .catch(() => {})
+            .finally(() => handling.delete(req.id));
+          // A fill can wait minutes for its page (spec 037): the next
+          // requests (photos) never wait behind it.
+          if (req.kind !== "fill") await job;
         }
         if (data.live) await liveTick(data).catch(() => {});
         await sleep(LOOP_MS);
@@ -230,7 +245,10 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     if (!claimed.ok) return; // taken elsewhere, or gone
     await addRunTab(data.run_id, tab.id);
     try {
-      if (req.kind === "fill") return await finish(req, await fill(tab));
+      if (req.kind === "fill") {
+        await onRunFill(tab.id, data.run_id).catch(() => {});
+        return await finish(req, await fill(tab, req));
+      }
       if (req.kind === "peek") return await finish(req, await peekShot(req, tab));
       return await finish(req, await photos(req, tab));
     } catch {
@@ -263,11 +281,17 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     return tabs.find((t) => t.active && t.windowId === focused?.id && t.url && hostOf(t.url) === host) || null;
   }
 
-  async function fill(tab) {
+  async function fill(tab, req = {}) {
     const started = Date.now();
+    // Never past the app's own wait for this fill: from when it was asked
+    // (else from now), FILL_BUDGET_MS.
+    const made = Date.parse(req.created_at || "");
+    const until = Math.min(started, Number.isFinite(made) ? made : started) + FILL_BUDGET_MS;
     const out = await press(tab.id);
     const read = () => fillSession(tab.id).catch(() => ({ frames: {} }));
-    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => (f.at || 0) >= started);
+    // A frame's fill report since this press; a report after a panel action
+    // (a Fix, an Undo) is never a fill's.
+    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => !f.action && (f.fillAt ?? f.at ?? 0) >= started);
     let session = await read();
     // Still going (spec 037): Keep filling was already filling this step
     // (busy), or the page outlasted the press's wait (slow, a long Workday
@@ -275,8 +299,14 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // keeps this fill going for Claude, never handing back the last step's
     // (spec 029: Workday keeps one address).
     const going = !!out?.busy || out?.problem === "slow";
-    const waits = going ? Math.ceil(Math.max(0, started + FILL_BUDGET_MS - Date.now()) / BUSY_MS) : out?.ok ? 3 : 0;
+    const waits = going ? Math.ceil(Math.max(0, until - Date.now()) / BUSY_MS) : out?.ok ? 3 : 0;
     for (let i = 0; i < waits && !fresh(session).length; i++) {
+      await sleep(BUSY_MS);
+      session = await read();
+    }
+    // A late fill: its other frames a moment more, then the best of every
+    // frame, as for a press that answered in time.
+    for (let i = 0; going && i < 2 && fresh(session).length; i++) {
       await sleep(BUSY_MS);
       session = await read();
     }
@@ -469,6 +499,8 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
         q: String(b.q).slice(0, 300),
         a: String(b.a ?? "").slice(0, 300),
         ...(b.by ? { by: b.by } : {}),
+        // A box the form requires (spec 037).
+        ...(b.required === true ? { required: true } : {}),
         // The form's choices (spec 033), capped like the page side does.
         ...(Array.isArray(b.options) && b.options.length
           ? { options: b.options.slice(0, MAX_CHOICES).map((o) => String(o).slice(0, CHOICE_CHARS)), ...(b.free ? { free: true } : {}) }
@@ -517,5 +549,5 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     }
   }
 
-  return { tick, event, active, loop, resumeFor, inRun, coverLetterFor };
+  return { tick, event, active, loop, resumeFor, inRun, coverLetterFor, runFor };
 }
