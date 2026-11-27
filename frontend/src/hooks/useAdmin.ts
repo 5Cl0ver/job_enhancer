@@ -4,7 +4,8 @@ import type { AdminUserRow, Allowances, UserProfile } from "@/types/api";
 
 interface ServiceStatus {
   name: string;
-  status: "healthy" | "degraded" | "down";
+  // off: no key set, so it's not set up (never pinged, never reported).
+  status: "healthy" | "degraded" | "down" | "off";
   latency_ms: number | null;
   detail: string | null;
 }

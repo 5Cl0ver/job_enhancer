@@ -12,8 +12,9 @@ import {
 import { format } from "date-fns";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { documentFile, useFileViewer } from "@/components/common/FileViewer";
+import { documentFile, pdfName, useFileViewer } from "@/components/common/FileViewer";
 import { useJobDocuments, useUpdateDocument } from "@/hooks/useAI";
+import { useAiWritingOn } from "@/hooks/useUsage";
 import { cn } from "@/lib/utils";
 import type { GeneratedDocument } from "@/types/api";
 
@@ -29,7 +30,7 @@ function docText(doc: GeneratedDocument) {
   return doc.edited_content?.trim() || doc.content;
 }
 
-function DocumentRow({ doc }: { doc: GeneratedDocument }) {
+function DocumentRow({ doc, company }: { doc: GeneratedDocument; company?: string | null }) {
   const [open, setOpen] = useState(false);
   const [copied, setCopied] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -143,8 +144,9 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
             </>
           ) : (
             <>
-              {/* Generous max height so it reads on a phone without swallowing the page. */}
-              <p className="max-h-64 overflow-y-auto whitespace-pre-wrap text-sm leading-relaxed text-foreground/90">
+              {/* All of it: the row is opened on purpose, and the page scrolls
+                  (no small box scrolling inside it on a phone, spec 039). */}
+              <p className="whitespace-pre-wrap break-words text-sm leading-relaxed text-foreground/90">
                 {text}
               </p>
               <div className="flex flex-wrap gap-2">
@@ -163,7 +165,7 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
                 <Button
                   variant="outline"
                   size="sm"
-                  onClick={() => view(documentFile(doc.id, `${doc.document_type}-${doc.id}.pdf`))}
+                  onClick={() => view(documentFile(doc.id, pdfName(LABEL[doc.document_type] ?? "Document", company)))}
                   className="flex-1 sm:flex-none"
                 >
                   <Eye className="mr-1 h-4 w-4" aria-hidden />
@@ -191,13 +193,17 @@ function DocumentRow({ doc }: { doc: GeneratedDocument }) {
  */
 export function JobDocuments({
   jobListingId,
+  company,
   compact = false,
 }: {
   jobListingId: string | null | undefined;
+  /** The job's company, for readable file names. */
+  company?: string | null;
   /** Match the dialog's smaller section labels instead of the page's headings. */
   compact?: boolean;
 }) {
   const { data: docs = [], isLoading, isError } = useJobDocuments(jobListingId);
+  const aiOn = useAiWritingOn();
 
   // No job to ask about — the query never ran, so claiming "nothing saved yet"
   // would be asserting something we never checked.
@@ -227,14 +233,14 @@ export function JobDocuments({
         </p>
       ) : docs.length === 0 ? (
         <p className={cn(compact ? "text-xs" : "text-sm", "text-muted-foreground")}>
-          No résumé or cover letter saved for this job yet. Generate one from this job,
-          or ask Claude to tailor one through the connector — either way it appears here
-          to read, edit, or download.
+          {aiOn
+            ? "No résumé or cover letter saved for this job yet. Generate one from this job, or ask Claude to tailor one through the connector: either way it appears here to read, edit, or download."
+            : "No résumé or cover letter saved for this job yet. Ask Claude to tailor one through the connector, and it appears here to read, edit, or download."}
         </p>
       ) : (
         <div className="space-y-2">
           {docs.map((doc) => (
-            <DocumentRow key={doc.id} doc={doc} />
+            <DocumentRow key={doc.id} doc={doc} company={company} />
           ))}
         </div>
       )}

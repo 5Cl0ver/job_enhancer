@@ -429,19 +429,67 @@ describe("look over the résumé (spec 025)", () => {
 });
 
 
-describe("the cover letter on the application page (spec 031)", () => {
-  it("shows the job's letter beside the résumé", async () => {
-    serve({ ...RUN, status: "filling", cover_letter: { id: "cl1", filename: "Alex Rivera - Cover letter.pdf" }, cover_letter_written: true });
+describe("the cover letter on the application page (spec 031, 039)", () => {
+  const LETTERS = [
+    { id: "cl1", job_listing_id: "l1", job_title: "IT Engineer", company: "Acme", created_at: "2026-11-24T10:00:00Z" },
+  ];
+  function serveWithLetters(run: ApplyRun, savedJobs: unknown[] = []) {
+    serve(run);
+    const base = get.getMockImplementation()!;
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/ai/cover-letters") return Promise.resolve(LETTERS);
+      if (path.startsWith("/v1/saved-jobs")) return Promise.resolve(savedJobs);
+      return base(path);
+    });
+  }
+
+  it("shows the job's letter right after the résumé, the same row as the job's page", async () => {
+    serveWithLetters({
+      ...RUN,
+      status: "filling",
+      resume_id: "res1",
+      cover_letter: { id: "cl1", filename: "Sam Rivera - Cover letter.pdf" },
+      cover_letter_written: true,
+    });
     renderPage();
-    expect(await screen.findByText("Alex Rivera - Cover letter.pdf")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "View Alex Rivera - Cover letter.pdf" })).toBeInTheDocument();
+    expect(await screen.findByText("Cover letter - Acme.pdf")).toBeInTheDocument();
+    for (const name of ["View Cover letter - Acme.pdf", "Download Cover letter - Acme.pdf"])
+      expect(screen.getByRole("button", { name })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /Edit text/ })).toBeInTheDocument();
+    // Next to the résumé: its card is the one right after the résumé's.
+    const headings = screen.getAllByRole("heading").map((h) => h.textContent);
+    expect(headings.indexOf("Cover letter")).toBe(headings.indexOf("Résumé for this job") + 1);
+  });
+
+  it("says so under the status when Claude wrote one, with View", async () => {
+    serveWithLetters({
+      ...RUN,
+      status: "filling",
+      cover_letter: { id: "cl1", filename: "Sam Rivera - Cover letter.pdf" },
+      cover_letter_written: true,
+    });
+    renderPage();
+    expect(await screen.findByText(/Claude wrote a cover letter\./)).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "View" }));
+    expect(await screen.findByRole("dialog")).toHaveTextContent("Cover letter - Acme.pdf");
+  });
+
+  it("changes it here too, when the job's saved", async () => {
+    serveWithLetters(
+      { ...RUN, status: "filling", cover_letter: { id: "cl1", filename: "x.pdf" }, cover_letter_written: true },
+      [{ id: "s1", job_listing_id: "l1", cover_letter_id: "cl1", job_listing: { id: "l1", title: "IT Engineer", company: "Acme", location: "", description: "" } }],
+    );
+    renderPage();
+    const select = await screen.findByRole("combobox", { name: "Cover letter for this job" });
+    await waitFor(() => expect(select).toHaveValue("cl1"));
   });
 
   it("says None when Claude wrote one but the job now has none", async () => {
-    serve({ ...RUN, status: "filling", cover_letter: null, cover_letter_written: true });
+    serveWithLetters({ ...RUN, status: "filling", cover_letter: null, cover_letter_written: true });
     renderPage();
     expect(await screen.findByText(/None for this job/)).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /View .*Cover letter/ })).toBeNull();
+    expect(screen.queryByText(/Claude wrote a cover letter/)).toBeNull();
   });
 
   it("no card when there's no letter at all", async () => {

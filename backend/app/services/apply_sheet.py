@@ -38,6 +38,9 @@ MAX_STEPS = 30
 MAX_ROWS = 120
 MAX_OPTIONS = 60
 OPTION_CHARS = 120
+# A box's answer as the page shows it: long Workday answers in full, line
+# breaks kept (spec 039).
+ANSWER_CHARS = 2000
 MAX_WAITING = 30  # fixes waiting at once
 MAX_FIXES_KEPT = 150  # every fix in a run, any state
 # The same page seen again (a pop-up, a page done again): near-total overlap.
@@ -63,10 +66,24 @@ def _text(value: Any, limit: int) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()[:limit]
 
 
+def answer_text(value: Any) -> str:
+    """A box's answer, long text kept as written: spaces folded on each line,
+    line breaks kept (at most one blank line in a row)."""
+    s = re.sub(r"[ \t]+", " ", str(value or "").replace("\r\n", "\n"))
+    s = re.sub(r" ?\n ?", "\n", s)
+    return re.sub(r"\n{3,}", "\n\n", s).strip()[:ANSWER_CHARS]
+
+
 def norm(q: Any) -> str:
     """A question's key: case, punctuation and "required" marks folded."""
     s = _REQUIRED.sub(" ", str(q or "")).casefold()
     return re.sub(r"[^\w]+", " ", s).strip()[:200]
+
+
+def _fold(a: Any) -> str:
+    """An answer folded the same way, but whole: a long answer changed past
+    its first 200 characters is a change (spec 039)."""
+    return re.sub(r"[^\w]+", " ", str(a or "").casefold()).strip()
 
 
 def options_of(raw: Any) -> list[str]:
@@ -671,7 +688,7 @@ def add_fix(
         "step": step,
         "q": row["q"],
         "k": k,
-        "now": _text(row.get("a"), 300),
+        "now": answer_text(row.get("a")),
         "to": to or None,
         "ask": ask or None,
         "status": "waiting",
@@ -728,7 +745,7 @@ def for_claude(sheet: dict | None, fix: dict) -> dict[str, Any]:
         "id": fix["id"],
         "step_on_page": s["title"] if s else "",
         "box_on_page": fix.get("q"),
-        "now_on_page": _text((row or {}).get("a", fix.get("now")), 300),
+        "now_on_page": answer_text((row or {}).get("a", fix.get("now"))),
     }
     if fix.get("to"):
         out["to"] = fix["to"]
@@ -740,7 +757,7 @@ def for_claude(sheet: dict | None, fix: dict) -> dict[str, Any]:
 def _same(a: Any, to: Any) -> bool:
     """The box holds exactly what the owner asked for (case and punctuation
     aside): "Not Hispanic or Latino" is never "Hispanic or Latino"."""
-    na, nt = norm(a), norm(to)
+    na, nt = _fold(a), _fold(to)
     return bool(na) and na == nt
 
 
@@ -765,7 +782,7 @@ def settle(sheet: dict | None, fixes: Any, now: str) -> tuple[dict, list[dict]]:
         if (
             row is not None
             and _same(row.get("a"), f["to"])
-            and norm(row.get("a")) != norm(f.get("now"))
+            and _fold(row.get("a")) != _fold(f.get("now"))
         ):
             f.update(status="done", done_at=now)
             f.pop("claude_done", None)

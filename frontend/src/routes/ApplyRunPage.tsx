@@ -8,7 +8,8 @@ import { Pages } from "@/components/apply/Pages";
 import { Problems } from "@/components/apply/Problems";
 import { Questions } from "@/components/apply/Questions";
 import { ResumeForJob } from "@/components/apply/ResumeForJob";
-import { CoverLetterCard } from "@/components/jobs/JobCoverLetterPicker";
+import { JobCoverLetterPicker, letterFileName } from "@/components/jobs/JobCoverLetterPicker";
+import { documentFile, useFileViewer } from "@/components/common/FileViewer";
 import { ResumeReview } from "@/components/apply/ResumeReview";
 import { ModeSwitch } from "@/components/apply/ModeSwitch";
 import { ReviewBoard } from "@/components/apply/Review";
@@ -124,6 +125,26 @@ function Activity({ run }: { run: ApplyRun }) {
   );
 }
 
+/** "Claude wrote a cover letter. View" under the run's status (spec 039). */
+function LetterNote({ run }: { run: ApplyRun }) {
+  const { view, viewer } = useFileViewer();
+  if (!run.cover_letter_written || !run.cover_letter) return null;
+  const letter = run.cover_letter;
+  return (
+    <p className="text-sm text-muted-foreground">
+      Claude wrote a cover letter.{" "}
+      <button
+        type="button"
+        className="font-medium text-primary underline-offset-2 hover:underline"
+        onClick={() => view(documentFile(letter.id, letterFileName(run.job.company)))}
+      >
+        View
+      </button>
+      {viewer}
+    </p>
+  );
+}
+
 /**
  * One application with Claude (spec 022): the six steps, live, on phone or
  * computer. Each part shows once it has something; the part waiting for the
@@ -170,6 +191,7 @@ export function ApplyRunPage() {
             {run.status === "sent" && <CheckCircle2 className="h-4 w-4 text-emerald-600" aria-hidden />}
             {statusLine(run)}
           </p>
+          <LetterNote run={run} />
         </div>
         {open && (
           <Button
@@ -237,15 +259,15 @@ export function ApplyRunPage() {
         </Card>
       )}
 
+      {/* Right by the résumé, the same row as on the job's page (spec 039). */}
       {(run.cover_letter || run.cover_letter_written) && (
         <Card title="Cover letter">
-          {run.cover_letter ? (
-            <CoverLetterCard letter={run.cover_letter} />
-          ) : (
-            <p className="text-sm text-muted-foreground">
-              None for this job: Job Catcher leaves the cover-letter box. Pick one on the job's page.
-            </p>
-          )}
+          <JobCoverLetterPicker
+            jobListingId={run.job.listing_id}
+            company={run.job.company}
+            letter={run.cover_letter ?? null}
+            bare
+          />
         </Card>
       )}
 

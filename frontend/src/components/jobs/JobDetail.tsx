@@ -10,6 +10,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Separator } from "@/components/ui/separator";
 import { useIsPhone } from "@/hooks/useIsPhone";
+import { useAiWritingOn } from "@/hooks/useUsage";
 import { cn, formatSalary } from "@/lib/utils";
 import type { JobListing, SavedJob } from "@/types/api";
 
@@ -74,6 +75,7 @@ export function JobDetail({
   applyWithClaude,
 }: JobDetailProps) {
   const phone = useIsPhone();
+  const aiOn = useAiWritingOn();
   // Made from an email: its link is that email, not a posting to apply on.
   const fromEmail = savedJob?.origin === "email";
   const salary = formatSalary(job.salary_min, job.salary_max, job.currency, job.salary_period);
@@ -176,7 +178,9 @@ export function JobDetail({
             </Button>
           ))}
         {applyWithClaude}
-        {onGenerateDocuments && (
+        {/* The app's own AI writing: hidden while it's off (the app works
+            without it), never a button that fails (spec 039). */}
+        {onGenerateDocuments && aiOn && (
           <Button variant="outline" onClick={onGenerateDocuments}>
             Generate Documents
           </Button>
@@ -192,7 +196,7 @@ export function JobDetail({
 
       {/* Résumés and cover letters saved for this job — app-generated or written
           by Claude through the MCP connector. */}
-      <JobDocuments jobListingId={job.id} />
+      <JobDocuments jobListingId={job.id} company={job.company} />
 
       {/* Description */}
       {job.description ? (

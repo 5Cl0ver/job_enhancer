@@ -990,6 +990,99 @@ async def test_degraded_isnt_down(engine, health):
         assert await _caught(db) == []
 
 
+@pytest.fixture
+def no_keys(monkeypatch):
+    """No JSearch, Adzuna or NVIDIA key set; any ping fails the test."""
+
+    async def no_pings(*args, **kwargs):
+        raise AssertionError("pinged a service with no key")
+
+    monkeypatch.setattr(admin_service, "_check_endpoint", no_pings)
+    monkeypatch.setattr(admin_service, "_external", None)
+    monkeypatch.setattr(admin_service, "_health_last", {})
+    monkeypatch.setattr(admin_service, "_watch_pinged", {})
+    monkeypatch.setattr(admin_service.settings, "jsearch_api_key", "")
+    monkeypatch.setattr(admin_service.settings, "adzuna_app_id", "")
+    monkeypatch.setattr(admin_service.settings, "adzuna_app_key", "")
+    monkeypatch.setattr(admin_service.settings, "nvidia_api_key", " ")
+
+
+@pytest.mark.asyncio
+async def test_a_service_with_no_key_is_off_not_down(db_session, no_keys):
+    statuses = await admin_service.check_service_health(db_session)
+    off = {s.name: s for s in statuses if s.status == "off"}
+    assert set(off) == {"JSearch", "Adzuna", "NVIDIA NIM"}
+    assert all(s.detail == "Not set up" for s in off.values())
+    assert not any(s.status == "down" for s in statuses)
+
+
+@pytest.mark.asyncio
+async def test_the_watch_never_reports_a_service_with_no_key(engine, no_keys):
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    for _ in range(5):
+        await admin_service.health_watch(maker)
+    async with maker() as db:
+        assert await _caught(db) == []
+    assert "JSearch" not in admin_service._health_last
+
+
+@pytest.mark.asyncio
+async def test_no_key_leaves_an_open_outage_alone(engine, no_keys):
+    # An old "JSearch is down" report isn't closed as "recovered" by a key
+    # that's simply not set up.
+    maker = async_sessionmaker(bind=engine, expire_on_commit=False)
+    async with maker() as db:
+        await svc.service_down(db, "JSearch", "No key set")
+        await db.commit()
+    await admin_service.health_watch(maker)
+    async with maker() as db:
+        [report] = await _caught(db)
+        detail = await svc.detail(db, report.id)
+    assert not any(e["data"].get("field") == "recovered" for e in detail["events"])
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [401, 403])
+async def test_a_rejected_key_is_degraded(monkeypatch, code):
+    import httpx
+
+    real = httpx.AsyncClient
+
+    def client(*args, **kwargs):
+        transport = httpx.MockTransport(lambda request: httpx.Response(code))
+        return real(transport=transport)
+
+    monkeypatch.setattr(admin_service.httpx, "AsyncClient", client)
+    status = await admin_service._check_endpoint("Adzuna", "https://example.test/x")
+    assert status.status == "degraded" and status.detail == "Key rejected"
+
+
+@pytest.mark.asyncio
+async def test_a_rejected_key_isnt_pinged_again_every_minute(db_session, monkeypatch):
+    """The admin page asks every minute: a "Key rejected" reading is kept
+    like a healthy one, so Adzuna's daily calls aren't spent on it."""
+    import httpx
+
+    real = httpx.AsyncClient
+    asked: list[str] = []
+
+    def answer(request):
+        asked.append(request.url.host)
+        return httpx.Response(401 if "adzuna" in request.url.host else 200)
+
+    def client(*args, **kwargs):
+        return real(transport=httpx.MockTransport(answer))
+
+    monkeypatch.setattr(admin_service.httpx, "AsyncClient", client)
+    monkeypatch.setattr(admin_service, "_external", None)
+    first = await admin_service.check_service_health(db_session)
+    second = await admin_service.check_service_health(db_session)
+    assert sum("adzuna" in h for h in asked) == 1
+    for statuses in (first, second):
+        adzuna = next(s for s in statuses if s.name == "Adzuna")
+        assert (adzuna.status, adzuna.detail) == ("degraded", "Key rejected")
+
+
 @pytest.mark.asyncio
 async def test_the_health_watch_never_raises(health):
     class Broken:

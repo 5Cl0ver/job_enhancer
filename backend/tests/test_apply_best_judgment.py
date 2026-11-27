@@ -167,7 +167,7 @@ async def test_the_live_view(engine, monkeypatch):
         {"q": "First name", "a": "Sam", "by": "job_catcher"},
         {"q": "Password", "a": "hunter2"},
         {"q": "CVV", "a": "123"},
-        {"q": "Why Acme?", "a": "x" * 500, "by": "someone"},
+        {"q": "Why Acme?", "a": "x" * 2500, "by": "someone"},
         "junk",
     ] + [{"q": f"Box {i}", "a": ""} for i in range(200)]
     async with maker() as db:
@@ -188,7 +188,8 @@ async def test_the_live_view(engine, monkeypatch):
         live = (await svc.view(db, run))["live"]
     assert live["title"] == "Info"
     assert live["boxes"][0] == {"q": "First name", "a": "Sam", "by": "job_catcher"}
-    assert live["boxes"][1] == {"q": "Why Acme?", "a": "x" * 300}
+    # Long answers are kept whole up to 2,000 characters (spec 039).
+    assert live["boxes"][1] == {"q": "Why Acme?", "a": "x" * 2000}
     assert all(b["q"] not in ("Password", "CVV") for b in live["boxes"])
     assert len(live["boxes"]) <= svc.MAX_LIVE_BOXES
 
