@@ -952,10 +952,21 @@ function listedTimes(list, name) {
 /**
  * Does this box's list show a file of exactly this name (spec 037)? Workday's
  * card lists it; another site shows its name by the box. The whole name,
- * never a part of one.
+ * never a part of one. `loose` (only for a file Job Catcher itself put
+ * there): its name anywhere in the list ("Uploaded: resume.pdf"), or
+ * shortened ("Sam_Rivera_Nor….pdf").
  */
-export function fileListed(field, name) {
-  return listedTimes(listOf(field), name) > 0;
+export function fileListed(field, name, { loose = false } = {}) {
+  const list = listOf(field);
+  if (listedTimes(list, name) > 0) return true;
+  if (!loose || !list) return false;
+  const want = fileName(name);
+  if (!want) return false;
+  if (fileName(list.textContent).includes(want)) return true;
+  return [list, ...list.querySelectorAll("*")].some((el) => {
+    const [head, tail, ...more] = fileName(el.textContent).split(/…|\.\.\.(?=\S)/);
+    return !more.length && tail !== undefined && head.length >= 4 && want.startsWith(head) && want.endsWith(tail);
+  });
 }
 
 /** The upload card's files as shown: how many, how many with our file's

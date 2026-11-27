@@ -571,7 +571,8 @@ export function createSession(deps) {
       deps.onFileTried?.(k, rec);
     };
     const rec = tried.get(k);
-    if (rec && fileListed(field, file.name)) {
+    // Ours (a record of it): its list may show it shortened or with other words.
+    if (rec && fileListed(field, file.name, { loose: true })) {
       if (rec.s !== "attached") keep("attached");
       return { state: "attached", wrote: false };
     }

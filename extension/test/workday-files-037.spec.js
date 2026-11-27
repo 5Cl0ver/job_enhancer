@@ -122,6 +122,25 @@ describe("the résumé on Workday (bug 1)", () => {
     expect(s.report().resume).toBe("attached");
   });
 
+  it("ours, listed under a shortened or longer name: never a new copy on the next press (spec 037 review)", async () => {
+    for (const shown of ["Uploaded: Sam_Rivera_Northwind.pdf", "Sam_Rivera_Nor….pdf"]) {
+      const doc = stepTwo();
+      const uploads = [];
+      const card = doc.querySelector("[data-automation-id=attachments-FileUpload]");
+      doc.querySelector("#input-3f9a").addEventListener("change", (e) => {
+        uploads.push(...[...e.target.files].map((f) => f.name));
+        e.target.value = "";
+        card.insertAdjacentHTML("afterbegin", `<div data-automation-id="file-upload-successful">${shown}</div>`);
+      });
+      const s = session(doc);
+      const copy = { values: {}, answers: [], resumeFile: resumeFile() };
+      await s.uploadResume(copy);
+      await s.uploadResume(copy);
+      expect(uploads).toHaveLength(1);
+      expect(s.report().resume).toBe("attached");
+    }
+  });
+
   it("an 'unverified' try is locked for ~3 minutes only", async () => {
     const doc = stepTwo();
     const page = likeWorkday(doc, { list: false });

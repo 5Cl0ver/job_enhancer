@@ -607,6 +607,27 @@ describe("the background loop", () => {
     expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: true, reason: null, filled: ["Why Tidewell?"], need: [], cover_letter: "attached" });
   });
 
+  it("never photographs a tab while a fill is going on it: waits for it, else says so (spec 037 review)", async () => {
+    // A fill on the tab that ends after a few looks: the photo after it.
+    let looks = 0;
+    const c = fakeChrome();
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 2 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), filling: () => ++looks < 4, chrome: c }));
+    expect(looks).toBeGreaterThanOrEqual(4);
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).ok).toBe(true);
+    // Filling the whole time: no photo, never scrolled, the answers kept.
+    const busy = fakeChrome();
+    const two = fakeApi([{ id: "q2", kind: "photo", url: URL1, page_n: 2 }]);
+    await runLoop(createApplyRun({ api: two.api, press: vi.fn(), fillSession: vi.fn(), filling: () => true, chrome: busy }));
+    expect(two.calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(0);
+    expect(busy.tabs.sendMessage).not.toHaveBeenCalled();
+    expect(JSON.parse(two.calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: false, reason: "filling", answers: [{ q: "Name", a: "Sam" }, { q: "Email", a: "s@x" }] });
+    // "Show me the screen" too.
+    const peek = fakeApi([{ id: "k2", kind: "peek", url: URL1, page_n: 0 }]);
+    await runLoop(createApplyRun({ api: peek.api, press: vi.fn(), fillSession: vi.fn(), filling: () => true, chrome: fakeChrome() }));
+    expect(JSON.parse(peek.calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: false, reason: "filling" });
+  });
+
   it("a photo never waits behind a long fill (spec 037 review)", async () => {
     const c = fakeChrome();
     const calls = [];
@@ -627,13 +648,38 @@ describe("the background loop", () => {
     expect(results).toEqual(["/v1/apply/requests/q1/result", "/v1/apply/requests/f1/result"]);
   });
 
-  it("a long fill never waits past the app's own wait: from when the request was made (spec 037 review)", async () => {
-    const made = new Date(Date.now() - 160_000).toISOString(); // asked 160 s ago
-    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2, created_at: made }]);
-    const fillSession = vi.fn().mockResolvedValue({ frames: {} });
+  it("a long fill never waits past the app's own wait: by the request's age, never the server's clock (spec 037 review)", async () => {
+    const run = async (req) => {
+      const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2, ...req }]);
+      const fillSession = vi.fn().mockResolvedValue({ frames: {} });
+      await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: fakeChrome() }));
+      expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).reason).toBe("slow");
+      return fillSession.mock.calls.length;
+    };
+    // Asked 100 s ago: ~70 s left.
+    const left = await run({ age_s: 100 });
+    expect(left).toBeGreaterThan(60);
+    expect(left).toBeLessThan(80);
+    // Asked 160 s ago: never less than ~30 s.
+    const least = await run({ age_s: 160 });
+    expect(least).toBeGreaterThan(25);
+    expect(least).toBeLessThan(40);
+    // A server clock an hour ahead changes nothing: only its age counts.
+    const skewed = await run({ age_s: 100, created_at: new Date(Date.now() + 3_600_000).toISOString() });
+    expect(Math.abs(skewed - left)).toBeLessThan(3);
+  });
+
+  it("a frame's fill report still counts after a panel action reported later (spec 037 review)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    let reads = 0;
+    const fillSession = vi.fn(async () => {
+      reads++;
+      if (reads < 5) return { frames: {} };
+      // Filled now, then the user pressed Fix in the panel: its report came last.
+      return { frames: { 0: { entries: [{ label: "First Name" }], need_you: [], at: Date.now() + 5, fillAt: Date.now(), action: true } } };
+    });
     await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: fakeChrome() }));
-    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).reason).toBe("slow");
-    expect(fillSession.mock.calls.length).toBeLessThan(20); // ~10 s left, not 170
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: true, reason: null, filled: ["First Name"], need: [] });
   });
 
   it("a late fill: every frame's report, never a panel action's (spec 037 review)", async () => {

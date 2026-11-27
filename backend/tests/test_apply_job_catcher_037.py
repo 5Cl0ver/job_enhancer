@@ -283,7 +283,9 @@ async def test_job_catcher_hears_when_each_request_was_made(engine, monkeypatch)
         await svc.fill_request(db, user, rid, PAGE)
         await db.commit()
         [req] = (await svc.extension_state(db, user.id))["requests"]
-    assert req["kind"] == "fill" and req["created_at"].endswith("+00:00")
+    # Its age by the server's own clock: Job Catcher never mixes clocks.
+    assert req["kind"] == "fill" and isinstance(req["age_s"], int)
+    assert 0 <= req["age_s"] < 5
 
 
 @pytest.mark.asyncio
@@ -333,3 +335,10 @@ def test_the_playbook_says_what_cover_letter_and_unverified_mean():
     assert 'One box for both ("Resume / Cover Letter")' in text
     assert "`cover_letter` (attached / unverified / no_box / no_file / failed)" in text
     assert "`unverified` means Job Catcher put the file in" in text
+
+
+def test_a_photo_missed_while_job_catcher_was_filling_says_what_to_do():
+    assert svc.REASONS["filling"] == (
+        "Job Catcher was still filling this page, so no photo then (the answers "
+        "are kept). Call page_done again once fill_page has returned"
+    )

@@ -47,6 +47,10 @@ const BUSY_MS = 1_000; // a fill still going: look for its report this often…
 // …for as long as the app keeps the same fill going for Claude (its FILL_GOING,
 // 3 min from the request), a little less (spec 037).
 const FILL_BUDGET_MS = 170_000;
+const FILL_LEAST_MS = 30_000; // …but never less than this from the claim
+// A photo while a fill is going on its tab: wait this long for it to end.
+const FILLING_MS = 1_000;
+const FILLING_LOOKS = 30;
 const MAX_LIVE = 150;
 const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|card number|credit card|\bcvv\b|\bcvc\b/i;
 // The best of what each frame says happened to the résumé (and the cover letter, spec 037).
@@ -79,12 +83,15 @@ function hostOf(url) {
  *   chrome?: typeof chrome,
  * }} deps
  */
-export function createApplyRun({ api, press, fillSession, onRunFill = async () => {}, chrome: c = globalThis.chrome }) {
+export function createApplyRun({ api, press, fillSession, onRunFill = async () => {}, filling = () => false, chrome: c = globalThis.chrome }) {
   let state = { at: 0, ttl: IDLE_TTL, data: { run_id: null }, okAt: 0 };
   let asking = null;
   let looping = false;
   const done = new Set(); // request ids answered here (claimed, or taken elsewhere)
   const handling = new Set(); // request ids being handled right now
+  const fillingTabs = new Set(); // tabs a fill request is filling now
+  /** Is a fill going on this tab (Claude's, or a press)? Never photographed then. */
+  const fillingNow = (tabId) => fillingTabs.has(tabId) || !!filling(tabId);
 
   async function active(force = false) {
     if (!force && Date.now() - state.at < state.ttl) return state.data;
@@ -247,7 +254,12 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     try {
       if (req.kind === "fill") {
         await onRunFill(tab.id, data.run_id).catch(() => {});
-        return await finish(req, await fill(tab, req));
+        fillingTabs.add(tab.id);
+        try {
+          return await finish(req, await fill(tab, req));
+        } finally {
+          fillingTabs.delete(tab.id);
+        }
       }
       if (req.kind === "peek") return await finish(req, await peekShot(req, tab));
       return await finish(req, await photos(req, tab));
@@ -283,15 +295,19 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
 
   async function fill(tab, req = {}) {
     const started = Date.now();
-    // Never past the app's own wait for this fill: from when it was asked
-    // (else from now), FILL_BUDGET_MS.
-    const made = Date.parse(req.created_at || "");
-    const until = Math.min(started, Number.isFinite(made) ? made : started) + FILL_BUDGET_MS;
+    // Never past the app's own wait for this fill: FILL_BUDGET_MS from when it
+    // was asked, by its age as the app counts it (never its clock against
+    // this computer's), and never less than FILL_LEAST_MS from now.
+    const age = Number(req.age_s);
+    const left = Number.isFinite(age) && age > 0 ? FILL_BUDGET_MS - age * 1000 : FILL_BUDGET_MS;
+    const until = started + Math.max(FILL_LEAST_MS, left);
     const out = await press(tab.id);
     const read = () => fillSession(tab.id).catch(() => ({ frames: {} }));
-    // A frame's fill report since this press; a report after a panel action
-    // (a Fix, an Undo) is never a fill's.
-    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => !f.action && (f.fillAt ?? f.at ?? 0) >= started);
+    // A frame's fill report since this press, by when it last FILLED: a
+    // panel action's report (a Fix, an Undo) is never a fill's, and never
+    // hides the fill before it.
+    const filledAt = (f) => (f.action ? f.fillAt || 0 : (f.fillAt ?? f.at ?? 0));
+    const fresh = (s) => Object.values(s?.frames || {}).filter((f) => filledAt(f) >= started);
     let session = await read();
     // Still going (spec 037): Keep filling was already filling this step
     // (busy), or the page outlasted the press's wait (slow, a long Workday
@@ -393,7 +409,18 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     return idle === "locked" ? "locked" : "hidden";
   }
 
+  /** A fill going on the tab (spec 037): wait for it, up to ~30 s. True when done. */
+  async function fillDone(tab) {
+    for (let looks = 0; fillingNow(tab.id); looks++) {
+      if (looks >= FILLING_LOOKS) return false;
+      await sleep(FILLING_MS);
+    }
+    return true;
+  }
+
   async function photos(req, tab) {
+    // Never shown or scrolled mid-fill: the answers are kept.
+    if (!(await fillDone(tab))) return { ok: false, reason: "filling", answers: await readAnswers(tab.id) };
     const shown = await showFor(tab);
     if (!shown.tab) {
       // In use: no photo now, but the page's questions and answers still go.
@@ -452,6 +479,7 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
 
   /** The screen as it is now: one photo, never scrolled (spec 023). */
   async function peekShot(req, tab) {
+    if (!(await fillDone(tab))) return { ok: false, reason: "filling" };
     const shown = await showFor(tab);
     if (!shown.tab) return { ok: false, reason: shown.reason };
     try {

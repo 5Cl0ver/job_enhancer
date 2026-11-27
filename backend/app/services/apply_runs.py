@@ -3025,6 +3025,11 @@ REASONS = {
         "retake the photos"
     ),
     "replaced": "A newer page came first",
+    # Spec 037: never a photo while Job Catcher fills the page.
+    "filling": (
+        "Job Catcher was still filling this page, so no photo then (the answers "
+        "are kept). Call page_done again once fill_page has returned"
+    ),
     # Spec 029: never an earlier step's report in its place.
     "no_report": (
         "Job Catcher filled but got no fresh reading of this page (it may "
@@ -3661,8 +3666,9 @@ async def extension_state(db: AsyncSession, user_id: uuid.UUID) -> dict[str, Any
                 "kind": r.kind,
                 "url": r.url,
                 "page_n": r.page_n,
-                # A long fill never outlasts FILL_GOING from here (spec 037).
-                "created_at": _iso(r.created_at),
+                # How old it is, by this clock (spec 037): a long fill never
+                # outlasts FILL_GOING, whatever the computer's clock says.
+                "age_s": max(0, int((_now() - _aware(r.created_at)).total_seconds())),
             }
             for r in reqs
         ],

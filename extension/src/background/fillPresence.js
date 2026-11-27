@@ -299,5 +299,8 @@ export function createFillPresence({ notify, idleBadge = async () => ({ text: ""
     return { result: { ok: false, problem, filled: 0, need: 0 } };
   }
 
-  return { get, storePresence, frameStatus, clear, probe, press, readAgain, report, badge };
+  /** Is a press filling this tab right now (spec 037: no photos mid-fill)? */
+  const pressingNow = (tabId) => pressing.has(tabId);
+
+  return { get, storePresence, frameStatus, clear, probe, press, readAgain, report, badge, pressingNow };
 }

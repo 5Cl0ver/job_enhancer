@@ -584,6 +584,8 @@ const applyRun = createApplyRun({
   },
   press: (tabId) => pressTab(tabId),
   fillSession: (tabId) => getFillSession(tabId),
+  // A press filling the tab (panel, toolbar): no photos then (spec 037).
+  filling: (tabId) => presence.pressingNow(tabId),
   // A fill for another run than the one this tab's file tries were for: they
   // don't count any more (spec 037).
   onRunFill: async (tabId, runId) => {
