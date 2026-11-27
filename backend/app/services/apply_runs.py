@@ -2717,8 +2717,9 @@ async def page_done(
             _event(run, "step_ok", f"{title} looked fine: no stop.")
             extra["next"] = (
                 "Page by page, but this step has nothing for the owner to look "
-                "at (no guesses, no empty required boxes): post a one-line "
-                "update with message_user, press Next and fill the next step."
+                "at (nothing you wrote, no guesses, no empty required boxes): "
+                "post a one-line update with message_user, press Next and fill "
+                "the next step."
             )
         elif (run.mode or APPLY_MODE_PAGE) == APPLY_MODE_PAGE and not (
             sheet_svc.step_of(run.sheet, key) or {}

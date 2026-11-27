@@ -621,15 +621,16 @@ def rows_to_check(sheet: dict | None) -> list[dict[str, Any]]:
 
 def to_look_at(sheet: dict | None, key: str, fixes: Any = None) -> bool:
     """Page by page (spec 038): whether a finished step has anything for the
-    owner to look at: a guess, an "only you" box, an agreement, an empty box
-    the form marks required, or a fix of theirs still waiting. A step with
-    none of these doesn't stop."""
+    owner to look at: an answer Claude wrote (an essay, a typed answer it
+    composed), a guess, an "only you" box, an agreement, an empty box the
+    form marks required, or a fix of theirs still waiting. A step with none
+    of these doesn't stop."""
     if waiting(fixes, key):
         return True
     step = step_of(sheet, key)
     for r in (step or {}).get("rows") or []:
         tag = tag_of(r)
-        if tag in ("agreement", "only_you", "guess"):
+        if r.get("claude") or tag in ("agreement", "only_you", "guess"):
             return True
         if tag == "empty" and _REQUIRED.search(str(r.get("q") or "")):
             return True

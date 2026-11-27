@@ -355,6 +355,12 @@ async def test_a_clean_step_doesn_t_pause(engine, monkeypatch):
     "row",
     [
         {"q": "Prefix", "a": "Mr.", "guess": True},
+        # An answer Claude wrote itself: the main thing the owner looks at.
+        {
+            "q": "Why do you want to work at Northwind Labs?",
+            "a": "I've run Intune for a 400-seat office and want to grow it here.",
+            "claude": True,
+        },
         {"q": "Years with Intune", "a": "", "only_you": True},
         {"q": "I certify this is true", "a": "Yes", "agreement": True},
         {"q": "Phone Number*", "a": ""},
