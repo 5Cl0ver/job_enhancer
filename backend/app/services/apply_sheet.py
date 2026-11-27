@@ -80,6 +80,12 @@ def norm(q: Any) -> str:
     return re.sub(r"[^\w]+", " ", s).strip()[:200]
 
 
+def _fold(a: Any) -> str:
+    """An answer folded the same way, but whole: a long answer changed past
+    its first 200 characters is a change (spec 039)."""
+    return re.sub(r"[^\w]+", " ", str(a or "").casefold()).strip()
+
+
 def options_of(raw: Any) -> list[str]:
     """A box's choices as the form shows them (labels only): never a
     placeholder ("Select One"), at most 60 of 120 characters."""
@@ -751,7 +757,7 @@ def for_claude(sheet: dict | None, fix: dict) -> dict[str, Any]:
 def _same(a: Any, to: Any) -> bool:
     """The box holds exactly what the owner asked for (case and punctuation
     aside): "Not Hispanic or Latino" is never "Hispanic or Latino"."""
-    na, nt = norm(a), norm(to)
+    na, nt = _fold(a), _fold(to)
     return bool(na) and na == nt
 
 
@@ -776,7 +782,7 @@ def settle(sheet: dict | None, fixes: Any, now: str) -> tuple[dict, list[dict]]:
         if (
             row is not None
             and _same(row.get("a"), f["to"])
-            and norm(row.get("a")) != norm(f.get("now"))
+            and _fold(row.get("a")) != _fold(f.get("now"))
         ):
             f.update(status="done", done_at=now)
             f.pop("claude_done", None)

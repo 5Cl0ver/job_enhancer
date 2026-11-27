@@ -147,6 +147,22 @@ describe("Cover letter for this job", () => {
     expect(screen.queryByRole("button", { name: /View/ })).toBeNull();
   });
 
+  it("says nothing until the letters are in (no flash of None yet)", async () => {
+    let letGo: (v: unknown) => void = () => {};
+    get.mockImplementation((path: string) => {
+      if (path === "/v1/ai/cover-letters") return new Promise((r) => (letGo = r));
+      return Promise.resolve(path.startsWith("/v1/saved-jobs") ? savedJobs : []);
+    });
+    const { container } = renderIt(<JobCoverLetterPicker jobListingId="l1" />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/v1/ai/cover-letters"));
+    await waitFor(() => expect(get).toHaveBeenCalledWith(expect.stringMatching(/^\/v1\/saved-jobs/)));
+    await new Promise((r) => setTimeout(r, 20));
+    expect(container).toBeEmptyDOMElement();
+    letGo(letters);
+    expect(await screen.findByText("Cover letter - Northwind Labs.pdf")).toBeInTheDocument();
+    expect(screen.queryByText(/None yet/)).toBeNull();
+  });
+
   it("not on a job that isn't saved", async () => {
     savedJobs = [];
     const { container } = renderIt(<JobCoverLetterPicker jobListingId="l1" />);
@@ -188,6 +204,14 @@ describe("Settings › Cover letters", () => {
     expect(within(rows[1]).getByText("Cover letter - Contoso.pdf")).toBeInTheDocument();
     expect(within(rows[0]).getByText(/^Platform Engineer · /)).toBeInTheDocument();
     expect(within(rows[0]).getByRole("button", { name: /Edit text/ })).toBeInTheDocument();
+  });
+
+  it("says nothing until the letters are in", async () => {
+    get.mockImplementation(() => new Promise(() => {}));
+    renderIt(<CoverLettersCard />);
+    await waitFor(() => expect(get).toHaveBeenCalledWith("/v1/ai/cover-letters"));
+    expect(screen.getByText("Cover letters")).toBeInTheDocument();
+    expect(screen.queryByText(/None yet/)).toBeNull();
   });
 
   it("says none yet when there are none", async () => {

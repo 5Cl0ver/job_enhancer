@@ -31,9 +31,13 @@ describe("a long answer in the list", () => {
     render(<RowButton row={{ q: Q, a: LONG }} onTap={() => {}} />);
     const text = screen.getByText((_, el) => el?.tagName === "SPAN" && el.textContent === LONG);
     expect(text).toHaveClass("line-clamp-4");
-    await userEvent.click(screen.getByRole("button", { name: "Show all" }));
+    // Named for its question: a list of rows has many of these.
+    const toggle = screen.getByRole("button", { name: `Show all of ${Q}` });
+    expect(toggle).toHaveTextContent("Show all");
+    expect(toggle).toHaveAttribute("aria-controls", text.id);
+    await userEvent.click(toggle);
     expect(text).not.toHaveClass("line-clamp-4");
-    await userEvent.click(screen.getByRole("button", { name: "Show less" }));
+    await userEvent.click(screen.getByRole("button", { name: `Show less of ${Q}` }));
     expect(text).toHaveClass("line-clamp-4");
   });
 
@@ -41,7 +45,7 @@ describe("a long answer in the list", () => {
     vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(400);
     vi.spyOn(HTMLElement.prototype, "clientHeight", "get").mockReturnValue(80);
     render(<RowButton row={{ q: "City", a: "Eugene" }} onTap={() => {}} />);
-    expect(screen.queryByRole("button", { name: "Show all" })).toBeNull();
+    expect(screen.queryByRole("button", { name: /^Show all/ })).toBeNull();
     expect(screen.getByText("Eugene")).not.toHaveClass("line-clamp-4");
   });
 });
@@ -59,6 +63,17 @@ describe("changing a long answer", () => {
     await userEvent.type(box, " Thanks.");
     await userEvent.click(screen.getByRole("button", { name: "Add fix" }));
     expect(onSave).toHaveBeenCalledWith({ to: `${LONG} Thanks.` });
+  });
+
+  it("says when it's at the 2,000-character limit", async () => {
+    const full = "y".repeat(2000);
+    render(<FixSheet target={target(full)} onSave={() => {}} onClose={() => {}} />);
+    expect(screen.getByText("2,000 characters max")).toBeInTheDocument();
+  });
+
+  it("no limit note far from it", () => {
+    render(<FixSheet target={target(LONG)} onSave={() => {}} onClose={() => {}} />);
+    expect(screen.queryByText("2,000 characters max")).toBeNull();
   });
 
   it("a short answer keeps its one-line box", () => {

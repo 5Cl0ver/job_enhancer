@@ -193,12 +193,14 @@ export function JobCoverLetterPicker({
   bare?: boolean;
 }) {
   const { data: saved } = useSavedJobs();
-  const { data: listed } = useCoverLetters();
+  const { data: listed, isError: listFailed } = useCoverLetters();
   const letters = listed ?? [];
   const setLetter = useSetJobCoverLetter();
   const job = saved?.find((sj) => sj.job_listing_id === jobListingId);
   // Not a saved job (and no run to speak for it): nothing to show.
   if (!job && letter === undefined) return null;
+  // Nothing until the letters are in: never a flash of "None yet".
+  if (listed === undefined && !listFailed) return null;
   const chosen = job ? (job.cover_letter_id ?? "") : (letter?.id ?? "");
   const picked = letters.find((l) => l.id === chosen);
   // This job's own letters first, then the others (newest first in each).
@@ -239,7 +241,11 @@ export function JobCoverLetterPicker({
         <CoverLetterRow key={chosen} id={chosen} filename={filename} sub={sub || undefined} />
       ) : (
         <p className="text-sm text-muted-foreground">
-          {letters.length ? "None for this job: Job Catcher leaves the cover-letter box." : NO_LETTER_YET}
+          {letters.length
+            ? "None for this job: Job Catcher leaves the cover-letter box."
+            : listFailed
+              ? "Couldn't load your cover letters. Try again later."
+              : NO_LETTER_YET}
         </p>
       )}
     </section>

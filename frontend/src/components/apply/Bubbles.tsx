@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useId, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronUp, Loader2, MessageCircle, Pencil, Search, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -85,6 +85,7 @@ export function RowButton({
   const empty = !row.a.trim();
   const pending = fix && (fix.status === "waiting" || fix.status === "sent") && fix.to;
   const fold = useFold(row.a);
+  const answerId = useId();
   const body = (
     <>
       <span className="flex items-start justify-between gap-2">
@@ -96,6 +97,7 @@ export function RowButton({
       </span>
       <span
         ref={fold.ref}
+        id={answerId}
         className={cn(
           "block whitespace-pre-wrap break-words text-sm",
           fold.clamp && "line-clamp-4",
@@ -143,6 +145,8 @@ export function RowButton({
       <button
         type="button"
         aria-expanded={fold.all}
+        aria-controls={answerId}
+        aria-label={`${fold.all ? "Show less" : "Show all"} of ${row.q}`}
         onClick={fold.toggle}
         className="min-h-8 px-3 text-xs font-medium text-primary underline-offset-2 hover:underline"
       >
@@ -164,6 +168,8 @@ export interface FixTarget {
 }
 
 const SEARCH_FROM = 8;
+/** The most a change can hold (the server keeps 2,000 characters). */
+const MAX_TO = 2000;
 
 /**
  * Change one box, or ask Claude about it (spec 033). A dropdown, radio or
@@ -305,7 +311,7 @@ export function FixSheet({
                 aria-label="Change it to"
                 value={other}
                 rows={4}
-                maxLength={2000}
+                maxLength={MAX_TO}
                 placeholder="The new answer"
                 onChange={(e) => setOther(e.target.value)}
               />
@@ -319,6 +325,10 @@ export function FixSheet({
                 onChange={(e) => setOther(e.target.value)}
               />
             ))}
+          {typing && big && other.length >= MAX_TO - 100 && (
+            // The box stops taking letters at the limit: say so.
+            <p className="text-xs text-muted-foreground">2,000 characters max</p>
+          )}
         </div>
 
         {asking ? (

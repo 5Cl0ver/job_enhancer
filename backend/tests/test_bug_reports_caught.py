@@ -1058,6 +1058,32 @@ async def test_a_rejected_key_is_degraded(monkeypatch, code):
 
 
 @pytest.mark.asyncio
+async def test_a_rejected_key_isnt_pinged_again_every_minute(db_session, monkeypatch):
+    """The admin page asks every minute: a "Key rejected" reading is kept
+    like a healthy one, so Adzuna's daily calls aren't spent on it."""
+    import httpx
+
+    real = httpx.AsyncClient
+    asked: list[str] = []
+
+    def answer(request):
+        asked.append(request.url.host)
+        return httpx.Response(401 if "adzuna" in request.url.host else 200)
+
+    def client(*args, **kwargs):
+        return real(transport=httpx.MockTransport(answer))
+
+    monkeypatch.setattr(admin_service.httpx, "AsyncClient", client)
+    monkeypatch.setattr(admin_service, "_external", None)
+    first = await admin_service.check_service_health(db_session)
+    second = await admin_service.check_service_health(db_session)
+    assert sum("adzuna" in h for h in asked) == 1
+    for statuses in (first, second):
+        adzuna = next(s for s in statuses if s.name == "Adzuna")
+        assert (adzuna.status, adzuna.detail) == ("degraded", "Key rejected")
+
+
+@pytest.mark.asyncio
 async def test_the_health_watch_never_raises(health):
     class Broken:
         def __call__(self):

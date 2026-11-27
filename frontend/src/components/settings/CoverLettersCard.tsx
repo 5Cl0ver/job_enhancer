@@ -11,7 +11,7 @@ const day = (iso: string) =>
  * Download, Edit text). Which one a job uses is picked on the job's page.
  */
 export function CoverLettersCard() {
-  const { data } = useCoverLetters();
+  const { data, isError } = useCoverLetters();
   const letters = data ?? [];
   return (
     <Card>
@@ -22,7 +22,8 @@ export function CoverLettersCard() {
         </CardDescription>
       </CardHeader>
       <CardContent>
-        {letters.length ? (
+        {/* Nothing until the list is in: never a flash of "None yet". */}
+        {data === undefined && !isError ? null : letters.length ? (
           <ul className="divide-y" aria-label="Cover letters">
             {letters.map((l) => (
               <li key={l.id} className="py-2">
@@ -35,7 +36,9 @@ export function CoverLettersCard() {
             ))}
           </ul>
         ) : (
-          <p className="text-sm text-muted-foreground">{NO_LETTER_YET}</p>
+          <p className="text-sm text-muted-foreground">
+            {isError ? "Couldn't load your cover letters. Try again later." : NO_LETTER_YET}
+          </p>
         )}
       </CardContent>
     </Card>

@@ -17,6 +17,7 @@ from app.schemas.user import AdminJobCatcher, AdminUserRow, UserProfile
 logger = logging.getLogger(__name__)
 
 _HTTP_TIMEOUT = 5.0
+KEY_REJECTED = "Key rejected"
 
 
 class ServiceStatus(BaseModel):
@@ -105,7 +106,7 @@ async def _check_endpoint(
                 name=name,
                 status="degraded",
                 latency_ms=latency_ms,
-                detail="Key rejected",
+                detail=KEY_REJECTED,
             )
         if r.status_code < 500:
             return ServiceStatus(name=name, status="healthy", latency_ms=latency_ms)
@@ -179,16 +180,20 @@ async def check_service_health(
 
         checks = list(await asyncio.gather(*(_ping(name) for name in wanted)))
         if len(checks) == len(_PINGED):
-            # Only a clean bill of health is kept: a problem is checked
-            # again next time. Not set up isn't a problem.
+            # Only a settled reading is kept: a problem is checked again next
+            # time. Not set up, and a key the service turned away, won't
+            # change in a minute (the admin page asks every minute, and each
+            # Adzuna ping spends one of its daily calls).
             _external = (
-                (time.monotonic(), checks)
-                if all(c.status in ("healthy", "off") for c in checks)
-                else None
+                (time.monotonic(), checks) if all(_settled(c) for c in checks) else None
             )
         statuses.extend(checks)
     statuses.append(await _jsearch_status(db))
     return statuses
+
+
+def _settled(s: ServiceStatus) -> bool:
+    return s.status in ("healthy", "off") or s.detail == KEY_REJECTED
 
 
 def _off(name: str) -> ServiceStatus:

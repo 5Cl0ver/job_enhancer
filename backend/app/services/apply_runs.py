@@ -796,7 +796,8 @@ def _deliver(run: ApplyRun, fixes: list[dict[str, Any]]) -> list[dict[str, Any]]
 
 
 def _fix_input(data: dict[str, Any]) -> tuple[str, str]:
-    return _text(data.get("to"), 2000), _text(data.get("ask"), 500)
+    # The owner's paragraphs stay paragraphs (spec 039).
+    return sheet_svc.answer_text(data.get("to")), _text(data.get("ask"), 500)
 
 
 async def _fixable(db: AsyncSession, user_id: uuid.UUID, run_id: uuid.UUID) -> ApplyRun:
@@ -1193,7 +1194,7 @@ def _fixes(run: ApplyRun, raw: Any) -> list[dict[str, Any]]:
     for f in (raw or [])[:MAX_FIXES]:
         if not isinstance(f, dict):
             continue
-        to = _text(f.get("to"), 2000)
+        to = sheet_svc.answer_text(f.get("to"))
         ask = _text(f.get("ask"), 500)
         row = _on_page(
             run, f.get("page"), _text(f.get("q"), 300), _text(f.get("a"), 2000)
