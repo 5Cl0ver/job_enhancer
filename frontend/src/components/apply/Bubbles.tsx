@@ -4,7 +4,7 @@ import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
-import { useAddFix, useEditFix, useRemoveFix, useSendFixes } from "@/hooks/useApply";
+import { useAddFix, useDidItMyself, useEditFix, useRemoveFix, useSendFixes } from "@/hooks/useApply";
 import { cn } from "@/lib/utils";
 import {
   type ApplyRun,
@@ -14,6 +14,8 @@ import {
   TAG_LABEL,
   fixFor,
   fixLine,
+  fixNotMade,
+  isConsentBox,
   isOpenApply,
   normQ,
   sheetOf,
@@ -111,7 +113,7 @@ export function RowButton({
         <span
           className={cn(
             "flex items-start gap-1 text-xs font-medium",
-            fix.status === "gone" ? "text-destructive" : fix.status === "done" ? "text-emerald-700 dark:text-emerald-400" : "text-primary",
+            fixNotMade(fix) ? "text-destructive" : fix.status === "done" ? "text-emerald-700 dark:text-emerald-400" : "text-primary",
           )}
         >
           {fix.to ? null : <MessageCircle className="mt-0.5 h-3 w-3 shrink-0" aria-hidden />}
@@ -186,6 +188,8 @@ export function FixSheet({
   onSave,
   onRemove,
   onClose,
+  notMade,
+  onDidIt,
 }: {
   target: FixTarget;
   current?: { to?: string | null; ask?: string | null };
@@ -195,6 +199,9 @@ export function FixSheet({
   onSave: (fix: { to?: string; ask?: string }) => void;
   onRemove?: () => void;
   onClose: () => void;
+  /** A fix Claude couldn't or wouldn't make (spec 038): the owner can do it. */
+  notMade?: RunFix;
+  onDidIt?: () => void;
 }) {
   const options = useMemo(() => target.options ?? [], [target.options]);
   const known = (v?: string | null) => !!v && options.some((o) => normQ(o) === normQ(v));
@@ -245,6 +252,16 @@ export function FixSheet({
             {now || "Left empty"}
           </p>
         </div>
+
+        {/* Claude couldn't or wouldn't make it (spec 038): do it yourself. */}
+        {notMade && onDidIt && (
+          <div className="space-y-2 rounded-lg border border-destructive/40 bg-destructive/5 p-3">
+            <p className="text-sm">{fixLine(notMade)}</p>
+            <Button variant="outline" className="w-full gap-1.5" disabled={busy} onClick={onDidIt}>
+              <Check className="h-4 w-4" aria-hidden /> I did it myself
+            </Button>
+          </div>
+        )}
 
         <div className="space-y-2">
           <p className="text-sm font-medium">Change it to</p>
@@ -329,6 +346,11 @@ export function FixSheet({
             // The box stops taking letters at the limit: say so.
             <p className="text-xs text-muted-foreground">2,000 characters max</p>
           )}
+          {isConsentBox(target) && (
+            <p className="text-xs text-muted-foreground">
+              Claude never ticks optional boxes (texts, marketing) by itself. Ask here and it will.
+            </p>
+          )}
         </div>
 
         {asking ? (
@@ -395,19 +417,21 @@ export function useFixer(run: ApplyRun) {
   const add = useAddFix();
   const edit = useEditFix();
   const remove = useRemoveFix();
+  const didIt = useDidItMyself();
   const can =
     isOpenApply(run) && run.status !== "submitting" && !(run.status === "review" && run.review?.decision);
   const found = target ? fixFor(run.fixes, target.step, target.q, target.k) : undefined;
   const waiting = found?.status === "waiting" ? found : undefined;
+  const notMade = fixNotMade(found) ? found : undefined;
   const close = () => setTarget(null);
-  const failed = [add, edit, remove].find((m) => m.isError)?.error as Error | undefined;
+  const failed = [add, edit, remove, didIt].find((m) => m.isError)?.error as Error | undefined;
   const sheet = target && (
     <FixSheet
       key={`${target.step}|${target.q}|${target.k}`}
       target={target}
       current={waiting}
       note={whenItGoes(run, target.step)}
-      busy={add.isPending || edit.isPending || remove.isPending}
+      busy={add.isPending || edit.isPending || remove.isPending || didIt.isPending}
       error={failed?.message ?? null}
       onClose={close}
       onSave={(v) =>
@@ -416,6 +440,8 @@ export function useFixer(run: ApplyRun) {
           : add.mutate({ runId: run.id, step: target.step, q: target.q, k: target.k, ...v }, { onSuccess: close })
       }
       onRemove={waiting ? () => remove.mutate({ runId: run.id, fixId: waiting.id }, { onSuccess: close }) : undefined}
+      notMade={notMade}
+      onDidIt={notMade && (() => didIt.mutate({ runId: run.id, fixId: notMade.id }, { onSuccess: close }))}
     />
   );
   return { open: can ? setTarget : undefined, sheet };

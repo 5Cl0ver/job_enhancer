@@ -9,6 +9,8 @@ import {
   latestPages,
   checkRows,
   fixLine,
+  fixNotMade,
+  isConsentBox,
   needsYou,
   normQ,
   pageAnswers,
@@ -118,6 +120,22 @@ describe("where an application is", () => {
     expect(fixLine({ ...fix, status: "done" })).toBe("→ Portland (done)");
     expect(fixLine({ ...fix, status: "done", already: true })).toBe("→ Portland (already that)");
     expect(fixLine({ ...fix, status: "gone" })).toBe("Couldn't apply: box gone");
+    // Spec 038: Claude chose not to, with why; the owner did it themselves.
+    expect(fixLine({ ...fix, status: "declined", why: "The form only offers Salem" })).toBe(
+      "Claude didn't do this: The form only offers Salem",
+    );
+    expect(fixLine({ ...fix, status: "declined" })).toBe("Claude didn't do this");
+    expect(fixLine({ ...fix, status: "done", by_you: true })).toBe("→ Portland (you did it)");
+    expect(fixNotMade({ ...fix, status: "declined" })).toBe(true);
+    expect(fixNotMade({ ...fix, status: "sent" })).toBe(false);
+  });
+
+  it("knows a tick box or a consent box (spec 038)", () => {
+    expect(isConsentBox({ q: "Send me texts about this job", a: "" })).toBe(true);
+    expect(isConsentBox({ q: "Join our talent community", a: "", options: ["Yes", "No"] })).toBe(true);
+    expect(isConsentBox({ q: "I'm over 18", a: "No" })).toBe(true);
+    expect(isConsentBox({ q: "City", a: "Portland" })).toBe(false);
+    expect(isConsentBox({ q: "Do you have a degree?", a: "Yes", options: ["Yes", "No"] })).toBe(false);
   });
 });
 

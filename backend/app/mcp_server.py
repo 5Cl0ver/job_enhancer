@@ -823,8 +823,9 @@ async def page_done(
     "only_you": true for a box you left empty because only the user knows}].
     Job Catcher takes photos of the whole page (it scrolls; wait for this to
     return). Returns the page number, whether photos were taken, and `next`:
-    Page by page, wait_for_you while the user looks the step over; Keep
-    going, press Next and go on."""
+    Page by page, wait_for_you while the user looks the step over (a step
+    with nothing to look at doesn't stop); Keep going, press Next and go
+    on."""
     return await _page(run_id, page_url, page_title, answers, last=False)
 
 
@@ -840,14 +841,21 @@ async def ready_for_review(
 
 @mcp.tool
 async def mark_fixes(
-    run_id: str, done: list[str] | None = None, gone: list[str] | None = None
+    run_id: str,
+    done: list[str] | None = None,
+    gone: list[str] | None = None,
+    declined: list[dict] | None = None,
 ) -> dict:
     """After making the user's fixes (from_user `fixes`, or a review's
-    `fixes`): pass the `id`s you made as done, and the ids of boxes you
-    couldn't find on the page as gone. The app shows each fix as done or
-    "couldn't apply". No page_done is needed just for a fix."""
+    `fixes`): pass the `id`s you made as done, the ids of boxes you couldn't
+    find on the page as gone, and any you chose not to make as declined:
+    [{"id", "why": a short reason the user reads}]. The app shows each fix as
+    done, "couldn't apply: box gone" or "Claude didn't do this: <why>" (the
+    user can then do it themselves). No page_done is needed just for a fix;
+    then carry on from the step you're on (no wait_for_you)."""
     return await _apply(
-        lambda db, user: apply_svc.mark_fixes(db, user, run_id, done, gone), run_id
+        lambda db, user: apply_svc.mark_fixes(db, user, run_id, done, gone, declined),
+        run_id,
     )
 
 
@@ -900,12 +908,12 @@ async def report_problem(
 @mcp.tool
 async def wait_for_you(run_id: str) -> dict:
     """Wait (about 45 s) for the user: their answers, their look at the
-    résumé (use / change + note), their look at a step (Page by page: go on,
-    with any fixes), their reply to need_help, or their review decision
-    (submit / fix + note and `fixes` / self). Returns ready: false while still
-    waiting: call it again, for as long as it says so. It also returns early
-    with from_user when the user writes to you in the app. next says what to
-    do."""
+    résumé (use / change + note), their look at a step (Page by page:
+    go_on: true, with any fixes; said again until you fill the next step),
+    their reply to need_help, or their review decision (submit / fix + note
+    and `fixes` / self). Returns ready: false while still waiting: call it
+    again, for as long as it says so. It also returns early with from_user
+    when the user writes to you in the app. next says what to do."""
     return await _apply(
         lambda db, user: apply_svc.wait_for_you(db, user, run_id), run_id
     )

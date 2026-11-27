@@ -286,13 +286,30 @@ export interface SheetStep {
   rows: SheetRow[];
 }
 
+/** The owner's last Continue (spec 038): did it reach Claude yet? */
+export interface StepCheckState {
+  step: string;
+  title: string;
+  at: string;
+  /** Claude got the go-on. */
+  read: boolean;
+  read_at?: string | null;
+  /** Claude went on to the next step (missing on a check from before spec 038). */
+  moved_on?: boolean;
+  /** Switched to Keep going while the step was paused. */
+  keep?: boolean;
+  fixes?: number;
+}
+
 export interface Sheet {
   steps: SheetStep[];
   /** The step being filled now. */
   current?: string | null;
+  check?: StepCheckState | null;
 }
 
-export type FixStatus = "waiting" | "sent" | "done" | "gone";
+/** gone: Claude couldn't find the box; declined: it chose not to (spec 038). */
+export type FixStatus = "waiting" | "sent" | "done" | "gone" | "declined";
 
 /** A change ("to") or a question ("ask") about one box, kept on the run. */
 export interface RunFix {
@@ -311,6 +328,10 @@ export interface RunFix {
   claude_done?: string | null;
   /** The box already held it when the fix was made. */
   already?: boolean;
+  /** Why Claude didn't make it (declined). */
+  why?: string | null;
+  /** The owner made it themselves ("I did it myself"). */
+  by_you?: boolean;
 }
 
 export const TAG_LABEL: Record<RowTag, string> = {
@@ -365,10 +386,25 @@ export const waitingFixes = (run: { fixes?: RunFix[] }) => (run.fixes ?? []).fil
 /** How a fix stands, in a few words: "→ No (waiting)". */
 export function fixLine(fix: RunFix): string {
   if (fix.status === "gone") return "Couldn't apply: box gone";
+  if (fix.status === "declined") return fix.why ? `Claude didn't do this: ${fix.why}` : "Claude didn't do this";
   const what = fix.to ? `→ ${fix.to}` : "Asked Claude";
+  if (fix.status === "done" && fix.by_you) return `${what} (you did it)`;
   if (fix.status === "sent" && fix.claude_done) return `${what} (Claude says done)`;
   if (fix.status === "done" && fix.already) return `${what} (already that)`;
   return `${what} (${fix.status})`;
+}
+
+/** A fix Claude couldn't or wouldn't make: the owner can do it themselves. */
+export const fixNotMade = (fix?: RunFix) => fix?.status === "gone" || fix?.status === "declined";
+
+// Optional consent boxes (texts, marketing): Claude never ticks one by itself
+// (spec 038), but a fix the owner asks for is their own decision.
+const CONSENT = /\b(?:texts?|text messages?|sms|marketing|promotional|newsletters?|opt[- ]?in|subscribe|talent (?:community|network)|consent|job alerts?)\b/i;
+
+/** A tick box (read as Yes / No) or a box asking for consent. */
+export function isConsentBox(row: { q: string; a: string; options?: string[] }): boolean {
+  if (CONSENT.test(row.q)) return true;
+  return !row.options?.length && /^(?:yes|no)$/i.test(row.a.trim());
 }
 
 /** A sheet for a run from an older server: its pages, merged by step and

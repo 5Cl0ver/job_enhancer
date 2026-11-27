@@ -22,7 +22,9 @@ question twice:
   never drops the rest of the step.
 - **Fixes** (the owner's changes) wait on the run until a checkpoint:
   ``waiting`` → ``sent`` → ``done`` (Job Catcher read the box holding exactly
-  what they asked for) or ``gone`` (Claude couldn't find the box).
+  what they asked for), ``gone`` (Claude couldn't find the box) or
+  ``declined`` (Claude chose not to make it, with ``why``; spec 038). The
+  owner can make a gone or declined one themselves ("I did it myself").
 
 Everything here is pure: callers pass rows already trimmed and free of
 passwords (``apply_runs``), and store what comes back.
@@ -48,7 +50,7 @@ SAME_SHARE = 0.8
 SAME_SHARED = 3
 # Two wordings of one question (Claude's and Job Catcher's).
 NEAR = 92
-FIX_STATES = ("waiting", "sent", "done", "gone")
+FIX_STATES = ("waiting", "sent", "done", "gone", "declined")
 FLAGS = ("claude", "guess", "agreement", "only_you")
 # What the owner checks before Submit, most important first.
 CHECK_TAGS = ("agreement", "only_you", "guess", "empty")
@@ -433,6 +435,12 @@ def _apply(row: dict, item: dict, src: str) -> None:
                 row.pop(flag, None)
     if item.get("by") == "job_catcher":
         row["by"] = "job_catcher"
+    if src == "jc" and isinstance(item.get("required"), bool):
+        # The form says it's required (Job Catcher's live reading, spec 038).
+        if item["required"]:
+            row["required"] = True
+        else:
+            row.pop("required", None)
     opts = options_of(item.get("options"))
     if opts:
         # Choices as last seen (a country can change the states offered).
@@ -617,6 +625,26 @@ def rows_to_check(sheet: dict | None) -> list[dict[str, Any]]:
     return sorted(out, key=lambda x: CHECK_TAGS.index(tag_of(x) or "empty"))
 
 
+def to_look_at(sheet: dict | None, key: str, fixes: Any = None) -> bool:
+    """Page by page (spec 038): whether a finished step has anything for the
+    owner to look at: an answer Claude wrote (an essay, a typed answer it
+    composed), a guess, an "only you" box, an agreement, an empty box the
+    form marks required, or a fix of theirs still waiting. A step with none
+    of these doesn't stop."""
+    if waiting(fixes, key):
+        return True
+    step = step_of(sheet, key)
+    for r in (step or {}).get("rows") or []:
+        tag = tag_of(r)
+        if r.get("claude") or tag in ("agreement", "only_you", "guess"):
+            return True
+        if tag == "empty" and (
+            r.get("required") is True or _REQUIRED.search(str(r.get("q") or ""))
+        ):
+            return True
+    return False
+
+
 def counts(sheet: dict | None) -> dict[str, int]:
     steps = _steps(sheet)
     filled = sum(1 for s in steps for r in s["rows"] if str(r.get("a")).strip())
@@ -795,18 +823,29 @@ def settle(sheet: dict | None, fixes: Any, now: str) -> tuple[dict, list[dict]]:
 
 
 def mark(
-    sheet: dict | None, fixes: Any, *, done: set[str], gone: set[str], now: str
+    sheet: dict | None,
+    fixes: Any,
+    *,
+    done: set[str],
+    gone: set[str],
+    now: str,
+    declined: dict[str, str] | None = None,
 ) -> tuple[dict, list[dict], int]:
-    """Claude says which fixes it made, and which boxes it couldn't find. A
-    change stays "Claude says done" until Job Catcher reads the box holding it
+    """Claude says which fixes it made, which boxes it couldn't find, and
+    which it chose not to make (``declined``: id → why). A change stays
+    "Claude says done" until Job Catcher reads the box holding it
     (``settle``); the answer itself is never taken from Claude's word."""
     out = _fix_list(fixes)
+    declined = declined or {}
     n = 0
     for f in out:
         if f.get("status") not in ("waiting", "sent"):
             continue
         if f.get("id") in gone:
             f.update(status="gone", done_at=now)
+            n += 1
+        elif f.get("id") in declined:
+            f.update(status="declined", done_at=now, why=declined[f["id"]] or None)
             n += 1
         elif f.get("id") in done:
             n += 1
@@ -825,7 +864,14 @@ def check_step(sheet: dict | None, key: str, *, now: str, keep: bool = False) ->
     s = _by_key(steps, key)
     if s is not None:
         s["checked"] = True
-    check = {"step": key, "title": s["title"] if s else key, "at": now, "read": False}
+    check = {
+        "step": key,
+        "title": s["title"] if s else key,
+        "at": now,
+        "read": False,
+        # Claude went on to the next step (spec 038).
+        "moved_on": False,
+    }
     if keep:
         check["keep"] = True
     return {**(sheet or {}), "steps": steps, "check": check}
