@@ -41,7 +41,7 @@ export function fakeRun(start: ApplyRun) {
       for (const f of fixes) if (f.status === "waiting" && f.step === run.paused_step) f.status = "sent";
       // Spec 038: the go-on waits for Claude to get it.
       const title = run.sheet?.steps.find((s) => s.key === run.paused_step)?.title ?? "";
-      if (run.sheet) run.sheet.check = { step: run.paused_step!, title, at: new Date().toISOString(), read: false };
+      if (run.sheet) run.sheet.check = { step: run.paused_step!, title, at: new Date().toISOString(), read: false, moved_on: false };
       run.paused_step = null;
       run.paused_title = null;
     } else if (method === "POST" && path.startsWith(`${base}/fixes/`) && path.endsWith("/did-it")) {

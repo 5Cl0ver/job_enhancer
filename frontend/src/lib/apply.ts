@@ -294,7 +294,7 @@ export interface StepCheckState {
   /** Claude got the go-on. */
   read: boolean;
   read_at?: string | null;
-  /** Claude went on to the next step. */
+  /** Claude went on to the next step (missing on a check from before spec 038). */
   moved_on?: boolean;
   /** Switched to Keep going while the step was paused. */
   keep?: boolean;

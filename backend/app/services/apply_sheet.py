@@ -435,6 +435,12 @@ def _apply(row: dict, item: dict, src: str) -> None:
                 row.pop(flag, None)
     if item.get("by") == "job_catcher":
         row["by"] = "job_catcher"
+    if src == "jc" and isinstance(item.get("required"), bool):
+        # The form says it's required (Job Catcher's live reading, spec 038).
+        if item["required"]:
+            row["required"] = True
+        else:
+            row.pop("required", None)
     opts = options_of(item.get("options"))
     if opts:
         # Choices as last seen (a country can change the states offered).
@@ -632,7 +638,9 @@ def to_look_at(sheet: dict | None, key: str, fixes: Any = None) -> bool:
         tag = tag_of(r)
         if r.get("claude") or tag in ("agreement", "only_you", "guess"):
             return True
-        if tag == "empty" and _REQUIRED.search(str(r.get("q") or "")):
+        if tag == "empty" and (
+            r.get("required") is True or _REQUIRED.search(str(r.get("q") or ""))
+        ):
             return True
     return False
 
@@ -856,7 +864,14 @@ def check_step(sheet: dict | None, key: str, *, now: str, keep: bool = False) ->
     s = _by_key(steps, key)
     if s is not None:
         s["checked"] = True
-    check = {"step": key, "title": s["title"] if s else key, "at": now, "read": False}
+    check = {
+        "step": key,
+        "title": s["title"] if s else key,
+        "at": now,
+        "read": False,
+        # Claude went on to the next step (spec 038).
+        "moved_on": False,
+    }
     if keep:
         check["keep"] = True
     return {**(sheet or {}), "steps": steps, "check": check}

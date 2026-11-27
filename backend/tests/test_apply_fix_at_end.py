@@ -346,7 +346,10 @@ async def test_page_by_page_pauses_and_sends_the_step_s_fixes_on_continue(
     await _live(maker, user, run_id, INFO, "My Information")
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": INFO})
     out = await mcp_mod.page_done(rid, PAGE, "My Information", GUESSED)
-    assert "wait_for_you" in out["next"] and "Don't press Next" in out["next"]
+    assert (
+        "wait_for_you" in out["next"]
+        and "Don't press the form's Next/Continue" in out["next"]
+    )
     view = await _view(maker, run_id)
     assert view["paused_step"] == "my information"
     assert view["paused_title"] == "My Information"
@@ -386,7 +389,7 @@ async def test_page_by_page_pauses_and_sends_the_step_s_fixes_on_continue(
         await svc.continue_step(db, user.id, run_id)
         await db.commit()
     got = await mcp_mod.wait_for_you(rid)
-    assert got["ready"] is True and "press Next" in got["next"]
+    assert got["ready"] is True and "Next/Continue" in got["next"]
     (told,) = got["from_user"]
     (fix,) = told["fixes"]
     assert (fix["step_on_page"], fix["box_on_page"], fix["now_on_page"], fix["to"]) == (
@@ -407,7 +410,7 @@ async def test_page_by_page_pauses_and_sends_the_step_s_fixes_on_continue(
     assert run.sheet["steps"][0]["rows"][2]["tag"] == "changed"
     # The step was checked: a redo of it never pauses again.
     out = await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
-    assert "press Next" in out["next"]
+    assert "Next/Continue" in out["next"]
     assert (await _run(maker, run_id)).paused_step is None
     # The next step pauses (it has a pick on it).
     await _live(

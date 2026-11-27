@@ -1,7 +1,7 @@
 // Spec 033: Your application (one growing list by step), the fix sheet with
 // the form's real choices, the waiting tray, the step check, the two modes.
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { act, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
@@ -279,7 +279,14 @@ describe("after Continue: did it reach Claude? (spec 038)", () => {
     mode: "page" as const,
     sheet: {
       ...SHEET,
-      check: { step: "my information", title: "My Information", at: new Date().toISOString(), read: false, ...extra },
+      check: {
+        step: "my information",
+        title: "My Information",
+        at: new Date().toISOString(),
+        read: false,
+        moved_on: false,
+        ...extra,
+      },
     },
   });
 
@@ -300,9 +307,31 @@ describe("after Continue: did it reach Claude? (spec 038)", () => {
     );
   });
 
+  it("turns into what to tell Claude when the 2 minutes are up", async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      show(check({ at: new Date(Date.now() - 60_000).toISOString() }), "check");
+      expect(await screen.findByRole("status")).toHaveTextContent("Sent to Claude…");
+      await act(async () => {
+        vi.advanceTimersByTime(61_000);
+      });
+      expect(screen.getByRole("status")).toHaveTextContent("Claude hasn't picked this up. In the chat, tell it: carry on");
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("an old check (before spec 038) Claude got shows nothing", async () => {
+    show(check({ read: true, moved_on: undefined }), "check");
+    await waitFor(() => expect(server.calls.length).toBeGreaterThan(0));
+    await act(() => new Promise((r) => setTimeout(r, 30))); // the run is drawn
+    expect(screen.queryByRole("status")).not.toBeInTheDocument();
+  });
+
   it("gone once Claude fills the next step", async () => {
     show(check({ read: true, moved_on: true }), "check");
     await waitFor(() => expect(server.calls.length).toBeGreaterThan(0));
+    await act(() => new Promise((r) => setTimeout(r, 30))); // the run is drawn
     expect(screen.queryByRole("status")).not.toBeInTheDocument();
   });
 });

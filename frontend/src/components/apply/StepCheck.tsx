@@ -1,3 +1,4 @@
+import { useEffect, useState } from "react";
 import { AlertTriangle, ArrowRight, Check, Loader2 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { RowButton, useFixer } from "@/components/apply/Bubbles";
@@ -58,8 +59,20 @@ export const NOT_PICKED_UP_MS = 2 * 60_000;
  */
 function ContinueSent({ run }: { run: ApplyRun }) {
   const check = run.sheet?.check;
-  if (!check || check.moved_on || check.keep) return null;
-  const late = !check.read && Date.now() - new Date(check.at).getTime() > NOT_PICKED_UP_MS;
+  const [, redraw] = useState(0);
+  const at = check ? new Date(check.at).getTime() : 0;
+  const unread = !!check && !check.read;
+  // Unread: draw again when the 2 minutes are up (no new data comes then).
+  useEffect(() => {
+    if (!unread) return;
+    const left = NOT_PICKED_UP_MS - (Date.now() - at);
+    if (left < 0) return;
+    const t = setTimeout(() => redraw((n) => n + 1), left + 50);
+    return () => clearTimeout(t);
+  }, [unread, at]);
+  // A check from before spec 038 has no moved_on: once read, it's done.
+  if (!check || check.moved_on || check.keep || (check.moved_on === undefined && check.read)) return null;
+  const late = !check.read && Date.now() - at > NOT_PICKED_UP_MS;
   return (
     <p
       role="status"

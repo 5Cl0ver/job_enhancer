@@ -96,7 +96,7 @@ async def test_continue_reaches_claude_even_when_the_first_answer_is_lost(
     # The owner's go-on is a message too: any tool result carries it.
     run = await _run(maker, run_id)
     (msg,) = [m for m in run.messages if m["by"] == "you"]
-    assert "go on" in msg["text"] and "Press Next" in msg["text"]
+    assert "go on" in msg["text"] and "Next/Continue (never Submit)" in msg["text"]
     assert "My Information" not in msg["text"]  # the page's text stays apart
     # The first answer is lost on the way (a deploy restart cut it): the
     # flag and the message are taken, but Claude never saw them.
@@ -111,10 +111,10 @@ async def test_continue_reaches_claude_even_when_the_first_answer_is_lost(
     again = await mcp_mod.wait_for_you(rid)
     assert again["ready"] is True and again["go_on"] is True
     assert again["waiting_on"] is None
-    assert "said go on" in again["next"] and "press Next" in again["next"]
+    assert "said go on" in again["next"] and "Next/Continue" in again["next"]
     assert OPEN_LINE not in again["next"]
     brief = await mcp_mod.get_apply_brief(rid)
-    assert "said go on" in brief["next"] and "press Next" in brief["next"]
+    assert "said go on" in brief["next"] and "Next/Continue" in brief["next"]
     # fill_page on the next step is moving on: not refused, and after it the
     # go-on is done.
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "filled": [], "need": []})
@@ -149,7 +149,7 @@ async def test_continue_with_fixes_is_one_message(engine, monkeypatch):
     (told,) = got["from_user"]
     assert told["fixes"][0]["to"] == "Dr." and "mark_fixes" in told["text"]
     assert got["ready"] is True and got["waiting_on"] is None
-    assert "mark_fixes" in got["next"] and "press Next" in got["next"]
+    assert "mark_fixes" in got["next"] and "Next/Continue" in got["next"]
     assert "call wait_for_you again" not in got["user_message_note"]
 
 
@@ -344,7 +344,7 @@ async def test_a_clean_step_doesn_t_pause(engine, monkeypatch):
     await _live(maker, user, run_id, rows, "My Information")
     _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": rows})
     out = await mcp_mod.page_done(rid, PAGE, "My Information", rows)
-    assert "press Next" in out["next"] and "wait_for_you" not in out["next"]
+    assert "Next/Continue" in out["next"] and "wait_for_you" not in out["next"]
     run = await _run(maker, run_id)
     assert run.paused_step is None
     assert run.events[-1]["text"] == "My Information looked fine: no stop."
@@ -438,3 +438,150 @@ async def test_a_blocked_submit_press_says_what_to_do_next(engine, monkeypatch):
     waited = await mcp_mod.wait_for_you(rid)
     assert waited["submit_blocked"] is True and "wait_for_you" in waited["next"]
     assert waited["next"].startswith("Job Catcher stopped your Submit press")
+
+
+# --------------------------------------------------------------------------- #
+# Review findings: fixes while the owner is still looking, a go-on that's
+# safe to repeat, required boxes, the form's own Next, the review answered
+# --------------------------------------------------------------------------- #
+
+NEXT_BUTTON = "the form's Next/Continue (never Submit)"
+
+
+async def _send_now(maker, user, run_id):
+    async with maker() as db:
+        await svc.send_fixes(db, user.id, run_id)
+        await db.commit()
+
+
+@pytest.mark.asyncio
+async def test_send_now_while_paused_waits_for_continue(engine, monkeypatch):
+    maker, user, run_id, rid = await _paused(engine, monkeypatch)
+    fix_id = await _fix(maker, user, run_id)
+    await _send_now(maker, user, run_id)
+    got = await mcp_mod.wait_for_you(rid)
+    assert got["waiting_on"] == "step_check" and got["ready"] is False
+    assert "call wait_for_you again" in got["user_message_note"]
+    marked = await mcp_mod.mark_fixes(rid, done=[fix_id])
+    assert "wait_for_you" in marked["next"]
+    assert "until it says go on" in marked["next"]
+    assert "Carry on" not in marked["next"]
+    assert (await _run(maker, run_id)).paused_step == "my information"
+
+
+@pytest.mark.asyncio
+async def test_i_did_it_myself_while_paused_says_wait(engine, monkeypatch):
+    maker, user, run_id, rid = await _paused(engine, monkeypatch)
+    fix_id = await _fix(maker, user, run_id)
+    await _send_now(maker, user, run_id)
+    await mcp_mod.wait_for_you(rid)
+    marked = await mcp_mod.mark_fixes(rid, gone=[fix_id])
+    assert "until it says go on" in marked["next"]
+    async with maker() as db:
+        await svc.did_it_myself(db, user.id, run_id, fix_id)
+        await db.commit()
+    got = await mcp_mod.wait_for_you(rid)
+    (told,) = got["from_user"]
+    assert "wait for my Continue" in told["text"]
+    assert got["waiting_on"] == "step_check" and got["ready"] is False
+    assert "call wait_for_you again" in got["user_message_note"]
+
+
+@pytest.mark.asyncio
+async def test_held_fixes_go_back_to_the_review(engine, monkeypatch):
+    maker, user, run_id, _job, rid, _saved = await _filling(engine, monkeypatch)
+    _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": INFO})
+    await _live(maker, user, run_id, INFO, "My Information")
+    await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
+    fix_id = await _fix(maker, user, run_id, q="First Name", to="Samuel")
+    held = await mcp_mod.ready_for_review(rid, PAGE, "Review", [])
+    assert "ready_for_review again" in held["next"]
+    marked = await mcp_mod.mark_fixes(rid, done=[fix_id])
+    assert "call ready_for_review again" in marked["next"]
+    # The review clears it.
+    await mcp_mod.ready_for_review(rid, PAGE, "Review", [])
+    assert "held" not in (await _run(maker, run_id)).sheet
+
+
+@pytest.mark.asyncio
+async def test_the_go_on_is_safe_to_repeat_and_ends_at_need_help(engine, monkeypatch):
+    maker, user, run_id, rid = await _paused(engine, monkeypatch)
+    await _continue(maker, user, run_id)
+    await mcp_mod.wait_for_you(rid)
+    # Claude may already have pressed Next (its fill_page lost to a 502).
+    brief = await mcp_mod.get_apply_brief(rid)
+    assert "If you already moved on, call fill_page" in brief["next"]
+    assert NEXT_BUTTON in brief["next"]
+    # A sign-in on the next step: Claude is working again, the go-on is done.
+    await mcp_mod.need_help(rid, "sign_in", "Please sign in again")
+    async with maker() as db:
+        await svc.help_done(db, user.id, run_id)
+        await db.commit()
+    for _ in range(2):
+        out = await mcp_mod.wait_for_you(rid)
+        assert "said go on" not in out["next"] and "go_on" not in out
+
+
+@pytest.mark.asyncio
+async def test_an_old_check_claude_got_never_repeats(engine, monkeypatch):
+    """A run going at deploy: its check from before spec 038 has no
+    `moved_on`. Once Claude got it, it's done."""
+    maker, user, run_id, rid = await _paused(engine, monkeypatch)
+    await _continue(maker, user, run_id)
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        old = {k: v for k, v in run.sheet["check"].items() if k != "moved_on"}
+        run.sheet = {**run.sheet, "check": {**old, "read": True}}
+        await db.commit()
+    brief = await mcp_mod.get_apply_brief(rid)
+    assert "said go on" not in brief["next"]
+    out = await mcp_mod.wait_for_you(rid)
+    assert "go_on" not in out
+
+
+@pytest.mark.asyncio
+async def test_i_did_it_myself_after_the_review_is_answered(engine, monkeypatch):
+    maker, user, run_id, _job, rid, _saved = await _filling(engine, monkeypatch)
+    _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": INFO})
+    await _live(maker, user, run_id, INFO, "My Information")
+    await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
+    fix_id = await _fix(maker, user, run_id, q="First Name", to="Samuel")
+    await _send_now(maker, user, run_id)
+    await mcp_mod.mark_fixes(rid, declined=[{"id": fix_id, "why": "x"}])
+    await mcp_mod.ready_for_review(rid, PAGE, "Review", [])
+    await mcp_mod.user_said(rid, decision="self", user_words="I will send it")
+    async with maker() as db:
+        with pytest.raises(ValueError, match="already answered the review"):
+            await svc.did_it_myself(db, user.id, run_id, fix_id)
+
+
+@pytest.mark.asyncio
+async def test_job_catcher_s_required_mark_stops_the_step(engine, monkeypatch):
+    """Job Catcher drops the "*" from labels and says `required` apart."""
+    maker, user, run_id, _job, rid, _saved = await _page_mode(engine, monkeypatch)
+    live = [
+        *INFO,
+        {"q": "Phone Number", "a": "", "required": True},
+        {"q": "Middle Name", "a": "", "required": "yes"},  # not a bool: ignored
+    ]
+    await _live(maker, user, run_id, live, "My Information")
+    run = await _run(maker, run_id)
+    rows = {r["q"]: r for r in run.sheet["steps"][0]["rows"]}
+    assert rows["Phone Number"]["required"] is True
+    assert "required" not in rows["Middle Name"]
+    assert "required" not in run.live["boxes"][3]
+    _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": live})
+    out = await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
+    assert "wait_for_you" in out["next"]
+    assert (await _run(maker, run_id)).paused_step == "my information"
+
+
+@pytest.mark.asyncio
+async def test_every_next_names_the_form_s_own_button(engine, monkeypatch):
+    maker, user, run_id, _job, rid, _saved = await _page_mode(engine, monkeypatch)
+    await _live(maker, user, run_id, INFO, "My Information")
+    _job_catcher(monkeypatch, maker, user.id, {"ok": True, "answers": INFO})
+    out = await mcp_mod.page_done(rid, PAGE, "My Information", INFO)
+    assert NEXT_BUTTON in out["next"] and "press Next" not in out["next"]
+    assert NEXT_BUTTON in svc.CARRY_ON and NEXT_BUTTON in svc.MARKED_NEXT
+    assert "Press Next" not in svc.GO_ON_WORDS
