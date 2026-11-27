@@ -389,8 +389,10 @@ async def test_a_run_code_two_runs_share(engine, monkeypatch):
     maker, user, run_id, _ = await _setup(engine, monkeypatch)
     code = str(run_id)[:8]
     async with maker() as db:
+        # Letters in the rest: an all-digit id (a code like "12345678") reads
+        # back from SQLite as a number.
         old = ApplyRun(
-            id=uuid.UUID(code + "-0000-4000-8000-000000000001"),
+            id=uuid.UUID(code + "-aaaa-4aaa-8aaa-aaaaaaaaaaaa"),
             user_id=user.id,
             saved_job_id=(await db.get(ApplyRun, run_id)).saved_job_id,
             status="stopped",
