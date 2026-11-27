@@ -175,14 +175,65 @@ describe("the Submit lock on the page", () => {
   });
 
   it("a button with no form counts only once the page moved on", async () => {
-    vi.useFakeTimers({ toFake: ["setTimeout"] });
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
     const { win, sent, m } = await mode({ active: true, guard: false });
     win.document.getElementById("send").click();
     win.document.getElementById("spa").remove(); // the SPA showed its thank-you
     await vi.advanceTimersByTimeAsync(2100);
+    expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(0); // gone a moment: not yet
+    await vi.advanceTimersByTimeAsync(4000);
     vi.useRealTimers();
     expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
     m.stop();
+  });
+
+  // Workday's Submit (spec 037): no form; disabled while it sends, then back
+  // with an error banner when the site turned it down.
+  const WORKDAY_SUBMIT = `<div data-automation-id="mainContent"><div id="banner"></div>
+    <button type="button" id="wd-submit" data-automation-id="pageFooterNextButton">Submit</button></div>`;
+
+  it("Workday's Submit disabled while sending, then back with an error: not 'pressed', 'didn't go through' with the error (spec 037)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const { win, sent, m } = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    const doc = win.document;
+    const btn = doc.getElementById("wd-submit");
+    btn.addEventListener("click", () => {
+      btn.disabled = true;
+      setTimeout(() => {
+        // Workday re-draws the button and shows its error.
+        const again = doc.createElement("button");
+        again.type = "button";
+        again.textContent = "Submit";
+        btn.replaceWith(again);
+        doc.getElementById("banner").innerHTML = '<div data-automation-id="errorMessage">Error - Page Error. Contact sam.rivera@northwind.example or call 555-010-4477.</div>';
+      }, 3000);
+    });
+    btn.click();
+    await vi.advanceTimersByTimeAsync(21_000);
+    vi.useRealTimers();
+    expect(sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(0);
+    const failed = sent.filter((x) => x.type === "applySubmitFailed");
+    expect(failed).toHaveLength(1);
+    expect(failed[0].error).toBe("Error - Page Error. Contact … or call ….");
+    m.stop();
+  });
+
+  it("Workday's Submit gone for 5 s with no error: sent; a confirmation: sent at once (spec 037)", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "Date"] });
+    const gone = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    gone.win.document.getElementById("wd-submit").click();
+    gone.win.document.getElementById("wd-submit").remove();
+    await vi.advanceTimersByTimeAsync(6000);
+    expect(gone.sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
+    gone.m.stop();
+    const thanks = await mode({ active: true, guard: false }, { html: WORKDAY_SUBMIT });
+    thanks.win.document.getElementById("wd-submit").click();
+    thanks.win.document.getElementById("banner").innerHTML = "<h2>Thank you for applying</h2>";
+    await vi.advanceTimersByTimeAsync(1000);
+    vi.useRealTimers();
+    expect(thanks.sent.filter((x) => x.type === "applySubmitPressed")).toHaveLength(1);
+    expect(thanks.sent.filter((x) => x.type === "applySubmitFailed")).toHaveLength(0);
+    thanks.m.stop();
   });
 
   it("does nothing at all with no application open", async () => {
@@ -330,6 +381,38 @@ describe("the background loop", () => {
     }
   });
 
+  it("the user busy in another tab, then away: the photo waits, then is taken (spec 037)", async () => {
+    const c = fakeChrome({ tabActive: false });
+    c.idle.queryState = vi.fn().mockResolvedValueOnce("active").mockResolvedValueOnce("active").mockResolvedValue("idle");
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(2);
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]).ok).toBe(true);
+    expect(c._list.find((t) => t.id === 8).active).toBe(true); // the user's tab is back
+  });
+
+  it("the user clicks the application's tab while busy: photographed then, nothing switched (spec 037)", async () => {
+    const c = fakeChrome({ tabActive: false });
+    let looks = 0;
+    c.idle.queryState = vi.fn(async () => {
+      if (++looks === 3) for (const t of c._list) t.active = t.id === 7; // the user's click
+      return "active";
+    });
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(c.tabs.update).not.toHaveBeenCalled();
+    expect(calls.filter(([, p]) => p.includes("/photo"))).toHaveLength(2);
+  });
+
+  it("busy the whole time: no switch, 'busy' after ~30 s of looking, the answers kept (spec 037)", async () => {
+    const c = fakeChrome({ tabActive: false, idle: "active" });
+    const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
+    await runLoop(createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c }));
+    expect(c.tabs.update).not.toHaveBeenCalled();
+    expect(c.idle.queryState.mock.calls.length).toBeGreaterThanOrEqual(15);
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: false, reason: "busy", answers: [{ q: "Name", a: "Sam" }, { q: "Email", a: "s@x" }] });
+  });
+
   it("a minimised window is restored for the photos and minimised again", async () => {
     const c = fakeChrome({ windowState: "minimized", idle: "idle" });
     const { api, calls } = fakeApi([{ id: "q1", kind: "photo", url: URL1, page_n: 1 }]);
@@ -415,6 +498,38 @@ describe("the background loop", () => {
     await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, busy: true }), fillSession, chrome: fakeChrome() }));
     const result = JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]);
     expect(result).toEqual({ ok: true, reason: null, filled: ["Why Tidewell?"], need: [], resume: "attached" });
+  });
+
+  it("a page that outlasts the press's wait: its late report is the answer, never 'slow' (spec 037)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    const old = { 0: { entries: [{ label: "First Name" }], need_you: [], at: 1 } };
+    let reads = 0;
+    // The report lands 30 reads (~30 s) after the press gave up.
+    const fillSession = vi.fn().mockImplementation(async () =>
+      ++reads < 30 ? { frames: old } : { frames: { 0: { entries: [{ label: "Skills" }], need_you: [{ label: "Skills not added: Cobol" }], resume: "attached", at: Date.now() } } },
+    );
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: fakeChrome() }));
+    const result = JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2]);
+    expect(result).toEqual({ ok: true, reason: null, filled: ["Skills"], need: ["Skills not added: Cobol"], resume: "attached" });
+  });
+
+  it("a page that never reports after the press gave up: still 'slow' (spec 037)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    const old = { frames: { 0: { entries: [{ label: "First Name" }], need_you: [], at: 1 } } };
+    const fillSession = vi.fn().mockResolvedValue(old);
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, problem: "slow" }), fillSession, chrome: fakeChrome() }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: false, reason: "slow", filled: [], need: [] });
+    expect(fillSession.mock.calls.length).toBeGreaterThan(100); // it waited (~170 s) first
+  });
+
+  it("a fill already going (busy) that reports after 40 s: that report, not 'no report' (spec 037)", async () => {
+    const { api, calls } = fakeApi([{ id: "f1", kind: "fill", url: URL1, page_n: 2 }]);
+    let reads = 0;
+    const fillSession = vi.fn().mockImplementation(async () =>
+      ++reads < 41 ? { frames: {} } : { frames: { 0: { entries: [{ label: "Why Tidewell?" }], need_you: [], cover_letter: "attached", at: Date.now() } } },
+    );
+    await runLoop(createApplyRun({ api, press: vi.fn().mockResolvedValue({ ok: false, busy: true }), fillSession, chrome: fakeChrome() }));
+    expect(JSON.parse(calls.find(([, p]) => p.endsWith("/result"))[2])).toEqual({ ok: true, reason: null, filled: ["Why Tidewell?"], need: [], cover_letter: "attached" });
   });
 
   it("never switches tabs while the user is busy in another window (spec 029)", async () => {

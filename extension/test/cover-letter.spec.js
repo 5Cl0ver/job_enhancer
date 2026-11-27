@@ -22,12 +22,15 @@ describe("which box is the cover letter's", () => {
     expect(isCoverLetterUpload({ ...upload("Attach"), hints: { context: "Attach", group: "Cover Letter", unclearUploads: 99, accept: ".pdf" } })).toBe(true);
   });
 
-  it("never the résumé's box, a box for both, or another document", () => {
+  it("never the résumé's box, a box for both (the résumé's, spec 037), or another document", () => {
     expect(isCoverLetterUpload(upload("Resume/CV"))).toBe(false);
     expect(isCoverLetterUpload(upload("Upload", ""))).toBe(false); // unclear: the résumé's, if anything
     expect(isCoverLetterUpload(upload("Resume and cover letter"))).toBe(false);
     expect(isCoverLetterUpload(upload("Transcript"))).toBe(false);
     expect(isCoverLetterUpload(upload("Attach", "Résumé / Cover letter"))).toBe(false);
+    // A box for both is the résumé's: the letter goes in after it (spec 037).
+    expect(isResumeUpload(upload("Resume and cover letter"))).toBe(true);
+    expect(isResumeUpload(upload("Attach", "Résumé / Cover letter"))).toBe(true);
   });
 
   it("a text box that asks for the letter itself", () => {

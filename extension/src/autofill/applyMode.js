@@ -7,14 +7,18 @@
 // - while it is, a final Submit press does nothing and the run log says so
 //   (Claude in Chrome's clicks are real clicks, so this can't tell Claude from
 //   the user: the user's own "I'll submit it myself" lifts the lock first);
-// - once it isn't, a Submit that really went (its form sent, or the page moved
-//   on) is reported, so a "submit it myself" run ends as sent;
+// - once it isn't, a Submit that really went (its form sent, the page moved
+//   on, a confirmation, or the button gone a while with no error) is
+//   reported, so a "submit it myself" run ends as sent; one that didn't (the
+//   button back with an error, Workday's way) is reported as not gone
+//   through, with the page's error (spec 037);
 // - in the top frame, scrolls on request so the background can photograph a
 //   long page screen by screen (the page, or its main scrolling box), then
 //   puts the scroll back.
 // A copy left behind by an extension update or reload lets go of everything.
 import {
   confirmationIn,
+  errorOnPage,
   finalSubmitButton,
   finalSubmitOfForm,
   pageAnswers,
@@ -24,7 +28,13 @@ import {
 
 const TICK_MS = 3000;
 const HIDDEN_TICK_MS = 10_000;
-const SETTLE_REPORT_MS = 2000;
+// A Submit with no form of its own (Workday): looked at this often after the
+// press; gone this long with no error = sent; still there after the last =
+// it didn't go through (spec 037: Workday disables it while sending, then
+// brings it back with an error).
+const SUBMIT_LOOK_MS = 500;
+const SUBMIT_GONE_MS = 5000;
+const SUBMIT_FAILED_MS = 20_000;
 const WATCH_MS = 20_000; // after a Submit, how long to look for the confirmation
 const WATCH_EVERY_MS = 2000;
 
@@ -92,13 +102,53 @@ export function startApplyMode({ send, isCurrent, scan, readField, doc = documen
     if (type === "applySubmitPressed") watchAfterSubmit();
   };
 
-  /** Sent, really: its form was sent, or the page changed or the button went. */
+  /**
+   * Sent, really (spec 037): the page moved on, a confirmation showed, or
+   * every final Submit is gone for 5 s with no error showing. Disabled
+   * doesn't count (Workday disables it while it sends, then brings it back on
+   * an error). Still there after 20 s with no confirmation: it didn't go
+   * through, and the page's error goes with that.
+   */
+  let watchingPress = false;
   const reportWhenGone = (button) => {
+    if (watchingPress) return;
+    watchingPress = true;
     const href = win.location.href;
-    setTimeout(() => {
-      if (!live() || !active || guard) return;
-      if (!button.isConnected || win.location.href !== href || button.disabled) report("applySubmitPressed");
-    }, SETTLE_REPORT_MS);
+    const errorBefore = errorOnPage(doc);
+    const words = before;
+    const t0 = Date.now();
+    let goneSince = 0;
+    const shownBox = (el) => el.isConnected && !el.hidden && (typeof el.checkVisibility !== "function" || el.checkVisibility());
+    // The button, or the same button drawn again (Workday re-draws it): the
+    // same words, in the same form (or none).
+    const label = (el) => (el.value || el.textContent || "").replace(/\s+/g, " ").trim().toLowerCase();
+    const formOf = (el) => el.form || el.closest?.("form") || null;
+    const again = (b) => label(b) === label(button) && formOf(b) === formOf(button) && !!finalSubmitButton(b);
+    const submitShown = () => shownBox(button) || [...doc.querySelectorAll("button, [role='button'], input[type='submit']")].some((b) => shownBox(b) && again(b));
+    const look = () => {
+      if (!live() || !active || guard) return (watchingPress = false);
+      const now = Date.now();
+      const said = shownNow();
+      const error = errorOnPage(doc);
+      const newError = !!error && error !== errorBefore;
+      if (win.location.href !== href || (said && said !== words)) {
+        watchingPress = false;
+        return report("applySubmitPressed");
+      }
+      if (!submitShown()) {
+        goneSince ||= now;
+        if (now - goneSince >= SUBMIT_GONE_MS && !newError) {
+          watchingPress = false;
+          return report("applySubmitPressed");
+        }
+      } else goneSince = 0;
+      if (now - t0 >= SUBMIT_FAILED_MS) {
+        watchingPress = false;
+        return send({ type: "applySubmitFailed", url: win.location.href, ...(newError ? { error } : {}) });
+      }
+      setTimeout(look, SUBMIT_LOOK_MS);
+    };
+    setTimeout(look, SUBMIT_LOOK_MS);
   };
 
   const onClick = (event) => {

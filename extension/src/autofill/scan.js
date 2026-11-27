@@ -43,11 +43,15 @@ const CONTROL = "input, select, textarea, button, [role=combobox], [role=radio],
 
 // What holds a control's VALUE, never its question: a dropdown's shown
 // choice (react-select's single-value, a combobox / listbox / textbox),
-// something typed into (contenteditable), a button's caption.
+// something typed into (contenteditable), a button's caption, a file an
+// upload card lists (Workday's: "Cover letter.pdf" is never the box's
+// question, spec 037).
 const VALUE_HOLDER = /single-?value|singleValue|__value-container/;
+const LISTED_FILE = /file-upload-successful|file-upload-item/i;
 function holdsValue(el) {
   const role = el.getAttribute?.("role") || "";
   if (/^(combobox|listbox|textbox|option)$/.test(role) || el.tagName === "BUTTON") return true;
+  if (LISTED_FILE.test(el.getAttribute?.("data-automation-id") || "")) return true;
   if (el.hasAttribute?.("contenteditable") && el.getAttribute("contenteditable") !== "false") return true;
   return VALUE_HOLDER.test(el.getAttribute?.("class") || "");
 }
@@ -513,7 +517,7 @@ export function collectFields(root, opts = {}) {
   // A box that clearly is the résumé's leaves none of the unclear ones to it.
   const files = fields.filter((f) => f.kind === "file");
   const kinds = files.map(uploadKind);
-  const unclear = kinds.includes("resume") ? 99 : kinds.filter((k) => k === "unclear").length;
+  const unclear = kinds.includes("resume") || kinds.includes("both") ? 99 : kinds.filter((k) => k === "unclear").length;
   for (const f of files) f.hints.unclearUploads = unclear;
 
   // Page order (groups were added last).

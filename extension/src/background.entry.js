@@ -869,6 +869,7 @@ async function taughtApi(method, path = "") {
 // Never saved without the user's press in the side panel.
 const pendingKey = (tabId) => `je_pending:${tabId}`;
 const keepKey = (tabId) => `je_keep:${tabId}`;
+const filesKey = (tabId) => `je_files:${tabId}`; // file boxes tried (spec 037)
 
 // Hosts that serve many companies' applications: the company is in the path.
 const SHARED_HOSTS = /(^|\.)(greenhouse\.io|lever\.co|ashbyhq\.com|smartrecruiters\.com|workable\.com|jobvite\.com)$/i;
@@ -923,7 +924,7 @@ try {
   chrome.tabs.onRemoved.addListener((tabId) => {
     clearFillSession(tabId);
     presence.clear(tabId);
-    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), trackedKey(tabId), `je_edits:${tabId}`]).catch(() => {});
+    chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), trackedKey(tabId), `je_edits:${tabId}`, filesKey(tabId)]).catch(() => {});
   });
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
@@ -1447,6 +1448,11 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
+      } else if (msg.type === "applySubmitFailed") {
+        // Submit pressed, and the page still shows it (an error) 20 s on
+        // (spec 037): it didn't go through. The page's error is data.
+        await applyRun.event("submit_failed", sender.tab, msg.url, String(msg.error || "").slice(0, 200));
+        sendResponse({ ok: true });
       } else if (msg.type === "applyConfirmed") {
         // "Thank you for applying" on the application's tab (spec 023).
         await applyRun.event("confirmation_seen", sender.tab, msg.url, String(msg.words || "").slice(0, 200));
@@ -1678,6 +1684,29 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           await chrome.storage.session.set({ [`je_resume:${sender.tab.id}`]: { site: siteOf(sender.tab.url || ""), at: Date.now() } });
         }
         sendResponse({ ok: true });
+      } else if (msg.type === "fileTried") {
+        // A file box tried on this tab (spec 037): kept for the application,
+        // so a press, a step filled by itself or a fresh Job Catcher never
+        // attaches it again. Never the file or its name.
+        const tabId = sender.tab?.id;
+        if (tabId != null && typeof msg.key === "string" && msg.key.length <= 600) {
+          const k = filesKey(tabId);
+          const site = siteOf(sender.tab?.url || "");
+          const { [k]: held } = await chrome.storage.session.get(k);
+          const tried = held?.site === site && Date.now() - (held.at || 0) < KEEP_MS ? { ...held.tried } : {};
+          if (msg.state === "attached" || msg.state === "unverified") tried[msg.key] = msg.state;
+          else delete tried[msg.key];
+          const keys = Object.keys(tried);
+          for (const old of keys.slice(0, Math.max(0, keys.length - 40))) delete tried[old];
+          await chrome.storage.session.set({ [k]: { site, at: Date.now(), tried } });
+        }
+        sendResponse({ ok: true });
+      } else if (msg.type === "getFilesTried") {
+        const tabId = sender.tab?.id;
+        const k = filesKey(tabId);
+        const { [k]: held } = tabId != null ? await chrome.storage.session.get(k) : {};
+        const fresh = held?.site === siteOf(sender.tab?.url || "") && Date.now() - (held.at || 0) < KEEP_MS;
+        sendResponse({ ok: true, tried: fresh ? held.tried : {} });
       } else if (msg.type === "getKeepFilling") {
         const tabId = sender.tab?.id;
         const { [keepKey(tabId)]: keep } = tabId != null ? await chrome.storage.session.get(keepKey(tabId)) : {};

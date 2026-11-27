@@ -9,6 +9,7 @@ import { type ApplyPage, latestPages, pageAnswers } from "@/lib/apply";
 
 const RESUME_LINE: Record<NonNullable<ApplyPage["resume"]>, string | null> = {
   attached: "Résumé attached",
+  unverified: "Résumé put in: check it shows",
   failed: "Résumé not attached",
   no_file: "No résumé file",
   no_box: null,

@@ -37,14 +37,20 @@ const RETRY_MS = 3_000;
 const TRUST_MS = 90_000; // how long a last answer stands while the app can't be reached
 const LOOP_MS = 2_000;
 const PAINT_MS = 350; // a tab just shown needs a moment to draw
+// A photo while the user is busy in another tab (spec 037): look again this
+// often, for up to ~30 s, for the tab showing or the user stepping away.
+const IN_USE_MS = 2_000;
+const IN_USE_LOOKS = 15;
 const LIVE_MS = 3_000;
 const LIVE_AGAIN_MS = 60_000; // an unchanged page is sent again this often (spec 033)
-const BUSY_MS = 1_000; // a fill already going: look for its report this often…
-const BUSY_WAITS = 20; // …for up to 20 s
+const BUSY_MS = 1_000; // a fill still going: look for its report this often…
+// …for as long as the app keeps the same fill going for Claude (its FILL_GOING,
+// 3 min from the request), a little less (spec 037).
+const FILL_BUDGET_MS = 170_000;
 const MAX_LIVE = 150;
 const PRIVATE = /password|passcode|\bpin\b|social security|\bssn\b|card number|credit card|\bcvv\b|\bcvc\b/i;
-// The best of what each frame says happened to the résumé.
-const RESUME_RANK = ["attached", "failed", "no_file", "no_box"];
+// The best of what each frame says happened to the résumé (and the cover letter, spec 037).
+const RESUME_RANK = ["attached", "unverified", "failed", "no_file", "no_box"];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -179,7 +185,7 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // that ends the run as sent must come from the application's own tab.
     const ok = kind === "blocked_submit" ? onRunHost(hostOf(tab.url || ""), data.hosts) : await isRunTab(data, tab);
     if (!ok) return;
-    if (kind === "submit_pressed") state.at = 0; // hear the app's "watch" at once
+    if (kind === "submit_pressed" || kind === "submit_failed") state.at = 0; // hear the app's "watch" (or lock) at once
     await api(`/v1/apply/runs/${data.run_id}/event`, {
       method: "POST",
       // A confirmation is the tab's (a form embedded from another site says
@@ -263,10 +269,13 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     const read = () => fillSession(tab.id).catch(() => ({ frames: {} }));
     const fresh = (s) => Object.values(s?.frames || {}).filter((f) => (f.at || 0) >= started);
     let session = await read();
-    // Wait for this fill's report (it can land a moment after the press
-    // answers), longer when Keep filling was already filling this step: never
-    // hand back the last step's (spec 029: Workday keeps one address).
-    const waits = out?.busy ? BUSY_WAITS : out?.ok ? 3 : 0;
+    // Still going (spec 037): Keep filling was already filling this step
+    // (busy), or the page outlasted the press's wait (slow, a long Workday
+    // step). The page keeps filling: wait for ITS report, as long as the app
+    // keeps this fill going for Claude, never handing back the last step's
+    // (spec 029: Workday keeps one address).
+    const going = !!out?.busy || out?.problem === "slow";
+    const waits = going ? Math.ceil(Math.max(0, started + FILL_BUDGET_MS - Date.now()) / BUSY_MS) : out?.ok ? 3 : 0;
     for (let i = 0; i < waits && !fresh(session).length; i++) {
       await sleep(BUSY_MS);
       session = await read();
@@ -274,15 +283,17 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
     // Only what this fill reported: a frame that didn't fill now (gone with
     // the last step, or no form in it) never speaks for this page.
     const frames = fresh(session);
-    // Busy: Keep filling is already filling this step; its report is the answer.
-    const ok = !!out?.ok || !!out?.busy;
+    // Busy or slow: the fill still going reports for this page; its report is the answer.
+    const ok = !!out?.ok || !!out?.busy || (out?.problem === "slow" && frames.length > 0);
     if (!ok) return { ok: false, reason: out?.problem || "error", filled: [], need: [] };
     // No report from this fill: say so, never the last step's (spec 029).
     if (!frames.length) return { ok: false, reason: "no_report", filled: [], need: [] };
     const filled = frames.flatMap((f) => (f.entries || []).map((e) => e.label).filter(Boolean));
     const need = frames.flatMap((f) => (f.need_you || []).map((n) => n.label).filter(Boolean));
-    const resume = RESUME_RANK.find((s) => frames.some((f) => f.resume === s)) || null;
-    return { ok, reason: null, filled, need, ...(resume ? { resume } : {}) };
+    const best = (key) => RESUME_RANK.find((s) => frames.some((f) => f[key] === s)) || null;
+    const resume = best("resume");
+    const letter = best("cover_letter");
+    return { ok: true, reason: null, filled, need, ...(resume ? { resume } : {}), ...(letter ? { cover_letter: letter } : {}) };
   }
 
   /** Still the same tab, showing the same page, in the same window? */
@@ -294,20 +305,34 @@ export function createApplyRun({ api, press, fillSession, chrome: c = globalThis
   /**
    * Show the application's tab for a photo (spec 026): make it the tab
    * showing in its window, restoring a minimised window. Never while the user
-   * is typing in that window (their keys would land in the form): then it's
-   * "busy" and the page is kept as text. `restore` puts back what was
-   * showing, unless the user has moved on since.
+   * is typing in that window (their keys would land in the form): then it
+   * waits a while for the tab to show or the user to step away, and after
+   * that it's "busy" and the page is kept as text. `restore` puts back what
+   * was showing, unless the user has moved on since.
    */
   async function showFor(tab) {
-    const now = await c.tabs.get(tab.id).catch(() => null);
-    const win = now && (await c.windows.get(now.windowId).catch(() => null));
+    let now = null;
+    let win = null;
+    const look = async () => {
+      now = await c.tabs.get(tab.id).catch(() => null);
+      win = now && (await c.windows.get(now.windowId).catch(() => null));
+    };
+    await look();
     if (!now || !win) return { reason: "tab_closed" };
     const inUse = async () => (await c.idle?.queryState?.(15).catch(() => null)) === "active";
+    const hidden = () => win.state === "minimized" || !now.active;
     // Never switch tabs (or restore a window) while the user is acting, in
     // this window or another (spec 029): their keys and clicks, a file picker
-    // or a drag would land on the wrong tab. Then the page is kept as text.
+    // or a drag would land on the wrong tab. Look again every 2 s for ~30 s
+    // (spec 037): the photo is taken as soon as the tab shows (the user
+    // clicked it) or the user stops; then it's "busy", the page kept as text.
     // (Tabs are only ever shown and put back: never moved, grouped or made.)
-    if ((win.state === "minimized" || !now.active) && (await inUse())) return { reason: "busy" };
+    for (let looks = 0; hidden() && (await inUse()); looks++) {
+      if (looks >= IN_USE_LOOKS) return { reason: "busy" };
+      await sleep(IN_USE_MS);
+      await look();
+      if (!now || !win) return { reason: "tab_closed" };
+    }
     const undo = [];
     if (win.state === "minimized") {
       await c.windows.update(win.id, { state: "normal" }).catch(() => {});

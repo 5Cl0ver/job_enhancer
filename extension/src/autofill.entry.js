@@ -170,6 +170,8 @@ const session = createSession({
   skipField: (f) => inWorkdaySection(f.el),
   userEdited: isUsers,
   scope: openModal,
+  // Each file box tried, kept for the tab (spec 037): never attached twice.
+  onFileTried: (key, state) => send({ type: "fileTried", key, state }),
 });
 
 let state = "idle"; // idle | busy
@@ -351,6 +353,8 @@ async function fill(auto) {
   // The résumé first: many applicant systems read it and rewrite the form.
   // On an automatic step of an application it already went up in: never again.
   const skipFiles = auto && resumeDone;
+  // The file boxes already tried on this tab (a reload, an update): never again (spec 037).
+  session.seedTried((await send({ type: "getFilesTried" }))?.tried);
   if (!skipFiles && (await session.uploadResume(copy, { auto }))) {
     resumeDone = true;
     send({ type: "resumeUploaded" });

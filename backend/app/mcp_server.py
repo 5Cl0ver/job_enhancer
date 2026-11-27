@@ -769,9 +769,10 @@ async def save_cover_letter(run_id: str, content: str) -> dict:
 async def fill_page(run_id: str, page_url: str) -> dict:
     """Ask Job Catcher to fill this application page with what it knows
     (profile, saved answers, this job's résumé and cover letter). Waits ~45 s and
-    returns what it filled, what still needs an answer, and `resume`
-    (attached / no_box / no_file / failed, with `resume_note`). page_url is
-    the page's full address."""
+    returns what it filled, what still needs an answer, `resume` (attached /
+    unverified / no_box / no_file / failed, with `resume_note`) and, when the
+    job has a letter or the page a box for one, `cover_letter` (the same, with
+    `cover_letter_note`). page_url is the page's full address."""
     async with _session_user() as (db, user):
         try:
             run, req = await apply_svc.fill_request(db, user, run_id, page_url)

@@ -45,6 +45,7 @@ const WHY: Record<string, string> = {
   unknown: "New question",
   other_person: "About someone else",
   too_long: "Too long for this box",
+  not_added: "The site doesn't offer these",
 };
 
 export function Apply({

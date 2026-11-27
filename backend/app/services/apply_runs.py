@@ -135,8 +135,9 @@ JOB_CATCHER_LIVE = "0.42.0"
 LIVE_STATUSES = (APPLY_FILLING, APPLY_NEEDS_YOU)
 MAX_LIVE_BOXES = 150
 MAX_FIXES = 30
-# What Job Catcher did with the résumé on a page (spec 026).
-RESUME_STATES = ("attached", "no_box", "no_file", "failed")
+# What Job Catcher did with the résumé on a page (spec 026), and with the
+# cover letter (spec 037). "unverified": put in, the page didn't show it.
+RESUME_STATES = ("attached", "unverified", "no_box", "no_file", "failed")
 # Never kept or shown, wherever they come from.
 SENSITIVE = re.compile(
     r"password|passcode|\bpin\b|social security|\bssn\b|card number|credit card"
@@ -1893,6 +1894,12 @@ async def _resume_text(db: AsyncSession, run: ApplyRun) -> str | None:
     return doc.edited_content or doc.content
 
 
+# Spec 037: Job Catcher saw Submit come back with an error.
+_SUBMIT_FAILED = (
+    "Submit didn't go through (the page shows an error). Read the error on the "
+    "page, fix it, then press Submit once."
+)
+
 _ALREADY_PRESSED = (
     "Submit was ALREADY pressed. Never press it again on your own (that could "
     "apply twice). Look at the page: if it shows a confirmation, call "
@@ -2163,6 +2170,8 @@ def _next(run: ApplyRun, apply_url: str = "") -> str:
     if s == APPLY_SUBMITTING:
         if (run.review or {}).get("pressed_at"):
             return _ALREADY_PRESSED
+        if (run.review or {}).get("submit_failed"):
+            return _SUBMIT_FAILED
         return (
             "The user said submit: press the final Submit ONCE, then call "
             "finish_apply. If it was already pressed (a confirmation or an error "
@@ -2972,9 +2981,11 @@ REASONS = {
         "photo (the answers are kept)"
     ),
     "changed": "The page changed while the photo was taken",
+    # Spec 037: Job Catcher waited ~30 s for the tab to show first.
     "busy": (
-        "You were using Chrome on this computer, so no photo then (the answers "
-        "are kept)"
+        "Your application tab wasn't showing while you used the computer. Ask "
+        "the user to click the application's tab, then call page_done again to "
+        "retake the photos"
     ),
     "replaced": "A newer page came first",
     # Spec 029: never an earlier step's report in its place.
@@ -3043,6 +3054,32 @@ RESUME_WORDS = {
         "need_help(kind='file', what=…, page_url=…): the app gives the user "
         "the file to attach."
     ),
+    # Spec 037: never attached a second time.
+    "unverified": (
+        "Job Catcher put the résumé in its box, but the page didn't show it "
+        "yet. Don't attach it again. Look at the page: if the résumé isn't "
+        "listed there, call need_help(kind='file', what=…, page_url=…)."
+    ),
+}
+
+COVER_LETTER_WORDS = {
+    "attached": (
+        "Job Catcher put the job's cover letter in. Don't attach or paste it again."
+    ),
+    "unverified": (
+        "Job Catcher put the cover letter in its box, but the page didn't show "
+        "it yet. Don't attach it again; look at the page."
+    ),
+    "no_box": "There's no box for the cover letter on this page.",
+    "no_file": (
+        "The page has a cover-letter box and the job has no letter. If the "
+        "application asks for one, write it with save_cover_letter, then call "
+        "fill_page again."
+    ),
+    "failed": (
+        "Job Catcher couldn't put the cover letter in. Call need_help(kind="
+        "'file', what=…, page_url=…): the app gives the user the file."
+    ),
 }
 
 
@@ -3079,6 +3116,9 @@ def fill_result(res: dict) -> dict[str, Any]:
     if res.get("resume") in RESUME_STATES:
         out["resume"] = res["resume"]
         out["resume_note"] = RESUME_WORDS[res["resume"]]
+    if res.get("cover_letter") in RESUME_STATES:
+        out["cover_letter"] = res["cover_letter"]
+        out["cover_letter_note"] = COVER_LETTER_WORDS[res["cover_letter"]]
     return out
 
 
@@ -3361,6 +3401,20 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                 "waiting_on": "sent",
                 "ready": False,
                 "next": _ALREADY_PRESSED,
+            }
+        failed = (run.review or {}).get("submit_failed")
+        if failed:
+            # The page's error is data, never inside `next` (spec 037).
+            return {
+                **base,
+                "waiting_on": None,
+                "ready": True,
+                "next": _SUBMIT_FAILED,
+                **(
+                    {"submit_error_on_page": failed["error"]}
+                    if failed.get("error")
+                    else {}
+                ),
             }
         if (run.review or {}).get("retry"):
             return {
@@ -3733,6 +3787,8 @@ async def finish_request(
         ]
         if payload.get("resume") in RESUME_STATES:
             result["resume"] = payload["resume"]
+        if payload.get("cover_letter") in RESUME_STATES:
+            result["cover_letter"] = payload["cover_letter"]
         if (req.result or {}).get("late"):
             result["late"] = True  # Claude's last wait ended before it (spec 033)
     else:
@@ -3787,8 +3843,30 @@ async def extension_event(
         # Pressed, not yet sure it went: Job Catcher looks for the
         # confirmation, and the app asks if none shows (spec 023).
         if approved and run.review:
-            run.review = {**run.review, "pressed_at": _iso(_now())}
+            run.review = {
+                **run.review,
+                "pressed_at": _iso(_now()),
+                "submit_failed": None,
+            }
         _event(run, "submit_pressed", f"Submit was pressed on {host or 'the page'}.")
+    elif kind == "submit_failed":
+        # Pressed, and the page still shows Submit with an error 20 s on
+        # (spec 037: Workday brings it back): it didn't go through. One more
+        # press is allowed (the lock comes back with it).
+        error = problems_svc.scrub(words, 160)
+        if approved and run.review:
+            run.review = {
+                **run.review,
+                "pressed_at": None,
+                "submit_failed": {"error": error, "at": _iso(_now())},
+            }
+        _event(
+            run,
+            "submit_failed",
+            f"Submit didn't go through: {error}"
+            if error
+            else "Submit didn't go through.",
+        )
     elif kind == "confirmation_seen":
         seen = _text(words, 300) or "a confirmation"
         # Only after a Submit press Job Catcher saw: words that were on the page

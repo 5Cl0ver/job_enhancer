@@ -18,7 +18,12 @@
             (Workday's ids), Prefix/Suffix dropdowns nobody can answer.
          2. "My Experience": "Resume/CV" with the hidden file input BESIDE
             the drop zone in the upload card (not inside it), and a zone that
-            only takes a dropped file (like a React drop zone). -->
+            only takes a dropped file (like a React drop zone).
+         ?change: the box takes a file set on it too, and re-draws the card.
+         ?change&clear (spec 037, like real Workday): it reads the file, then
+            EMPTIES the box and lists the file in the card (the box and zone
+            stay). &late=<ms>: the list shows the file only that much later.
+         ?shared: the step's one upload is "Resume/Cover Letter" (both). -->
     <div data-automation-id="progressBar"><span id="step-name">My Information</span></div>
     <main id="step"></main>
     <button type="button" id="next" data-automation-id="pageFooterNextButton">Save and Continue</button>
@@ -61,7 +66,10 @@
       // ?change: the box also takes a file set on it (like real Workday's
       // input); by default only a drop on the zone counts.
       const takesChange = params.has("change");
+      const clears = params.has("clear");
+      const late = Number(params.get("late") || 0);
       const uploads = [];
+      window.__uploads = () => uploads.slice();
       // Like a React drop zone: by default a file set on the input alone is
       // ignored; only a drop on the zone counts. Each upload re-draws the whole
       // card: the files so far, then a fresh EMPTY zone and input (what made
@@ -85,11 +93,31 @@
           e.preventDefault();
           took(e.dataTransfer?.files);
         });
-        if (takesChange) document.getElementById("input-3f9a").addEventListener("change", (e) => took(e.target.files));
+        if (takesChange) document.getElementById("input-3f9a").addEventListener("change", (e) => (clears ? taken(e.target) : took(e.target.files)));
+      }
+      // Real Workday: it reads the file at once, then empties its box and,
+      // once the upload is done, lists the file in the card (box and zone stay).
+      function taken(input) {
+        const names = [...(input.files || [])].map((f) => f.name);
+        input.value = "";
+        for (const n of names) uploads.push(n);
+        document.getElementById("got").textContent = uploads.join(", ");
+        const list = () => {
+          const card = document.querySelector("[data-automation-id=attachments-FileUpload]");
+          for (const n of names) {
+            const item = document.createElement("div");
+            item.setAttribute("data-automation-id", "file-upload-successful");
+            item.textContent = n;
+            card.prepend(item);
+          }
+        };
+        if (late) setTimeout(list, late);
+        else list();
       }
       function draw() {
         step.innerHTML = steps[at];
         document.getElementById("step-name").textContent = at ? "My Experience" : "My Information";
+        if (at === 1 && params.has("shared")) step.querySelector("h3").textContent = "Resume/Cover Letter";
         wireZone();
       }
       document.getElementById("next").addEventListener("click", () => {

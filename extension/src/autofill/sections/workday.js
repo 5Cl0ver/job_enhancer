@@ -325,9 +325,10 @@ export async function fillWorkday(doc, data, ctx) {
       }
     }
   }
-  // Skills: a search prompt, one skill at a time (at most 30).
+  // Skills: a search prompt, one skill at a time, each the site's own entry
+  // only, ~30 s for the box; the ones it doesn't offer are listed (spec 037).
   const skills = doc.querySelector(`${FF("skills")} input:not([type=checkbox])`);
-  if (skills && data.skills?.length && wrote(await ctx.put(box(skills, "chips", "Skills"), data.skills.slice(0, 30)))) filled++;
+  if (skills && data.skills?.length && wrote(await ctx.put(box(skills, "chips", "Skills"), data.skills.slice(0, 60)))) filled++;
   return { filled, details };
 }
 

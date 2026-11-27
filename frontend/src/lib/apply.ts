@@ -94,7 +94,7 @@ export interface ApplyPage {
   round: number;
   last: boolean;
   /** What happened to the résumé on this page (spec 026). */
-  resume?: "attached" | "no_box" | "no_file" | "failed";
+  resume?: "attached" | "unverified" | "no_box" | "no_file" | "failed";
 }
 
 export interface ApplyHelp {

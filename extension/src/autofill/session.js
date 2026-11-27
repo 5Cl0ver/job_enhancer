@@ -8,7 +8,8 @@ import { matchTaught } from "./fingerprint.js";
 import { PERSONAL, classifySections, createJobBlocks, eduPart, eduValues, jobPart, jobValues } from "./classify/jobHistory.js";
 import { siteKey } from "./hosts.js";
 import { collectFields, hasFormHere, isSignupPage, looksLikeApplication, passwordShown } from "./scan.js";
-import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isResumeUpload, phoneInExtension, resolve } from "./resolve.js";
+import { COMPANY_KEYS, COMPUTED_KEYS, FORMAT_KEYS, IDENTITY, IDENTITY_KEYS, isCoverLetterText, isCoverLetterUpload, isResumeUpload, isSharedUpload, phoneInExtension, resolve, uploadKind } from "./resolve.js";
+import { stepName } from "./applyPage.js";
 
 /** Case, spaces and punctuation don't count when deciding the user changed a box. */
 const loose = (v) => String(v ?? "").toLowerCase().replace(/[^\p{L}\p{N}]+/gu, "");
@@ -28,7 +29,7 @@ function agrees(field, now, value) {
   }
   return same(now, value);
 }
-import { asWriter, canRestore, fire, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
+import { asWriter, canRestore, fileListed, fire, hasValue, peekOptions, readField, restore, same, snapshot, writeField } from "./widgets.js";
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 // Boxes a page can quietly empty after taking a choice (Workday's search
@@ -167,7 +168,7 @@ function within(box, el) {
   return false;
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "didnt_stick", "other_person", "too_long"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "didnt_stick", "other_person", "too_long", "not_added"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 // A lone yes/no checkbox is answered Yes (ticked) or No (left unticked).
@@ -186,8 +187,9 @@ function onPage(field) {
 /**
  * @param {{doc?: Document, send: (msg: object) => Promise<any>, onChange?: () => void,
  *          getShadow?: Function, visible?: Function, skipField?: (f) => boolean,
- *          scope?: () => Element|null}} deps
+ *          scope?: () => Element|null, onFileTried?: (key: string, state: string|null) => void}} deps
  *   scope: when it returns an element (an open pop-up), only fields inside it count.
+ *   onFileTried: a file box tried (spec 037), kept by the background for the tab.
  */
 export function createSession(deps) {
   const doc = deps.doc || document;
@@ -211,8 +213,16 @@ export function createSession(deps) {
   const already = new Map();
   /** Fields the user undid: an automatic run (keep filling) leaves them alone. */
   const declined = new Set();
-  /** The résumé on this page: attached / no_box / no_file / failed (spec 026). */
+  /** The résumé on this page: attached / unverified / no_box / no_file / failed (spec 026, 037). */
   let resumeState = null;
+  /** The cover letter on this page, the same way (spec 037); null when neither a letter nor its box. */
+  let coverState = null;
+  /** Each file box tried on each step (spec 037), by fileKey: "attached" or
+   * "unverified". One try per box per step, on a press or by itself: a site
+   * that empties its box after taking the file (Workday) never gets two. */
+  const tried = new Map();
+  /** uploadResume has run: the résumé's boxes are its own (fillKnown never tries them again). */
+  let uploadRan = false;
   /** Where the résumé went up, and its name: a site may swap its box for the
    * file's name (Workday), but later steps at the same address aren't it. */
   let attachedOn = "";
@@ -343,6 +353,8 @@ export function createSession(deps) {
     let res = await writeField(field, values);
     if (res.ok && !(await stuck(field, res))) res = { ok: false, reason: "rejected", actual: readField(field) };
     if (!res.ok) {
+      // A file the page may have taken (spec 037): never undone.
+      if (res.reason === "unverified") return res;
       // Written but not taken (or half taken): put the field back, so nothing
       // is left changed without a record and an Undo.
       if (readField(field) !== before) await restore(field, snap).catch(() => {});
@@ -378,8 +390,19 @@ export function createSession(deps) {
     const prior = !ours && now.trim() !== "";
     const res = await fillOne(field, values, "profile");
     if (res.ok && prior) filled.get(field.id).entry.corrected = true;
-    if (!res.ok) leave(field, res.reason || "rejected");
+    // Skills the site doesn't offer (spec 037): listed, never dropped silently.
+    if (res.notAdded?.length) notAdded(field, res.notAdded);
+    else if (!res.ok) leave(field, res.reason || "rejected");
     return res;
+  }
+
+  /** "Skills not added: Cobol, M365": beside the ones that were (spec 037). */
+  function notAdded(field, names) {
+    const label = `${shortLabel(field.question)} not added: ${names.join(", ")}`;
+    needYou.set(field.id, {
+      field,
+      item: { id: field.id, label: label.length > 200 ? `${label.slice(0, 199)}…` : label, reason: "not_added", kind: field.kind, options: [] },
+    });
   }
 
   /** `key`: the profile answer a "Not in your profile yet" box wants (Add to profile, spec 034). */
@@ -459,8 +482,9 @@ export function createSession(deps) {
       }
       if (field.kind === "file" && (field.el.files?.length || skipFiles)) continue;
       // The résumé is already up on this page (the site re-drew its box
-      // empty): never a second copy (spec 029).
-      if (field.kind === "file" && resumeShown() && isResumeUpload(field)) continue;
+      // empty): never a second copy (spec 029). The résumé's boxes are
+      // uploadResume's alone: never tried again here (spec 037).
+      if (field.kind === "file" && (uploadRan || resumeShown()) && isResumeUpload(field)) continue;
       // A box that shows the résumé's name is the résumé's: never a cover
       // letter (or anything else) in it (spec 031).
       if (field.kind === "file" && attachedName && [(field.mark || field.el)?.textContent, field.hints?.area].join(" ").includes(attachedName)) continue;
@@ -483,6 +507,8 @@ export function createSession(deps) {
         continue;
       }
       if (d.skip) {
+        // A box for the cover letter, and no letter for this job (spec 037).
+        if (d.key === "cover_letter_file" && d.skip === "no_data") coverState ||= "no_file";
         // A yes/no checkbox nobody requires: unticked already says no (spec 034).
         if (d.quiet) continue;
         if (d.skip === "unknown" && AI_KINDS.has(field.kind) && !isPhoneExtension(field)) leftovers.push(field);
@@ -496,10 +522,59 @@ export function createSession(deps) {
         if (once.has(d.key)) continue;
         once.add(d.key);
       }
+      // A file: once per box per step, like the résumé (spec 037).
+      if (field.kind === "file" && d.values[0] instanceof File) {
+        const r = await attachFile(field, d.values[0], d.key === "cover_letter_file" ? "cover_letter" : "resume", d.source);
+        if (d.key === "cover_letter_file") coverState = r.state;
+        if (r.state === "failed") leave(field, "rejected");
+        continue;
+      }
       const res = await fillOne(field, d.values, d.source);
+      if (d.key === "cover_letter") coverState = res.ok ? "attached" : "failed";
       if (!res.ok) leave(field, res.reason || "rejected");
     }
+    if (skipFiles) coverState = null; // the step filled by itself left the files alone
+    else if (!coverState && (copy.coverLetterFile || copy.coverLetterText) && !list.some(letterBox)) coverState = "no_box";
     return { leftovers: leftovers.filter((f) => !aiAsked.has(f.id)), seen: list.length };
+  }
+
+  /** A box the cover letter could go in: its own upload or text box, or one shared with the résumé. */
+  const letterBox = (f) => (f.kind === "file" ? isCoverLetterUpload(f) || isSharedUpload(f) : isCoverLetterText(f));
+
+  /** Which box on which step, for "tried once" (spec 037): Workday keeps one
+   * address for every step, so its step's name counts too. */
+  function fileKey(field, what) {
+    const at = `${doc.location?.host || ""}${doc.location?.pathname || ""}`;
+    return [at, stepName(doc), uploadKind(field), field.key || "", what].join("|");
+  }
+
+  /**
+   * Attach one file to a box, once per box per step (spec 037): never when
+   * its list already shows it (a second press, a fresh Job Catcher), never
+   * again after a try the page didn't confirm ("unverified").
+   * @returns {Promise<{state: "attached"|"unverified"|"failed", wrote: boolean}>}
+   */
+  async function attachFile(field, file, what, source = "profile") {
+    const k = fileKey(field, what);
+    const keep = (state) => {
+      tried.set(k, state);
+      deps.onFileTried?.(k, state);
+    };
+    if (fileListed(field, file.name)) {
+      if (tried.get(k) !== "attached") keep("attached");
+      return { state: "attached", wrote: false };
+    }
+    if (tried.has(k)) return { state: tried.get(k), wrote: false };
+    const res = await fillOne(field, [file], source);
+    if (res.ok) {
+      keep("attached");
+      return { state: "attached", wrote: !res.already };
+    }
+    if (res.reason === "unverified") {
+      keep("unverified");
+      return { state: "unverified", wrote: true };
+    }
+    return { state: "failed", wrote: false };
   }
 
   /** Did the résumé go up on this page, and does the page still show it? */
@@ -510,11 +585,31 @@ export function createSession(deps) {
 
   /**
    * Upload the résumé before anything else: many applicant systems read it
-   * and rewrite the form (spec 016, research R7). True when one was uploaded.
+   * and rewrite the form (spec 016, research R7). True when a file was sent
+   * to the page now. A box for the résumé and the cover letter gets the
+   * letter too, after it (spec 037).
    */
   async function uploadResume(copy, { auto = false } = {}) {
     if (!auto) declined.clear(); // a press means: fill again, undone ones too
+    uploadRan = true;
+    coverState = null;
     const boxes = scan().filter((f) => f.kind === "file" && isResumeUpload(f));
+    const sent = await putResume(boxes, copy);
+    // The letter in the box it shares with the résumé (found again: Workday
+    // may have re-drawn it), once, and only after the résumé went in.
+    const shared = scan().find((f) => isSharedUpload(f) && !declined.has(f.id));
+    if (!shared || !copy.coverLetterFile || !["attached", "unverified"].includes(resumeState)) return sent;
+    // A plain box that takes one file only: the résumé stays in it.
+    if (!shared.el.multiple && !shared.zone) {
+      coverState = "no_box";
+      return sent;
+    }
+    const r = await attachFile(shared, copy.coverLetterFile, "cover_letter");
+    coverState = r.state;
+    return sent || r.wrote;
+  }
+
+  async function putResume(boxes, copy) {
     const here = doc.location?.href || "";
     // What happened to the résumé on this page, for Apply with Claude (spec 026).
     const state = (s) => ((resumeState = s), false);
@@ -524,21 +619,19 @@ export function createSession(deps) {
     if (!boxes.length) return state("no_box");
     if (boxes.some((f) => f.el.files?.length || filled.has(f.id))) return state("attached");
     if (!copy.resumeFile) return state("no_file");
-    let tried = false;
     for (const field of boxes) {
       if (declined.has(field.id)) continue;
       const d = resolve(field, copy);
       if (d.skip) continue;
-      tried = true;
-      const res = await fillOne(field, d.values, d.source);
-      if (res.ok) {
-        state("attached");
-        attachedOn = here;
-        attachedName = copy.resumeFile.name || "";
-        return true; // one résumé per page, never into a second box
-      }
+      // One try (spec 037): a box that may have taken it is never tried
+      // again, and never another box after it.
+      const r = await attachFile(field, copy.resumeFile, "resume", d.source);
+      state(r.state);
+      if (r.state === "failed") continue;
+      attachedOn = here;
+      attachedName = copy.resumeFile.name || "";
+      return r.wrote; // one résumé per page, never into a second box
     }
-    if (tried) state("failed");
     return false;
   }
 
@@ -599,9 +692,11 @@ export function createSession(deps) {
     return {
       url: doc.location?.href || "",
       resume: resumeState,
+      ...(coverState ? { cover_letter: coverState } : {}),
       entries: current(filled).map((x) => x.entry),
       need_you: current(needYou)
-        .filter((x) => !hasValue(x.field) && !suggestions.has(x.field.id))
+        // "Skills not added: …" stays listed beside the skills that were (spec 037).
+        .filter((x) => (x.item.reason === "not_added" || !hasValue(x.field)) && !suggestions.has(x.field.id))
         .map((x) => x.item),
       suggestions: current(suggestions)
         .filter((x) => !hasValue(x.field))
@@ -752,9 +847,24 @@ export function createSession(deps) {
         declined.add(k);
         unmark(x.field);
         undone++;
+        // An undone file may go in again on the next press (spec 037).
+        if (x.field.kind === "file") forgetFile(x.field);
       }
     }
     return undone;
+  }
+
+  function forgetFile(field) {
+    for (const what of ["resume", "cover_letter"]) {
+      const k = fileKey(field, what);
+      if (tried.delete(k)) deps.onFileTried?.(k, null);
+    }
+  }
+
+  /** What the background kept for this tab (spec 037): a fresh Job Catcher
+   * (a reload, an update) never tries a box again either. */
+  function seedTried(held) {
+    for (const [k, v] of Object.entries(held || {})) if ((v === "attached" || v === "unverified") && !tried.has(k)) tried.set(k, v);
   }
 
   function show(id) {
@@ -867,6 +977,7 @@ export function createSession(deps) {
     /** What Job Catcher put in a box, if it filled it: {source, value}. */
     filledEntry: (id) => filled.get(id)?.entry || null,
     uploadResume,
+    seedTried,
     fillKnown,
     fillWithAi,
     report,
