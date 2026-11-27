@@ -1203,7 +1203,7 @@ def _fixes(run: ApplyRun, raw: Any) -> list[dict[str, Any]]:
         fix: dict[str, Any] = {
             "page": f["page"],
             "box_on_page": row["q"],
-            "now_on_page": _text(row.get("a"), 300),
+            "now_on_page": sheet_svc.answer_text(row.get("a")),
         }
         if to:
             fix["to"] = to
@@ -3346,7 +3346,9 @@ async def save_live(
         q = _text(b.get("q"), 300)
         if not q or SENSITIVE.search(q):
             continue
-        row: dict[str, Any] = {"q": q, "a": _text(b.get("a"), 300)}
+        # A long answer in full, line breaks kept (spec 039: Workday's
+        # 1,500-character answers were cut at 300).
+        row: dict[str, Any] = {"q": q, "a": sheet_svc.answer_text(b.get("a"))}
         if b.get("by") == "job_catcher":
             row["by"] = "job_catcher"
         # The box's choices, as the form shows them (spec 033).

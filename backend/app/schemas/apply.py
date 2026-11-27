@@ -39,7 +39,7 @@ class FixIn(BaseModel):
 
     page: int | None = Field(default=None, ge=1, le=99)
     q: str = Field(max_length=300)
-    a: str = Field(default="", max_length=300)
+    a: str = Field(default="", max_length=2000)
     to: str | None = Field(default=None, max_length=2000)
     ask: str | None = Field(default=None, max_length=500)
 

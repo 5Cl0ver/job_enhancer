@@ -21,7 +21,7 @@ _HTTP_TIMEOUT = 5.0
 
 class ServiceStatus(BaseModel):
     name: str
-    status: str  # healthy | degraded | down
+    status: str  # healthy | degraded | down | off (no key set: not set up)
     latency_ms: int | None = None
     detail: str | None = None
 
@@ -99,6 +99,14 @@ async def _check_endpoint(
         async with httpx.AsyncClient() as client:
             r = await client.get(url, headers=headers or {}, timeout=_HTTP_TIMEOUT)
         latency_ms = int((time.monotonic() - start) * 1000)
+        if r.status_code in (401, 403):
+            # It answered, but turned the key away: every real call fails too.
+            return ServiceStatus(
+                name=name,
+                status="degraded",
+                latency_ms=latency_ms,
+                detail="Key rejected",
+            )
         if r.status_code < 500:
             return ServiceStatus(name=name, status="healthy", latency_ms=latency_ms)
         return ServiceStatus(
@@ -120,8 +128,8 @@ _external: tuple[float, list[ServiceStatus]] | None = None
 async def _jsearch_status(db: AsyncSession) -> ServiceStatus:
     from app.services import allowance
 
-    if not settings.jsearch_api_key:
-        return ServiceStatus(name="JSearch", status="down", detail="No key set")
+    if not settings.jsearch_api_key.strip():
+        return _off("JSearch")
     shared = await allowance.usage_shared(db)
     return ServiceStatus(
         name="JSearch",
@@ -136,7 +144,8 @@ async def check_service_health(
     """The database (always), NVIDIA and Adzuna (pinged at most every 10
     minutes: all of them, none, or only the ones named in ``ping_external``;
     one not pinged is given only from a fresh answer already in hand, else
-    left out) and JSearch (counted, never pinged)."""
+    left out) and JSearch (counted, never pinged). One with no key set is
+    "off" and never pinged."""
     statuses: list[ServiceStatus] = []
 
     # DB latency
@@ -171,10 +180,10 @@ async def check_service_health(
         checks = list(await asyncio.gather(*(_ping(name) for name in wanted)))
         if len(checks) == len(_PINGED):
             # Only a clean bill of health is kept: a problem is checked
-            # again next time.
+            # again next time. Not set up isn't a problem.
             _external = (
                 (time.monotonic(), checks)
-                if all(c.status == "healthy" for c in checks)
+                if all(c.status in ("healthy", "off") for c in checks)
                 else None
             )
         statuses.extend(checks)
@@ -182,14 +191,29 @@ async def check_service_health(
     return statuses
 
 
-def _ping(name: str):
+def _off(name: str) -> ServiceStatus:
+    """A service with no key set isn't down, it's not set up: the app works
+    without it (job search skips it quietly), so it's never pinged or
+    reported."""
+    return ServiceStatus(name=name, status="off", detail="Not set up")
+
+
+def _set_up(name: str) -> bool:
     if name == "NVIDIA NIM":
-        return _check_endpoint(
+        return bool(settings.nvidia_api_key.strip())
+    return bool(settings.adzuna_app_id.strip() and settings.adzuna_app_key.strip())
+
+
+async def _ping(name: str) -> ServiceStatus:
+    if not _set_up(name):
+        return _off(name)
+    if name == "NVIDIA NIM":
+        return await _check_endpoint(
             "NVIDIA NIM",
             "https://integrate.api.nvidia.com/v1/models",
             headers={"Authorization": f"Bearer {settings.nvidia_api_key}"},
         )
-    return _check_endpoint(
+    return await _check_endpoint(
         "Adzuna",
         f"https://api.adzuna.com/v1/api/jobs/us/search/1?app_id={settings.adzuna_app_id}&app_key={settings.adzuna_app_key}&results_per_page=1&what=python",
     )
@@ -235,7 +259,8 @@ async def health_watch(session_factory) -> None:
     line to its history. The database is checked every time; NVIDIA and
     Adzuna each on their own clock (6-hourly while up, the next run to
     confirm a bad reading, hourly while noted down); JSearch is only
-    counted, never pinged. Never raises."""
+    counted, never pinged. A service with no key set ("off") is skipped:
+    never reported, never "recovered". Never raises."""
     from app.services import bug_reports
 
     try:
@@ -245,6 +270,9 @@ async def health_watch(session_factory) -> None:
         async with session_factory() as db:
             statuses = await check_service_health(db, ping_external=ping)
             for s in statuses:
+                if s.status == "off":
+                    # Not set up: no outage to report, no "back up" line.
+                    continue
                 down = s.status == "down"
                 before = _health_last.get(s.name) or {}
                 streak = before.get("streak", 0) + 1 if down else 0

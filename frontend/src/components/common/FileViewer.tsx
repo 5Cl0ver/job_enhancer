@@ -79,6 +79,21 @@ export const resumeFile = (id: string, filename?: string | null): ViewFile => ({
   filename: filename || "Résumé",
 });
 
+/**
+ * A readable file name for a written document (spec 039): "Cover letter -
+ * Northwind Labs.pdf", never an id. Characters a file name can't hold are
+ * dropped.
+ */
+export function pdfName(kind: string, company?: string | null): string {
+  const clean = (company ?? "")
+    .replace(/[\\/:*?"<>|\p{Cc}]+/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 60)
+    .trim();
+  return clean ? `${kind} - ${clean}.pdf` : `${kind}.pdf`;
+}
+
 /** A written document (résumé or cover letter) as a PDF. */
 export const documentFile = (id: string, filename: string): ViewFile => ({
   path: `/v1/ai/documents/${id}/pdf`,

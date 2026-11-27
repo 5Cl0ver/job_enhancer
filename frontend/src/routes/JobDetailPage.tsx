@@ -94,7 +94,8 @@ export function JobDetailPage() {
                 {savedJob && <JobActions page savedJob={savedJob} listing={job} />}
                 <JobResumeType jobListingId={id} />
                 <JobResumePicker jobListingId={id} />
-                <JobCoverLetterPicker jobListingId={id} />
+                {/* Right under the résumé, always there (spec 039). */}
+                <JobCoverLetterPicker jobListingId={id} company={job.company} />
               </>
             ) : null
           }

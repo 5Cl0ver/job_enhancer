@@ -120,7 +120,7 @@ export function JobDetailDialog({
           descriptionReady={!!fullListing || !loadingDescription}
         />
 
-        <JobDocuments jobListingId={savedJob.job_listing_id} compact />
+        <JobDocuments jobListingId={savedJob.job_listing_id} company={j.company} compact />
 
         {savedJob.notes && (
           <section className="space-y-2">

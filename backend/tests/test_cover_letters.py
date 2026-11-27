@@ -193,6 +193,28 @@ async def test_claude_saves_a_letter_and_job_catcher_gets_it(engine, monkeypatch
 
 
 @pytest.mark.asyncio
+async def test_the_job_page_finds_claudes_letter(engine, monkeypatch):
+    """Spec 039: the letter Claude saved shows on the job's page and in
+    Settings, so the saved-jobs list names it and the letters list has it."""
+    from app.main import app
+    from tests.conftest import _make_client
+
+    maker, user, run_id, job_id = await _setup(engine, monkeypatch)
+    await mcp_mod.get_apply_brief(str(run_id))
+    saved = await mcp_mod.save_cover_letter(str(run_id), LETTER)
+    try:
+        async with maker() as db, _make_client(db, user) as http:
+            jobs = (await http.get("/v1/saved-jobs/")).json()
+            letters = (await http.get("/v1/ai/cover-letters")).json()
+    finally:
+        app.dependency_overrides.clear()
+    [job] = [j for j in jobs if j["id"] == str(job_id)]
+    assert job["cover_letter_id"] == saved["cover_letter_id"]
+    assert [x["id"] for x in letters] == [saved["cover_letter_id"]]
+    assert letters[0]["company"] == "Acme"
+
+
+@pytest.mark.asyncio
 async def test_a_letter_the_user_picked_is_never_written_over(engine, monkeypatch):
     maker, user, run_id, job_id = await _setup(engine, monkeypatch)
     async with maker() as db:

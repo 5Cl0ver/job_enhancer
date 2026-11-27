@@ -1,4 +1,4 @@
-import { useMemo, useState } from "react";
+import { useLayoutEffect, useMemo, useRef, useState } from "react";
 import { Check, ChevronUp, Loader2, MessageCircle, Pencil, Search, Send, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
@@ -36,9 +36,36 @@ export function TagChip({ tag }: { tag: RowTag }) {
   return <span className={cn("shrink-0 whitespace-nowrap rounded px-1.5 text-[11px] leading-5", TONE[tag])}>{TAG_LABEL[tag]}</span>;
 }
 
+/** An answer too long for one line: it edits in a growing box (spec 039). */
+export function isLongText(text: string): boolean {
+  return text.length > 80 || text.includes("\n");
+}
+
+/**
+ * Fold a long answer to 4 lines. `folds` is true only when the text really
+ * runs past them (measured), so a short answer never gets a "Show all".
+ */
+function useFold(text: string) {
+  const ref = useRef<HTMLSpanElement>(null);
+  const [all, setAll] = useState(false);
+  const [folds, setFolds] = useState(false);
+  const long = isLongText(text);
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (!el || !long || all) return;
+    const check = () => setFolds(el.scrollHeight > el.clientHeight + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [text, long, all]);
+  return { ref, clamp: long && !all, folds: long && folds, all, toggle: () => setAll((a) => !a) };
+}
+
 /**
  * One box (spec 033): the question, what's in it, its tag, and where its fix
- * stands ("→ No (waiting)"). Tap it to change it or ask Claude about it.
+ * stands ("→ No (waiting)"). Tap it to change it or ask Claude about it. A
+ * long answer shows 4 lines and a "Show all" (spec 039).
  */
 export function RowButton({
   row,
@@ -57,6 +84,7 @@ export function RowButton({
   const tag = tagOf(row);
   const empty = !row.a.trim();
   const pending = fix && (fix.status === "waiting" || fix.status === "sent") && fix.to;
+  const fold = useFold(row.a);
   const body = (
     <>
       <span className="flex items-start justify-between gap-2">
@@ -67,8 +95,10 @@ export function RowButton({
         {tag && tag !== "empty" && <TagChip tag={tag} />}
       </span>
       <span
+        ref={fold.ref}
         className={cn(
           "block whitespace-pre-wrap break-words text-sm",
+          fold.clamp && "line-clamp-4",
           empty && "italic text-amber-700 dark:text-amber-400",
           pending && "line-through opacity-60",
         )}
@@ -93,8 +123,9 @@ export function RowButton({
     fresh && "bg-primary/10",
     fix?.status === "waiting" && "bg-primary/5 ring-1 ring-primary/40",
   );
-  if (!onTap) return <div className={shape}>{body}</div>;
-  return (
+  const box = !onTap ? (
+    <div className={shape}>{body}</div>
+  ) : (
     <button
       type="button"
       onClick={onTap}
@@ -103,6 +134,21 @@ export function RowButton({
     >
       {body}
     </button>
+  );
+  if (!fold.folds) return box;
+  // Its own button, beside the row's (a button can't hold another).
+  return (
+    <div>
+      {box}
+      <button
+        type="button"
+        aria-expanded={fold.all}
+        onClick={fold.toggle}
+        className="min-h-8 px-3 text-xs font-medium text-primary underline-offset-2 hover:underline"
+      >
+        {fold.all ? "Show less" : "Show all"}
+      </button>
+    </div>
   );
 }
 
@@ -146,8 +192,21 @@ export function FixSheet({
 }) {
   const options = useMemo(() => target.options ?? [], [target.options]);
   const known = (v?: string | null) => !!v && options.some((o) => normQ(o) === normQ(v));
+  const now = target.a.trim();
   const [pick, setPick] = useState<string | null>(known(current?.to) ? current!.to! : null);
-  const [other, setOther] = useState(current?.to && !known(current.to) ? current.to : "");
+  // A long typed answer (spec 039) edits in a growing box that starts with
+  // what's there now, so a small change is a small edit.
+  const [big] = useState(() => !options.length && (isLongText(now) || isLongText(current?.to ?? "")));
+  const [other, setOther] = useState(current?.to && !known(current.to) ? current.to : big ? now : "");
+  // Grows with its text where the browser can't by itself (no field-sizing):
+  // the whole sheet scrolls, never a little box inside it.
+  const box = useRef<HTMLTextAreaElement>(null);
+  useLayoutEffect(() => {
+    const el = box.current;
+    if (!el || (typeof CSS !== "undefined" && CSS.supports?.("field-sizing", "content"))) return;
+    el.style.height = "auto";
+    el.style.height = `${el.scrollHeight + 2}px`;
+  }, [other]);
   const [typing, setTyping] = useState(!options.length || (!!current?.to && !known(current.to)));
   const [ask, setAsk] = useState(current?.ask ?? "");
   const [asking, setAsking] = useState(!!current?.ask);
@@ -156,18 +215,30 @@ export function FixSheet({
     () => (search.trim() ? options.filter((o) => o.toLowerCase().includes(search.trim().toLowerCase())) : options),
     [options, search],
   );
-  const to = (typing ? other : pick ?? "").trim();
+  const typed = (typing ? other : pick ?? "").trim();
+  // The growing box starts with the answer: unchanged isn't a change.
+  const to = big && typing && typed === now ? "" : typed;
   const words = ask.trim();
-  const now = target.a.trim();
   const save = () => onSave({ ...(to ? { to } : {}), ...(words ? { ask: words } : {}) });
 
   return (
     <Dialog open onOpenChange={(o) => !o && onClose()}>
       <DialogContent className="max-h-[92dvh] max-w-md gap-3 overflow-y-auto">
         <DialogTitle className="pr-6 text-base leading-snug">{target.q}</DialogTitle>
-        <DialogDescription className="text-xs">
-          {target.stepTitle} · Now: {now || "left empty"}
-        </DialogDescription>
+        <DialogDescription className="text-xs">{target.stepTitle}</DialogDescription>
+
+        {/* What's in the box now, in full and readable (spec 039). */}
+        <div className="space-y-1">
+          <p className="text-xs font-medium text-muted-foreground">Now</p>
+          <p
+            className={cn(
+              "whitespace-pre-wrap break-words rounded-lg bg-muted/50 px-3 py-2 text-sm",
+              !now && "italic text-muted-foreground",
+            )}
+          >
+            {now || "Left empty"}
+          </p>
+        </div>
 
         <div className="space-y-2">
           <p className="text-sm font-medium">Change it to</p>
@@ -227,16 +298,27 @@ export function FixSheet({
               )}
             </>
           )}
-          {typing && (
-            <Input
-              aria-label="Change it to"
-              autoFocus={!options.length}
-              value={other}
-              maxLength={1900}
-              placeholder={now || "The new answer"}
-              onChange={(e) => setOther(e.target.value)}
-            />
-          )}
+          {typing &&
+            (big ? (
+              <Textarea
+                ref={box}
+                aria-label="Change it to"
+                value={other}
+                rows={4}
+                maxLength={2000}
+                placeholder="The new answer"
+                onChange={(e) => setOther(e.target.value)}
+              />
+            ) : (
+              <Input
+                aria-label="Change it to"
+                autoFocus={!options.length}
+                value={other}
+                maxLength={1900}
+                placeholder={now || "The new answer"}
+                onChange={(e) => setOther(e.target.value)}
+              />
+            ))}
         </div>
 
         {asking ? (

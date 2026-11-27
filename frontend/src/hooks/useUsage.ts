@@ -23,3 +23,12 @@ export function useUsage() {
     staleTime: 60_000,
   });
 }
+
+/**
+ * Is the app's own AI writing on (spec 039)? Off by default: a button that
+ * needs it is hidden, never shown broken. False until the answer is in.
+ */
+export function useAiWritingOn(): boolean {
+  const { data } = useUsage();
+  return data?.kinds?.ai_document?.on === true;
+}

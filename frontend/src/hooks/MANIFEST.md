@@ -22,7 +22,7 @@ optimistic updates where useful.
 | `useJobsParams.ts` | `useJobsParams`: My Jobs' collection and "where from" kept in the address (`?folder=`, `?origin=`) so other pages can link to them | — |
 | `useShowMore.ts` | `useShowMore` (draw a long list 30 at a time; loads the next page as its button scrolls into view) | — |
 | `useJobCatcher.ts` | `useJobCatcherRelease`, `useJobCatcherConnections`, `useDisconnectJobCatcher`, `useConnectStatus`, `useApproveConnect`, `useCancelConnect` (spec 019) | `/v1/extension/*` |
-| `useUsage.ts` | `useUsage` (spec 019 part C: what's left of today's free allowances; `on` per kind) | `/v1/usage` |
+| `useUsage.ts` | `useUsage` (spec 019 part C: what's left of today's free allowances; `on` per kind), `useAiWritingOn` (spec 039: false until known; hides AI-only buttons such as Generate Documents) | `/v1/usage` |
 | `useOnboarding.ts` | `useOnboarding(pollMs?)`, `useUpdateOnboarding` (spec 019 part B: Welcome progress and the Getting started ticks) | `/v1/onboarding` |
 | `useResumeDetails.ts` | `useResumeDetails`, `useSaveResumeDetails`, `useReadResume`, `useSetJobResume` (spec 020: each résumé's jobs, schools, skills, read without AI; the résumé for one saved job) | `/v1/autofill/resumes/{id}/*`, `PUT /v1/saved-jobs/{id}/resume` |
 | `useSkippedSites.ts` | `useSkippedSites`, `useSiteSuggestions`, `useAddSkippedSite` (409 → `NeedsConfirm` with the reason), `useRemoveSkippedSite`; `siteOf` / `onSite` (spec 024) | `/v1/skipped-sites` |
