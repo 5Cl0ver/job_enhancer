@@ -350,8 +350,11 @@ async def test_a_new_tab_that_isnt_a_web_page_is_ignored(engine, monkeypatch):
 
 
 def test_the_playbook_says_the_new_tab_comes_back():
+    from app.services.apply_playbook import APPLY_PLAYBOOK_VERSION
+
+    assert APPLY_PLAYBOOK_VERSION >= "2026.12.08"
     text = playbook_text()
-    assert "new_tab_url" in text
+    assert "new_tab_urls" in text and "new_tab_url" in text
     assert "Never ask the user for the address" in text
 
 
