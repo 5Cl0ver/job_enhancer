@@ -7,7 +7,7 @@
 // link, and only from a page naming its posting.
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { OPEN_MS, PICK_MS, SUGGEST_MS, askAbout, fillJobFor, holdFiles, pageOf, isSignIn, isWebPage, onHub, onJobBoard, postingIds, postingLevelId, putEntry, sameApplication, siteOf, suggestFor, worthTelling } from "../src/tabJob.js";
+import { OPEN_MS, PICK_MS, SUGGEST_MS, askAbout, fillJobFor, holdFiles, looksLikeApplication, pageOf, isSignIn, isWebPage, onHub, onJobBoard, postingIds, postingLevelId, putEntry, sameApplication, siteOf, suggestFor, worthTelling } from "../src/tabJob.js";
 import { createTabJobs } from "../src/background/tabJobs.js";
 import { applyLabel, isApplyPress, watchApplyPresses } from "../src/autofill/applyClick.js";
 import { bestJobMatch, filesLabel } from "../panel/src/lib/context.ts";
@@ -618,3 +618,86 @@ describe("no choice of files for this fill (an automatic fill on a suggested job
   });
 });
 
+describe("seventh review", () => {
+  it("a job with no files of its own: nothing is held, fills go as always (B1)", async () => {
+    const c = fakeChrome({ 1: { id: 1, url: LI_J } });
+    const tj = createTabJobs({ ownMatch: async (t) => (t.url === LI_J ? { id: "J" } : null), hasFiles: async () => false, chrome: c, now: () => T0 });
+    await tj.pressed(tab(1, LI_J), 0);
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await tj.loaded(tab(1, wd));
+    expect((await tj.suggestion(tab(1, wd)))?.jobId).toBe("J");
+    expect(await tj.holdsFiles(tab(1, wd), null)).toBe(false);
+  });
+
+  it("the landing is the first page after the press; going back to a search ends it (F1)", async () => {
+    let now = T0;
+    const { tj, learnLink } = make({ now: () => now });
+    await tj.pressed(tab(1, LI_J), 0);
+    for (const u of ["https://acme.com/about", "https://www.google.com/search?q=beta+jobs", "https://job-boards.greenhouse.io/beta/jobs/7777777"]) {
+      now += 15_000;
+      await tj.loaded(tab(1, u));
+    }
+    const beta = "https://job-boards.greenhouse.io/beta/jobs/7777777";
+    expect(await tj.suggestion(tab(1, beta))).toBeNull();
+    expect(learnLink).not.toHaveBeenCalled();
+  });
+
+  it("the landing site's own Apply hands over to its applicant system once (two hops)", async () => {
+    let now = T0;
+    const { tj } = make({ now: () => now });
+    await tj.pressed(tab(1, LI_J), 0);
+    const careers = "https://careers.acme.com/job/12345/it-analyst";
+    const wd = "https://acme.wd5.myworkdayjobs.com/External/job/Portland/IT-Analyst_JR-1234/apply";
+    await tj.loaded(tab(1, careers));
+    now += 10_000;
+    expect(await tj.suggestion(tab(1, wd))).toBeNull(); // another site: not before the careers page's Apply
+    await tj.pressed(tab(1, careers), 0); // its own Apply
+    now += 5_000;
+    await tj.loaded(tab(1, wd));
+    expect((await tj.suggestion(tab(1, wd)))?.jobId).toBe("J");
+    // Once: a third site isn't the application's.
+    now += 5_000;
+    const other = "https://globex.wd1.myworkdayjobs.com/External/job/X/Dev_R-9";
+    await tj.loaded(tab(1, other));
+    expect(await tj.suggestion(tab(1, other))).toBeNull();
+  });
+
+  it("a Yes learns a link only on the application's own site", async () => {
+    let now = T0;
+    const { tj, learnLink } = make({ now: () => now });
+    await tj.pressed(tab(1, LI_J), 0);
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await tj.loaded(tab(1, wd));
+    const s = await tj.suggestion(tab(1, wd));
+    expect(await tj.answerLanding(tab(1, wd), true, s.page)).toEqual({ ok: true });
+    expect(learnLink).toHaveBeenCalledWith("J", wd);
+  });
+
+  it("only a press on the job's board listing starts a suggestion (F3)", async () => {
+    const company = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    const c = fakeChrome({});
+    const tj = createTabJobs({ ownMatch: async (t) => (t.url === company ? { id: "J" } : null), chrome: c, now: () => T0 });
+    await tj.pressed(tab(1, company), 0); // the job's own company page (its learned link)
+    const next = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111/apply";
+    await tj.loaded(tab(1, next));
+    expect(await tj.suggestion(tab(1, next))).toBeNull();
+    expect(c.store.je_tab_press || {}).toEqual({});
+  });
+
+  it("a learned Greenhouse or iCIMS link matches the posting's later pages, never another (F5)", () => {
+    const gh = "https://job-boards.greenhouse.io/acme/jobs/4567890";
+    expect(sameApplication(gh, `${gh}#app`)).toBe(true);
+    expect(sameApplication(gh, `${gh}/confirmation`)).toBe(true);
+    expect(sameApplication(gh, "https://job-boards.greenhouse.io/acme/jobs/4567891")).toBe(false);
+    const ic = "https://careers-acme.icims.com/jobs/1234/it-analyst/job";
+    expect(sameApplication(ic, "https://careers-acme.icims.com/jobs/1234/it-analyst/candidate?mode=apply")).toBe(true);
+    expect(sameApplication(ic, "https://careers-acme.icims.com/jobs/5678/designer/job")).toBe(false);
+    const J = { id: "J", job_listing_id: "1", title: "IT Analyst", company: "Acme", location: "", url: LI_J, applied: false, company_url: gh };
+    expect(bestJobMatch({ url: `${gh}/confirmation`, title: "Thanks" }, [J])?.id).toBe("J");
+  });
+
+  it("roles and opportunities are applications too", () => {
+    expect(looksLikeApplication("https://acme.example/opportunities/data-analyst")).toBe(true);
+    expect(looksLikeApplication("https://acme.example/roles/data-analyst")).toBe(true);
+  });
+});

@@ -34,7 +34,7 @@ const SIGN_IN = /(^|\.)(okta\.com|oktapreview\.com|auth0\.com|microsoftonline\.c
 // Never the application in a tab of its own: sign-ins, file pickers.
 const NOT_APPLICATION = /(^|\.)(accounts\.google\.com|drive\.google\.com|docs\.google\.com|dropbox\.com|onedrive\.live\.com|box\.com|login\.live\.com|microsoftonline\.com|okta\.com|auth0\.com)$/i;
 // An application or careers page (the server's looks_like_application).
-const APPLICATION = /job|career|apply|applicat|recruit|talent|hiring|position|opening|requisition|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com/i;
+const APPLICATION = /job|career|apply|applicat|recruit|talent|hiring|position|opening|opportunit|role|requisition|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com/i;
 
 // Ids that surely name ONE posting (the server's STRONG_PARAMS).
 const STRONG_PARAMS = new Set(["pid", "id", "token", "jvi", "jk", "vjk", "gh_jid", "ashby_jid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "opportunityid", "jobpostingid", "positionid", "currentjobid"]);
@@ -144,7 +144,18 @@ export function postingIds(url) {
     rest = rest.replace(ZIP, " ").replace(YEAR, " ");
     for (const m of rest.match(/\d{3,}/g) || []) weak.add(m.replace(/^0+(?=\d)/, ""));
   };
-  const path = decoded(u.pathname);
+  let path = decoded(u.pathname);
+  // A system's own posting id in its path is a strong one: Greenhouse's
+  // /jobs/<n> (its gh_jid), iCIMS's /jobs/<n>/.
+  const host = hostOf(url);
+  const system = (/(^|\.)greenhouse\.io$/.test(host) && [/\/jobs\/(\d{4,})/, "gh_jid"]) || (/(^|\.)icims\.com$/.test(host) && [/\/jobs\/(\d{3,})\//, "icims_job"]);
+  if (system) {
+    const m = system[0].exec(path);
+    if (m) {
+      strong.add(`${system[1]}=${m[1]}`);
+      path = path.replace(m[0], "/jobs/ /");
+    }
+  }
   take(path);
   take(u.hash);
   for (const [k, v] of u.searchParams) {
@@ -265,11 +276,11 @@ export function isSignIn(url) {
  * suggestion: the panel offers "Fill with <job>'s résumé and cover letter",
  * one fill at a time.
  */
-export function suggestFor(press, url, ownJobId, now = Date.now()) {
+export function suggestFor(press, url, ownJobId, now = Date.now(), { anySite = false } = {}) {
   if (!press?.jobId || now - (press.at || 0) > SUGGEST_MS) return null;
   if (ownJobId || !isWebPage(url) || onHub(url) || isSignIn(url) || NOT_APPLICATION.test(hostOf(url))) return null;
   // Once the application's first page is known, only on that company's site.
-  if (press.landingSite && siteOf(url) !== press.landingSite) return null;
+  if (!anySite && press.landingSite && siteOf(url) !== press.landingSite) return null;
   return press.jobId;
 }
 
@@ -374,6 +385,8 @@ export function fillJobFor(ownJobId, pick, url, nonce, now = Date.now()) {
  * panel, never a guess either way.
  */
 export function holdFiles(suggested, pick, nonce) {
+  // `suggested`: a job is suggested here AND it has files of its own (a
+  // job with none has nothing to choose: the usual résumé, as always).
   if (!suggested) return false;
   return !(nonce && pick?.nonce === nonce);
 }

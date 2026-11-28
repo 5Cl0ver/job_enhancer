@@ -172,3 +172,56 @@ test("a press inside an ad's frame, or a page script's click, never suggests the
   expect(await ext.worker.evaluate(async () => (await chrome.storage.session.get("je_tab_press")).je_tab_press || {})).toEqual({});
   await Promise.all([page.close(), ad.close(), panel.close(), beside.panel.close()]);
 });
+
+// A two-step application (the next step drawn in place, as Workday does):
+// the second step is filled by itself, an automatic fill (spec 040).
+const WD_STEPS = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply/applyManually";
+const STEPS = html(
+  "Workday",
+  `<div id="wd"><form><label for="first">First name</label><input id="first" name="first" autocomplete="given-name"><button type="button" id="next" onclick="document.getElementById('wd').innerHTML=document.getElementById('s2').innerHTML">Next</button></form></div>
+  <template id="s2"><form><h2>My Experience</h2><label for="last">Last name</label><input id="last" name="last" autocomplete="family-name"><label for="resume">Resume</label><input type="file" id="resume" name="resume"></form></template>`,
+);
+
+async function stepsAfterApply() {
+  PAGES[WD_STEPS] = STEPS;
+  const page = await ext.context.newPage();
+  await page.goto(LI_A);
+  await page.waitForTimeout(800);
+  await page.evaluate((u) => {
+    document.getElementById("apply").setAttribute("onclick", `window.open('${u}')`);
+  }, WD_STEPS);
+  const [np] = await Promise.all([ext.context.waitForEvent("page"), page.click("#apply")]);
+  await np.waitForURL(WD_STEPS);
+  return { page, np };
+}
+
+test("a job with no files of its own: nothing to choose, the next step gets the usual résumé as always", async () => {
+  const bare = { ...JOB, resume_id: null, cover_letter_id: null };
+  api.state.jobs = [bare];
+  await ext.worker.evaluate(async (jobs) => chrome.storage.local.set({ je_saved_cache: { version: "bare", jobs, at: Date.now() } }), [bare]);
+  const { page, np } = await stepsAfterApply();
+  const { panel } = await panelBeside(WD_STEPS);
+  await expect(panel.getByRole("button", { name: "Autofill this page" })).toBeVisible();
+  await expect(panel.getByRole("button", { name: "Use my usual résumé" })).toHaveCount(0);
+  await panel.getByRole("button", { name: "Autofill this page" }).click();
+  await expect(np.locator("#first")).toHaveValue("Wren", { timeout: 10000 });
+  await np.click("#next");
+  await expect.poll(() => fileName(np, "resume"), { timeout: 15000 }).toBe("wren-calloway.pdf");
+  await Promise.all([page.close(), np.close(), panel.close()]);
+});
+
+test("a job with its own files: the next step's résumé box waits for the user's pick, and says so", async () => {
+  const { page, np } = await stepsAfterApply();
+  const { panel } = await panelBeside(WD_STEPS);
+  await fillWith(panel).click();
+  await expect(np.locator("#first")).toHaveValue("Wren", { timeout: 10000 });
+  await np.click("#next");
+  await expect(np.locator("#last")).toHaveValue(/./, { timeout: 15000 });
+  await np.waitForTimeout(1500);
+  expect(await fileName(np, "resume")).toBe("");
+  await expect(panel.getByText("Pick whose résumé to use, above, then fill again")).toBeVisible({ timeout: 10000 });
+  // The user picks: the job's résumé goes in.
+  await fillWith(panel).click();
+  await expect.poll(() => fileName(np, "resume"), { timeout: 15000 }).toBe("Sam_Rivera_IT_Analyst.pdf");
+  await Promise.all([page.close(), np.close(), panel.close()]);
+});

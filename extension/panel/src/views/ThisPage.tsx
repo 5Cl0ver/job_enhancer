@@ -3,7 +3,7 @@
 import * as React from "react";
 import { ExternalLink, FileText, MousePointerClick, RefreshCw, Save } from "lucide-react";
 import { Alert, Badge, Button, Card, Field, Input, Muted, SectionTitle, Select, Switch, Textarea } from "@/ui";
-import { findDuplicate, type SavedJob } from "@/lib/context";
+import { filesLabel, findDuplicate, type SavedJob } from "@/lib/context";
 import { send } from "@/lib/chrome";
 import { usePageJob } from "@/lib/pageJob";
 import { jobName, useJobSuggestion } from "@/lib/suggestion";
@@ -117,24 +117,34 @@ function Suggested() {
 function NoForm({ known }: { known: boolean }) {
   const { tab } = usePanel();
   const [busy, setBusy] = React.useState(false);
+  // The job an Apply press suggests here, when it has files of its own.
+  const { suggestion } = useJobSuggestion();
+  const choice = suggestion ? filesLabel(suggestion) : null;
+  const fill = async (withJob: string | null) => {
+    if (tab.id == null) return;
+    setBusy(true);
+    await send({ type: "pressAutofill", tabId: tab.id, ...(withJob ? { withJob } : {}) });
+    setBusy(false);
+  };
   return (
     <div className="flex flex-col gap-2 px-1">
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
         <span>{known ? "No form on this page yet. Open the application and Autofill appears here." : "Looking at this page…"}</span>
-        {known && tab.id != null && (
-          <Button
-            variant="ghost"
-            size="sm"
-            busy={busy}
-            onClick={async () => {
-              setBusy(true);
-              await send({ type: "pressAutofill", tabId: tab.id });
-              setBusy(false);
-            }}
-          >
+        {known && tab.id != null && (choice ? (
+          // A job suggested here with files of its own: the same two choices (spec 040).
+          <span className="flex gap-1">
+            <Button variant="ghost" size="sm" busy={busy} onClick={() => fill(suggestion?.jobId || null)}>
+              {choice}
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => fill(null)}>
+              Use my usual résumé
+            </Button>
+          </span>
+        ) : (
+          <Button variant="ghost" size="sm" busy={busy} onClick={() => fill(null)}>
             Fill anyway
           </Button>
-        )}
+        ))}
       </div>
       {/* Can see a form Job Catcher can't? Never stuck (spec 017). */}
       {known && <Trouble key={tab.url} tabId={tab.id} onPoint={() => startPointing(tab.id)} />}

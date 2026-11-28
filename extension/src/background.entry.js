@@ -785,6 +785,11 @@ async function learnCompanyLink(jobId, url) {
 const tabJobs = createTabJobs({
   ownMatch: ownJob,
   learnLink: learnCompanyLink,
+  // A suggested job's files are held for the user's pick only when it has some.
+  hasFiles: async (id) => {
+    const job = await savedJobById(id);
+    return !!(job?.resume_id || job?.cover_letter_id);
+  },
   run: { opened: (tab, opener) => applyRun.tabOpened(tab, opener), landed: (tab, openerId) => applyRun.tabLanded(tab, openerId) },
 });
 

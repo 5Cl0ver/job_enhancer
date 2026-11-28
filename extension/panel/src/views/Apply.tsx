@@ -836,7 +836,7 @@ function NeedRow({ need }: { need: FillNeed }) {
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{need.label}</p>
-          <p className="truncate text-xs text-muted-foreground">{need.kind === "file" ? "Upload a file" : WHY[need.reason] || "Needs you"}</p>
+          <p className="truncate text-xs text-muted-foreground">{need.reason === "choose_files" ? WHY.choose_files : need.kind === "file" ? "Upload a file" : WHY[need.reason] || "Needs you"}</p>
         </div>
         <Button variant="ghost" size="icon-sm" aria-label={`Show ${need.label} on the page`} title="Show on the page" onClick={() => act(need.frameId, "show", need.id)}>
           <LocateFixed />

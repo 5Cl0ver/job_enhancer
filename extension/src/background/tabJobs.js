@@ -24,8 +24,8 @@
 // The panel's reads and answers never wait behind a tab opening (its run
 // check can take a while on a sleeping server): only the press bookkeeping
 // is one-at-a-time.
-import { OPEN_MS, TAB_PRESS, askAbout, boardOf, boardRedirect, fillJobFor, holdFiles, isWebPage, looksLikeApplication, onHub, onJobBoard, pageOf, postingLevelId, putEntry, siteOf, suggestFor, worthTelling } from "../tabJob.js";
-import { applicantHost, isApplyUrl, postingKey } from "../autofill/hosts.js";
+import { OPEN_MS, TAB_PRESS, askAbout, boardOf, boardRedirect, fillJobFor, holdFiles, isSignIn, isWebPage, onHub, onJobBoard, pageOf, postingLevelId, putEntry, siteOf, suggestFor, worthTelling } from "../tabJob.js";
+import { postingKey } from "../autofill/hosts.js";
 
 const TAB_PICK = "je_tab_pick"; // tab → the job picked for one fill of one page
 const NEW_TABS = "je_new_tabs"; // run hints waiting for their tab's first page
@@ -38,12 +38,13 @@ const boardPosting = (url) => (onJobBoard(url) && postingKey(url)?.sure ? postin
  * @param {{
  *   ownMatch: (tab: chrome.tabs.Tab) => Promise<{id: string}|null>,
  *   learnLink?: (jobId: string, url: string) => Promise<unknown>,
+ *   hasFiles?: (jobId: string) => Promise<boolean>,  // the job has a résumé or a letter of its own
  *   run?: { opened: (tab: chrome.tabs.Tab, opener: chrome.tabs.Tab) => Promise<boolean>, landed: (tab: chrome.tabs.Tab, openerId: number) => Promise<unknown> },
  *   chrome?: typeof chrome,
  *   now?: () => number,
  * }} deps
  */
-export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { opened: async () => false, landed: async () => {} }, chrome: c = globalThis.chrome, now = () => Date.now() }) {
+export function createTabJobs({ ownMatch, learnLink = async () => {}, hasFiles = async () => true, run = { opened: async () => false, landed: async () => {} }, chrome: c = globalThis.chrome, now = () => Date.now() }) {
   // The press bookkeeping, one change at a time (a new tab's first page can
   // load before its opening has been noted). Never network inside.
   let chain = Promise.resolve();
@@ -67,15 +68,21 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     return serial(async () => {
       if (tab?.id == null || frameId !== 0 || !isWebPage(tab.url)) return;
       const own = await ownMatch(tab).catch(() => null);
-      if (own) {
-        // A saved job's own page: its press (another saved job's replaces it).
-        await set(TAB_PRESS, tab.id, { jobId: own.id, at: now(), page: boardPosting(tab.url) });
-      } else if (onJobBoard(tab.url)) {
-        // An Apply on another job's board posting: the earlier press is no longer the one.
-        await set(TAB_PRESS, tab.id, null);
+      if (onJobBoard(tab.url)) {
+        // A saved job's board listing: its press (another saved job's
+        // replaces it); another job's: the earlier press is no longer the one.
+        await set(TAB_PRESS, tab.id, own ? { jobId: own.id, at: now(), page: boardPosting(tab.url) } : null);
+        return;
       }
-      // The company site's own Apply (Workday's, Greenhouse's…): the same
-      // application going on, the press stays.
+      const press = (await read(TAB_PRESS))[tab.id];
+      if (!press) return; // a press elsewhere starts nothing
+      if (own && own.id !== press.jobId) {
+        await set(TAB_PRESS, tab.id, null); // another saved job's page
+      } else if (press.landingSite && siteOf(tab.url) === press.landingSite) {
+        // The company site's own Apply (its careers page → its applicant
+        // system): the next site may become the application's, once.
+        await set(TAB_PRESS, tab.id, { ...press, relandAt: now() });
+      }
     });
   }
 
@@ -107,7 +114,9 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     if (!offered?.ask) return { refused: true };
     const press = (await read(TAB_PRESS))[tab.id];
     await set(TAB_PRESS, tab.id, { ...press, answered: true });
-    if (!yes || !postingLevelId(tab.url)) return { ok: true };
+    // Only on the application's own site, a page naming its posting.
+    const press2 = (await read(TAB_PRESS))[tab.id];
+    if (!yes || !postingLevelId(tab.url) || siteOf(tab.url) !== press2?.landingSite) return { ok: true };
     const saved = await learnLink(offered.jobId, tab.url).catch(() => false);
     return saved === false ? { ok: true, linkFailed: true } : { ok: true };
   }
@@ -146,7 +155,9 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
   async function holdsFiles(tab, nonce) {
     if (tab?.id == null) return false;
     const offered = await suggestion(tab).catch(() => null);
-    return holdFiles(!!offered, (await read(TAB_PICK))[tab.id], nonce);
+    // Only a job with files of its own has anything to choose.
+    const choice = !!offered && (await hasFiles(offered.jobId).catch(() => false));
+    return holdFiles(choice, (await read(TAB_PICK))[tab.id], nonce);
   }
 
   /** The suggested job's files couldn't be used for that fill: the panel says so. */
@@ -181,17 +192,26 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
         const own = await ownMatch(tab).catch(() => null);
         const posting = boardPosting(tab.url);
         const level = postingLevelId(tab.url);
+        const site = siteOf(tab.url);
+        const relanding = press.relandAt && now() - press.relandAt <= OPEN_MS && site !== press.landingSite;
         if ((posting && posting !== press.page) || (own && own.id !== press.jobId)) {
           // Another board posting, or another saved job's own page: that press was for another job.
           await set(TAB_PRESS, tab.id, null);
-        } else if (press.landingPosting && level && level !== press.landingPosting && siteOf(tab.url) === press.landingSite) {
+        } else if (press.landingSite && onHub(tab.url) && !isSignIn(tab.url)) {
+          // Back to a search or a board after the application: it's over.
+          await set(TAB_PRESS, tab.id, null);
+        } else if (press.landingPosting && level && level !== press.landingPosting && site === press.landingSite) {
           // The same company's site naming another posting: another job.
           await set(TAB_PRESS, tab.id, null);
-        } else if (!press.landingSite && suggestFor(press, tab.url, own?.id || null, now()) && (applicantHost(tab.url) || isApplyUrl(tab.url) || looksLikeApplication(tab.url))) {
-          // The application's first page: its company's site from now on,
-          // and (when it names its posting) the one the link question is about.
-          await set(TAB_PRESS, tab.id, { ...press, landingSite: siteOf(tab.url), ...(level ? { landingPosting: level, asking: page } : {}) });
-        } else if (press.landingSite && !press.landingPosting && level && siteOf(tab.url) === press.landingSite) {
+        } else if (!suggestFor(press, tab.url, own?.id || null, now(), { anySite: true })) {
+          // A board's redirect, a sign-in or a file picker on the way: nothing settles yet.
+        } else if (!press.landingSite || relanding) {
+          // The first page after the press (or after the company site's own
+          // Apply): its company's site from now on, and (when it names its
+          // posting) the one the link question is about.
+          const { relandAt: _r, landingPosting: _p, asking: _a, ...kept } = press;
+          await set(TAB_PRESS, tab.id, { ...kept, landingSite: site, ...(level ? { landingPosting: level, asking: page } : {}) });
+        } else if (!press.landingPosting && level && site === press.landingSite) {
           await set(TAB_PRESS, tab.id, { ...press, landingPosting: level, asking: page });
         }
       }

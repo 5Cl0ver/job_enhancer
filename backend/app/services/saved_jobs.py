@@ -184,7 +184,8 @@ def _site(url: str | None) -> str:
 # An application or careers page: never a link from the posting's text (the
 # company's home page, a blog post) taken for the Apply.
 _APPLICATION = re.compile(
-    r"job|career|apply|applicat|recruit|talent|hiring|position|opening|requisition"
+    r"job|career|apply|applicat|recruit|talent|hiring|position|opening|opportunit|role"
+    r"|requisition"
     r"|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters"
     r"|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com",
     re.IGNORECASE,
