@@ -15,6 +15,7 @@ import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
 import { APPLY_ALARM, createApplyRun } from "./background/applyRun.js";
+import { createTabJobs } from "./background/tabJobs.js";
 import { createCaughtReporter, fillFailure, isSaveFailure, ownerReport, placeOf } from "./background/bugReports.js";
 import { capture } from "./background/pagePhoto.js";
 import { sameBox } from "./autofill/fingerprint.js";
@@ -558,12 +559,13 @@ const caught = createCaughtReporter({
  * reader was there (it had reported a form). Never pages Job Catcher can't
  * run on (the Web Store, a PDF), signed out or the app asleep.
  */
-async function pressTab(tabId) {
+async function pressTab(tabId, { nonce = null } = {}) {
   const hadForm = await presence.get(tabId).then(
     (p) => !!p?.form,
     () => false,
   );
-  const out = await presence.press(tabId);
+  // `nonce`: the panel's choice of files for this one press (spec 040).
+  const out = await presence.press(tabId, { nonce });
   if (out?.problem) {
     chrome.tabs
       .get(tabId)
@@ -736,12 +738,60 @@ async function linkedJob(tab) {
     await listSaved(cache?.version || null).catch(() => {});
     ({ [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE));
   }
-  const jobs = cache?.jobs || [];
+  return matchJob(tab, cache?.jobs || []);
+}
+
+async function matchJob(tab, jobs) {
   if (!jobs.length) return null;
   const { je_not_this: notThis = {}, je_page_job: pinned = {} } = await chrome.storage.local.get(["je_not_this", "je_page_job"]);
   const pid = pageId(tab.url);
   return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid]) || null;
 }
+
+/** A message from the extension's own pages (the panel), never a web page. */
+function fromExtension(sender) {
+  return String(sender?.url || "").startsWith(chrome.runtime.getURL(""));
+}
+
+/** A saved job from the list held here, by id. */
+async function savedJobById(id) {
+  const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+  return (cache?.jobs || []).find((j) => j.id === id) || null;
+}
+
+/** The saved job a page is by itself (no carrying, never a fetch). */
+async function ownJob(tab) {
+  if (!tab?.url) return null;
+  const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+  return matchJob(tab, cache?.jobs || []);
+}
+
+/** Save the job's company link (the user's Yes, spec 040). False when the app couldn't be reached or refused. */
+async function learnCompanyLink(jobId, url) {
+  const token = await getValidToken();
+  if (!token) return false;
+  // A sleeping server wakes for it (Render's cold start).
+  const res = await wakeFetch(`${cfg.API_BASE}/v1/saved-jobs/${encodeURIComponent(jobId)}/company-link`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: String(url).slice(0, 2000) }),
+  }).catch(() => null);
+  if (!res?.ok) return false;
+  // Learned: the list carries it from now on.
+  if ((await res.json().catch(() => null))?.saved) await listSaved(null).catch(() => {});
+  return true;
+}
+
+const tabJobs = createTabJobs({
+  ownMatch: ownJob,
+  learnLink: learnCompanyLink,
+  // A suggested job's files are held for the user's pick only when it has some.
+  hasFiles: async (id) => {
+    const job = await savedJobById(id);
+    return !!(job?.resume_id || job?.cover_letter_id);
+  },
+  run: { opened: (tab, opener) => applyRun.tabOpened(tab, opener), landed: (tab, openerId) => applyRun.tabLanded(tab, openerId) },
+});
 
 /**
  * This application's résumé: a linked job's own (set in the panel or the app
@@ -944,7 +994,15 @@ async function clearFillSession(tabId) {
 }
 
 try {
+  // Which job each tab is applying for (spec 040).
+  chrome.tabs.onCreated.addListener((tab) => {
+    tabJobs.opened(tab).catch(() => {});
+  });
+  chrome.tabs.onUpdated.addListener((_tabId, info, tab) => {
+    if (info.status === "complete") tabJobs.loaded(tab).catch(() => {});
+  });
   chrome.tabs.onRemoved.addListener((tabId) => {
+    tabJobs.closed(tabId).catch(() => {});
     clearFillSession(tabId);
     presence.clear(tabId);
     chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), trackedKey(tabId), `je_edits:${tabId}`, filesKey(tabId)]).catch(() => {});
@@ -952,6 +1010,8 @@ try {
   // A new page in the tab: last page's review no longer applies.
   chrome.tabs.onUpdated.addListener((tabId, info) => {
     if (!info.url) return;
+    // Any change of address, the #part too: a choice of files was for that page.
+    tabJobs.moved(tabId).catch(() => {});
     clearFillSession(tabId);
     // Pointing ends with the page (an in-page step change keeps the old copy).
     chrome.storage.session.get(pickKey(tabId)).then((held) => {
@@ -1195,6 +1255,8 @@ async function markApplied(job, tab = null) {
     // same posting — no guessing by name. Anywhere else (a search box on a
     // saved job's page) never: the old exact title + company match only.
     if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab).catch(() => null))?.id || null;
+    // The application was sent: the job an Apply suggested here is done (spec 040).
+    tabJobs.submitted(tab.id).catch(() => {});
   }
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
     method: "POST",
@@ -1469,6 +1531,37 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "pending": Job Catcher's own hold while a press goes through (spec 037).
         await applyRun.event("blocked_submit", sender.tab, msg.url, undefined, msg.reason === "pending" ? "pending" : undefined);
         sendResponse({ ok: true });
+      } else if (msg.type === "applyPressed") {
+        // The user's own press on an Apply, in the page itself (never a frame
+        // in it: an ad), on a saved job's page (spec 040): the panel suggests
+        // that job on the pages that follow.
+        await tabJobs.pressed(sender.tab, sender.frameId);
+        sendResponse({ ok: true });
+      } else if (msg.type === "getJobSuggestion" || msg.type === "answerLanding") {
+        // The side panel's suggestion (spec 040): only the extension's own
+        // pages ask or answer, never a web page's script.
+        if (!fromExtension(sender)) {
+          sendResponse({ ok: false });
+          return;
+        }
+        const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
+        if (msg.type === "answerLanding") {
+          const out = tab ? await tabJobs.answerLanding(tab, !!msg.yes, String(msg.page || "")).catch(() => ({ refused: true })) : { refused: true };
+          if (tab?.id != null) changed(tab.id);
+          sendResponse({ ok: !out.refused, ...out });
+          return;
+        }
+        // An Apply with Claude run's tab: the run's own files, never a suggestion.
+        const onRun = tab ? !!(await applyRun.runFor(tab).catch(() => null)) : false;
+        const offered = tab && !onRun ? await tabJobs.suggestion(tab).catch(() => null) : null;
+        const job = offered ? await savedJobById(offered.jobId) : null;
+        sendResponse({
+          ok: true,
+          job: job ? { id: job.id, title: job.title, company: job.company, hasResume: !!job.resume_id, hasLetter: !!job.cover_letter_id } : null,
+          ask: !!offered?.ask,
+          page: offered?.page || "",
+          problem: offered?.problem || "",
+        });
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
@@ -1500,7 +1593,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The cover letter (spec 031): the job's pick, from the run on its
         // tab (undefined = not the run's tab), else the linked saved job.
         const runLetter = await applyRun.coverLetterFor(tab).catch(() => undefined);
-        const linked = await linkedJob(tab).catch(() => null);
+        const own = await linkedJob(tab).catch(() => null);
+        // The page's own saved job; else the job the user picked in the
+        // panel for THIS press (spec 040: "Use <job>'s…", its nonce; never
+        // an automatic fill, never on a run's tab); else none.
+        const nonce = !msg.auto && typeof msg.nonce === "string" ? msg.nonce : null;
+        const runTab = runResume || runLetter !== undefined;
+        const pickedId = own || runTab ? null : await tabJobs.fillJob(tab, null, nonce).catch(() => null);
+        const picked = pickedId ? await savedJobById(pickedId) : null;
+        // A job suggested here and no choice made for this fill: the résumé
+        // and letter boxes are left for the user's choice.
+        const holdFiles = !own && !runTab && !picked && (await tabJobs.holdsFiles(tab, nonce).catch(() => false));
+        const linked = own || picked;
         const coverLetterId = runLetter !== undefined ? runLetter : linked?.cover_letter_id || null;
         // The company this application is for (spec 034, "have you worked
         // here before?"): the saved job linked to the page; else the page
@@ -1515,10 +1619,28 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const failed = got.chosenFailed ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {};
           sendResponse({ ok: true, ...got, ...failed, resumeId: runResume, company });
         } else {
-          const { key, choice, resumeId } = await resumeFor(tab);
+          const { key, choice, resumeId: chosen } = await resumeFor(tab);
+          // A picked job's own résumé (its tailored one), else the usual.
+          const resumeId = picked ? picked.resume_id || null : chosen;
           const got = await autofill.get({ resumeId, coverLetterId });
+          if (holdFiles) {
+            sendResponse({ ok: true, ...got, resume: null, coverLetter: null, holdFiles: true, company });
+            return;
+          }
+          if (picked) {
+            // The job's files, or nothing in their place (never the usual
+            // résumé under its name): the panel says what didn't load.
+            const noResume = !!picked.resume_id && !!got.chosenFailed;
+            const noLetter = !!picked.cover_letter_id && !got.coverLetter;
+            if (noResume || noLetter) {
+              const what = noResume && noLetter ? "résumé and cover letter" : noResume ? "résumé" : "cover letter";
+              await tabJobs.noteProblem(tab.id, `${picked.title}'s ${what} didn't load, so nothing went in ${noResume && noLetter ? "those boxes" : "that box"}. Try again, or use your usual résumé.`);
+            }
+            sendResponse({ ok: true, ...got, ...(noResume ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {}), company });
+            return;
+          }
           // Never a silent switch: the panel says the chosen résumé failed.
-          if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
+          if (!picked && resumeId && !!got.chosenFailed !== !!choice?.failed) {
             const { job } = await resumeFor(tab);
             const note = job ? { failedFor: got.chosenFailed ? resumeId : null, filename: choice?.filename || "" } : { ...(choice || { resumeId, filename: "" }), failed: !!got.chosenFailed };
             await chrome.storage.session.set({ [key]: note });
@@ -1557,6 +1679,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: await autofill.refresh() });
       } else if (msg.type === "sessionUpdate") {
         if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
+
         // A résumé that didn't go into its box: the owner hears (spec 032).
         if (msg.session?.resume === "failed") {
           caught.report("resume_failed", sender.url || sender.tab?.url, "The résumé didn't go into the upload box.");
@@ -1758,7 +1881,30 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "pressAutofill") {
         // The panel's Autofill button (or the page, for a tab id it knows).
         const tabId = msg.tabId ?? sender.tab?.id;
-        sendResponse(tabId != null ? await pressTab(tabId) : { ok: false, problem: "refresh" });
+        // The panel's choice of files for THIS press (spec 040): "Use
+        // <job>'s…" (`withJob`) or "Use my usual résumé" — honoured only by
+        // the fill this press starts (its nonce), never an automatic one.
+        let nonce = null;
+        if (tabId != null && fromExtension(sender)) {
+          const tab = await chrome.tabs.get(tabId).catch(() => null);
+          const onRun = tab ? !!(await applyRun.runFor(tab).catch(() => null)) : false;
+          if (tab && !onRun) {
+            nonce = await tabJobs.pick(tab, msg.withJob || null).catch(() => null);
+            if (!nonce && msg.withJob) {
+              sendResponse({ ok: false, problem: "moved" });
+              return;
+            }
+          }
+        }
+        if (tabId == null) {
+          sendResponse({ ok: false, problem: "refresh" });
+          return;
+        }
+        try {
+          sendResponse(await pressTab(tabId, { nonce }));
+        } finally {
+          if (nonce) tabJobs.endPick(tabId, nonce).catch(() => {});
+        }
       } else if (msg.type === "startPick") {
         await startPick(msg.tabId);
         sendResponse({ ok: true });

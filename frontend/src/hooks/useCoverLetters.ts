@@ -1,7 +1,7 @@
 /**
  * Cover letters (spec 031): the user's letters, and the one that goes with a
- * job. Claude writes them through the connector; the app only shows, edits
- * and picks them.
+ * job. Claude writes them through the connector, or the user writes or pastes
+ * their own (spec 040); the app shows, edits and picks them.
  */
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -33,6 +33,20 @@ export function useSetJobCoverLetter() {
         cover_letter_id: coverLetterId,
       }),
     onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["saved-jobs"] });
+      qc.invalidateQueries({ queryKey: ["apply-run"] });
+    },
+  });
+}
+
+/** The user's own letter for one saved job (spec 040): it becomes the job's. */
+export function useWriteJobCoverLetter() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: ({ savedJobId, text }: { savedJobId: string; text: string }) =>
+      api.post<{ id: string }>(`/v1/saved-jobs/${encodeURIComponent(savedJobId)}/cover-letter/write`, { text }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ["cover-letters"] });
       qc.invalidateQueries({ queryKey: ["saved-jobs"] });
       qc.invalidateQueries({ queryKey: ["apply-run"] });
     },

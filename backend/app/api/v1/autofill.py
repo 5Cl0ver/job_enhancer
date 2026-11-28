@@ -293,6 +293,8 @@ class ResumeDetailsOut(ResumeDetails):
     resume_id: uuid.UUID
     filename: str
     read: bool
+    # The résumé as plain text, for a "paste your résumé" box (spec 040).
+    text: str = ""
 
 
 def _valid(model: type[BaseModel], items: object, limit: int) -> list:
@@ -315,6 +317,9 @@ def _texts(items: object, longest: int, limit: int) -> list[str]:
     ][:limit]
 
 
+RESUME_TEXT_CHARS = 20_000
+
+
 def _details(resume: Resume) -> ResumeDetailsOut:
     stored = resume.parsed_history if isinstance(resume.parsed_history, dict) else {}
     websites = [
@@ -331,6 +336,7 @@ def _details(resume: Resume) -> ResumeDetailsOut:
         skills=_texts(stored.get("skills"), 160, 80),
         certifications=_texts(stored.get("certifications"), 160, 30),
         websites=websites,
+        text=(resume.extracted_text or "").strip()[:RESUME_TEXT_CHARS],
     )
 
 

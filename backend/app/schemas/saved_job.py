@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.job import JobListingSchema, JobListingSummarySchema
+from app.utils.web_address import public_web_url
 
 
 class SavedJobCreate(BaseModel):
@@ -177,6 +178,8 @@ class ListingRename(BaseModel):
     def _http_only(cls, v: str | None) -> str | None:
         if v is not None and not v.startswith(("http://", "https://")):
             raise ValueError("The link must start with http:// or https://")
+        if v is not None and not public_web_url(v):
+            raise ValueError("The link must be a public web address.")
         return v
 
     @model_validator(mode="after")
@@ -292,6 +295,21 @@ class SavedJobSummary(BaseModel):
     resume_usual: bool = False
     # The cover letter Job Catcher attaches or pastes (spec 031); null = none.
     cover_letter_id: uuid.UUID | None = None
+    # The company's own application, when it differs from the listing's link
+    # (spec 040): its pages are this job too.
+    company_url: str | None = None
+
+
+class CompanyLinkIn(BaseModel):
+    """The company's application address, seen opening from the board."""
+
+    url: str = Field(min_length=8, max_length=2000)
+
+
+class CoverLetterWriteIn(BaseModel):
+    """The user's own cover letter text (spec 040)."""
+
+    text: str = Field(min_length=1, max_length=10_000)
 
 
 class JobResumeIn(BaseModel):

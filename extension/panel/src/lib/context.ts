@@ -1,6 +1,7 @@
 // What the user is doing in the tab the panel is beside. Pure (URL + title in,
 // a context out) so it's unit-tested: test/panel-context.spec.js.
 import { applicantHost, postingKey } from "../../../src/autofill/hosts.js";
+import { sameApplication } from "../../../src/tabJob.js";
 
 export type PageContext =
   | { kind: "none" }
@@ -18,6 +19,8 @@ export interface SavedJob {
   applied: boolean;
   /** The résumé chosen for this job (spec 020); null = the usual one. */
   resume_id?: string | null;
+  /** The company's own application, when it isn't `url` (spec 040). */
+  company_url?: string | null;
 }
 
 /** A friendly site name from a host: "www.amazon.jobs" → "Amazon". */
@@ -159,7 +162,9 @@ export function bestJobMatch(
   if (mine) return mine;
   let sameSure: SavedJob[] = [];
   if (here) {
-    const same = pool.filter((j) => postingKey(j.url)?.key === here.key);
+    // Its listing, or the company's own application (spec 040) when that
+    // names one posting (never a careers home page or a sign-in).
+    const same = pool.filter((j) => postingKey(j.url)?.key === here.key || sameApplication(j.company_url, page.url));
     if (same.length === 1) return same[0];
     if (here.sure) sameSure = same;
     // Several saved from one address (a careers page listing many jobs): the
@@ -201,4 +206,15 @@ export function downloadFilename(resumeFilename: string, docType: "cover_letter"
   const label = docType === "resume" ? "Resume" : "Cover_Letter";
   if (person) return `${person.replace(/\s+/g, "_")}_${label}.pdf`;
   return docType === "resume" ? "Resume.pdf" : "Cover_Letter.pdf";
+}
+
+/**
+ * What "Use <job>'s…" uses (spec 040): only what the job has of its own (a
+ * tailored résumé, a cover letter). Null: nothing of its own to offer.
+ */
+export function filesLabel(s: { title: string; hasResume: boolean; hasLetter: boolean }): string | null {
+  if (s.hasResume && s.hasLetter) return `Use ${s.title}'s résumé and letter`;
+  if (s.hasResume) return `Use ${s.title}'s résumé`;
+  if (s.hasLetter) return `Use ${s.title}'s cover letter`;
+  return null;
 }

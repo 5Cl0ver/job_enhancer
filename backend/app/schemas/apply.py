@@ -101,7 +101,11 @@ class RequestResult(BaseModel):
 
 class ExtensionEvent(BaseModel):
     kind: Literal[
-        "blocked_submit", "submit_pressed", "submit_failed", "confirmation_seen"
+        "blocked_submit",
+        "submit_pressed",
+        "submit_failed",
+        "confirmation_seen",
+        "new_tab",
     ]
     url: str | None = Field(default=None, max_length=2000)
     # The confirmation's own words ("Thank you for applying"), spec 023; for
@@ -110,6 +114,8 @@ class ExtensionEvent(BaseModel):
     # through, never the user's lock (spec 037).
     words: str | None = Field(default=None, max_length=300)
     reason: Literal["pending"] | None = None
+    # new_tab: Job Catcher put the tab in the run's tab group (spec 040).
+    grouped: bool | None = None
 
 
 class HelpDoneIn(BaseModel):

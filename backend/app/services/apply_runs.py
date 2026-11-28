@@ -89,6 +89,7 @@ from app.services import skipped_sites as sites_svc
 from app.services import tracker as tracker_svc
 from app.services.match import match_resume
 from app.services.scout_dedupe import url_key
+from app.utils.web_address import public_web_url
 
 logger = logging.getLogger(__name__)
 
@@ -1269,6 +1270,15 @@ async def with_inbox(
                 "to do, do that; reply briefly with message_user.",
             ),
         }
+    tab = _new_tab_line(run)
+    if tab:
+        line, urls = tab
+        out = {
+            **out,
+            "new_tab_urls": urls,
+            "new_tab_url": urls[-1],  # the latest
+            "next": f"{line} {out['next']}" if out.get("next") else line,
+        }
     blocked = _blocked_line(run)
     if blocked:
         out = {
@@ -1278,6 +1288,38 @@ async def with_inbox(
         }
     await db.flush()
     return out
+
+
+NEW_TABS_TOLD = 3
+
+
+def _new_tab_line(run: ApplyRun) -> tuple[str, list[str]] | None:
+    """New tabs the application's tab opened since Claude's last call (spec
+    040), told once, a few at most: a hint, Claude decides. The addresses
+    are data (``new_tab_urls``)."""
+    new = [
+        e for e in run.events or [] if e.get("kind") == "new_tab" and not e.get("told")
+    ]
+    if not new:
+        return None
+    run.events = [
+        {**e, "told": True} if e.get("kind") == "new_tab" else e
+        for e in run.events or []
+    ]
+    new = new[-NEW_TABS_TOLD:]
+    grouped = all(e.get("grouped") for e in new)
+    where = (
+        "Job Catcher put it in your tab group"
+        if grouped
+        else "it may not be in your tab group: look for it among the tabs"
+    )
+    return (
+        f"A new tab opened from the application's tab (new_tab_urls; {where}). "
+        "If it is the application, switch to it and carry on there; if it "
+        "isn't (a privacy page, a sign-in, an ad), ignore it. Never ask the "
+        "user for the address.",
+        [e.get("url") or "" for e in new],
+    )
 
 
 def _blocked_line(run: ApplyRun) -> str | None:
@@ -3952,6 +3994,7 @@ async def extension_event(
     url: str | None,
     words: str | None = None,
     reason: str | None = None,
+    grouped: bool | None = None,
 ) -> ApplyRun:
     run = await _locked(db, user_id, run_id)
     if run.status not in APPLY_OPEN:
@@ -4053,6 +4096,19 @@ async def extension_event(
                 pass
         else:
             _event(run, "confirmation_seen", f"Job Catcher saw “{seen}”.")
+    elif kind == "new_tab":
+        # A tab the run's tab opened that looks like the application (spec
+        # 040: LinkedIn's "Apply on company website"). Only a hint for
+        # Claude: its site isn't the run's until Claude reaches that page, and
+        # the job never learns a link from it (only the user's Yes in Job
+        # Catcher teaches one).
+        if not host or not public_web_url(url):
+            return run
+        _event(run, "new_tab", f"A new tab opened on {host}.")
+        run.events = [
+            *run.events[:-1],
+            {**run.events[-1], "url": url[:2000], "grouped": bool(grouped)},
+        ]
     else:
         raise ValueError("Unknown event")
     await db.flush()

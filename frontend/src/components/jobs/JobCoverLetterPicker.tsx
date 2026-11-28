@@ -1,11 +1,16 @@
 import { useState } from "react";
-import { Download, Eye, Loader2, Mail, Pencil } from "lucide-react";
+import { Download, Eye, Loader2, Mail, Pencil, Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
 import { documentFile, pdfName, useFileViewer } from "@/components/common/FileViewer";
 import { saveBlob } from "@/components/common/PdfViewer";
 import { useUpdateDocument } from "@/hooks/useAI";
-import { useCoverLetters, useSetJobCoverLetter, type CoverLetterItem } from "@/hooks/useCoverLetters";
+import {
+  useCoverLetters,
+  useSetJobCoverLetter,
+  useWriteJobCoverLetter,
+  type CoverLetterItem,
+} from "@/hooks/useCoverLetters";
 import { useSavedJobs } from "@/hooks/useSavedJobs";
 import { api } from "@/lib/api";
 import { cn } from "@/lib/utils";
@@ -172,6 +177,64 @@ export function CoverLetterRow({ id, filename, sub }: { id: string; filename: st
 }
 
 /**
+ * "Write your own" (spec 040): type or paste a letter, and it is this job's,
+ * its PDF drawn like Claude's, so Job Catcher attaches it. No AI, no Docs.
+ */
+function WriteLetter({ savedJobId, replaces }: { savedJobId: string; replaces: boolean }) {
+  const [text, setText] = useState<string | null>(null);
+  const write = useWriteJobCoverLetter();
+  if (text === null) {
+    return (
+      <Button
+        variant="outline"
+        size="sm"
+        className="h-9 gap-1.5 pointer-coarse:h-11"
+        onClick={() => {
+          write.reset();
+          setText("");
+        }}
+      >
+        <Plus className="h-3.5 w-3.5" aria-hidden /> Write your own
+      </Button>
+    );
+  }
+  const tooLong = text.length > MAX_CHARS;
+  return (
+    <div className="space-y-2">
+      <Textarea
+        aria-label="Your cover letter"
+        placeholder="Type or paste your cover letter. Your name and contact go on top by themselves."
+        className="min-h-56 text-sm"
+        value={text}
+        autoFocus
+        onChange={(e) => setText(e.target.value)}
+      />
+      {replaces && (
+        <p className="text-xs text-muted-foreground">
+          It becomes this job's letter in place of the one above (that one stays in Settings).
+        </p>
+      )}
+      <div className="flex flex-wrap items-center gap-2">
+        <Button
+          size="sm"
+          className="gap-1.5 pointer-coarse:h-11"
+          disabled={write.isPending || !text.trim() || tooLong}
+          onClick={() => write.mutate({ savedJobId, text }, { onSuccess: () => setText(null) })}
+        >
+          {write.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
+          Save for this job
+        </Button>
+        <Button size="sm" variant="ghost" className="pointer-coarse:h-11" onClick={() => setText(null)}>
+          Cancel
+        </Button>
+      </div>
+      {tooLong && <p className="text-sm text-destructive">That's too long for a cover letter.</p>}
+      {write.isError && <p className="text-sm text-destructive">Couldn't save that. Try again.</p>}
+    </div>
+  );
+}
+
+/**
  * "Cover letter for this job" (spec 031; spec 039 made it always there): the
  * letter Job Catcher attaches to a cover-letter upload box, or pastes into a
  * cover-letter text box, on this job's application. View it, download it,
@@ -245,9 +308,12 @@ export function JobCoverLetterPicker({
             ? "None for this job: Job Catcher leaves the cover-letter box."
             : listFailed
               ? "Couldn't load your cover letters. Try again later."
-              : NO_LETTER_YET}
+              : job
+                ? "None yet. Write your own, or Claude writes one when an application asks for it."
+                : NO_LETTER_YET}
         </p>
       )}
+      {job && <WriteLetter savedJobId={job.id} replaces={!!chosen} />}
     </section>
   );
 }

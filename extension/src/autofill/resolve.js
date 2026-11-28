@@ -128,6 +128,17 @@ export function isCoverLetterText(field) {
   return COVER_LABEL.test(label) && !NOT_WANTED.test(label) && !RESUME.test(label);
 }
 
+// "Resume", "Paste your resume", "Résumé text", "CV (paste here)".
+const RESUME_LABEL = /^(your\s+|paste\s+(your\s+)?)?(r[ée]sum[ée]|cv)(\s+(text|here|below))?\s*(\((paste|copy)[^)]*\))?\s*[:*]?\s*$/i;
+
+/** Is this a text box for pasting the résumé (spec 040)? Only one that says so plainly. */
+export function isResumeText(field) {
+  if (!LETTER_BOX.has(field.kind)) return false;
+  const label = String(field.question || "").trim();
+  if (!label || label.length > 60) return false;
+  return RESUME_LABEL.test(label) && !COVER.test(label) && !NOT_WANTED.test(label);
+}
+
 /** Legal identity: learned only from an explicit point-and-save, never from typing. */
 export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "email", "email_confirm"]);
 
@@ -265,6 +276,13 @@ function yesNoBox(field, copy) {
  *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person"|"too_long", key?: string}}
  */
 export function resolve(field, copy) {
+  // A job is suggested here and no files were chosen for this fill (spec
+  // 040): the résumé and cover-letter boxes are the user's pick.
+  if (copy.holdFiles) {
+    if (field.kind === "file" && (isCoverLetterUpload(field) || isResumeUpload(field))) return { skip: "choose_files", key: isCoverLetterUpload(field) ? "cover_letter_file" : "resume_file" };
+    if (isCoverLetterText(field)) return { skip: "choose_files", key: "cover_letter" };
+    if (isResumeText(field)) return { skip: "choose_files", key: "resume_text" };
+  }
   const guard = fieldGuard(field);
   // "Paste your cover letter": the job's letter, when it has one (spec 031);
   // otherwise it stays an essay for the user (or Claude) to write.
@@ -273,6 +291,12 @@ export function resolve(field, copy) {
     const max = field.hints?.maxLength || 0;
     if (max > 0 && copy.coverLetterText.length > max) return { skip: "too_long", key: "cover_letter" };
     return { values: [copy.coverLetterText], source: "profile", key: "cover_letter" };
+  }
+  // "Paste your résumé": the résumé this application uses, as text (spec 040).
+  if ((guard === "essay" || !guard) && copy.resumeText && isResumeText(field)) {
+    const max = field.hints?.maxLength || 0;
+    if (max > 0 && copy.resumeText.length > max) return { skip: "too_long", key: "resume_text" };
+    return { values: [copy.resumeText], source: "profile", key: "resume_text" };
   }
   if (guard) return { skip: guard };
   if (field.kind === "file") {

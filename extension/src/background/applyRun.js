@@ -244,6 +244,39 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     state.at = 0; // a press can end the run: ask again next time
   }
 
+  /** A tab opened from the application's own tab (spec 040: LinkedIn's
+   * "Apply on company website" opens the company's site in one): a tab of
+   * the run (Claude's requests went to it), or one in the same tab group as
+   * a tab of the run — never just any tab on the run's site. True when it
+   * is; nothing is grouped or told until it lands (`tabLanded`). */
+  async function tabOpened(tab, opener) {
+    const data = await active();
+    if (!data.run_id || tab?.id == null || opener?.id == null) return false;
+    if (await isRunTab(data, opener)) return true;
+    const group = opener.groupId ?? -1;
+    if (group === -1) return false;
+    for (const id of await runTabs(data.run_id)) {
+      const t = await c.tabs.get(id).catch(() => null);
+      if (t && t.groupId === group) return true;
+    }
+    return false;
+  }
+
+  /** That tab's first page, when it looks like the application (the caller
+   * checks): it joins the opener's tab group, so Claude can reach it, and
+   * Claude hears its address as a hint. The run's site list only grows when
+   * Claude reaches it. */
+  async function tabLanded(tab, openerId) {
+    const data = await active();
+    if (!data.run_id || tab?.id == null) return;
+    const opener = openerId == null ? null : await c.tabs.get(openerId).catch(() => null);
+    const group = opener?.groupId ?? -1;
+    let grouped = group !== -1 && tab.groupId === group;
+    if (group !== -1 && !grouped) grouped = (await c.tabs.group({ groupId: group, tabIds: tab.id }).catch(() => null)) === group;
+    // Claude is only told it's in its tab group when it is.
+    await api(`/v1/apply/runs/${data.run_id}/event`, { method: "POST", body: JSON.stringify({ kind: "new_tab", url: tab.url, grouped }) }).catch(() => null);
+  }
+
   async function loop() {
     if (looping) return;
     looping = true;
@@ -610,5 +643,5 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     }
   }
 
-  return { tick, event, active, loop, wake, resumeFor, inRun, coverLetterFor, runFor };
+  return { tick, event, active, loop, wake, resumeFor, inRun, coverLetterFor, runFor, tabOpened, tabLanded };
 }

@@ -20,7 +20,8 @@ import { Alert, Badge, Button, Card, InfoBubble, Input, Muted, SectionTitle, Sel
 import { HELP } from "@/lib/help";
 import { cn } from "@/lib/utils";
 import { appUrl, send } from "@/lib/chrome";
-import type { SavedJob } from "@/lib/context";
+import { filesLabel, type SavedJob } from "@/lib/context";
+import { useJobSuggestion } from "@/lib/suggestion";
 import { Trouble } from "@/views/Trouble";
 import { startPointing } from "@/views/Point";
 import { usePanel, type FillAlready, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence, type SavedAnswer } from "@/lib/store";
@@ -46,6 +47,7 @@ const WHY: Record<string, string> = {
   other_person: "About someone else",
   too_long: "Too long for this box",
   not_added: "The site doesn't offer these",
+  choose_files: "Pick whose résumé to use, above, then fill again",
 };
 
 export function Apply({
@@ -79,11 +81,20 @@ export function Apply({
 
   // The background fills every frame that holds a form and keeps the status
   // line up to date while it works; the result lands there too.
-  async function autofill() {
+  // A job an Apply press suggests here (spec 040): its résumé and cover
+  // letter only for a fill the user asks for by name, one at a time.
+  const { suggestion, refresh } = useJobSuggestion();
+  const offered = !match ? suggestion : null;
+  const useJob = offered ? filesLabel(offered) : null;
+  const [moved, setMoved] = React.useState(false);
+  async function autofill(withJob: string | null = null) {
     if (!tab.id) return;
     setBusy(true);
-    await send({ type: "pressAutofill", tabId: tab.id });
+    setMoved(false);
+    const r = (await send({ type: "pressAutofill", tabId: tab.id, ...(withJob ? { withJob } : {}) })) as { problem?: string } | null;
     setBusy(false);
+    if (r?.problem === "moved") setMoved(true); // the page changed under the panel: choose again
+    refresh();
   }
   // A status that went silent (STUCK_MS) no longer holds the button: press again.
   const st = fill.presence?.status;
@@ -121,10 +132,26 @@ export function Apply({
           {isApplication && <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>}
           {match && <JobLinks match={match} onNotThis={onNotThis} />}
         </div>
-        <Button onClick={autofill} busy={filling} disabled={filling} className="w-full">
-          {!filling && <Zap />}
-          {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
-        </Button>
+        {offered && useJob ? (
+          // Two equal choices, for this press only (spec 040).
+          <div className="flex flex-col gap-1.5">
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => autofill(offered.jobId)} busy={filling} disabled={filling} className="h-auto whitespace-normal py-2">
+                {filling ? "Filling…" : useJob}
+              </Button>
+              <Button variant="outline" onClick={() => autofill(null)} disabled={filling} className="h-auto whitespace-normal py-2">
+                Use my usual résumé
+              </Button>
+            </div>
+            {offered.problem && <span className="text-xs text-destructive">{offered.problem}</span>}
+            {moved && <span className="text-xs text-destructive">The page changed. Choose again for this page.</span>}
+          </div>
+        ) : (
+          <Button onClick={() => autofill(null)} busy={filling} disabled={filling} className="w-full">
+            {!filling && <Zap />}
+            {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
+          </Button>
+        )}
         {signup && (
           <div data-testid="signup-note">
             <Alert tone="info">
@@ -136,7 +163,8 @@ export function Apply({
         )}
         <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} alreadyNow={already.length} tabId={tab.id} />
         <ShortcutHint />
-        <ResumeChoice match={match} staged={staged} />
+        {/* The choice above says whose files: no second line about it. */}
+        {!(offered && useJob) && <ResumeChoice match={match} staged={staged} />}
         {!filling && entries.length + needYou.length + already.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>
@@ -808,7 +836,7 @@ function NeedRow({ need }: { need: FillNeed }) {
       <div className="flex items-center gap-2">
         <div className="min-w-0 flex-1">
           <p className="truncate font-medium">{need.label}</p>
-          <p className="truncate text-xs text-muted-foreground">{need.kind === "file" ? "Upload a file" : WHY[need.reason] || "Needs you"}</p>
+          <p className="truncate text-xs text-muted-foreground">{need.reason === "choose_files" ? WHY.choose_files : need.kind === "file" ? "Upload a file" : WHY[need.reason] || "Needs you"}</p>
         </div>
         <Button variant="ghost" size="icon-sm" aria-label={`Show ${need.label} on the page`} title="Show on the page" onClick={() => act(need.frameId, "show", need.id)}>
           <LocateFixed />

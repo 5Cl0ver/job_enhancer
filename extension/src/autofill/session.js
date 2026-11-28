@@ -82,7 +82,7 @@ export const LEARNABLE_PROFILE = new Set([
 ]);
 const BOOL_PROFILE = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
 // Keys filled once per page (repeated education blocks: only the first).
-const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title", "resume_file", "cover_letter_file", "cover_letter"]);
+const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title", "resume_file", "cover_letter_file", "cover_letter", "resume_text"]);
 // Questions about a business, a recipient or someone's work line, not the user.
 const NOT_MINE = /company|employer|business|office|work (phone|address)|recipient|shipping|billing|gift|delivery/i;
 
@@ -172,7 +172,7 @@ function within(box, el) {
   return false;
 }
 
-const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "didnt_stick", "other_person", "too_long", "not_added"]);
+const LEFT_FOR_YOU = new Set(["sensitive", "consent", "job_history", "essay", "unknown", "no_data", "no_option", "rejected", "didnt_stick", "other_person", "too_long", "not_added", "choose_files"]);
 const AI_KINDS = new Set(["text", "select", "radio", "buttons", "combobox", "checkbox_list", "date"]);
 
 // A lone yes/no checkbox is answered Yes (ticked) or No (left unticked).
@@ -632,6 +632,12 @@ export function createSession(deps) {
     // A box holding a file (a plain one keeps it). One Job Catcher filled
     // whose list no longer shows it is tried again (attachFile, spec 037).
     if (boxes.some((f) => f.el.files?.length)) return state("attached");
+    // A job is suggested here and no files were chosen (spec 040): left
+    // for the user's pick, and listed as theirs.
+    if (copy.holdFiles) {
+      for (const field of boxes) if (!declined.has(field.id)) leave(field, "choose_files", null, "resume_file");
+      return false;
+    }
     if (!copy.resumeFile) return state("no_file");
     for (const field of boxes) {
       if (declined.has(field.id)) continue;

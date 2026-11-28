@@ -5,7 +5,15 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from urllib.parse import quote_plus, urlparse, urlsplit
+from urllib.parse import (
+    parse_qsl,
+    quote_plus,
+    unquote,
+    urlencode,
+    urlparse,
+    urlsplit,
+    urlunsplit,
+)
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
@@ -41,6 +49,7 @@ from app.services.dedup import job_content_hash, normalize
 from app.services.email_job_names import is_sender_person, role_doubtful
 from app.services.scout_dedupe import posting_link
 from app.services.scout_tracks import get_track
+from app.utils.web_address import public_web_url
 
 # Same thresholds the dedup service uses, so "is this the job I saved?" is judged
 # the same way across the app (title ≥88, company ≥85 token_sort_ratio).
@@ -135,6 +144,7 @@ async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list
             ResumeTrack.resume_id.label("track_resume_id"),
             SavedJob.resume_usual,
             SavedJob.cover_letter_id,
+            SavedJob.custom_apply_url,
         )
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
         .outerjoin(ResumeTrack, SavedJob.track_id == ResumeTrack.id)
@@ -149,6 +159,246 @@ def effective_resume_id(row) -> uuid.UUID | None:
     if row.own_resume_id:
         return row.own_resume_id
     return None if row.resume_usual else row.track_resume_id
+
+
+# Job boards and aggregators whose Apply leads elsewhere (spec 040), with
+# their country sites (indeed.co.uk, uk.indeed.com, glassdoor.ca…).
+_TLD = r"(?:com|net|org|ai|io|jobs|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})"
+_JOB_BOARD = re.compile(
+    rf"(^|\.)(linkedin\.(?:com|cn)|lnkd\.in|indeed\.{_TLD}|glassdoor\.{_TLD}"
+    rf"|ziprecruiter\.{_TLD}|simplyhired\.{_TLD}|monster\.{_TLD}|careerbuilder\.{_TLD}"
+    r"|builtin[a-z]*\.com|dice\.com|wellfound\.com|welcometothejungle\.com"
+    r"|jobright\.ai|joinhandshake\.com|handshake\.com|usajobs\.gov"
+    rf"|jooble\.org|talent\.com|adzuna\.{_TLD}|appcast\.io)$",
+    re.IGNORECASE,
+)
+
+
+def _site(url: str | None) -> str:
+    try:
+        return (urlsplit(url or "").hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+# An application or careers page: never a link from the posting's text (the
+# company's home page, a blog post) taken for the Apply.
+_APPLICATION = re.compile(
+    r"job|career|apply|applicat|recruit|talent|hiring|position|opening|opportunit|role"
+    r"|requisition"
+    r"|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters"
+    r"|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com",
+    re.IGNORECASE,
+)
+
+
+_UUID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
+# A requisition id (R-1234, JR-1234); a repost keeps its suffix (JR12345-1).
+_REQ = re.compile(
+    r"(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?:-\d{1,3})?(?![a-z0-9])", re.I
+)
+
+
+# The query parts that name the company on a host many share (Job Catcher's
+# siteOf / siteKey), or that the page needs to show the job (SuccessFactors'
+# career_ns, Eightfold's domain): kept in a learned link with the posting's.
+_KEEP_PARAMS = {
+    "company",
+    "cid",
+    "ccid",
+    "clientkey",
+    "partnerid",
+    "siteid",
+    "for",
+    "career_ns",
+    "domain",
+}
+# The query parts that name ONE posting anywhere (Job Catcher's postingParam).
+_POSTING_PARAMS = {
+    "jvi",
+    "gh_jid",
+    "ashby_jid",
+    "jk",
+    "vjk",
+    "opportunityid",
+    "career_job_req_id",
+    "job",
+    "jobid",
+    "job_id",
+    "jid",
+    "req",
+    "reqid",
+    "requisitionid",
+    "postingid",
+    "jobreqid",
+    "jobpostingid",
+    "positionid",
+    "currentjobid",
+}
+_ONE_DIGITS_OR_UUID = re.compile(
+    r"\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
+
+
+def _posting_param(host: str, path: str, keys: set[str], name: str, value: str) -> bool:
+    """Does this query part name ONE posting here? The ones above anywhere; a
+    Greenhouse embed's token, an Eightfold job's pid (never a search with
+    query=), an id only as digits or a UUID. Never a session token."""
+    key = name.lower()
+    if not value:
+        return False
+    if key in _POSTING_PARAMS:
+        return True
+    if key == "token":
+        return bool(re.search(r"(^|\.)greenhouse\.io$", host)) and bool(
+            re.search(r"/embed/job_app\b", path, re.I)
+        )
+    if key == "pid":
+        return bool(re.search(r"(^|\.)eightfold\.ai$", host)) and "query" not in keys
+    if key == "id":
+        return bool(_ONE_DIGITS_OR_UUID.fullmatch(value))
+    return False
+
+
+# Hosts whose UUIDs name the company (its board), never a posting.
+_TENANT_UUIDS = re.compile(
+    r"(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net|paylocity\.com|adp\.com)$", re.I
+)
+# An applicant system's own posting id in its path.
+_OWN_POSTING = (
+    (r"(^|\.)greenhouse\.io$", r"/jobs/(\d{4,})"),
+    (r"(^|\.)lever\.co$", r"^/[^/]+/([0-9a-f-]{36})"),
+    (r"(^|\.)ashbyhq\.com$", r"^/[^/]+/([0-9a-f-]{36})"),
+    (r"(^|\.)workable\.com$", r"/j/([0-9a-z]{6,})"),
+    (r"(^|\.)jobvite\.com$", r"/job/([0-9a-z]{6,})"),
+    (r"(^|\.)smartrecruiters\.com$", r"^/[^/]+/(\d{6,})"),
+    (r"(^|\.)icims\.com$", r"/jobs/(\d{3,})/"),
+    (r"(^|\.)dayforcehcm\.com$", r"/jobs/(\d{3,})"),
+    (r"(^|\.)paylocity\.com$", r"/jobs/(?:details|apply)/(\d{3,})"),
+    (r"\.oraclecloud\.com$", r"/job/(\d{3,})"),
+    (
+        r"(^|\.)ultipro\.(com|ca)$|\.rec\.pro\.ukg\.net$",
+        r"/opportunity(?:detail|apply)/([0-9a-f-]{36})",
+    ),
+)
+
+
+def posting_level_id(url: str | None) -> str | None:
+    """The id that names ONE posting in an address (spec 040), else None: a
+    posting query part, a requisition id (R-1234, JR-1234), or the applicant
+    system's own posting id in its path. Never a lone UUID where UUIDs name
+    the company (UKG, Paylocity, ADP). Learning a job's link needs one."""
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return None
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = unquote(parts.path)
+    query = parse_qsl(parts.query)
+    keys = {k.lower() for k, _ in query}
+    for name, value in query:
+        if _posting_param(host, path, keys, name, value):
+            key = name.lower()
+            return f"{'jk' if key == 'vjk' else key}={value.lower()}"
+    req = _REQ.search(path)
+    if req:
+        return re.sub(r"^([a-z]+)[-_]", r"\1", req.group(0).lower())
+    for host_re, path_re in _OWN_POSTING:
+        if re.search(host_re, host):
+            m = re.search(path_re, path, re.I)
+            if m:
+                return m.group(1).lower()
+    uuid_ = None if _TENANT_UUIDS.search(host) else _UUID.search(path)
+    return uuid_.group(0).lower() if uuid_ else None
+
+
+def clean_link(url: str) -> str:
+    """The link to keep: no #part, and only the query parts that name the
+    posting or the company on a shared host (a session token like _s.crb or
+    a tracking id never stays in it)."""
+    parts = urlsplit(url)
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = unquote(parts.path)
+    pairs = parse_qsl(parts.query)
+    keys = {k.lower() for k, _ in pairs}
+    query = [
+        (k, v)
+        for k, v in pairs
+        if k.lower() in _KEEP_PARAMS or _posting_param(host, path, keys, k, v)
+    ]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))[
+        :2000
+    ]
+
+
+def names_one_posting(url: str | None) -> bool:
+    """A posting-level id names one posting (a board or company id never does)."""
+    return posting_level_id(url) is not None
+
+
+# Never the application: sign-ins and file pickers (a résumé from Drive).
+_NOT_APPLICATION = re.compile(
+    r"(^|\.)(accounts\.google\.com|drive\.google\.com|docs\.google\.com|dropbox\.com"
+    r"|onedrive\.live\.com|box\.com|login\.live\.com|microsoftonline\.com|okta\.com"
+    r"|auth0\.com)$",
+    re.IGNORECASE,
+)
+
+
+def looks_like_application(url: str | None) -> bool:
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return False
+    if _NOT_APPLICATION.search(parts.hostname or ""):
+        return False
+    return bool(_APPLICATION.search(f"{parts.hostname or ''}{parts.path}"))
+
+
+def on_job_board(url: str | None) -> bool:
+    return bool(_JOB_BOARD.search(_site(url)))
+
+
+async def learn_company_link(
+    db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, url: str
+) -> bool:
+    """The company's own application for a job on a board (spec 040): the
+    page the user said Yes to in Job Catcher ("Is this the application for
+    <job>?") after pressing Apply on the job's listing. It must name its
+    posting by a posting-level id. It becomes the job's apply link (the
+    board's listing stays the listing's own link, as the backup), marked as
+    learned: a later Yes may replace it, while a link the user set is never
+    changed. True when it was saved."""
+    sj = await db.scalar(
+        select(SavedJob)
+        .options(selectinload(SavedJob.job_listing))
+        .where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
+    )
+    if sj is None or sj.job_listing is None:
+        return False
+    if sj.custom_apply_url and not sj.apply_url_learned:
+        return False  # the user's own link
+    listing_url = sj.job_listing.apply_url
+    host = _site(url)
+    if (
+        not public_web_url(url)
+        or not names_one_posting(url)
+        or not on_job_board(listing_url)
+        or on_job_board(url)
+        or host == _site(listing_url)
+        or not looks_like_application(url)
+    ):
+        return False
+    link = clean_link(url)
+    if sj.custom_apply_url == link:
+        return False
+    sj.custom_apply_url = link
+    sj.apply_url_learned = True
+    sj.updated_at = datetime.now(UTC)
+    await db.flush()
+    return True
 
 
 async def set_job_resume(
@@ -653,6 +903,7 @@ async def rename_listing(
         sj.custom_location = data.location or None
     if data.apply_url is not None:
         sj.custom_apply_url = data.apply_url
+        sj.apply_url_learned = False  # the user's own: never replaced
     await db.flush()
     return sj
 

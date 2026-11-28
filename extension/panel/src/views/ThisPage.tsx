@@ -3,9 +3,10 @@
 import * as React from "react";
 import { ExternalLink, FileText, MousePointerClick, RefreshCw, Save } from "lucide-react";
 import { Alert, Badge, Button, Card, Field, Input, Muted, SectionTitle, Select, Switch, Textarea } from "@/ui";
-import { findDuplicate, type SavedJob } from "@/lib/context";
+import { filesLabel, findDuplicate, type SavedJob } from "@/lib/context";
 import { send } from "@/lib/chrome";
 import { usePageJob } from "@/lib/pageJob";
+import { jobName, useJobSuggestion } from "@/lib/suggestion";
 import { usePanel } from "@/lib/store";
 import { extractJobFromPage } from "@/lib/extractPage.js";
 import { expandMore } from "../../../src/extract/expand.js";
@@ -42,6 +43,7 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   const workdayJob = !!workday?.posting;
   return (
     <div className="flex flex-col gap-3">
+      {!match && <Suggested />}
       {fill.pick && <Point pick={fill.pick} />}
       {workdayJob && !workday?.apply && <WorkdayJob key={`workday:${tab.url}`} apply={false} onSaved={savedHere} />}
       {applying && apply}
@@ -64,28 +66,85 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   );
 }
 
+/**
+ * The job an Apply press suggests here (spec 040), on the pages after it
+ * that name no saved job: one plain line; Fill offers its files or the
+ * usual ones, for each press. Once, on the first page naming its posting:
+ * "Is this the application for <job>?" — Yes only saves the job's link.
+ */
+function Suggested() {
+  const { tab, reloadSaved } = usePanel();
+  const { suggestion, refresh } = useJobSuggestion();
+  const [busy, setBusy] = React.useState(false);
+  const [note, setNote] = React.useState("");
+  if (!suggestion || tab.id == null) return null;
+  const answer = async (yes: boolean) => {
+    setBusy(true);
+    setNote("");
+    const r = (await send({ type: "answerLanding", tabId: tab.id, yes, page: suggestion.page })) as { ok?: boolean; refused?: boolean; linkFailed?: boolean } | null;
+    setBusy(false);
+    if (r?.ok) {
+      if (r.linkFailed) setNote("Couldn't save the job's link. Filling still works.");
+      else if (yes) reloadSaved?.();
+    } else if (r?.refused) setNote("The page changed. Asking about this page.");
+    else setNote("Couldn't save that. Try again.");
+    refresh();
+  };
+  return (
+    <Card className="flex flex-col gap-1.5" aria-live="polite">
+      <Muted>
+        You pressed Apply on <strong className="text-foreground">{jobName(suggestion)}</strong>.
+      </Muted>
+      {suggestion.ask && (
+        <div className="flex flex-wrap items-center gap-2" role="group" aria-labelledby="landing-question">
+          <span id="landing-question" className="min-w-0 flex-1 text-sm">
+            Is this the application for <strong>{suggestion.title}</strong>?
+          </span>
+          <Button size="sm" disabled={busy} onClick={() => answer(true)}>
+            Yes
+          </Button>
+          <Button size="sm" variant="outline" disabled={busy} onClick={() => answer(false)}>
+            No
+          </Button>
+        </div>
+      )}
+      {note && <span className="text-xs text-destructive">{note}</span>}
+    </Card>
+  );
+}
+
 /** No form here (yet): say so plainly, and still let the user try. */
 function NoForm({ known }: { known: boolean }) {
   const { tab } = usePanel();
   const [busy, setBusy] = React.useState(false);
+  // The job an Apply press suggests here, when it has files of its own.
+  const { suggestion } = useJobSuggestion();
+  const choice = suggestion ? filesLabel(suggestion) : null;
+  const fill = async (withJob: string | null) => {
+    if (tab.id == null) return;
+    setBusy(true);
+    await send({ type: "pressAutofill", tabId: tab.id, ...(withJob ? { withJob } : {}) });
+    setBusy(false);
+  };
   return (
     <div className="flex flex-col gap-2 px-1">
       <div className="flex items-center justify-between gap-2 text-xs text-muted-foreground" role="status">
         <span>{known ? "No form on this page yet. Open the application and Autofill appears here." : "Looking at this page…"}</span>
-        {known && tab.id != null && (
-          <Button
-            variant="ghost"
-            size="sm"
-            busy={busy}
-            onClick={async () => {
-              setBusy(true);
-              await send({ type: "pressAutofill", tabId: tab.id });
-              setBusy(false);
-            }}
-          >
+        {known && tab.id != null && (choice ? (
+          // A job suggested here with files of its own: the same two choices (spec 040).
+          <span className="flex gap-1">
+            <Button variant="ghost" size="sm" busy={busy} onClick={() => fill(suggestion?.jobId || null)}>
+              {choice}
+            </Button>
+            <Button variant="ghost" size="sm" disabled={busy} onClick={() => fill(null)}>
+              Use my usual résumé
+            </Button>
+          </span>
+        ) : (
+          <Button variant="ghost" size="sm" busy={busy} onClick={() => fill(null)}>
             Fill anyway
           </Button>
-        )}
+        ))}
       </div>
       {/* Can see a form Job Catcher can't? Never stuck (spec 017). */}
       {known && <Trouble key={tab.url} tabId={tab.id} onPoint={() => startPointing(tab.id)} />}

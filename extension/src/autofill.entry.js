@@ -25,6 +25,7 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
+import { watchApplyPresses } from "./autofill/applyClick.js";
 import { extractFromJsonLd } from "./extract/jsonld.js";
 
 /** The hiring company in the page's own job data (JSON-LD), or "". */
@@ -57,6 +58,12 @@ function send(msg) {
     return Promise.resolve(null);
   }
 }
+
+// The user's own press on an Apply that leaves for the company's site (spec
+// 040): the background carries the saved job along only right after one.
+watchApplyPresses(document, () => {
+  if (isCurrent()) send({ type: "applyPressed" });
+});
 
 // ---- Pop-ups ------------------------------------------------------------------
 // While a pop-up holding a form is open, only its fields are filled: what's
@@ -186,6 +193,8 @@ let keepUserOff = false; // switched off in the panel: a press doesn't turn it b
 let usedHere = false; // autofill ran on this page (learning only notices then)
 let lastStep = "";
 let lastCopy = null; // the profile's answers, for noticing typed ones
+// The page `lastCopy` was read on: another page reads it again (spec 040).
+let lastCopyAt = "";
 const choicesSeen = new Map(); // a dropdown's choices, once the fill opened it (spec 033)
 let taughtHere = []; // boxes the user taught on this site (spec 017)
 let resumeDone = false; // the résumé already went up in this application (spec 018)
@@ -261,8 +270,13 @@ function report({ action = false } = {}) {
   return r;
 }
 
-async function loadCopy() {
-  const res = await send({ type: "getAutofillCopy" });
+/**
+ * The copy to fill from. `nonce`: the panel's choice of files for the press
+ * that started this fill (spec 040); `auto`: an automatic fill (a new step,
+ * Keep filling), which never uses a choice.
+ */
+async function loadCopy({ auto = false, nonce = null } = {}) {
+  const res = await send({ type: "getAutofillCopy", ...(auto ? { auto: true } : {}), ...(nonce ? { nonce } : {}) });
   if (!res?.signedIn) return { signedOut: true };
   if (!res.copy) return { unreachable: true };
   const fileOf = (f, fallback) => {
@@ -278,6 +292,7 @@ async function loadCopy() {
   // The job's cover letter (spec 031): its PDF for an upload box, its text for a text box.
   const coverLetterFile = fileOf(res.coverLetter, "Cover letter.pdf");
   const copy = res.copy || {};
+  lastCopyAt = location.href;
   lastCopy = {
     values: profileValues(copy.profile, copy.email, new Date(), copy.history),
     answers: copy.answers || [],
@@ -285,9 +300,14 @@ async function loadCopy() {
     history: copy.history || null,
     languages: copy.profile?.languages || [],
     resumeFile,
+    // Its text, for a "paste your résumé" box (spec 040).
+    resumeText: res.resume?.text || "",
     resumeId: res.resumeId || null,
     coverLetterFile,
     coverLetterText: res.coverLetter?.text || "",
+    // A job is suggested here and no files were chosen for this fill (spec
+    // 040): the résumé and cover-letter boxes are left for the user's pick.
+    holdFiles: !!res.holdFiles,
     // Which company this application is for ("have you worked for us
     // before?", spec 034): the linked saved job's, else the page's own job
     // data — never a guess from the site's address ("jj", "pg"…).
@@ -324,12 +344,12 @@ function settle({ firstMs = 700, quietMs = 500, capMs = 4000 } = {}) {
   });
 }
 
-async function run({ auto = false } = {}) {
+async function run({ auto = false, nonce = null } = {}) {
   if (state === "busy" || !isCurrent()) return { ok: false, busy: state === "busy" };
   if (runtimeGone()) return { ok: false, refresh: true };
   state = "busy";
   try {
-    return await fill(auto);
+    return await fill(auto, nonce);
   } catch {
     // Never leave the panel saying "Filling…": say what to do instead.
     status({ phase: "problem", problem: "refresh" }, { now: true });
@@ -339,11 +359,11 @@ async function run({ auto = false } = {}) {
   }
 }
 
-async function fill(auto) {
+async function fill(auto, nonce = null) {
   status({ phase: "filling", done: 0, total: 0, note: "Getting your details…" }, { now: true });
   // The first use on a computer may wait for a sleeping server.
   const slow = setTimeout(() => status({ phase: "filling", done: 0, total: 0, note: "Waking up the app…" }, { now: true }), 1500);
-  const copy = await loadCopy();
+  const copy = await loadCopy({ auto, nonce });
   clearTimeout(slow);
   if (copy.signedOut || copy.unreachable) {
     const problem = copy.signedOut ? "signed_out" : "asleep";
@@ -495,7 +515,7 @@ try {
       // A frame fills when it holds a form itself (not a chat widget, a
       // newsletter box or a payment frame); the top frame always tries.
       if (!TOP && !(msg.force ? presenceNow().form : session.isApplication())) return;
-      run().then(reply, () => reply({ ok: false }));
+      run({ nonce: typeof msg.nonce === "string" ? msg.nonce : null }).then(reply, () => reply({ ok: false }));
       return true;
     }
     if (msg?.type === "fillAction") {
@@ -593,7 +613,7 @@ const picker = createPicker({
     let known = null;
     let taughtHereAlready = false;
     if (!refused) {
-      const copy = lastCopy || (await loadCopy());
+      const copy = (lastCopyAt === location.href && lastCopy) || (await loadCopy());
       if (!copy.signedOut && !copy.unreachable) {
         const site = siteKey(location.href);
         const t = matchTaught((copy.taught || []).filter((x) => x.site === site || x.site === location.hostname), fields).get(field.id);
@@ -650,7 +670,7 @@ async function fillPickedNow({ fieldId: id, profile_key, answer }) {
   if (!field?.el?.isConnected) return { ok: false, reason: "gone" };
   let values = answer ? [answer] : [];
   if (profile_key) {
-    const copy = lastCopy || (await loadCopy());
+    const copy = (lastCopyAt === location.href && lastCopy) || (await loadCopy());
     if (copy.signedOut || copy.unreachable) return { ok: false, reason: copy.signedOut ? "signed_out" : "asleep" };
     values = copy.values[profile_key] || [];
   }
