@@ -222,6 +222,15 @@ function writeSpin(field, [value]) {
  * the first of the answer's wordings the site offers, and only that one.
  */
 async function writeChips(field, items) {
+  homeOf(field.el);
+  try {
+    return await writeChipsNow(field, items);
+  } finally {
+    field.el = liveBox(field.el);
+  }
+}
+
+async function writeChipsNow(field, items) {
   if (field.single) {
     const have = chipsOf(field.el);
     const hit = items.find((it) => have.some((c) => norm(c) === norm(String(it).split(">").pop())));
@@ -267,6 +276,16 @@ const SKILL_ALIASES = [
   ["M365", "Microsoft 365"],
   ["O365", "Office 365"],
   ["AD", "Active Directory"],
+  // Workday's own names for them (spec 040).
+  [".NET", ".NET Framework"],
+  ["Azure", "Microsoft Azure"],
+  ["AKS", "Azure Kubernetes Service"],
+  ["K8s", "Kubernetes"],
+  ["JS", "JavaScript"],
+  ["TS", "TypeScript"],
+  ["GCP", "Google Cloud Platform"],
+  ["AWS", "Amazon Web Services"],
+  ["SQL Server", "Microsoft SQL Server"],
 ];
 // Letters and digits of any language (and + #: "C++", "C#"), nothing else.
 const squash = (s) => String(s ?? "").normalize("NFKC").toLowerCase().replace(/[^\p{L}\p{N}+#]+/gu, "");
@@ -302,7 +321,7 @@ export function skillWordings(skill) {
   const names = [s];
   for (const pair of SKILL_ALIASES) {
     const i = squash(s) ? pair.findIndex((a) => squash(a) === squash(s)) : -1;
-    if (i >= 0) names.push(pair[1 - i]);
+    if (i >= 0 && !names.includes(pair[1 - i])) names.push(pair[1 - i]);
   }
   const m = /^(.*\s)([\w.+#]+)\s*\/\s*([\w.+#]+)$/.exec(s);
   const parts = m && m[1].trim() ? [`${m[1]}${m[2]}`, `${m[1]}${m[3]}`] : [];
@@ -712,8 +731,45 @@ export function peekOptions(field) {
 
 const CHIP = '[data-automation-id="selectedItem"], ul[data-automation-id="selectedItemList"] > li';
 
+// Workday draws a search prompt again when a chip is added (spec 040): the
+// box we held is then gone from the page, typing into it does nothing, and
+// every skill after the first was "not added". The box is found again each
+// time: by its id, else by its field's own name; never another box.
+const SEARCH_INPUT = "input:not([type=hidden]):not([type=checkbox]):not([type=radio]):not([type=file])";
+const homes = new WeakMap();
+
+/** Remember where a search prompt's box lives (while it's on the page). */
+export function homeOf(input) {
+  if (!input?.isConnected) return homes.get(input) || null;
+  let home = homes.get(input);
+  if (!home) {
+    const field = input.closest?.('[data-automation-id^="formField-"]');
+    home = { doc: input.ownerDocument, id: input.id || "", field: field?.getAttribute("data-automation-id") || "" };
+    homes.set(input, home);
+  }
+  return home;
+}
+
+/** The search prompt's box as the page has it now: the same one, or the one drawn in its place. */
+export function liveBox(input) {
+  if (!input || input.isConnected) return input;
+  const home = homes.get(input);
+  if (!home) return input;
+  let found = home.id ? home.doc.getElementById(home.id) : null;
+  if (found && !found.matches?.(SEARCH_INPUT)) found = null;
+  if (!found && home.field) {
+    const fields = [...home.doc.querySelectorAll("[data-automation-id]")].filter((b) => b.getAttribute("data-automation-id") === home.field);
+    const inputs = fields.length === 1 ? [...fields[0].querySelectorAll(SEARCH_INPUT)] : [];
+    found = inputs.length === 1 ? inputs[0] : null;
+  }
+  if (!found) return input;
+  homes.set(found, home);
+  return found;
+}
+
 /** The box holding a search prompt's chosen items ("chips"). */
 export function promptBox(input) {
+  input = liveBox(input);
   return input.closest(`${PROMPT_BOX}, [data-automation-id^="formField-"]`) || input.parentElement;
 }
 
@@ -736,6 +792,8 @@ export function chipsOf(input) {
  * @returns {Promise<{ok: boolean, already?: boolean, reason?: string, actual?: string}>}
  */
 export function searchPick(input, term, { wait = 1500, strict = false, also = [] } = {}) {
+  homeOf(input);
+  const box = () => liveBox(input);
   return oneAtATime(async () => {
     const doc = input.ownerDocument;
     const path = String(term || "")
@@ -752,18 +810,25 @@ export function searchPick(input, term, { wait = 1500, strict = false, also = []
     // Strict: the entry is the term itself (or one of its other names).
     const same = (label, name) => [name, ...also].some((n) => sameSkill(n, label));
     const match = (name, opts) => (strict ? opts.findIndex((o) => same(o.label, name)) : firstMatch([name], opts));
-    const field = { el: input };
+    const field = {
+      get el() {
+        return box();
+      },
+    };
     const before = new Set(visibleOptions(field).map((o) => o.el));
+    // Typed only into the prompt's own box, found again each time (spec 040).
     const search = (text) => {
+      const el = box();
+      if (!el.isConnected) return;
       try {
-        input.focus?.({ preventScroll: true });
+        el.focus?.({ preventScroll: true });
       } catch {
         /* fine */
       }
-      pointerClick(input);
-      setNativeValue(input, text, { blur: false });
-      key(input, "Enter");
-      ours.set(input, before);
+      pointerClick(el);
+      setNativeValue(el, text, { blur: false });
+      key(el, "Enter");
+      ours.set(el, before);
     };
     // Choose each name in turn, one level of the list at a time (a category,
     // then its item). A match that opens a list instead of becoming a chip is
@@ -820,7 +885,7 @@ export function searchPick(input, term, { wait = 1500, strict = false, also = []
       picked = ok ? right[0] : "";
     }
     // Text left in the box (no match, or a page that keeps it) is cleared.
-    if (input.value) setNativeValue(input, "", { blur: false });
+    if (box().value) setNativeValue(box(), "", { blur: false });
     await closeOpenLists(doc, 300);
     return ok ? { ok: true, actual: picked || want } : { ok: false, reason: "no_option" };
   });

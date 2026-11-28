@@ -12,7 +12,7 @@
 // with a name box plus a phone or email box. PURE: unit-tested in
 // test/autofill-memory.spec.js.
 
-import { degreeForms } from "./profileKeys.js";
+import { countryForms, degreeForms, isUsState } from "./profileKeys.js";
 
 const JOB = /\b(employment|employer|work (history|experience)|experience|previous (jobs?|positions?|employers?)|job history|positions? held|prior employment)\b/i;
 const EDUCATION = /\b(education|schools?|universit(y|ies)|colleges?|academic)\b/i;
@@ -25,7 +25,7 @@ const NAME_HINT = /employer|\bjob_?\d|work_?hist|prev(ious)?_?(job|employer)|wor
 /** The user's own details: never written into a past job's, a school's or a reference's box. */
 export const PERSONAL = new Set([
   "first_name", "last_name", "full_name", "preferred_name", "middle_name", "email", "email_confirm",
-  "phone", "phone_type", "phone_country", "address_line1", "address_line2", "city", "state", "postal_code",
+  "phone", "phone_type", "phone_country", "contact_method", "address_line1", "address_line2", "city", "state", "postal_code",
   "country", "location", "linkedin_url", "github_url", "portfolio_url",
 ]);
 
@@ -59,6 +59,7 @@ export function jobPart(field) {
   // "Employer City" is the job's city, not the employer's name.
   if (/\bcity\b/i.test(q)) return "city";
   if (/\b(state|province)\b/i.test(q)) return "state";
+  if (/\bcountry\b/i.test(q)) return "country";
   if (/\b(company|employer|organi[sz]ation|business)( name)?\b/i.test(q)) return "company";
   if (/\b(job title|title|position( title| held)?|role)\b/i.test(q)) return "title";
   return "";
@@ -107,7 +108,7 @@ const pad = (n) => String(n).padStart(2, "0");
 /** What goes in one part of one past job (from the résumé), in the forms the box may take. */
 export function jobValues(part, job, field) {
   if (!job) return [];
-  const [city, state] = String(job.location || "").split(",").map((s) => s.trim());
+  const [city, state, country] = String(job.location || "").split(",").map((s) => s.trim());
   if (part === "company") return job.company ? [job.company] : [];
   if (part === "title") return job.title ? [job.title] : [];
   if (part === "description") return job.description ? [job.description] : [];
@@ -115,6 +116,9 @@ export function jobValues(part, job, field) {
   if (part === "current") return job.current ? ["Yes"] : [];
   if (part === "city") return city ? [city] : [];
   if (part === "state") return state ? [state] : [];
+  // The job's country: its location's, else the United States for a US state
+  // ("Harborview, OR"); nothing from a location that doesn't say.
+  if (part === "country") return country ? countryForms(country) : isUsState(state) ? countryForms("United States") : [];
   const m = part === "start" ? job.start_month : job.end_month;
   const y = part === "start" ? job.start_year : job.end_year;
   if (part === "end" && job.current) return /\b(present|current)\b/i.test(field.options?.map((o) => o.label).join(" ") || "") ? ["Present", "Current"] : [];

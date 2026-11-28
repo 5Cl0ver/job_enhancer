@@ -2,7 +2,7 @@
 // reason to leave it. PURE: unit-tested in test/fill-engine.spec.js.
 import { answerKey, closestAnswer, isCompanySpecific, yesNo } from "./classify/answers.js";
 import { formerEmployerAnswer } from "./classify/formerEmployer.js";
-import { LEGAL_KEYS, OTHER_PERSON, fieldGuard, isPhoneExtension, profileKeyFor, valueForms } from "./classify/profileKeys.js";
+import { LEGAL_KEYS, OTHER_PERSON, fieldGuard, fitsKey, isPhoneExtension, profileKeyFor, valueForms } from "./classify/profileKeys.js";
 
 /**
  * A phone NUMBER where an extension goes (spec 036): an extension is at most
@@ -286,7 +286,10 @@ export function resolve(field, copy) {
   const key = profileKeyFor(field); // never the user's own details for someone else
   // What the user taught beats the profile (spec 020): correct a box once and
   // every site asking it gets the correction.
-  const learned = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
+  // A remembered answer that isn't this kind of box's ("LinkedIn" for the
+  // LinkedIn link, spec 040) is never used.
+  const recalled = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
+  const learned = recalled && key && !fitsKey(key, recalled.answer) ? null : recalled;
   // The phone number remembered for an extension box (a Workday revisit
   // taken for the user's answer): never put back (spec 036).
   if (learned && phoneInExtension(field, learned.answer, copy)) return { skip: "no_data" };

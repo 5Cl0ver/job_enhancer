@@ -140,3 +140,26 @@ test("Workday Skills: only the site's own entries, other names and 'Windows 10/1
   expect(need).toContain("Skills not added: Microsoft 365, Cobol");
   await page.close();
 });
+
+test("Workday Skills drawn again after each chip: every skill goes in, not only the first (spec 040)", async () => {
+  test.setTimeout(120000);
+  api.state.answers = [];
+  api.state.taught = [];
+  api.state.history = { work: [], education: [], certifications: [], websites: [], skills: ["Python", "TypeScript", "Azure", "AD", "Intune", "Cobol"] };
+  api.state.bundleVersion++;
+  await ext.worker.evaluate(async () => {
+    await chrome.storage.local.remove(["je_autofill"]);
+    await chrome.storage.sync.set({ je_super: false });
+  });
+  const page = await ext.context.newPage();
+  await page.goto(lab.url("/lab/workday-sections.html?redraw"));
+  const res = await ext.autofill(page);
+  expect(res.ok).toBe(true);
+  const chips = page.locator('[data-automation-id="formField-skills"] [data-automation-id="selectedItem"]');
+  await expect(chips).toHaveText(["Python", "TypeScript", "Azure", "Active Directory", "Intune"]);
+  const tabId = await ext.tabIdOf(page);
+  const s = await ext.bg({ type: "getFillSession", tabId });
+  const need = Object.values(s.frames).flatMap((f) => (f.need_you || []).map((n) => n.label));
+  expect(need).toContain("Skills not added: Cobol");
+  await page.close();
+});

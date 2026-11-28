@@ -153,6 +153,8 @@ const RULES = [
   { key: "last_name", re: /last[\s_-]*name|surname|family[\s_-]*name/i },
   { key: "full_name", re: /full[\s_-]*(legal[\s_-]*)?name|legal[\s_-]*name|your[\s_-]*name|^\W*name\W*$/i },
   { key: "email", re: /e-?mail/i },
+  // "Preferred Contact Method" (Dayforce, spec 040): Email.
+  { key: "contact_method", re: /(preferred|best)[\s_-]*(method|way|mode|means)[\s_-]*(of[\s_-]*)?contact|contact[\s_-]*(method|preference)|how (should|would you like|do you prefer) (we|us|to be) (to )?contact/i },
   { key: "phone_type", re: /(phone|device)[\s_-]*(device[\s_-]*)?type|type of phone/i },
   { key: "phone_country", re: /country[\s_-]*(phone[\s_-]*)?code|phone.*country|dialing code/i },
   { key: "phone", re: /phone|mobile|telephone|\bcell\b/i },
@@ -295,7 +297,45 @@ function stateForms(v) {
   return code && US_STATES[code] ? [US_STATES[code], code] : [s];
 }
 
-function countryForms(v) {
+/** Is this a US state ("OR", "Oregon")? */
+export function isUsState(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return false;
+  return s.length === 2 ? !!US_STATES[s.toUpperCase()] : Object.values(US_STATES).some((n) => n.toLowerCase() === s.toLowerCase());
+}
+
+// The ways a country-code list words the United States (spec 040): Workday's
+// "United States of America (+1)", "United States (+1)", "USA +1", "+1 United
+// States", a bare "+1". Searched in this order (Workday's prompt tries the
+// first few); a list is checked for an exact one before a close one, so
+// Canada's "+1" is never taken.
+const US_DIAL = [
+  "United States of America (+1)",
+  "United States of America",
+  "United States",
+  "+1",
+  "United States (+1)",
+  "United States +1",
+  "USA (+1)",
+  "US (+1)",
+  "USA +1",
+  "+1 United States",
+];
+
+// A link box takes only a link, and LinkedIn's only a LinkedIn one (spec 040:
+// Dayforce's "LinkedIn Profile" got a saved "LinkedIn").
+const LINK = /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i;
+const LINK_KEYS = { linkedin_url: /linkedin\./i, github_url: /github\./i, portfolio_url: /./ };
+
+/** Does this answer fit the box's kind (a link box, a link)? */
+export function fitsKey(key, value) {
+  const want = LINK_KEYS[key];
+  if (!want) return true;
+  const v = String(value ?? "").trim();
+  return LINK.test(v) && want.test(v);
+}
+
+export function countryForms(v) {
   if (!v) return [];
   const s = String(v).trim();
   if (/^(us|usa|u\.s\.a?\.?|united states( of america)?|america)$/i.test(s)) {
@@ -354,7 +394,8 @@ export function profileValues(profile, email, today = new Date(), history = null
     email_confirm: list(email),
     phone: list(p.phone),
     phone_type: list(p.phone ? "Mobile" : null, p.phone ? "Cell" : null),
-    phone_country: list(...(/^(us|usa|united states)/i.test(p.country || "United States") && p.phone ? ["United States (+1)", "+1", "United States"] : [])),
+    phone_country: list(...(/^(us|usa|u\.s\.|united states)/i.test(p.country || "United States") && p.phone ? US_DIAL : [])),
+    contact_method: list(email ? "Email" : null, email ? "E-mail" : null),
     address_line1: list(p.address_line1),
     address_line2: list(p.address_line2),
     city: list(city),
@@ -366,9 +407,9 @@ export function profileValues(profile, email, today = new Date(), history = null
       [city, stateFull].filter(Boolean).join(", "),
       city,
     ),
-    linkedin_url: list(p.linkedin_url),
-    github_url: list(p.github_url),
-    portfolio_url: list(p.portfolio_url),
+    linkedin_url: list(p.linkedin_url).filter((v) => fitsKey("linkedin_url", v)),
+    github_url: list(p.github_url).filter((v) => fitsKey("github_url", v)),
+    portfolio_url: list(p.portfolio_url).filter((v) => fitsKey("portfolio_url", v)),
     authorized_to_work: list(yn(p.authorized_to_work)),
     requires_sponsorship: list(yn(p.requires_sponsorship)),
     // "Able to work without sponsorship?": the other way round (spec 036).
