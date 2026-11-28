@@ -3,8 +3,9 @@
 - The company's own application, seen opening from a job board's listing
   (LinkedIn's "Apply on company website" has no address to read), becomes
   the job's apply link, once; the board's listing stays the listing's link.
-- During Apply with Claude, Job Catcher reports that new tab: its site is the
-  run's, and Claude's next call carries its address (``new_tab_url``).
+- During Apply with Claude, Job Catcher reports that new tab: Claude's next
+  call carries its address (``new_tab_url``) as a hint. Its site is the
+  run's, and the job learns the link, only once Claude reaches that page.
 - The user writes or pastes their own cover letter for a job: it becomes the
   job's letter, its PDF drawn like Claude's. No AI.
 - A résumé's details carry its text, for a "paste your résumé" box.
@@ -30,7 +31,7 @@ from app.services.apply_playbook import playbook_text
 from tests.test_mcp_server import _connected_user
 
 BOARD = "https://www.linkedin.com/jobs/view/4100000001/"
-COMPANY = "https://jobs.northwind.example/en/jobs/77/platform-engineer/apply"
+COMPANY = "https://jobs.northwind.example/en/jobs/7731/platform-engineer/apply"
 
 
 @pytest.fixture(autouse=True)
@@ -100,6 +101,15 @@ async def test_the_company_link_is_learned_once_from_the_board(
         (BOARD, "ftp://files.northwind.example/apply"),
         # A link from the posting's text, not an application.
         (BOARD, "https://northwind.example/blog/our-platform-team"),
+        # A careers home page or a sign-in: no one posting.
+        (BOARD, "https://jobs.northwind.example/careers"),
+        (BOARD, "https://accounts.google.com/o/oauth2/v2/auth?job=12345"),
+        (BOARD, "https://www.dropbox.com/chooser/jobs/12345"),
+        # Not a public host.
+        (BOARD, "http://127.0.0.1:8000/jobs/12345/apply"),
+        (BOARD, "http://[::1]/jobs/12345/apply"),
+        (BOARD, "http://localhost/jobs/12345/apply"),
+        (BOARD, "http://intranet/jobs/12345/apply"),
     ],
 )
 async def test_only_a_board_listing_learns_a_company_link(
@@ -174,7 +184,7 @@ def test_job_catcher_may_report_a_new_tab():
 
 
 @pytest.mark.asyncio
-async def test_a_new_tab_is_the_runs_and_claude_hears_its_address(engine, monkeypatch):
+async def test_a_new_tab_is_a_hint_until_claude_reaches_it(engine, monkeypatch):
     maker, user, run_id, job_id = await _board_run(engine, monkeypatch)
     rid = str(run_id)
     await mcp_mod.get_apply_brief(rid)
@@ -183,26 +193,49 @@ async def test_a_new_tab_is_the_runs_and_claude_hears_its_address(engine, monkey
         await db.commit()
     out = await mcp_mod.message_user(rid, "Opening the company's application.")
     assert out["new_tab_url"] == COMPANY
-    assert "never ask the user for the address" in out["next"]
+    assert "If it is the application, switch to it" in out["next"]
+    assert "Never ask the user for the address" in out["next"]
     # The address is data: never inside `next`.
     assert COMPANY not in out["next"]
     # Told once.
     again = await mcp_mod.message_user(rid, "Filling it in.")
     assert "new_tab_url" not in again
+    # Not the run's site, and no link learned, until Claude is on that page.
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id)
+        assert "jobs.northwind.example" not in (run.apply_hosts or [])
+        assert (await db.get(SavedJob, job_id)).custom_apply_url is None
+    await mcp_mod.fill_page(rid, COMPANY)
     async with maker() as db:
         run = await svc.get_run(db, user.id, run_id)
         assert "jobs.northwind.example" in run.apply_hosts
-        sj = await db.get(SavedJob, job_id)
-        assert sj.custom_apply_url == COMPANY
-        state = await svc.extension_state(db, user.id)
-        assert "jobs.northwind.example" in state["hosts"]
+        assert (await db.get(SavedJob, job_id)).custom_apply_url == COMPANY
+
+
+@pytest.mark.asyncio
+async def test_a_new_tab_claude_never_goes_to_teaches_nothing(engine, monkeypatch):
+    maker, user, run_id, job_id = await _board_run(engine, monkeypatch)
+    rid = str(run_id)
+    await mcp_mod.get_apply_brief(rid)
+    async with maker() as db:
+        # A privacy page opened from the application; Claude stays on the board.
+        await svc.extension_event(
+            db, user.id, run_id, "new_tab", "https://jobs.contoso.example/jobs/999"
+        )
+        await db.commit()
+    await mcp_mod.fill_page(rid, BOARD)
+    async with maker() as db:
+        run = await svc.get_run(db, user.id, run_id)
+        assert "jobs.contoso.example" not in (run.apply_hosts or [])
+        assert (await db.get(SavedJob, job_id)).custom_apply_url is None
 
 
 @pytest.mark.asyncio
 async def test_a_new_tab_that_isnt_a_web_page_is_ignored(engine, monkeypatch):
     maker, user, run_id, _ = await _board_run(engine, monkeypatch)
     async with maker() as db:
-        await svc.extension_event(db, user.id, run_id, "new_tab", "about:blank")
+        for url in ("about:blank", "http://192.168.1.5/apply", "http://localhost/x"):
+            await svc.extension_event(db, user.id, run_id, "new_tab", url)
         await db.commit()
         run = await svc.get_run(db, user.id, run_id)
         assert not any(e.get("kind") == "new_tab" for e in run.events or [])
@@ -283,3 +316,26 @@ async def test_resume_details_carry_its_text(
     await db_session.commit()
     body = (await client.get(f"/v1/autofill/resumes/{resume.id}/details")).json()
     assert body["text"] == "Sam Rivera\nPlatform engineer at Northwind Labs."
+
+
+# --------------------------------------------------------------------------- #
+# The job's own link: a public web address only
+# --------------------------------------------------------------------------- #
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "url",
+    [
+        "http://127.0.0.1/apply",
+        "http://localhost:3000/apply",
+        "http://intranet/apply",
+        "http://[::1]/apply",
+    ],
+)
+async def test_a_jobs_link_must_be_a_public_address(
+    client: AsyncClient, db_session: AsyncSession, test_user: User, url: str
+):
+    sj = await _job(db_session, test_user)
+    r = await client.patch(f"/v1/saved-jobs/{sj.id}/listing", json={"apply_url": url})
+    assert r.status_code == 422

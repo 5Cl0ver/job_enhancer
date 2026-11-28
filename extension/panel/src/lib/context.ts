@@ -1,6 +1,7 @@
 // What the user is doing in the tab the panel is beside. Pure (URL + title in,
 // a context out) so it's unit-tested: test/panel-context.spec.js.
 import { applicantHost, postingKey } from "../../../src/autofill/hosts.js";
+import { definitePosting } from "../../../src/tabJob.js";
 
 export type PageContext =
   | { kind: "none" }
@@ -164,8 +165,11 @@ export function bestJobMatch(
   if (mine) return mine;
   let sameSure: SavedJob[] = [];
   if (here) {
-    // Its listing, or the company's own application (spec 040).
-    const same = pool.filter((j) => [j.url, j.company_url].some((u) => u && postingKey(u)?.key === here.key));
+    // Its listing, or the company's own application (spec 040) when that
+    // names one posting (never a careers home page or a sign-in).
+    const same = pool.filter(
+      (j) => postingKey(j.url)?.key === here.key || (!!j.company_url && definitePosting(j.company_url) === here.key),
+    );
     if (same.length === 1) return same[0];
     if (here.sure) sameSure = same;
     // Several saved from one address (a careers page listing many jobs): the
@@ -181,7 +185,17 @@ export function bestJobMatch(
   // The most specific title wins ("Software Engineer II" over "Software Engineer").
   // One posting saved more than once: any of them is this page.
   const best = fits.sort((a, b) => norm(b.title).length - norm(a.title).length)[0] || sameSure[0];
-  return best || (carried ? allowed.find((j) => j.id === carried) : undefined) || null;
+  if (best) return best;
+  // The carried job, never over this page being another posting of the same
+  // system than the job's own (when in doubt, no job: the usual résumé).
+  const kept = carried ? allowed.find((j) => j.id === carried) : undefined;
+  if (!kept) return null;
+  const mineHere = definitePosting(page.url);
+  const other = [kept.url, kept.company_url].some((u) => {
+    const theirs = u ? postingKey(u) : null;
+    return !!mineHere && !!theirs && theirs.scope === here?.scope && theirs.key !== mineHere;
+  });
+  return other ? null : kept;
 }
 
 /** A saved job that looks like this one: same company, same or contained title (whole words). */

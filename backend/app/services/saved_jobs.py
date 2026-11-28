@@ -41,6 +41,7 @@ from app.services.dedup import job_content_hash, normalize
 from app.services.email_job_names import is_sender_person, role_doubtful
 from app.services.scout_dedupe import posting_link
 from app.services.scout_tracks import get_track
+from app.utils.web_address import public_web_url
 
 # Same thresholds the dedup service uses, so "is this the job I saved?" is judged
 # the same way across the app (title ≥88, company ≥85 token_sort_ratio).
@@ -180,10 +181,34 @@ _APPLICATION = re.compile(
 )
 
 
+# One posting for sure: an id in the address (digits, a UUID, a Workday
+# requisition like _R-1234), never a careers home page or a sign-in.
+_POSTING_ID = re.compile(r"\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-", re.IGNORECASE)
+
+
+def names_one_posting(url: str | None) -> bool:
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return False
+    return bool(_POSTING_ID.search(f"{parts.path}?{parts.query}"))
+
+
+# Never the application: sign-ins and file pickers (a résumé from Drive).
+_NOT_APPLICATION = re.compile(
+    r"(^|\.)(accounts\.google\.com|drive\.google\.com|docs\.google\.com|dropbox\.com"
+    r"|onedrive\.live\.com|box\.com|login\.live\.com|microsoftonline\.com|okta\.com"
+    r"|auth0\.com)$",
+    re.IGNORECASE,
+)
+
+
 def looks_like_application(url: str | None) -> bool:
     try:
         parts = urlsplit(url or "")
     except ValueError:
+        return False
+    if _NOT_APPLICATION.search(parts.hostname or ""):
         return False
     return bool(_APPLICATION.search(f"{parts.hostname or ''}{parts.path}"))
 
@@ -210,14 +235,10 @@ async def learn_company_link(
     if sj is None or sj.custom_apply_url or sj.job_listing is None:
         return False
     listing_url = sj.job_listing.apply_url
-    try:
-        scheme = urlsplit(url or "").scheme
-    except ValueError:
-        return False
     host = _site(url)
     if (
-        scheme not in ("http", "https")
-        or not host
+        not public_web_url(url)
+        or not names_one_posting(url)
         or not on_job_board(listing_url)
         or on_job_board(url)
         or host == _site(listing_url)

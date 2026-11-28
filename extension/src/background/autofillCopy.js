@@ -47,7 +47,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     if (!res.ok || gen !== generation) return;
     const b64 = toB64(await res.arrayBuffer());
     // Its text too, for a "paste your résumé" box (spec 040).
-    const text = meta.id ? await resumeText(headers, meta.id) : "";
+    const text = meta.id ? await resumeText(headers, meta.id) : undefined;
     if (gen !== generation) return;
     await chrome.storage.local.set({
       [RESUME]: {
@@ -60,11 +60,12 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
     });
   }
 
+  /** The résumé's text; undefined when it couldn't be read (asked again next time). */
   async function resumeText(headers, resumeId) {
     const res = await wakeFetch(`${api}/v1/autofill/resumes/${encodeURIComponent(resumeId)}/details`, { headers }).catch(() => null);
-    if (!res?.ok) return "";
+    if (!res?.ok) return undefined;
     const body = await res.json().catch(() => null);
-    return typeof body?.text === "string" ? body.text : "";
+    return typeof body?.text === "string" ? body.text : undefined;
   }
 
   /** Ask the server what changed (cheap when nothing did). */

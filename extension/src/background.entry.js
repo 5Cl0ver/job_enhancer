@@ -730,7 +730,7 @@ const choiceKeyFor = (job, url) => (job ? `je_resume_choice:job:${job.id}` : `je
 const SAVED_CACHE = "je_saved_cache";
 const SAVED_CACHE_MS = 2 * 60_000;
 
-async function linkedJob(tab) {
+async function linkedJob(tab, carry = true) {
   if (!tab?.url) return null;
   let { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
   if (!cache || Date.now() - (cache.at || 0) > SAVED_CACHE_MS) {
@@ -739,7 +739,7 @@ async function linkedJob(tab) {
   }
   // The job this tab came from, when the page doesn't say (spec 040): the
   // company's application after the job board's Apply.
-  return matchJob(tab, cache?.jobs || [], await tabJobs.carried(tab).catch(() => null));
+  return matchJob(tab, cache?.jobs || [], carry ? await tabJobs.carried(tab).catch(() => null) : null);
 }
 
 async function matchJob(tab, jobs, carried = null) {
@@ -771,7 +771,7 @@ async function learnCompanyLink(jobId, url) {
 const tabJobs = createTabJobs({
   ownMatch: ownJob,
   learnLink: learnCompanyLink,
-  run: { opened: (tab, opener) => applyRun.tabOpened(tab, opener), landed: (tab) => applyRun.tabLanded(tab) },
+  run: { opened: (tab, opener) => applyRun.tabOpened(tab, opener), landed: (tab, openerId) => applyRun.tabLanded(tab, openerId) },
 });
 
 /**
@@ -1233,7 +1233,9 @@ async function markApplied(job, tab = null) {
     // page only reports its final Submit), the saved job this page is — the
     // same posting — no guessing by name. Anywhere else (a search box on a
     // saved job's page) never: the old exact title + company match only.
-    if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab).catch(() => null))?.id || null;
+    // The page's own job only (spec 040): never one carried from another
+    // page, which a Submit here could mark applied by mistake.
+    if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab, false).catch(() => null))?.id || null;
   }
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
     method: "POST",

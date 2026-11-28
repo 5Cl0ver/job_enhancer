@@ -7,6 +7,7 @@ from typing import Literal
 from pydantic import BaseModel, Field, field_validator, model_validator
 
 from app.schemas.job import JobListingSchema, JobListingSummarySchema
+from app.utils.web_address import public_web_url
 
 
 class SavedJobCreate(BaseModel):
@@ -177,6 +178,8 @@ class ListingRename(BaseModel):
     def _http_only(cls, v: str | None) -> str | None:
         if v is not None and not v.startswith(("http://", "https://")):
             raise ValueError("The link must start with http:// or https://")
+        if v is not None and not public_web_url(v):
+            raise ValueError("The link must be a public web address.")
         return v
 
     @model_validator(mode="after")

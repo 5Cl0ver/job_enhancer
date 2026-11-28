@@ -180,7 +180,7 @@ export function CoverLetterRow({ id, filename, sub }: { id: string; filename: st
  * "Write your own" (spec 040): type or paste a letter, and it is this job's,
  * its PDF drawn like Claude's, so Job Catcher attaches it. No AI, no Docs.
  */
-function WriteLetter({ savedJobId }: { savedJobId: string }) {
+function WriteLetter({ savedJobId, replaces }: { savedJobId: string; replaces: boolean }) {
   const [text, setText] = useState<string | null>(null);
   const write = useWriteJobCoverLetter();
   if (text === null) {
@@ -209,17 +209,22 @@ function WriteLetter({ savedJobId }: { savedJobId: string }) {
         autoFocus
         onChange={(e) => setText(e.target.value)}
       />
+      {replaces && (
+        <p className="text-xs text-muted-foreground">
+          It becomes this job's letter in place of the one above (that one stays in Settings).
+        </p>
+      )}
       <div className="flex flex-wrap items-center gap-2">
         <Button
           size="sm"
-          className="gap-1.5"
+          className="gap-1.5 pointer-coarse:h-11"
           disabled={write.isPending || !text.trim() || tooLong}
           onClick={() => write.mutate({ savedJobId, text }, { onSuccess: () => setText(null) })}
         >
           {write.isPending && <Loader2 className="h-3.5 w-3.5 animate-spin" aria-hidden />}
           Save for this job
         </Button>
-        <Button size="sm" variant="ghost" onClick={() => setText(null)}>
+        <Button size="sm" variant="ghost" className="pointer-coarse:h-11" onClick={() => setText(null)}>
           Cancel
         </Button>
       </div>
@@ -308,7 +313,7 @@ export function JobCoverLetterPicker({
                 : NO_LETTER_YET}
         </p>
       )}
-      {job && <WriteLetter savedJobId={job.id} />}
+      {job && <WriteLetter savedJobId={job.id} replaces={!!chosen} />}
     </section>
   );
 }

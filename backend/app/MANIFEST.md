@@ -25,7 +25,7 @@ lifecycle.
 | `services/` | Business logic (async functions). `services/sources/` = pluggable job-source adapters |
 | `models/` | SQLAlchemy ORM models (database tables) |
 | `middleware/` | Auth dependency — verifies Supabase JWTs via JWKS |
-| `utils/` | Small helpers (e.g. `rate_limit.py`) |
+| `utils/` | Small helpers (e.g. `rate_limit.py`; `web_address.py`: a link the app keeps must be on a public host, spec 040) |
 
 ## How a request flows
 ```

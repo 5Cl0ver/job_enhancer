@@ -89,6 +89,7 @@ from app.services import skipped_sites as sites_svc
 from app.services import tracker as tracker_svc
 from app.services.match import match_resume
 from app.services.scout_dedupe import url_key
+from app.utils.web_address import public_web_url
 
 logger = logging.getLogger(__name__)
 
@@ -1288,6 +1289,29 @@ async def with_inbox(
     return out
 
 
+async def _reached(db: AsyncSession, run: ApplyRun, page_url: str) -> None:
+    """Claude is on the page a new tab opened (spec 040): that was the
+    company's application, so the job keeps its link (once; the saved-jobs
+    service checks it names one posting on a job board's job)."""
+    host = _host(page_url)
+    tabs = [
+        e
+        for e in run.events or []
+        if e.get("kind") == "new_tab"
+        and not e.get("reached")
+        and host
+        and _host(e.get("url")) == host
+    ]
+    if not tabs:
+        return
+    url = tabs[-1]["url"]
+    run.events = [
+        {**e, "reached": True} if e.get("kind") == "new_tab" and e in tabs else e
+        for e in run.events or []
+    ]
+    await sj_svc.learn_company_link(db, run.user_id, run.saved_job_id, url)
+
+
 def _new_tab_line(run: ApplyRun) -> tuple[str, str] | None:
     """The application opened in a new tab since Claude's last call (spec
     040), told once: where it is. The address is data (``new_tab_url``)."""
@@ -1301,9 +1325,10 @@ def _new_tab_line(run: ApplyRun) -> tuple[str, str] | None:
         for e in run.events or []
     ]
     return (
-        "The application opened in a new tab (new_tab_url); Job Catcher put "
-        "it in your tab group. Switch to that tab and carry on there; never "
-        "ask the user for the address.",
+        "A new tab opened from the application's tab (new_tab_url; Job "
+        "Catcher put it in your tab group). If it is the application, switch "
+        "to it and carry on there; if it isn't (a privacy page, a sign-in, an "
+        "ad), ignore it. Never ask the user for the address.",
         new[-1].get("url") or "",
     )
 
@@ -2870,6 +2895,7 @@ async def page_done(
     waiting = sheet_svc.waiting(run.fixes)
     hold = last and bool(waiting)  # the owner's fixes first, then the review
     page = _new_page(run, page_url, page_title, rows, last=last and not hold, step=key)
+    await _reached(db, run, page_url)
     await _with_fill(db, run, page)
     req = await _request(db, run, REQUEST_PHOTO, page_url, page["n"])
     title = _step_title(run, key)
@@ -2984,6 +3010,7 @@ async def fill_request(
     if run.status in (APPLY_READING, APPLY_QUESTIONS, APPLY_WRITING):
         _set(run, APPLY_FILLING)
     _add_host(run, page_url)
+    await _reached(db, run, page_url)
     # Filling after a go-on is going on (spec 038).
     _moved_on(run)
     # A long fill of this very page still going, or finished after the last
@@ -4082,16 +4109,14 @@ async def extension_event(
         else:
             _event(run, "confirmation_seen", f"Job Catcher saw “{seen}”.")
     elif kind == "new_tab":
-        # The application opened in a new tab from the run's tab (spec 040:
-        # LinkedIn's "Apply on company website"). Job Catcher put it in the
-        # tab group; Claude hears its address on the next call, and the job
-        # keeps the company's own link for next time.
-        if not host or not (url or "").startswith(("http://", "https://")):
+        # A tab the run's tab opened that looks like the application (spec
+        # 040: LinkedIn's "Apply on company website"). Only a hint for
+        # Claude: its site isn't the run's, and the job learns no link, until
+        # Claude reaches that page (`_reached`).
+        if not host or not public_web_url(url):
             return run
-        _add_host(run, url)
-        _event(run, "new_tab", f"The application opened in a new tab on {host}.")
+        _event(run, "new_tab", f"A new tab opened on {host}.")
         run.events = [*run.events[:-1], {**run.events[-1], "url": url[:2000]}]
-        await sj_svc.learn_company_link(db, user_id, run.saved_job_id, url)
     else:
         raise ValueError("Unknown event")
     await db.flush()

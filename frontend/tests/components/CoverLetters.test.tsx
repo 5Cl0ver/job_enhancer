@@ -155,6 +155,7 @@ describe("Cover letter for this job", () => {
     post.mockResolvedValue({ id: "cl3" });
     renderIt(<JobCoverLetterPicker jobListingId="l1" company="Northwind Labs" />);
     await userEvent.click(await screen.findByRole("button", { name: /Write your own/ }));
+    expect(screen.queryByText(/in place of the one above/)).toBeNull();
     const save = screen.getByRole("button", { name: "Save for this job" });
     expect(save).toBeDisabled();
     await userEvent.type(screen.getByRole("textbox", { name: "Your cover letter" }), "Hi Jordan, the role fits.");
@@ -163,6 +164,12 @@ describe("Cover letter for this job", () => {
       expect(post).toHaveBeenCalledWith("/v1/saved-jobs/s1/cover-letter/write", { text: "Hi Jordan, the role fits." }),
     );
     await waitFor(() => expect(screen.queryByRole("textbox", { name: "Your cover letter" })).toBeNull());
+  });
+
+  it("says when your own letter will take the place of the job's", async () => {
+    renderIt(<JobCoverLetterPicker jobListingId="l1" company="Northwind Labs" />);
+    await userEvent.click(await screen.findByRole("button", { name: /Write your own/ }));
+    expect(screen.getByText(/in place of the one above/)).toBeInTheDocument();
   });
 
   it("says nothing until the letters are in (no flash of None yet)", async () => {

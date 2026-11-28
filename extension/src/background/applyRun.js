@@ -244,27 +244,35 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     state.at = 0; // a press can end the run: ask again next time
   }
 
-  /** A tab opened from the application's tab (spec 040: LinkedIn's "Apply
-   * on company website" opens the company's site in one): it joins the
-   * opener's tab group at once, so Claude can reach it, and is the run's.
-   * True when it is. */
+  /** A tab opened from the application's own tab (spec 040: LinkedIn's
+   * "Apply on company website" opens the company's site in one): a tab of
+   * the run (Claude's requests went to it), or one in the same tab group as
+   * a tab of the run — never just any tab on the run's site. True when it
+   * is; nothing is grouped or told until it lands (`tabLanded`). */
   async function tabOpened(tab, opener) {
     const data = await active();
     if (!data.run_id || tab?.id == null || opener?.id == null) return false;
+    if (await isRunTab(data, opener)) return true;
     const group = opener.groupId ?? -1;
-    const ours = (await isRunTab(data, opener)) || (group !== -1 && onRunHost(hostOf(opener.url || ""), data.hosts));
-    if (!ours) return false;
-    await addRunTab(data.run_id, tab.id);
-    if (group !== -1 && tab.groupId !== group) await c.tabs.group({ groupId: group, tabIds: tab.id }).catch(() => {});
-    return true;
+    if (group === -1) return false;
+    for (const id of await runTabs(data.run_id)) {
+      const t = await c.tabs.get(id).catch(() => null);
+      if (t && t.groupId === group) return true;
+    }
+    return false;
   }
 
-  /** That tab's first page off the job board: Claude hears its address. */
-  async function tabLanded(tab) {
+  /** That tab's first page, when it looks like the application (the caller
+   * checks): it joins the opener's tab group, so Claude can reach it, and
+   * Claude hears its address as a hint. The run's site list only grows when
+   * Claude reaches it. */
+  async function tabLanded(tab, openerId) {
     const data = await active();
-    if (!data.run_id || tab?.id == null || !(await runTabs(data.run_id)).has(tab.id)) return;
+    if (!data.run_id || tab?.id == null) return;
+    const opener = openerId == null ? null : await c.tabs.get(openerId).catch(() => null);
+    const group = opener?.groupId ?? -1;
+    if (group !== -1 && tab.groupId !== group) await c.tabs.group({ groupId: group, tabIds: tab.id }).catch(() => {});
     await api(`/v1/apply/runs/${data.run_id}/event`, { method: "POST", body: JSON.stringify({ kind: "new_tab", url: tab.url }) }).catch(() => null);
-    state.at = 0; // its site is the run's now: hear the app's hosts at once
   }
 
   async function loop() {
