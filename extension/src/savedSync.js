@@ -37,6 +37,8 @@ export function parseSummary(data) {
     resume_id: j.resume_id || null,
     // The cover letter chosen for this job (spec 031); null = none.
     cover_letter_id: j.cover_letter_id || null,
+    // The company's own application, learned from the board (spec 040).
+    company_url: j.company_url || null,
   }));
   return { changed: true, version: data.version, jobs };
 }

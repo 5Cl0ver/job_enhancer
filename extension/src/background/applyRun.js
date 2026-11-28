@@ -244,6 +244,29 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     state.at = 0; // a press can end the run: ask again next time
   }
 
+  /** A tab opened from the application's tab (spec 040: LinkedIn's "Apply
+   * on company website" opens the company's site in one): it joins the
+   * opener's tab group at once, so Claude can reach it, and is the run's.
+   * True when it is. */
+  async function tabOpened(tab, opener) {
+    const data = await active();
+    if (!data.run_id || tab?.id == null || opener?.id == null) return false;
+    const group = opener.groupId ?? -1;
+    const ours = (await isRunTab(data, opener)) || (group !== -1 && onRunHost(hostOf(opener.url || ""), data.hosts));
+    if (!ours) return false;
+    await addRunTab(data.run_id, tab.id);
+    if (group !== -1 && tab.groupId !== group) await c.tabs.group({ groupId: group, tabIds: tab.id }).catch(() => {});
+    return true;
+  }
+
+  /** That tab's first page off the job board: Claude hears its address. */
+  async function tabLanded(tab) {
+    const data = await active();
+    if (!data.run_id || tab?.id == null || !(await runTabs(data.run_id)).has(tab.id)) return;
+    await api(`/v1/apply/runs/${data.run_id}/event`, { method: "POST", body: JSON.stringify({ kind: "new_tab", url: tab.url }) }).catch(() => null);
+    state.at = 0; // its site is the run's now: hear the app's hosts at once
+  }
+
   async function loop() {
     if (looping) return;
     looping = true;
@@ -610,5 +633,5 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     }
   }
 
-  return { tick, event, active, loop, wake, resumeFor, inRun, coverLetterFor, runFor };
+  return { tick, event, active, loop, wake, resumeFor, inRun, coverLetterFor, runFor, tabOpened, tabLanded };
 }

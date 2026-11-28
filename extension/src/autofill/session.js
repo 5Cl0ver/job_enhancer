@@ -82,7 +82,7 @@ export const LEARNABLE_PROFILE = new Set([
 ]);
 const BOOL_PROFILE = new Set(["authorized_to_work", "requires_sponsorship", "willing_to_relocate"]);
 // Keys filled once per page (repeated education blocks: only the first).
-const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title", "resume_file", "cover_letter_file", "cover_letter"]);
+const ONCE_KEYS = new Set(["school", "degree", "field_of_study", "graduation_year", "current_company", "current_title", "resume_file", "cover_letter_file", "cover_letter", "resume_text"]);
 // Questions about a business, a recipient or someone's work line, not the user.
 const NOT_MINE = /company|employer|business|office|work (phone|address)|recipient|shipping|billing|gift|delivery/i;
 

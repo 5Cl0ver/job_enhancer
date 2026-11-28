@@ -15,6 +15,7 @@ import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
 import { APPLY_ALARM, createApplyRun } from "./background/applyRun.js";
+import { createTabJobs } from "./background/tabJobs.js";
 import { createCaughtReporter, fillFailure, isSaveFailure, ownerReport, placeOf } from "./background/bugReports.js";
 import { capture } from "./background/pagePhoto.js";
 import { sameBox } from "./autofill/fingerprint.js";
@@ -736,12 +737,42 @@ async function linkedJob(tab) {
     await listSaved(cache?.version || null).catch(() => {});
     ({ [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE));
   }
-  const jobs = cache?.jobs || [];
+  // The job this tab came from, when the page doesn't say (spec 040): the
+  // company's application after the job board's Apply.
+  return matchJob(tab, cache?.jobs || [], await tabJobs.carried(tab).catch(() => null));
+}
+
+async function matchJob(tab, jobs, carried = null) {
   if (!jobs.length) return null;
   const { je_not_this: notThis = {}, je_page_job: pinned = {} } = await chrome.storage.local.get(["je_not_this", "je_page_job"]);
   const pid = pageId(tab.url);
-  return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid]) || null;
+  return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid], carried) || null;
 }
+
+/** The saved job a page is by itself (no carrying, never a fetch). */
+async function ownJob(tab) {
+  if (!tab?.url) return null;
+  const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+  return matchJob(tab, cache?.jobs || []);
+}
+
+async function learnCompanyLink(jobId, url) {
+  const token = await getValidToken();
+  if (!token) return;
+  const res = await fetchWithTimeout(`${cfg.API_BASE}/v1/saved-jobs/${encodeURIComponent(jobId)}/company-link`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+    body: JSON.stringify({ url: String(url).slice(0, 2000) }),
+  }).catch(() => null);
+  // Learned: the list carries it from now on.
+  if (res?.ok && (await res.json().catch(() => null))?.saved) await listSaved(null).catch(() => {});
+}
+
+const tabJobs = createTabJobs({
+  ownMatch: ownJob,
+  learnLink: learnCompanyLink,
+  run: { opened: (tab, opener) => applyRun.tabOpened(tab, opener), landed: (tab) => applyRun.tabLanded(tab) },
+});
 
 /**
  * This application's résumé: a linked job's own (set in the panel or the app
@@ -944,7 +975,15 @@ async function clearFillSession(tabId) {
 }
 
 try {
+  // Which job each tab is applying for (spec 040).
+  chrome.tabs.onCreated.addListener((tab) => {
+    tabJobs.opened(tab).catch(() => {});
+  });
+  chrome.tabs.onUpdated.addListener((_tabId, info, tab) => {
+    if (info.status === "complete") tabJobs.loaded(tab).catch(() => {});
+  });
   chrome.tabs.onRemoved.addListener((tabId) => {
+    tabJobs.closed(tabId).catch(() => {});
     clearFillSession(tabId);
     presence.clear(tabId);
     chrome.storage.session.remove([pendingKey(tabId), keepKey(tabId), pickKey(tabId), savedKey(tabId), trackedKey(tabId), `je_edits:${tabId}`, filesKey(tabId)]).catch(() => {});

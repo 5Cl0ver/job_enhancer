@@ -9,11 +9,12 @@ const put = vi.fn();
 const patch = vi.fn();
 const getBlob = vi.fn();
 const getDocument = vi.fn();
+const post = vi.fn();
 
 vi.mock("@/lib/api", () => ({
   api: {
     get: (...a: unknown[]) => get(...a),
-    post: vi.fn(),
+    post: (...a: unknown[]) => post(...a),
     put: (...a: unknown[]) => put(...a),
     patch: (...a: unknown[]) => patch(...a),
     delete: vi.fn(),
@@ -141,10 +142,27 @@ describe("Cover letter for this job", () => {
       Promise.resolve(path.startsWith("/v1/saved-jobs") ? savedJobs : []),
     );
     renderIt(<JobCoverLetterPicker jobListingId="l1" />);
-    expect(await screen.findByText("None yet. Claude writes one when an application asks for it.")).toBeInTheDocument();
+    expect(
+      await screen.findByText("None yet. Write your own, or Claude writes one when an application asks for it."),
+    ).toBeInTheDocument();
     expect(screen.getByText("Cover letter for this job")).toBeInTheDocument();
     expect(screen.queryByRole("combobox")).toBeNull();
     expect(screen.queryByRole("button", { name: /View/ })).toBeNull();
+  });
+
+  it("writes or pastes your own, and it becomes this job's letter (spec 040)", async () => {
+    savedJobs = [{ id: "s1", job_listing_id: "l1", cover_letter_id: null, job_listing: listing }];
+    post.mockResolvedValue({ id: "cl3" });
+    renderIt(<JobCoverLetterPicker jobListingId="l1" company="Northwind Labs" />);
+    await userEvent.click(await screen.findByRole("button", { name: /Write your own/ }));
+    const save = screen.getByRole("button", { name: "Save for this job" });
+    expect(save).toBeDisabled();
+    await userEvent.type(screen.getByRole("textbox", { name: "Your cover letter" }), "Hi Jordan, the role fits.");
+    await userEvent.click(save);
+    await waitFor(() =>
+      expect(post).toHaveBeenCalledWith("/v1/saved-jobs/s1/cover-letter/write", { text: "Hi Jordan, the role fits." }),
+    );
+    await waitFor(() => expect(screen.queryByRole("textbox", { name: "Your cover letter" })).toBeNull());
   });
 
   it("says nothing until the letters are in (no flash of None yet)", async () => {

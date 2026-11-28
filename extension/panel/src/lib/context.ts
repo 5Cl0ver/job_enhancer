@@ -18,6 +18,8 @@ export interface SavedJob {
   applied: boolean;
   /** The résumé chosen for this job (spec 020); null = the usual one. */
   resume_id?: string | null;
+  /** The company's own application, when it isn't `url` (spec 040). */
+  company_url?: string | null;
 }
 
 /** A friendly site name from a host: "www.amazon.jobs" → "Amazon". */
@@ -150,8 +152,11 @@ export function bestJobMatch(
   jobs: SavedJob[],
   notThis: string[] = [],
   pinned?: string,
+  /** The job this tab was applying for when the page doesn't say (spec 040). */
+  carried?: string | null,
 ): SavedJob | null {
   let pool = jobs.filter((j) => !notThis.includes(j.id));
+  const allowed = pool;
   const here = postingKey(page.url);
   // Only an address that is surely one posting can hold a pin: a careers page
   // listing many jobs, or #/job/42 vs #/job/43, can't.
@@ -159,7 +164,8 @@ export function bestJobMatch(
   if (mine) return mine;
   let sameSure: SavedJob[] = [];
   if (here) {
-    const same = pool.filter((j) => postingKey(j.url)?.key === here.key);
+    // Its listing, or the company's own application (spec 040).
+    const same = pool.filter((j) => [j.url, j.company_url].some((u) => u && postingKey(u)?.key === here.key));
     if (same.length === 1) return same[0];
     if (here.sure) sameSure = same;
     // Several saved from one address (a careers page listing many jobs): the
@@ -174,7 +180,8 @@ export function bestJobMatch(
   });
   // The most specific title wins ("Software Engineer II" over "Software Engineer").
   // One posting saved more than once: any of them is this page.
-  return fits.sort((a, b) => norm(b.title).length - norm(a.title).length)[0] || sameSure[0] || null;
+  const best = fits.sort((a, b) => norm(b.title).length - norm(a.title).length)[0] || sameSure[0];
+  return best || (carried ? allowed.find((j) => j.id === carried) : undefined) || null;
 }
 
 /** A saved job that looks like this one: same company, same or contained title (whole words). */

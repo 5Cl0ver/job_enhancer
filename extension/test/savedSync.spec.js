@@ -202,6 +202,7 @@ describe("parseSummary", () => {
           applied: true,
           resume_id: null,
           cover_letter_id: null,
+          company_url: null,
         },
       ],
     });

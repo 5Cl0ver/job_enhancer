@@ -15,6 +15,8 @@ from app.schemas.saved_job import (
     ApplicationSyncRequest,
     ApplicationSyncResult,
     BackfillResult,
+    CompanyLinkIn,
+    CoverLetterWriteIn,
     JobCoverLetterIn,
     JobResumeIn,
     JobSavedCheck,
@@ -97,6 +99,7 @@ async def saved_jobs_summary(
                 resume_id=svc.effective_resume_id(r),
                 resume_usual=bool(r.resume_usual),
                 cover_letter_id=r.cover_letter_id,
+                company_url=r.custom_apply_url or None,
             )
             for r in rows
         ],
@@ -273,6 +276,20 @@ async def choose_job_resume(
     return Response(status_code=204)
 
 
+@router.post("/{saved_job_id}/company-link")
+async def learn_company_link(
+    saved_job_id: uuid.UUID,
+    data: CompanyLinkIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """Job Catcher saw the company's own application open from this job's
+    board listing (spec 040): it becomes the job's apply link, once."""
+    saved = await svc.learn_company_link(db, user.id, saved_job_id, data.url)
+    await db.commit()
+    return {"saved": saved}
+
+
 @router.put("/{saved_job_id}/cover-letter", status_code=204)
 async def choose_job_cover_letter(
     saved_job_id: uuid.UUID,
@@ -289,6 +306,25 @@ async def choose_job_cover_letter(
         raise HTTPException(status_code=404, detail=str(e)) from e
     await db.commit()
     return Response(status_code=204)
+
+
+@router.post("/{saved_job_id}/cover-letter/write", status_code=201)
+async def write_job_cover_letter(
+    saved_job_id: uuid.UUID,
+    data: CoverLetterWriteIn,
+    user: User = Depends(get_current_user),
+    db: AsyncSession = Depends(get_db),
+) -> dict:
+    """The user's own cover letter for this job (spec 040), typed or pasted:
+    it becomes the job's letter, its PDF drawn like Claude's. No AI."""
+    try:
+        doc = await cover_letters.write_for_job(db, user.id, saved_job_id, data.text)
+    except LookupError as e:
+        raise HTTPException(status_code=404, detail=str(e)) from e
+    except ValueError as e:
+        raise HTTPException(status_code=422, detail=str(e)) from e
+    await db.commit()
+    return {"id": str(doc.id)}
 
 
 @router.patch("/{saved_job_id}", response_model=SavedJobListItem)

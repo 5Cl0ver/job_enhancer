@@ -41,10 +41,13 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
   async function fetchResume(headers, meta, gen) {
     const { [RESUME]: cached } = await chrome.storage.local.get(RESUME);
     const stamp = `${meta.id}|${meta.updated_at}`;
-    if (cached?.stamp === stamp) return;
+    // Kept from before spec 040 (no text yet): fetched once more.
+    if (cached?.stamp === stamp && cached.text !== undefined) return;
     const res = await wakeFetch(`${api}/v1/ai/resumes/active/file`, { headers });
     if (!res.ok || gen !== generation) return;
     const b64 = toB64(await res.arrayBuffer());
+    // Its text too, for a "paste your résumé" box (spec 040).
+    const text = meta.id ? await resumeText(headers, meta.id) : "";
     if (gen !== generation) return;
     await chrome.storage.local.set({
       [RESUME]: {
@@ -52,8 +55,16 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
         b64,
         filename: fileNameOf(res, meta.filename || "resume.pdf"),
         mime: res.headers.get("Content-Type") || meta.mime || "application/pdf",
+        text,
       },
     });
+  }
+
+  async function resumeText(headers, resumeId) {
+    const res = await wakeFetch(`${api}/v1/autofill/resumes/${encodeURIComponent(resumeId)}/details`, { headers }).catch(() => null);
+    if (!res?.ok) return "";
+    const body = await res.json().catch(() => null);
+    return typeof body?.text === "string" ? body.text : "";
   }
 
   /** Ask the server what changed (cheap when nothing did). */
@@ -149,6 +160,7 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
       b64: toB64(await fileRes.arrayBuffer()),
       filename: fileNameOf(fileRes),
       mime: fileRes.headers.get("Content-Type") || "application/pdf",
+      text: typeof details?.text === "string" ? details.text : "",
       history: details?.read
         ? { work: details.work || [], education: details.education || [], skills: details.skills || [], certifications: details.certifications || [], websites: details.websites || [] }
         : null,
@@ -235,7 +247,8 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
       waited,
       resumeId: chosen ? resumeId : null,
       copy: { profile: held.profile, email: held.email, answers: held.answers, taught: held.taught || [], history },
-      resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime } : null,
+      // A staged tailored résumé has no text here: its box is left.
+      resume: r ? { b64: r.b64, filename: r.filename, mime: r.mime, text: r.text || "" } : null,
       // The job's cover letter (spec 031), or none: its box is left.
       coverLetter: letter ? { b64: letter.b64, filename: letter.filename, mime: letter.mime, text: letter.text } : null,
       // The chosen résumé couldn't be loaded: this fill used the usual one.

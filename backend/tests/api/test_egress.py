@@ -208,6 +208,7 @@ class TestSummaryChangeCheck:
             "resume_id",  # the résumé chosen for the job (spec 020)
             "resume_usual",  # "your usual résumé" chosen on purpose
             "cover_letter_id",  # the cover letter chosen for the job (spec 031)
+            "company_url",  # the company's own application (spec 040)
         }
         assert job["id"] == str(sj.id) and job["url"] == "https://jobs.example/1"
         assert len(r.content) < 600  # a few hundred bytes per job, no description

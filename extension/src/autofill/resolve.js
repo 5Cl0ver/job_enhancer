@@ -128,6 +128,17 @@ export function isCoverLetterText(field) {
   return COVER_LABEL.test(label) && !NOT_WANTED.test(label) && !RESUME.test(label);
 }
 
+// "Resume", "Paste your resume", "Résumé text", "CV (paste here)".
+const RESUME_LABEL = /^(your\s+|paste\s+(your\s+)?)?(r[ée]sum[ée]|cv)(\s+(text|here|below))?\s*(\((paste|copy)[^)]*\))?\s*[:*]?\s*$/i;
+
+/** Is this a text box for pasting the résumé (spec 040)? Only one that says so plainly. */
+export function isResumeText(field) {
+  if (!LETTER_BOX.has(field.kind)) return false;
+  const label = String(field.question || "").trim();
+  if (!label || label.length > 60) return false;
+  return RESUME_LABEL.test(label) && !COVER.test(label) && !NOT_WANTED.test(label);
+}
+
 /** Legal identity: learned only from an explicit point-and-save, never from typing. */
 export const IDENTITY_KEYS = new Set(["first_name", "last_name", "full_name", "email", "email_confirm"]);
 
@@ -273,6 +284,12 @@ export function resolve(field, copy) {
     const max = field.hints?.maxLength || 0;
     if (max > 0 && copy.coverLetterText.length > max) return { skip: "too_long", key: "cover_letter" };
     return { values: [copy.coverLetterText], source: "profile", key: "cover_letter" };
+  }
+  // "Paste your résumé": the résumé this application uses, as text (spec 040).
+  if ((guard === "essay" || !guard) && copy.resumeText && isResumeText(field)) {
+    const max = field.hints?.maxLength || 0;
+    if (max > 0 && copy.resumeText.length > max) return { skip: "too_long", key: "resume_text" };
+    return { values: [copy.resumeText], source: "profile", key: "resume_text" };
   }
   if (guard) return { skip: guard };
   if (field.kind === "file") {

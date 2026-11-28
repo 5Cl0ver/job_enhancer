@@ -101,7 +101,11 @@ class RequestResult(BaseModel):
 
 class ExtensionEvent(BaseModel):
     kind: Literal[
-        "blocked_submit", "submit_pressed", "submit_failed", "confirmation_seen"
+        "blocked_submit",
+        "submit_pressed",
+        "submit_failed",
+        "confirmation_seen",
+        "new_tab",
     ]
     url: str | None = Field(default=None, max_length=2000)
     # The confirmation's own words ("Thank you for applying"), spec 023; for

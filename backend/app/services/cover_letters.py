@@ -30,6 +30,7 @@ from app.services.resume_pdf import render_letter_pdf
 
 KIND = "cover_letter"
 MODEL = "claude-connector"
+USER_MODEL = "user"  # the user's own letter (spec 040)
 MIN_CHARS = 150
 MAX_CHARS = 4_000  # what Claude saves: about 250 words, with room
 MAX_WORDS = 330
@@ -198,6 +199,33 @@ async def save_for_job(
         run.cover_letter_id = doc.id
     await db.flush()
     return doc, attach
+
+
+async def write_for_job(
+    db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, content: str
+) -> GeneratedDocument:
+    """The user's own letter for one job (spec 040), typed or pasted in the
+    app: it becomes the job's letter, so Job Catcher attaches its PDF. Their
+    words as they are (``check_edit``), never Claude's rules."""
+    text = check_edit(content.replace("\r\n", "\n"))
+    sj = await db.scalar(
+        select(SavedJob).where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
+    )
+    if sj is None:
+        raise LookupError("Saved job not found")
+    doc = GeneratedDocument(
+        user_id=user_id,
+        job_listing_id=sj.job_listing_id,
+        document_type=KIND,
+        content=text,
+        model_used=USER_MODEL,
+    )
+    db.add(doc)
+    await db.flush()
+    sj.cover_letter_id = doc.id
+    sj.updated_at = datetime.now(UTC)
+    await db.flush()
+    return doc
 
 
 async def set_for_job(

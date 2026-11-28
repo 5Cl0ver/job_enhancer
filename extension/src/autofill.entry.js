@@ -285,6 +285,8 @@ async function loadCopy() {
     history: copy.history || null,
     languages: copy.profile?.languages || [],
     resumeFile,
+    // Its text, for a "paste your résumé" box (spec 040).
+    resumeText: res.resume?.text || "",
     resumeId: res.resumeId || null,
     coverLetterFile,
     coverLetterText: res.coverLetter?.text || "",

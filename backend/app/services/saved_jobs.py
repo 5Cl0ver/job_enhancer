@@ -135,6 +135,7 @@ async def list_saved_job_summaries(db: AsyncSession, user_id: uuid.UUID) -> list
             ResumeTrack.resume_id.label("track_resume_id"),
             SavedJob.resume_usual,
             SavedJob.cover_letter_id,
+            SavedJob.custom_apply_url,
         )
         .join(JobListing, SavedJob.job_listing_id == JobListing.id)
         .outerjoin(ResumeTrack, SavedJob.track_id == ResumeTrack.id)
@@ -149,6 +150,84 @@ def effective_resume_id(row) -> uuid.UUID | None:
     if row.own_resume_id:
         return row.own_resume_id
     return None if row.resume_usual else row.track_resume_id
+
+
+# Job boards whose "Apply on company website" leads elsewhere (spec 040).
+JOB_BOARDS = (
+    "linkedin.com",
+    "indeed.com",
+    "ziprecruiter.com",
+    "glassdoor.com",
+    "simplyhired.com",
+    "monster.com",
+)
+
+
+def _site(url: str | None) -> str:
+    try:
+        return (urlsplit(url or "").hostname or "").lower().removeprefix("www.")
+    except ValueError:
+        return ""
+
+
+# An application or careers page: never a link from the posting's text (the
+# company's home page, a blog post) taken for the Apply.
+_APPLICATION = re.compile(
+    r"job|career|apply|applicat|recruit|talent|hiring|position|opening|requisition"
+    r"|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters"
+    r"|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com",
+    re.IGNORECASE,
+)
+
+
+def looks_like_application(url: str | None) -> bool:
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return False
+    return bool(_APPLICATION.search(f"{parts.hostname or ''}{parts.path}"))
+
+
+def on_job_board(url: str | None) -> bool:
+    host = _site(url)
+    return any(host == b or host.endswith(f".{b}") for b in JOB_BOARDS)
+
+
+async def learn_company_link(
+    db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, url: str
+) -> bool:
+    """The company's own application, reached from the job board's listing
+    (spec 040: LinkedIn's "Apply on company website" has no address to read,
+    so Job Catcher sees the tab it opens). It becomes the job's apply link,
+    the board's listing staying the listing's own link as the backup. Only
+    once: a link the user (or an earlier visit) set is never changed, and only
+    a board listing's job learns one. True when it was saved."""
+    sj = await db.scalar(
+        select(SavedJob)
+        .options(selectinload(SavedJob.job_listing))
+        .where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
+    )
+    if sj is None or sj.custom_apply_url or sj.job_listing is None:
+        return False
+    listing_url = sj.job_listing.apply_url
+    try:
+        scheme = urlsplit(url or "").scheme
+    except ValueError:
+        return False
+    host = _site(url)
+    if (
+        scheme not in ("http", "https")
+        or not host
+        or not on_job_board(listing_url)
+        or on_job_board(url)
+        or host == _site(listing_url)
+        or not looks_like_application(url)
+    ):
+        return False
+    sj.custom_apply_url = url[:2000]
+    sj.updated_at = datetime.now(UTC)
+    await db.flush()
+    return True
 
 
 async def set_job_resume(

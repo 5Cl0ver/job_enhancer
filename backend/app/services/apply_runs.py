@@ -1269,6 +1269,14 @@ async def with_inbox(
                 "to do, do that; reply briefly with message_user.",
             ),
         }
+    tab = _new_tab_line(run)
+    if tab:
+        line, url = tab
+        out = {
+            **out,
+            "new_tab_url": url,
+            "next": f"{line} {out['next']}" if out.get("next") else line,
+        }
     blocked = _blocked_line(run)
     if blocked:
         out = {
@@ -1278,6 +1286,26 @@ async def with_inbox(
         }
     await db.flush()
     return out
+
+
+def _new_tab_line(run: ApplyRun) -> tuple[str, str] | None:
+    """The application opened in a new tab since Claude's last call (spec
+    040), told once: where it is. The address is data (``new_tab_url``)."""
+    new = [
+        e for e in run.events or [] if e.get("kind") == "new_tab" and not e.get("told")
+    ]
+    if not new:
+        return None
+    run.events = [
+        {**e, "told": True} if e.get("kind") == "new_tab" else e
+        for e in run.events or []
+    ]
+    return (
+        "The application opened in a new tab (new_tab_url); Job Catcher put "
+        "it in your tab group. Switch to that tab and carry on there; never "
+        "ask the user for the address.",
+        new[-1].get("url") or "",
+    )
 
 
 def _blocked_line(run: ApplyRun) -> str | None:
@@ -4053,6 +4081,17 @@ async def extension_event(
                 pass
         else:
             _event(run, "confirmation_seen", f"Job Catcher saw “{seen}”.")
+    elif kind == "new_tab":
+        # The application opened in a new tab from the run's tab (spec 040:
+        # LinkedIn's "Apply on company website"). Job Catcher put it in the
+        # tab group; Claude hears its address on the next call, and the job
+        # keeps the company's own link for next time.
+        if not host or not (url or "").startswith(("http://", "https://")):
+            return run
+        _add_host(run, url)
+        _event(run, "new_tab", f"The application opened in a new tab on {host}.")
+        run.events = [*run.events[:-1], {**run.events[-1], "url": url[:2000]}]
+        await sj_svc.learn_company_link(db, user_id, run.saved_job_id, url)
     else:
         raise ValueError("Unknown event")
     await db.flush()
