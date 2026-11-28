@@ -26,6 +26,7 @@ export function fileNameOf(res, fallback = "resume.pdf") {
   }
 }
 const REFRESH_MS = 60_000;
+const TEXT_RETRY_MS = 10 * 60_000; // a résumé's text that couldn't be read: asked again after this
 
 /**
  * @param {{api: string, token: () => Promise<string|null>, wakeFetch: Function, toB64: (buf: ArrayBuffer) => string, onFresh?: (copy: object) => Promise<void>}} deps
@@ -41,12 +42,19 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
   async function fetchResume(headers, meta, gen) {
     const { [RESUME]: cached } = await chrome.storage.local.get(RESUME);
     const stamp = `${meta.id}|${meta.updated_at}`;
-    // Kept from before spec 040 (no text yet): fetched once more.
-    if (cached?.stamp === stamp && cached.text !== undefined) return;
+    if (cached?.stamp === stamp) {
+      // The file is held; its text (spec 040) is asked for again only after
+      // a while when it couldn't be read: never the file again.
+      if (typeof cached.text === "string" || Date.now() - (cached.textAt || 0) < TEXT_RETRY_MS || !meta.id) return;
+      const text = await resumeText(headers, meta.id);
+      if (gen !== generation) return;
+      await chrome.storage.local.set({ [RESUME]: { ...cached, text: text ?? null, textAt: Date.now() } });
+      return;
+    }
     const res = await wakeFetch(`${api}/v1/ai/resumes/active/file`, { headers });
     if (!res.ok || gen !== generation) return;
     const b64 = toB64(await res.arrayBuffer());
-    // Its text too, for a "paste your résumé" box (spec 040).
+    // Its text too, for a "paste your résumé" box (spec 040); null = not read.
     const text = meta.id ? await resumeText(headers, meta.id) : undefined;
     if (gen !== generation) return;
     await chrome.storage.local.set({
@@ -55,7 +63,8 @@ export function createAutofillCopy({ api, token, wakeFetch, toB64, onFresh }) {
         b64,
         filename: fileNameOf(res, meta.filename || "resume.pdf"),
         mime: res.headers.get("Content-Type") || meta.mime || "application/pdf",
-        text,
+        text: text ?? null,
+        textAt: Date.now(),
       },
     });
   }

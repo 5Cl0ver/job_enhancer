@@ -4,7 +4,7 @@
 // job", undoable), and the job the user saved from this page (always linked).
 import * as React from "react";
 import { pageId as pageIdOf, postingKey } from "../../../src/autofill/hosts.js";
-import { TAB_JOB, carriedJobId } from "../../../src/tabJob.js";
+import { TAB_JOB, boundJobId } from "../../../src/tabJob.js";
 import { bestJobMatch, type SavedJob } from "@/lib/context";
 import { usePanel } from "@/lib/store";
 
@@ -14,7 +14,7 @@ const KEEP = 200; // pages remembered; the oldest go first
 
 type NotThis = Record<string, string[]>;
 type Pinned = Record<string, string>;
-type Carried = Record<string, { jobId: string; at: number }>;
+type Carried = Record<string, { jobId: string; at: number; site: string; ids: { strong: string[]; weak: string[] } }>;
 
 /** One page however it's reached: its posting, else its address without the #part. */
 export const pageId = (url: string): string => pageIdOf(url);
@@ -45,7 +45,7 @@ export function usePageJob(): PageJob {
   const { tab, saved } = usePanel();
   const [notThis, setNotThis] = React.useState<NotThis>({});
   const [pinned, setPinned] = React.useState<Pinned>({});
-  // The job each tab was applying for, kept by the background (spec 040).
+  // The job the user said Yes to for each tab ("Applying for…?", spec 040).
   const [carried, setCarried] = React.useState<Carried>({});
   React.useEffect(() => {
     let live = true;
@@ -70,7 +70,7 @@ export function usePageJob(): PageJob {
 
   const here = pageId(tab.url);
   const unlinked = notThis[here] || [];
-  const carriedId = tab.id != null ? carriedJobId(carried[String(tab.id)], tab.url) : null;
+  const carriedId = tab.id != null ? boundJobId(carried[String(tab.id)], tab.url) : null;
   const match = bestJobMatch(tab, saved.jobs, unlinked, pinned[here], carriedId);
   const hidden = saved.jobs.filter((j) => unlinked.includes(j.id) && j.id !== match?.id);
 

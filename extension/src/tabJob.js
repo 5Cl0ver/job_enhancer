@@ -1,32 +1,24 @@
-// The saved job a tab is applying for when its page doesn't say (spec 040).
+// Which saved job a tab is applying for when its page doesn't say (spec 040).
 // PURE: unit-tested in test/files-and-tabs-040.spec.js.
 //
 // An application often leaves the job's own page: the job board's Apply
-// opens the company's site (Dayforce, iCIMS…) in the same tab or a new
-// one, and those pages rarely name the job. The tab keeps the job it was on
-// (and a tab it opens inherits it), so the job's own résumé and cover letter
-// are the ones used there.
-//
-// When in doubt, no carry: the usual résumé and no letter is safe; another
-// job's letter on a company's application is not. So:
-// - a carry onto another site starts ONLY right after the user pressed an
-//   Apply that leaves (`armed`, src/autofill/applyClick.js): never a typed
-//   address, a bookmark, Back, an ad or a link in a posting's text;
-// - it is tied to the application's site (`siteOf`: an applicant system's
-//   tenant or company) and its posting (`postingIds`);
-// - it ends on any job board, search engine or app page (a new tab only
-//   passes its own board's redirect on its way out), on another posting
-//   (both pages name one, and they differ), on another site (a sign-in on the
-//   way excepted, and the company's posting handing over to its applicant
-//   system straight after an Apply press), and after 45 minutes with no page
-//   on its site.
+// opens the company's site (Dayforce, iCIMS…), and those pages rarely name
+// the job. Job Catcher never guesses which job that is. Right after the user
+// pressed an Apply on a saved job's own page (`press`, src/autofill/
+// applyClick.js), the side panel asks "Applying for <job>?" on the next
+// page that is no saved job by itself; only a Yes binds the tab to that job
+// (its résumé, its cover letter, its Submit, its company link). The binding
+// lasts while the tab stays on that application: its site (`siteOf`, tenant
+// and all) and its posting (`postingIds`, strong ids first), 45 minutes
+// idle. Anything else drops it; the question comes back only after a new
+// press. When in doubt: the usual résumé and no letter.
 
 import { applicantHost, siteKey } from "./autofill/hosts.js";
 
-export const TAB_JOB = "je_tab_job";
-export const CARRY_MS = 45 * 60_000; // idle: every page on the site restarts it
-export const ARM_MS = 20_000; // an Apply press counts for this long
-const HANDOVER_MS = 2 * 60_000; // from the held posting to its applicant system
+export const TAB_PRESS = "je_tab_press"; // tab → the press it holds
+export const TAB_JOB = "je_tab_job"; // tab → the job the user said Yes to
+export const BIND_MS = 45 * 60_000; // a press, and a binding, last this long idle
+export const OPEN_MS = 20_000; // a tab opened this soon after a press inherits it
 const KEEP = 50; // tabs remembered
 
 const TLD = "(?:com|net|org|ai|io|jobs|[a-z]{2}|co\\.[a-z]{2}|com\\.[a-z]{2})";
@@ -39,16 +31,23 @@ const HUB = /(^|\.)(bing\.com|duckduckgo\.com|claude\.ai)$/i;
 const APP = /(^|\.)job-enhancer[\w-]*\.vercel\.app$/i;
 // A board's own way out to the company's site.
 const BOARD_REDIRECT = /^\/(redir\b|safety\/go\b|applystart\b|rc\/clk\b|pagead\/clk\b|jobs\/view\/externalApply\b|partner\/jobListing\b|clk\b)/i;
-// Sign-ins on the way to an application: passed through, never "another site".
+// Sign-ins on the way: passed through, never "another site".
 const SIGN_IN = /(^|\.)(okta\.com|oktapreview\.com|auth0\.com|microsoftonline\.com|login\.microsoft\.com|login\.live\.com|onelogin\.com|pingone\.com|b2clogin\.com|accounts\.google\.com)$/i;
 // Never the application in a tab of its own: sign-ins, file pickers.
 const NOT_APPLICATION = /(^|\.)(accounts\.google\.com|drive\.google\.com|docs\.google\.com|dropbox\.com|onedrive\.live\.com|box\.com|login\.live\.com|microsoftonline\.com|okta\.com|auth0\.com)$/i;
 // An application or careers page (the server's looks_like_application).
 const APPLICATION = /job|career|apply|applicat|recruit|talent|hiring|position|opening|requisition|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com/i;
-// The query parts that name a posting (never a timestamp or a tracking id).
-const POSTING_PARAMS = new Set(["jk", "vjk", "gh_jid", "ashby_jid", "job", "jobid", "job_id", "jid", "id", "req", "reqid", "requisitionid", "postingid", "jobreqid", "opportunityid", "jobpostingid", "positionid", "currentjobid"]);
+
+// Ids that surely name ONE posting (the server's STRONG_PARAMS).
+const STRONG_PARAMS = new Set(["jk", "vjk", "gh_jid", "ashby_jid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "opportunityid", "jobpostingid", "positionid", "currentjobid"]);
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
-const REQ = /(?<![a-z])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])/gi;
+const ONE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+// Requisition ids: R-1234, JR-1234, REQ-1234, R1234 (Workday's job ids).
+const REQ = /(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])/gi;
+const STATES = "al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy";
+// A zip next to its state ("Portland-OR-97201") and a year are no posting.
+const ZIP = new RegExp(`(?<![a-z])(?:${STATES})[-_ ,]+\\d{5}(?:-\\d{4})?(?!\\d)`, "gi");
+const YEAR = /(?<!\d)(19|20)\d{2}(?!\d)/g;
 
 function parse(url) {
   try {
@@ -74,8 +73,34 @@ function domainOf(url) {
   return parts.length > 2 && /^(co|com|org|net|gov|ac|edu)\.[a-z]{2}$/.test(two) ? parts.slice(-3).join(".") : two;
 }
 
-/** The site an application belongs to: an applicant system's tenant or company (siteKey), else the domain. */
+/**
+ * The site an application belongs to: on a host many companies share, the
+ * company's own part of it (Workday's /recruiting/<tenant>, UKG's /<tenant>,
+ * Dayforce's /<locale>/<tenant>, SuccessFactors' ?company=, ADP's
+ * /<tenant>, Paylocity's board id); on an applicant system, its siteKey;
+ * else the domain. "" when the company can't be told on a shared host.
+ */
 export function siteOf(url) {
+  const u = parse(url);
+  if (!u) return "";
+  const host = hostOf(url);
+  const parts = u.pathname.split("/").filter(Boolean);
+  const low = parts.map((p) => p.toLowerCase());
+  // The company's part of a shared host; "?" when the address doesn't say.
+  const tenant = (base, key) => `${base}/${key ? key.toLowerCase() : "?"}`;
+  const after = (word) => {
+    const at = low.indexOf(word);
+    return at >= 0 ? parts[at + 1] || "" : "";
+  };
+  if (/(^|\.)myworkdaysite\.com$/.test(host)) return tenant("myworkdaysite.com", after("recruiting"));
+  if (/(^|\.)ultipro\.(com|ca)$|\.rec\.pro\.ukg\.net$/.test(host)) return tenant(host, parts[0]);
+  if (/(^|\.)dayforcehcm\.com$/.test(host)) {
+    const at = low.findIndex((p) => /^[a-z]{2}-[a-z]{2}$/.test(p));
+    return tenant("dayforcehcm.com", at >= 0 ? parts[at + 1] : "");
+  }
+  if (/successfactors\.(com|eu)$|(^|\.)sapsf\.(com|eu)$/.test(host)) return tenant(host, u.searchParams.get("company"));
+  if (/^(myjobs|recruiting|tcs)\.adp\.com$/.test(host)) return tenant(host, parts[0]);
+  if (/(^|\.)paylocity\.com$/.test(host)) return tenant(host, parts.find((p) => ONE_UUID.test(p)));
   return applicantHost(url) ? siteKey(url) : domainOf(url);
 }
 
@@ -92,53 +117,85 @@ export function onJobBoard(url) {
 }
 
 /**
- * The ids in an address that name a posting: UUIDs, requisition ids (R-1234,
- * JR-1234), runs of 3+ digits in the path or the #route, and the posting's
- * own query parts (`job=12345`, `opportunityId=…`, Indeed's `jk`). A query
- * part is kept as "name=value" too, so another value of it is another posting.
+ * The ids in an address that name a posting. `strong`: UUIDs, requisition
+ * ids (R-1234, JR-1234) and the posting's own query parts (`job=…`,
+ * `opportunityid=…`, `career_job_req_id=…`, Indeed's `jk`/`vjk`, kept as
+ * "name=value"). `weak`: runs of 3+ digits in the path or #route, years and
+ * a zip next to its state left out.
  */
 export function postingIds(url) {
   const u = parse(url);
-  if (!u) return [];
-  const ids = new Set();
-  const take = (text, named) => {
+  const strong = new Set();
+  const weak = new Set();
+  if (!u) return { strong: [], weak: [] };
+  const take = (text) => {
     let rest = text.toLowerCase();
     for (const re of [UUID, REQ]) {
       rest = rest.replace(re, (m) => {
-        ids.add(m.replace(/[-_]/g, ""));
+        strong.add(m.replace(/[-_]/g, ""));
         return " ";
       });
     }
-    for (const m of rest.match(/\d{3,}/g) || []) ids.add(m);
-    if (named) ids.add(`${named}=${text.toLowerCase()}`);
+    rest = rest.replace(ZIP, " ").replace(YEAR, " ");
+    for (const m of rest.match(/\d{3,}/g) || []) weak.add(m.replace(/^0+(?=\d)/, ""));
   };
-  take(decodeURIComponent(u.pathname));
+  let path = u.pathname;
+  try {
+    path = decodeURIComponent(path);
+  } catch {
+    /* a bad %: as it is */
+  }
+  take(path);
   take(u.hash);
   for (const [k, v] of u.searchParams) {
     const name = k.toLowerCase();
-    if (!v || !POSTING_PARAMS.has(name)) continue;
-    // Indeed's jk is its posting id, letters and all.
-    if (name === "jk" || name === "vjk") ids.add(v.toLowerCase());
-    take(v, name);
+    if (v && STRONG_PARAMS.has(name)) strong.add(`${name === "vjk" ? "jk" : name}=${v.toLowerCase()}`);
   }
-  return [...ids];
+  return { strong: [...strong], weak: [...weak] };
 }
 
-/** An address that surely names one posting. */
-export const definitePosting = (url) => postingIds(url).length > 0;
+const named = (list) => new Map(list.filter((id) => id.includes("=")).map((id) => id.split(/=(.*)/s).slice(0, 2)));
+const overlap = (a, b) => {
+  const set = new Set(a);
+  return b.some((x) => set.has(x));
+};
 
 /**
- * Are these two pages' ids the same posting? Only when both name one and
- * none is shared, or a posting query part changed (`opportunityId`), is it
- * another posting.
+ * Do these two pages name another posting? Strong ids when both have
+ * them (none shared, or a posting query part changed: another posting);
+ * one side with strong ids and the other with only plain digits: another;
+ * plain digits only when neither has a strong id. A page naming no posting
+ * at all (a sign-in, a step) is never another posting.
  */
-export function samePosting(held, ids) {
-  if (!held?.length || !ids?.length) return true;
-  const mine = new Set(held);
-  if (!ids.some((id) => mine.has(id))) return false;
-  const named = (list) => new Map(list.filter((id) => id.includes("=")).map((id) => id.split(/=(.*)/s).slice(0, 2)));
-  const before = named(held);
-  for (const [k, v] of named(ids)) if (before.has(k) && before.get(k) !== v) return false;
+export function otherPosting(a, b) {
+  const sa = a?.strong || [];
+  const sb = b?.strong || [];
+  if (sa.length && sb.length) {
+    if (!overlap(sa, sb)) return true;
+    const before = named(sa);
+    for (const [k, v] of named(sb)) if (before.has(k) && before.get(k) !== v) return true;
+    return false;
+  }
+  const wa = a?.weak || [];
+  const wb = b?.weak || [];
+  if (sa.length || sb.length) return (sa.length ? wb : wa).length > 0;
+  return wa.length > 0 && wb.length > 0 && !overlap(wa, wb);
+}
+
+/**
+ * The company's own application (`companyUrl`) and this page are surely the
+ * same posting: the same site, strong ids on both, none differing.
+ */
+export function sameApplication(companyUrl, pageUrl) {
+  if (!companyUrl || !siteOf(companyUrl) || siteOf(companyUrl) !== siteOf(pageUrl)) return false;
+  const a = postingIds(companyUrl);
+  const b = postingIds(pageUrl);
+  if (!a.strong.length || !b.strong.length) return false;
+  if (otherPosting(a, b)) return false;
+  // Every posting query part on either side, on the other too.
+  const na = named(a.strong);
+  const nb = named(b.strong);
+  for (const k of new Set([...na.keys(), ...nb.keys()])) if (na.get(k) !== nb.get(k)) return false;
   return true;
 }
 
@@ -166,60 +223,48 @@ export function boardRedirect(fromSite, url) {
   return !!u && onJobBoard(url) && domainOf(url) === fromSite && BOARD_REDIRECT.test(u.pathname);
 }
 
-const expired = (entry, now) => !entry?.jobId || now - (entry.at || 0) > CARRY_MS;
+/** The board a page is on, for `boardRedirect`. */
+export const boardOf = (url) => domainOf(url);
 
-/** The entry for a saved job's own page. */
-function ownEntry(jobId, url, now) {
-  if (onHub(url)) return { jobId, at: now };
-  const ids = postingIds(url);
-  return { jobId, at: now, site: siteOf(url), ats: !!applicantHost(url), ...(ids.length ? { posting: ids, postingAt: now, onPosting: true } : {}) };
+/**
+ * The job to ask about on this page, else null: a press on that job's own
+ * page in this tab (or the one that opened it) within 45 minutes, and this
+ * page is no saved job by itself, no board, search or app page.
+ */
+export function askAbout(press, url, ownJobId, now = Date.now()) {
+  if (!press?.jobId || now - (press.at || 0) > BIND_MS) return null;
+  if (ownJobId || !isWebPage(url) || onHub(url) || NOT_APPLICATION.test(hostOf(url))) return null;
+  // Only on what looks like an application, never a news site or a shop.
+  return applicantHost(url) || looksLikeApplication(url) ? press.jobId : null;
+}
+
+/** The binding the user's Yes makes on this page. */
+export function bindHere(jobId, url, now = Date.now()) {
+  return { jobId, site: siteOf(url), ids: postingIds(url), at: now };
 }
 
 /**
- * The tab's entry after a page loads in it: the page's own job (from now
- * on), else what it carried, else null (see the top for when it ends).
- * `armed`: the user pressed an Apply that leaves in this tab just now.
+ * The binding after a page loads in the tab: kept (its time restarted)
+ * while the tab stays on that site and posting, else null. A sign-in on the
+ * way keeps it as it is; about:blank changes nothing.
  */
-export function nextEntry(entry, url, ownJobId, now = Date.now(), { armed = false } = {}) {
-  if (!isWebPage(url)) return entry || null;
-  if (ownJobId) return ownEntry(ownJobId, url, now);
-  if (expired(entry, now)) return null;
-  if (onHub(url)) {
-    // Only a new tab on its way out, through its own board's redirect.
-    return entry.opened && boardRedirect(entry.from, url) ? entry : null;
-  }
-  if (SIGN_IN.test(hostOf(url))) return entry; // a sign-in on the way
-  const site = siteOf(url);
-  const ats = !!applicantHost(url);
+export function keepBinding(bound, url, now = Date.now()) {
+  if (!bound?.jobId || now - (bound.at || 0) > BIND_MS) return null;
+  if (!isWebPage(url)) return bound;
+  if (SIGN_IN.test(hostOf(url))) return bound;
+  if (!bound.site || siteOf(url) !== bound.site) return null;
   const ids = postingIds(url);
-  const { opened, from, ...kept } = entry;
-  if (!kept.site) {
-    // Off the job's own page onto the application: only right after an
-    // Apply press (a new tab exists only after its opener's), and only onto
-    // an application.
-    if (!(armed || opened) || !(ats || looksLikeApplication(url))) return null;
-    return { jobId: kept.jobId, at: now, site, ats, ...(ids.length ? { posting: ids, postingAt: now, onPosting: true } : {}) };
-  }
-  if (site !== kept.site) {
-    // The company's posting hands over to its applicant system: straight
-    // from that posting's page (within 2 minutes), after an Apply press on it.
-    const fresh = kept.posting && kept.onPosting && now - (kept.postingAt || 0) <= HANDOVER_MS;
-    if (!ats || kept.ats || !(armed || opened) || !fresh) return null;
-    return { jobId: kept.jobId, at: now, site, ats: true, ...(ids.length ? { posting: ids, postingAt: now, onPosting: true } : {}) };
-  }
-  if (!samePosting(kept.posting, ids)) return null; // another posting
-  const posting = kept.posting || (ids.length ? ids : null);
-  const onPosting = ids.length > 0;
-  return { ...kept, at: now, ...(posting ? { posting } : {}), ...(onPosting ? { postingAt: now } : {}), onPosting };
+  // Said Yes on a page naming no posting: a page that names one may be
+  // another job's, so it never takes it on.
+  const none = !bound.ids?.strong?.length && !bound.ids?.weak?.length;
+  if (none ? ids.strong.length || ids.weak.length : otherPosting(bound.ids, ids)) return null;
+  return { ...bound, at: now };
 }
 
-/** The job carried to this page, else null. */
-export function carriedJobId(entry, url, now = Date.now()) {
-  if (!isWebPage(url) || onHub(url) || expired(entry, now)) return null;
-  // Read-only: the page as it is now is still the carried job's.
-  if (!entry.site) return null;
-  if (siteOf(url) !== entry.site && !SIGN_IN.test(hostOf(url))) return null;
-  return samePosting(entry.posting, postingIds(url)) ? entry.jobId : null;
+/** The job bound to this page, else null (read-only). */
+export function boundJobId(bound, url, now = Date.now()) {
+  if (!isWebPage(url) || SIGN_IN.test(hostOf(url))) return null;
+  return keepBinding(bound, url, now)?.jobId || null;
 }
 
 /** The tabs map with one tab's entry set (or removed), newest last, capped. */

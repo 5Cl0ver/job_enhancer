@@ -182,24 +182,31 @@ _APPLICATION = re.compile(
 )
 
 
-# The ids that name a posting (spec 040, Job Catcher's postingIds): UUIDs,
-# requisition ids (R-1234, JR-1234), runs of 3+ digits in the path or the
-# #route, and the posting's own query parts — never a timestamp or a
-# tracking id.
+# The ids that name a posting (spec 040, Job Catcher's postingIds). Strong:
+# UUIDs, requisition ids (R-1234, JR-1234, Workday's job ids) and the
+# posting's own query parts ("job=…", "career_job_req_id=…", Indeed's jk).
+# Weak: runs of 3+ digits in the path or #route, years and a zip next to its
+# state left out.
 _UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
 )
-_REQ = re.compile(r"(?<![a-z])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])", re.I)
-_POSTING_PARAMS = {
+_REQ = re.compile(r"(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])", re.I)
+_STATES = (
+    "al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo"
+    "|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy"
+)
+_ZIP = re.compile(rf"(?<![a-z])(?:{_STATES})[-_ ,]+\d{{5}}(?:-\d{{4}})?(?!\d)", re.I)
+_YEAR = re.compile(r"(?<!\d)(19|20)\d{2}(?!\d)")
+_STRONG_PARAMS = {
     "jk",
     "vjk",
     "gh_jid",
     "ashby_jid",
+    "career_job_req_id",
     "job",
     "jobid",
     "job_id",
     "jid",
-    "id",
     "req",
     "reqid",
     "requisitionid",
@@ -212,33 +219,92 @@ _POSTING_PARAMS = {
 }
 
 
-def posting_ids(url: str | None) -> set[str]:
+def posting_ids(url: str | None) -> tuple[set[str], set[str]]:
+    """(strong, weak) ids naming a posting in an address."""
     try:
         parts = urlsplit(url or "")
     except ValueError:
-        return set()
-    ids: set[str] = set()
+        return set(), set()
+    strong: set[str] = set()
+    weak: set[str] = set()
 
     def take(text: str) -> None:
         rest = text.lower()
         for pattern in (_UUID, _REQ):
-            for m in pattern.findall(rest):
-                ids.add(re.sub(r"[-_]", "", m))
+            strong.update(
+                re.sub(r"[-_]", "", m.group(0)) for m in pattern.finditer(rest)
+            )
             rest = pattern.sub(" ", rest)
-        ids.update(re.findall(r"\d{3,}", rest))
+        rest = _YEAR.sub(" ", _ZIP.sub(" ", rest))
+        weak.update(m.lstrip("0") or "0" for m in re.findall(r"\d{3,}", rest))
 
     take(unquote(parts.path))
     take(parts.fragment)
     for name, value in parse_qsl(parts.query):
-        if value and name.lower() in _POSTING_PARAMS:
-            if name.lower() in ("jk", "vjk"):
-                ids.add(value.lower())
-            take(value)
-    return ids
+        key = name.lower()
+        if value and key in _STRONG_PARAMS:
+            strong.add(f"{'jk' if key == 'vjk' else key}={value.lower()}")
+    return strong, weak
+
+
+def _named(ids: set[str]) -> dict[str, str]:
+    return dict(i.split("=", 1) for i in ids if "=" in i)
+
+
+def same_posting(a: str | None, b: str | None) -> bool:
+    """Surely one posting: strong ids on both, shared, and every posting query
+    part on either side the same on the other (a step of it, never another
+    posting with a shared year, zip or board id)."""
+    sa, _ = posting_ids(a)
+    sb, _ = posting_ids(b)
+    if not sa or not sb or not sa & sb:
+        return False
+    na, nb = _named(sa), _named(sb)
+    return all(na.get(k) == nb.get(k) for k in set(na) | set(nb))
 
 
 def names_one_posting(url: str | None) -> bool:
-    return bool(posting_ids(url))
+    """A strong id names one posting (plain digits never do)."""
+    return bool(posting_ids(url)[0])
+
+
+_SHARED_PATH_TENANT = re.compile(
+    r"(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net)$|^(myjobs|recruiting|tcs)\.adp\.com$"
+)
+
+
+def site_key(url: str | None) -> str:
+    """The company's part of a shared applicant host (Job Catcher's siteOf):
+    Workday's /recruiting/<tenant>, UKG's and ADP's /<tenant>, Dayforce's
+    /<locale>/<tenant>, SuccessFactors' ?company=; else the host."""
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return ""
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = [p for p in parts.path.split("/") if p]
+    low = [p.lower() for p in path]
+
+    def tenant(base: str, key: str | None) -> str:
+        return f"{base}/{(key or '?').lower()}"
+
+    if host.endswith("myworkdaysite.com"):
+        at = low.index("recruiting") if "recruiting" in low else -1
+        return tenant(
+            "myworkdaysite.com", path[at + 1] if 0 <= at < len(path) - 1 else None
+        )
+    if _SHARED_PATH_TENANT.search(host):
+        return tenant(host, path[0] if path else None)
+    if host.endswith("dayforcehcm.com"):
+        at = next(
+            (i for i, p in enumerate(low) if re.fullmatch(r"[a-z]{2}-[a-z]{2}", p)), -1
+        )
+        return tenant(
+            "dayforcehcm.com", path[at + 1] if 0 <= at < len(path) - 1 else None
+        )
+    if re.search(r"successfactors\.(com|eu)$|(^|\.)sapsf\.(com|eu)$", host):
+        return tenant(host, dict(parse_qsl(parts.query)).get("company"))
+    return host
 
 
 # Never the application: sign-ins and file pickers (a résumé from Drive).
@@ -267,13 +333,13 @@ def on_job_board(url: str | None) -> bool:
 async def learn_company_link(
     db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, url: str
 ) -> bool:
-    """The company's own application, reached from the job board's listing
-    right after the user pressed its Apply (spec 040: LinkedIn's "Apply on
-    company website" has no address to read, so Job Catcher sees the tab it
-    opens). It becomes the job's apply link, the board's listing staying the
-    listing's own link as the backup, marked as learned: a later Apply may
-    replace it, while a link the user set is never changed. Only a board
-    listing's job learns one. True when it was saved."""
+    """The company's own application for a job on a board (spec 040): a page
+    the user said Yes to in Job Catcher ("Applying for <job>?") after the
+    board's Apply, or one Claude reached from the run's new tab. It must name
+    its posting by a strong id. It becomes the job's apply link, the board's
+    listing staying the listing's own link as the backup, marked as learned:
+    a later one may replace it, while a link the user set is never changed.
+    True when it was saved."""
     sj = await db.scalar(
         select(SavedJob)
         .options(selectinload(SavedJob.job_listing))

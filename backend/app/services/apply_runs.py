@@ -1291,21 +1291,18 @@ async def with_inbox(
 
 
 async def _reached(db: AsyncSession, run: ApplyRun, page_url: str) -> None:
-    """Claude is on the page a new tab opened (spec 040): the same page, or
-    the same posting (its ids) on the same host. That was the company's
+    """Claude is on the page a new tab opened (spec 040): the same company's
+    site and surely the same posting (strong ids). That was the company's
     application, so the job keeps its link (the saved-jobs service checks it
     again)."""
-    host = _host(page_url)
-    key = url_key(page_url)
-    ids = sj_svc.posting_ids(page_url)
+    site = sj_svc.site_key(page_url)
 
     def same(url: str | None) -> bool:
-        if not host or _host(url) != host:
-            return False
-        if key and url_key(url or "") == key:
-            return True
-        theirs = sj_svc.posting_ids(url)
-        return bool(ids and theirs and ids & theirs)
+        return (
+            bool(site)
+            and sj_svc.site_key(url) == site
+            and sj_svc.same_posting(url, page_url)
+        )
 
     tabs = [
         e

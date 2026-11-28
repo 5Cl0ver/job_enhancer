@@ -2,10 +2,10 @@
 // 040). PURE but for the DOM it's given: unit-tested in
 // test/files-and-tabs-040.spec.js.
 //
-// The background carries a saved job onto the company's site (its résumé and
-// cover letter) and learns the job's company link ONLY right after such a
-// press, so a typed address, a bookmark, Back, an ad or a link in a posting's
-// text never does. Only the user's own clicks count (`isTrusted`).
+// Only a hint: right after such a press on a saved job's own page, the side
+// panel asks "Applying for <job>?" on the next page; nothing is used until
+// the user says Yes. Only the user's own clicks count (`isTrusted`), in the
+// page itself (the background drops a frame's: an ad).
 
 // The whole label, so "Apply filters" never counts: "Apply", "Apply now",
 // "Apply on company website", "Apply on company site", "Apply for this job",
@@ -38,7 +38,9 @@ function labelsOf(el) {
 /** Was this event a press on an Apply that leaves? */
 export function isApplyPress(event) {
   if (!event?.isTrusted) return false;
-  const el = event.target?.closest?.(CONTROL);
+  // Inside a shadow root too: the first control on the click's path.
+  const path = typeof event.composedPath === "function" ? event.composedPath() : [event.target];
+  const el = path.find((n) => n?.nodeType === 1 && n.matches?.(CONTROL)) || event.target?.closest?.(CONTROL);
   if (!el) return false;
   const dialog = el.closest("[role=dialog], [role=alertdialog], dialog");
   const inShareDialog = !!dialog && SHARE.test(dialog.textContent || "");

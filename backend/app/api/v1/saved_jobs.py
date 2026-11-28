@@ -283,8 +283,9 @@ async def learn_company_link(
     user: User = Depends(get_current_user),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
-    """Job Catcher saw the company's own application open from this job's
-    board listing (spec 040): it becomes the job's apply link, once."""
+    """The user said this page is the job's application (spec 040, Job
+    Catcher's "Applying for <job>? Yes"): it becomes the job's apply link
+    when it names its posting for sure (never over the user's own link)."""
     saved = await svc.learn_company_link(db, user.id, saved_job_id, data.url)
     await db.commit()
     return {"saved": saved}

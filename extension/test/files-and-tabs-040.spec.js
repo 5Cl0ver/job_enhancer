@@ -1,114 +1,201 @@
 // Job Catcher's files and tabs (spec 040). Invented data.
-// When in doubt, no carry: the usual résumé and no letter.
-// - Right after the user presses an Apply that leaves (armed), a tab keeps
-//   the saved job onto the company's application (Dayforce, iCIMS…), and a
-//   tab it opens inherits it, so the job's own résumé and cover letter are
-//   used there. Typed addresses, bookmarks, Back, ads and links in a
-//   posting's text never carry or teach a link.
-// - A tab LinkedIn's "Apply on company website" opens: the job learns the
-//   company's link; during Apply with Claude the tab joins the run's tab
-//   group and Claude hears of it, as a hint.
-// - "Paste your résumé" gets the résumé's text.
+// Never a guess: right after the user's own press on an Apply on a saved
+// job's own page, the side panel asks "Applying for <job>?" on the next
+// page that names no job; only Yes binds the tab to it (its résumé, cover
+// letter, Submit and company link), while the tab stays on that
+// application. Every other path ends with no binding.
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { ARM_MS, CARRY_MS, TAB_JOB, boardRedirect, carriedJobId, definitePosting, isWebPage, nextEntry, onHub, onJobBoard, postingIds, putEntry, samePosting, siteOf, worthTelling } from "../src/tabJob.js";
+import { BIND_MS, OPEN_MS, TAB_JOB, askAbout, bindHere, boundJobId, isWebPage, keepBinding, onHub, onJobBoard, otherPosting, postingIds, putEntry, sameApplication, siteOf, worthTelling } from "../src/tabJob.js";
 import { createTabJobs } from "../src/background/tabJobs.js";
 import { applyLabel, isApplyPress, watchApplyPresses } from "../src/autofill/applyClick.js";
 import { bestJobMatch } from "../panel/src/lib/context.ts";
 import { isResumeText, resolve } from "../src/autofill/resolve.js";
 
-const BOARD = "https://www.linkedin.com/jobs/view/4100000001/";
-const DAYFORCE = "https://jobs.dayforcehcm.com/en-US/northwind/CANDIDATEPORTAL/jobs/123";
+const LI_A = "https://www.linkedin.com/jobs/view/4100000001/";
 const T0 = 1_700_000_000_000;
-const OPENED = { jobId: "A", at: T0, opened: true, from: "linkedin.com" };
-const OWN = { jobId: "A", at: T0 }; // the job's own board page, in this tab
+const PRESS = { jobId: "A", at: T0 };
 
-/** Walk a tab through pages, 30 s apart; the entry after each. */
-function walk(start, urls, { armed = false } = {}) {
-  let e = start;
-  return urls.map((u, i) => (e = nextEntry(e, u, null, T0 + (i + 1) * 30_000, { armed: armed && i === 0 })));
+/** Say Yes on the first page, then walk the rest 30 s apart: the job bound on each. */
+function yesThen(urls) {
+  let b = bindHere("A", urls[0], T0);
+  return [boundJobId(b, urls[0], T0), ...urls.slice(1).map((u, i) => boundJobId((b = keepBinding(b, u, T0 + (i + 1) * 30_000)), u, T0 + (i + 1) * 30_000))];
 }
 
-describe("the Apply press that arms a tab (review 2: 1)", () => {
-  it("only an Apply that leaves the board, by its whole label", () => {
+describe("the Apply press: a hint only", () => {
+  it("only an Apply by its whole label, never Easy Apply or Apply filters", () => {
     for (const t of ["Apply", "Apply now", "Apply on company website", "Apply on company site", "Apply for this job", "Apply to Platform Engineer on company website", "Apply now ›", "Start application", "I'm interested"]) {
       expect(applyLabel(t)).toBe(true);
     }
-    for (const t of ["Easy Apply", "Apply filters", "Applying tips", "Save", "Continue", "Submit application", ""]) {
+    for (const t of ["Easy Apply", "Apply filters", "Applying tips", "Save", "Continue", "Submit application", "Apply Now - Enroll Today", ""]) {
       expect(applyLabel(t)).toBe(false);
     }
-    // LinkedIn's "Share your profile?" Continue opens the company's site.
     expect(applyLabel("Continue", { inShareDialog: true })).toBe(true);
   });
 
-  it("the user's own click on such a control, never a script's", () => {
-    const win = new Window({ url: "https://www.linkedin.com/jobs/view/4100000001/" });
+  it("the user's own click only (never a script's), inside a shadow root too", () => {
+    const win = new Window({ url: LI_A });
     const doc = win.document;
-    doc.body.innerHTML = `
-      <button id="apply" aria-label="Apply to Platform Engineer on company website"><span>Apply</span></button>
-      <button id="easy">Easy Apply</button>
-      <a id="desc" href="https://northwind.example/benefits-2024">our benefits</a>
-      <div role="dialog"><h2>Share your profile?</h2><button id="cont">Continue</button></div>
-      <button id="cont2">Continue</button>`;
-    const press = (id, isTrusted = true) => isApplyPress({ isTrusted, target: doc.querySelector(`#${id} span`) || doc.getElementById(id) });
-    expect(press("apply")).toBe(true);
-    expect(press("cont")).toBe(true);
-    expect(press("easy")).toBe(false);
-    expect(press("desc")).toBe(false);
-    expect(press("cont2")).toBe(false);
-    expect(press("apply", false)).toBe(false); // a script's click
+    doc.body.innerHTML = `<button id="apply" aria-label="Apply to Platform Engineer on company website"><span>Apply</span></button>
+      <button id="easy">Easy Apply</button><a id="desc" href="https://northwind.example/benefits-2024">our benefits</a>
+      <div role="dialog"><h2>Share your profile?</h2><button id="cont">Continue</button></div><div id="host"></div>`;
+    const shadow = doc.getElementById("host").attachShadow({ mode: "open" });
+    shadow.innerHTML = `<button id="sapply"><span id="inner">Apply now</span></button>`;
+    const inner = shadow.getElementById("inner");
+    const press = (target, isTrusted = true, path) => isApplyPress({ isTrusted, target, composedPath: path ? () => path : undefined });
+    expect(press(doc.querySelector("#apply span"))).toBe(true);
+    expect(press(doc.getElementById("cont"))).toBe(true);
+    expect(press(doc.getElementById("easy"))).toBe(false);
+    expect(press(doc.getElementById("desc"))).toBe(false);
+    expect(press(doc.querySelector("#apply span"), false)).toBe(false);
+    // A shadow root's button: found on the click's path.
+    expect(press(doc.getElementById("host"), true, [inner, shadow.getElementById("sapply"), shadow, doc.getElementById("host"), doc.body])).toBe(true);
     const seen = vi.fn();
     const stop = watchApplyPresses(doc, seen);
-    doc.getElementById("apply").click(); // untrusted in tests: never counts
+    doc.getElementById("apply").click(); // untrusted
     expect(seen).not.toHaveBeenCalled();
     stop();
   });
 });
 
-describe("where a carry starts and ends", () => {
-  it("job boards, aggregators, search engines and the app are where the next job is picked (8)", () => {
-    for (const url of [BOARD, "https://www.indeed.com/viewjob?jk=abc", "https://uk.indeed.com/", "https://www.indeed.co.uk/", "https://www.glassdoor.co.uk/Job/index.htm", "https://www.linkedin.cn/", "https://builtin.com/jobs", "https://www.builtinnyc.com/jobs", "https://www.dice.com/jobs", "https://wellfound.com/jobs", "https://www.welcometothejungle.com/en/jobs", "https://jobright.ai/jobs", "https://app.joinhandshake.com/jobs/1", "https://www.usajobs.gov/job/1", "https://www.simplyhired.com/", "https://www.monster.com/", "https://www.careerbuilder.com/", "https://www.google.com/search?q=jobs", "https://job-enhancer-xxj1.vercel.app/jobs"]) {
+describe("when the panel asks", () => {
+  const WD = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234";
+  it("on the next application page within 45 minutes, never on a saved job's own page, a board, a sign-in or a news site", () => {
+    expect(askAbout(PRESS, WD, null, T0 + 1_000)).toBe("A");
+    expect(askAbout(PRESS, WD, null, T0 + BIND_MS + 1)).toBeNull();
+    expect(askAbout(PRESS, WD, "B", T0)).toBeNull();
+    expect(askAbout(PRESS, LI_A, null, T0)).toBeNull();
+    expect(askAbout(PRESS, "https://accounts.google.com/o/oauth2", null, T0)).toBeNull();
+    expect(askAbout(PRESS, "https://news.example/story", null, T0)).toBeNull();
+    expect(askAbout(null, WD, null, T0)).toBeNull();
+    expect(OPEN_MS).toBe(20_000);
+  });
+});
+
+describe("good path: Yes, then every step keeps the job", () => {
+  const paths = {
+    Workday: [
+      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234",
+      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply",
+      "https://acme.wd5.myworkdayjobs.com/en-US/External/login?redirect=%2Fen-US%2FExternal%2Fjob%2FPortland-OR%2FIT-Analyst_JR-1234%2Fapply",
+      "https://accounts.google.com/o/oauth2/v2/auth?client_id=1",
+      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply/applyManually",
+      "https://acme.wd5.myworkdayjobs.com/en-US/External/userHome",
+    ],
+    iCIMS: [
+      "https://careers-acme.icims.com/jobs/12345/it-analyst/job?mode=job&iis=LinkedIn&mobile=false&width=1200&jan1offset=-300",
+      "https://careers-acme.icims.com/jobs/12345/it-analyst/candidate?mode=apply&iis=LinkedIn",
+      "https://careers-acme.icims.com/jobs/candidate?from=login&eem=abc&code=123",
+      "https://careers-acme.icims.com/jobs/12345/it-analyst/candidate?mode=submit_apply",
+    ],
+    Taleo: [
+      "https://acme.taleo.net/careersection/ex/jobdetail.ftl?job=2400123&tz=GMT-05%3A00",
+      "https://acme.taleo.net/careersection/ex/jobapply.ftl?job=2400123&lang=en",
+      "https://acme.taleo.net/careersection/ex/flow.jsf?lang=en",
+    ],
+    Paylocity: ["https://recruiting.paylocity.com/Recruiting/Jobs/Details/2345678", "https://recruiting.paylocity.com/Recruiting/Jobs/Apply/2345678"],
+    UKG: [
+      "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666",
+      "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/Apply/OpportunityApply?opportunityId=aaaabbbb-1111-2222-3333-444455556666",
+      "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/Account/SignIn?ReturnUrl=x",
+    ],
+    Dayforce: [
+      "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345",
+      "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345/apply",
+      "https://candidate.dayforcehcm.com/CandidatePortal/en-US/acme/Account/Login",
+      "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345/apply?step=2",
+    ],
+    Greenhouse: ["https://boards.greenhouse.io/acme/jobs/4455667?gh_src=li", "https://boards.greenhouse.io/acme/jobs/4455667#app", "https://boards.greenhouse.io/acme/jobs/4455667/confirmation"],
+    Lever: [
+      "https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666?lever-source=LinkedIn",
+      "https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666/apply",
+      "https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666/thanks",
+    ],
+  };
+  for (const [name, urls] of Object.entries(paths)) {
+    it(`${name}: every step keeps A`, () => {
+      expect(askAbout(PRESS, urls[0], null, T0)).toBe("A");
+      expect(yesThen(urls)).toEqual(urls.map((u) => (/accounts\.google/.test(u) ? null : "A")));
+    });
+  }
+
+  it("each page on it restarts the 45 minutes; about:blank changes nothing", () => {
+    const url = paths.Workday[0];
+    let b = bindHere("A", url, T0);
+    b = keepBinding(b, `${url}/apply`, T0 + BIND_MS - 1_000);
+    expect(b?.at).toBe(T0 + BIND_MS - 1_000);
+    expect(keepBinding(b, `${url}/apply`, T0 + 2 * BIND_MS)).toBeNull();
+    expect(keepBinding(b, "about:blank", T0 + BIND_MS)).toBe(b);
+    expect(isWebPage("chrome://newtab/")).toBe(false);
+  });
+});
+
+describe("reviewer scenarios: another posting or company drops the binding", () => {
+  it("shared digit runs never make postings the same: 2026 interns, a zip, a store number, a slug's year", () => {
+    const A = postingIds("https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Software-Engineer-Intern---Summer-2026_R-123");
+    const B = postingIds("https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Data-Science-Intern---Summer-2026_R-456/apply");
+    expect(otherPosting(A, B)).toBe(true);
+    expect(otherPosting(postingIds("https://acme.wd5.myworkdayjobs.com/External/job/Portland-OR-97201/IT-Analyst_R-1234"), postingIds("https://acme.wd5.myworkdayjobs.com/External/job/Portland-OR-97201/Sales_R-5678"))).toBe(true);
+    expect(otherPosting(postingIds("https://acme.wd1.myworkdayjobs.com/Retail/job/Store-0423-Austin-TX/Sales-Associate_R-111"), postingIds("https://acme.wd1.myworkdayjobs.com/Retail/job/Store-0423-Austin-TX/Shift-Lead_R-222"))).toBe(true);
+    expect(otherPosting(postingIds("https://careers.acme.com/job/12345/analyst-2026"), postingIds("https://careers.acme.com/job/67890/engineer-2026"))).toBe(true);
+    expect(postingIds("https://acme.wd5.myworkdayjobs.com/External/job/Portland-OR-97201/IT-Analyst_R-1234")).toEqual({ strong: ["r1234"], weak: [] });
+  });
+
+  it("strong ids: SuccessFactors career_job_req_id, Indeed's vjk like jk, UKG's opportunityId", () => {
+    expect(postingIds("https://career4.successfactors.com/career?company=acmeP&career_job_req_id=12345").strong).toEqual(["career_job_req_id=12345"]);
+    expect(postingIds("https://www.indeed.com/viewjob?vjk=a1b2c3").strong).toEqual(["jk=a1b2c3"]);
+    const ukg = (opp) => postingIds(`https://recruiting.ultipro.com/ACM1/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=${opp}`);
+    expect(otherPosting(ukg("aaaabbbb-1111-2222-3333-444455556666"), ukg("cccccccc-1111-2222-3333-444455556666"))).toBe(true);
+  });
+
+  it("each scenario ends with no binding", () => {
+    const wdA = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Software-Engineer-Intern---Summer-2026_R-123";
+    for (const [first, next] of [
+      [wdA, "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Data-Science-Intern---Summer-2026_R-456"],
+      ["https://wd5.myworkdaysite.com/recruiting/acme/External", "https://wd5.myworkdaysite.com/recruiting/globex/External/job/Remote/Dev_R-9/apply"],
+      ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL", "https://jobs.dayforcehcm.com/en-US/globex/CANDIDATEPORTAL/jobs/555"],
+      ["https://career4.successfactors.com/career?company=acmeP&career_job_req_id=12345", "https://career4.successfactors.com/career?company=globexP&career_job_req_id=67890"],
+      ["https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/", "https://recruiting.ultipro.com/GLX2000GLOBX/JobBoard/9f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=dd"],
+      ["https://myjobs.adp.com/acme/cx/job-details?reqId=111", "https://myjobs.adp.com/globex/cx/job-details?reqId=222"],
+      ["https://recruiting.paylocity.com/Recruiting/Jobs/Details/2345678", "https://recruiting.paylocity.com/Recruiting/Jobs/Details/99999"],
+      // A company posting, then a "Similar jobs" link to another job's Workday.
+      ["https://careers.acme.com/job/12345/it-analyst", "https://acme.wd5.myworkdayjobs.com/External/job/Austin/Sales-Rep_JR-9999/apply"],
+      // Yes on a landing page that names no posting: no posting is taken on.
+      ["https://acme.wd5.myworkdayjobs.com/en-US/External", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Austin/Sales_JR-9999/apply"],
+      ["https://boards.greenhouse.io/acme", "https://boards.greenhouse.io/globex/jobs/7777777"],
+      ["https://careers.acme.com/#/jobs/123", "https://careers.acme.com/#/jobs/456"],
+      // Back to a board, a search, a typed address on another site.
+      [wdA, "https://www.linkedin.com/jobs/view/4000000002"],
+      [wdA, "https://www.google.com/search?q=jobs"],
+      [wdA, "https://careers-globex.icims.com/jobs/555/x/job"],
+      // Workday posting → its search → another posting.
+      [wdA, "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Austin/Sales_JR-9999"],
+    ]) {
+      expect([first, next, yesThen([first, next])[1]]).toEqual([first, next, null]);
+    }
+  });
+
+  it("shared hosts are told apart by company", () => {
+    for (const [a, b] of [
+      ["https://wd5.myworkdaysite.com/recruiting/acme/External", "https://wd5.myworkdaysite.com/recruiting/globex/External/job/X_R-9"],
+      ["https://recruiting.paylocity.com/Recruiting/Jobs/All/aaaa1111-1111-2222-3333-444455556666", "https://recruiting.paylocity.com/Recruiting/Jobs/Details/99999"],
+      ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL", "https://jobs.dayforcehcm.com/en-US/globex/CANDIDATEPORTAL/jobs/555"],
+      ["https://recruiting.ultipro.com/ACM1000ACME/JobBoard/x/", "https://recruiting.ultipro.com/GLX2000GLOBX/JobBoard/y/"],
+      ["https://career4.successfactors.com/career?company=acmeP", "https://career4.successfactors.com/career?company=globexP"],
+      ["https://myjobs.adp.com/acme/cx", "https://myjobs.adp.com/globex/cx"],
+      ["https://acme.wd5.myworkdayjobs.com/External", "https://globex.wd5.myworkdayjobs.com/External/job/X_R-9"],
+    ]) {
+      expect(siteOf(a)).not.toBe(siteOf(b));
+    }
+    expect(siteOf("https://candidate.dayforcehcm.com/CandidatePortal/en-US/acme/Account/Login")).toBe(siteOf("https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/1"));
+  });
+
+  it("job boards, aggregators, search engines and the app", () => {
+    for (const url of [LI_A, "https://uk.indeed.com/", "https://www.indeed.co.uk/", "https://www.glassdoor.co.uk/Job/index.htm", "https://www.linkedin.cn/", "https://builtin.com/jobs", "https://www.dice.com/jobs", "https://wellfound.com/jobs", "https://www.usajobs.gov/job/1", "https://www.google.com/search?q=jobs", "https://job-enhancer-xxj1.vercel.app/jobs"]) {
       expect(onHub(url)).toBe(true);
     }
     expect(onJobBoard("https://www.glassdoor.co.uk/x")).toBe(true);
-    expect(onHub(DAYFORCE)).toBe(false);
     expect(onHub("https://careers.google.com/jobs/results/1")).toBe(false);
-  });
-
-  it("an applicant system's site is its tenant or company (5)", () => {
-    expect(siteOf("https://acme.wd5.myworkdayjobs.com/x")).toBe("acme.wd5.myworkdayjobs.com");
-    expect(siteOf("https://boards.greenhouse.io/acme/jobs/1")).toBe("boards.greenhouse.io/acme");
-    expect(siteOf("https://jobs.northwind.co.uk/x")).toBe("northwind.co.uk");
-  });
-
-  it("from the job's own page, the next site carries only right after an Apply press (1)", () => {
-    expect(nextEntry(OWN, DAYFORCE, null, T0 + 1_000)).toBeNull(); // typed, bookmark, Back
-    const e = nextEntry(OWN, DAYFORCE, null, T0 + 1_000, { armed: true });
-    expect(e).toMatchObject({ jobId: "A", site: "jobs.dayforcehcm.com", ats: true, posting: ["123"] });
-    // Even armed, never onto a site that isn't an application.
-    expect(nextEntry(OWN, "https://news.example/story", null, T0, { armed: true })).toBeNull();
-  });
-
-  it("the reviewer's same-tab cases: typed careers, a bookmarked aggregator, Back", () => {
-    expect(walk(OWN, ["https://careers.globex.example/jobs/search", "https://careers.globex.example/jobs/98765/data-engineer"]).every((e) => e === null)).toBe(true);
-    expect(walk(OWN, ["https://builtin.com/jobs/remote", "https://builtin.com/job/data-engineer/4455667"]).every((e) => e === null)).toBe(true);
-  });
-
-  it("every page on the site restarts the 45 minutes (7)", () => {
-    let e = nextEntry(OWN, DAYFORCE, null, T0, { armed: true });
-    e = nextEntry(e, `${DAYFORCE}/step2`, null, T0 + CARRY_MS - 1_000);
-    expect(e?.at).toBe(T0 + CARRY_MS - 1_000);
-    expect(nextEntry(e, `${DAYFORCE}/step3`, null, T0 + 2 * CARRY_MS - 2_000)).not.toBeNull();
-    expect(nextEntry(e, `${DAYFORCE}/step3`, null, T0 + 2 * CARRY_MS + 1)).toBeNull();
-    expect(CARRY_MS).toBe(45 * 60_000);
-    expect(ARM_MS).toBe(20_000);
-  });
-
-  it("about:blank and chrome:// pages change nothing (12)", () => {
-    const e = nextEntry(OWN, DAYFORCE, null, T0, { armed: true });
-    expect(isWebPage("about:blank")).toBe(false);
-    expect(nextEntry(e, "about:blank", null, T0)).toBe(e);
-    expect(nextEntry(e, "chrome://newtab/", null, T0)).toBe(e);
   });
 
   it("keeps a few tabs, newest last", () => {
@@ -119,136 +206,37 @@ describe("where a carry starts and ends", () => {
   });
 });
 
-describe("a new tab keeps its job only through its own board's redirect", () => {
-  it("LinkedIn's and Indeed's redirects keep it, their query ids aside (10)", () => {
-    for (const url of ["https://www.linkedin.com/redir/redirect?url=x", "https://www.linkedin.com/safety/go?url=x", "https://www.linkedin.com/jobs/view/externalApply/4100000001?url=x"]) {
-      expect(nextEntry(OPENED, url, null, T0)).toBe(OPENED);
-    }
-    const indeed = { ...OPENED, from: "indeed.com" };
-    expect(boardRedirect("indeed.com", "https://www.indeed.com/applystart?jk=a123c3d4e5f6a7b8")).toBe(true);
-    expect(nextEntry(indeed, "https://www.indeed.com/rc/clk?jk=a123c3d4", null, T0)).toBe(indeed);
+describe("the company's application in the matcher: strong ids only", () => {
+  const wdA = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Software-Engineer-Intern---Summer-2026_R-123";
+  const A = { id: "A", job_listing_id: "1", title: "Software Engineer Intern", company: "Acme", location: "", url: LI_A, applied: false, company_url: wdA };
+  const B = { id: "B", job_listing_id: "2", title: "Data Science Intern", company: "Globex", location: "", url: "https://www.linkedin.com/jobs/view/4100000002/", applied: false };
+
+  it("another 2026 intern posting, another careers job, another UKG opportunity or its board home: not A", () => {
+    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Data-Science-Intern---Summer-2026_R-456/apply", title: "Workday" }, [A, B])).toBeNull();
+    const A3 = { ...A, company_url: "https://careers.acme.com/job/12345/analyst-2026" };
+    expect(bestJobMatch({ url: "https://careers.acme.com/job/67890/engineer-2026", title: "x" }, [A3])).toBeNull();
+    // Plain digits never name a company application for sure, even the same.
+    expect(sameApplication(A3.company_url, "https://careers.acme.com/job/12345/analyst-2026/apply")).toBe(false);
+    const A4 = { ...A, company_url: "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666" };
+    expect(bestJobMatch({ url: A4.company_url.replace("aaaabbbb", "cccccccc"), title: "x" }, [A4])).toBeNull();
+    expect(bestJobMatch({ url: "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/", title: "x" }, [A4])).toBeNull();
   });
 
-  it("another posting, another board, a search or a new tab page ends it", () => {
-    for (const url of ["https://www.linkedin.com/jobs/view/4000000002", "https://www.linkedin.com/feed/", "https://www.indeed.com/rc/clk?jk=abc", "https://www.google.com/search?q=northwind"]) {
-      expect(nextEntry(OPENED, url, null, T0 + 5_000)).toBeNull();
-    }
+  it("the same posting's later step is A", () => {
+    expect(bestJobMatch({ url: `${wdA}/apply/applyManually`, title: "Workday" }, [A, B])?.id).toBe("A");
   });
 
-  it("B's posting, then B's application, is never A's", () => {
-    const [b, app] = walk(OPENED, ["https://www.linkedin.com/jobs/view/4000000002", "https://companyb.wd5.myworkdayjobs.com/en-US/ext/job/Remote/Dev_R-99/apply"]);
-    expect(b).toBeNull();
-    expect(app).toBeNull();
-  });
-
-  it("LinkedIn → Workday: sign-in, account, steps, reload and the home page keep it", () => {
-    const steps = walk(OPENED, [
-      "https://www.linkedin.com/redir/redirect?url=x",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/login?redirect=%2Fjob%2FIT-Analyst_JR-1234%2Fapply",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/createAccount",
-      "https://accounts.google.com/o/oauth2/v2/auth?client_id=1",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply/autofillWithResume",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/userHome",
-    ]);
-    expect(steps.every((e) => e?.jobId === "A")).toBe(true);
-    expect(steps.at(-1).site).toBe("acme.wd5.myworkdayjobs.com");
+  it("the bound job, never onto another posting of its own system", () => {
+    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Other_R-999/apply", title: "Workday" }, [A, B], [], undefined, "A")).toBeNull();
+    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/en-US/External/userHome", title: "Workday" }, [A, B], [], undefined, "A")?.id).toBe("A");
   });
 });
 
-describe("one posting's steps keep the carry; another posting ends it (3)", () => {
-  const steps = {
-    iCIMS: ["https://careers-acme.icims.com/jobs/12345/it-analyst/job?mode=job&iis=LinkedIn", "https://careers-acme.icims.com/jobs/12345/it-analyst/login?back=intro", "https://careers-acme.icims.com/jobs/12345/it-analyst/candidate?mode=apply"],
-    Taleo: ["https://acme.taleo.net/careersection/2/jobdetail.ftl?job=12345&lang=en", "https://acme.taleo.net/careersection/2/jobapply.ftl?job=12345&lang=en", "https://acme.taleo.net/careersection/2/flow.jsf?lang=en"],
-    Paylocity: ["https://recruiting.paylocity.com/Recruiting/Jobs/Details/12345", "https://recruiting.paylocity.com/Recruiting/Jobs/Apply/12345"],
-    UKG: ["https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666", "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/Apply/OpportunityApply?opportunityId=aaaabbbb-1111-2222-3333-444455556666"],
-    Dayforce: [DAYFORCE, `${DAYFORCE}/step2`],
-  };
-  for (const [name, urls] of Object.entries(steps)) {
-    it(`${name}: every step carries the job`, () => {
-      const out = walk(OPENED, urls);
-      expect(out.map((e) => e?.jobId)).toEqual(urls.map(() => "A"));
-    });
-  }
-
-  it("another posting on the same site, a #route included, ends it", () => {
-    expect(walk(OPENED, [DAYFORCE, "https://jobs.dayforcehcm.com/en-US/northwind/CANDIDATEPORTAL/jobs/456"])[1]).toBeNull();
-    expect(walk(OPENED, ["https://careers.acme.example/#/jobs/123", "https://careers.acme.example/#/jobs/456"])[1]).toBeNull();
-    const ukgOther = steps.UKG[1].replace("aaaabbbb-1111", "ccccdddd-1111");
-    expect(walk(OPENED, [steps.UKG[0], ukgOther])[1]).toBeNull();
-  });
-
-  it("ids, not paths, decide (Indeed's jk is an id)", () => {
-    expect(postingIds("https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234/apply")).toEqual(["jr1234"]);
-    expect(postingIds("https://www.indeed.com/viewjob?jk=a1b2c3d4e5f6a7b8")).toContain("a1b2c3d4e5f6a7b8");
-    expect(postingIds("https://acme.taleo.net/careersection/2/flow.jsf?lang=en&ts=1700000000")).toEqual([]);
-    expect(samePosting(["12345"], [])).toBe(true);
-    expect(samePosting(["12345"], ["12345", "job=12345"])).toBe(true);
-    expect(samePosting(["12345"], ["678"])).toBe(false);
-    expect(definitePosting(DAYFORCE)).toBe(true);
-    expect(definitePosting("https://careers.fabrikam.example/login")).toBe(false);
-  });
-});
-
-describe("the company's site hands over to its applicant system (4)", () => {
-  const posting = "https://careers.acme.example/job/12345/it-analyst";
-  const workday = "https://acme.wd5.myworkdayjobs.com/External/job/Portland/IT-Analyst_JR-1234/apply";
-
-  it("straight from the posting's page, after an Apply press there", () => {
-    const e = nextEntry(OPENED, posting, null, T0);
-    expect(nextEntry(e, workday, null, T0 + 30_000, { armed: true })).toMatchObject({ jobId: "A", site: "acme.wd5.myworkdayjobs.com" });
-    // With a sign-in on the way.
-    const after = nextEntry(nextEntry(e, workday, null, T0 + 30_000, { armed: true }), "https://acme.okta.com/login", null, T0 + 60_000);
-    expect(nextEntry(after, `${workday}/applyManually`, null, T0 + 90_000)?.jobId).toBe("A");
-  });
-
-  it("never without a press, after more than 2 minutes, or from another page of the site", () => {
-    const e = nextEntry(OPENED, posting, null, T0);
-    expect(nextEntry(e, workday, null, T0 + 30_000)).toBeNull();
-    expect(nextEntry(e, workday, null, T0 + 3 * 60_000, { armed: true })).toBeNull();
-    const list = nextEntry(e, "https://careers.acme.example/search-results?keywords=", null, T0 + 30_000);
-    expect(nextEntry(list, "https://acme.wd5.myworkdayjobs.com/External/job/Austin/Sales-Rep_JR-9999/apply", null, T0 + 60_000, { armed: true })).toBeNull();
-  });
-
-  it("never with no posting held, never from one applicant system to another", () => {
-    const landing = nextEntry(OPENED, "https://boards.greenhouse.io/acme", null, T0);
-    expect(nextEntry(landing, "https://boards.greenhouse.io/globex/jobs/7777777", null, T0 + 1_000, { armed: true })).toBeNull();
-    const wd = nextEntry(OPENED, workday, null, T0);
-    expect(nextEntry(wd, DAYFORCE, null, T0 + 1_000, { armed: true })).toBeNull();
-    const noPosting = nextEntry(OPENED, "https://careers.acme.example/jobs", null, T0);
-    expect(nextEntry(noPosting, workday, null, T0 + 1_000, { armed: true })).toBeNull();
-  });
-});
-
-describe("bestJobMatch with a carried job", () => {
-  const A = { id: "A", job_listing_id: "l1", title: "IT Analyst", company: "Acme", location: "", url: "https://www.linkedin.com/jobs/view/4100000001/", applied: false, company_url: "https://acme.wd5.myworkdayjobs.com/External/job/Portland/IT-Analyst_JR-1234" };
-  const B = { id: "B", job_listing_id: "l2", title: "Sales Rep", company: "Acme", location: "", url: "https://www.linkedin.com/jobs/view/4100000002/", applied: false };
-
-  it("never onto another posting of the job's own system (2)", () => {
-    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/External/job/Austin/Sales-Rep_JR-9999/apply", title: "Workday" }, [A, B], [], undefined, "A")).toBeNull();
-    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/External/userHome", title: "Workday" }, [A, B], [], undefined, "A")?.id).toBe("A");
-  });
-
-  it("the company's application, a later step included, is the job's page (no carry needed)", () => {
-    expect(bestJobMatch({ url: `${A.company_url}/apply/applyManually`, title: "Workday" }, [A, B])?.id).toBe("A");
-  });
-
-  it("a company link naming no posting never counts (5)", () => {
-    const G = { ...B, id: "G", company_url: "https://careers.fabrikam.example/login" };
-    expect(bestJobMatch({ url: "https://careers.fabrikam.example/login", title: "Sign in" }, [G])).toBeNull();
-  });
-
-  it("a Submit is tracked for the page's own job only (no carry)", () => {
-    expect(bestJobMatch({ url: "https://other.icims.com/jobs/555/job", title: "Apply" }, [A, B])).toBeNull();
-  });
-});
-
-describe("what Claude hears of a new tab (3)", () => {
+describe("what Claude hears of a new tab", () => {
   it("only an application, never a sign-in, a file picker or the same site's page", () => {
-    expect(worthTelling(BOARD, DAYFORCE)).toBe(true);
-    expect(worthTelling("https://careers.northwind.example/apply/1", DAYFORCE)).toBe(true);
-    for (const url of ["https://accounts.google.com/o/oauth2/v2/auth", "https://www.dropbox.com/chooser", "https://drive.google.com/picker", "https://login.microsoftonline.com/common/oauth2", "https://careers.northwind.example/privacy", "https://ads.example.net/click?id=1", "https://www.linkedin.com/jobs/view/4000000002", "about:blank"]) {
+    const DF = "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345";
+    expect(worthTelling(LI_A, DF)).toBe(true);
+    for (const url of ["https://accounts.google.com/o/oauth2/v2/auth", "https://www.dropbox.com/chooser", "https://careers.northwind.example/privacy", "https://ads.example.net/click?id=1", "about:blank"]) {
       expect(worthTelling("https://careers.northwind.example/apply/1", url)).toBe(false);
     }
   });
@@ -269,106 +257,106 @@ function fakeChrome(tabs = {}) {
   };
 }
 
-describe("tabs and the jobs they apply for (background)", () => {
-  const jobOf = { [BOARD]: { id: "A" } };
+describe("the background: press, question, Yes", () => {
+  const WD = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234";
+  const jobOf = { [LI_A]: { id: "A" } };
   const ownMatch = async (tab) => jobOf[tab.url] || null;
-  const make = ({ now = () => T0, tabs = { 7: { id: 7, url: BOARD, groupId: 3 } } } = {}) => {
-    const c = fakeChrome(tabs);
+  const make = ({ now = () => T0 } = {}) => {
+    const c = fakeChrome({ 1: { id: 1, url: LI_A, groupId: -1 } });
     const learnLink = vi.fn(async () => {});
-    const run = { opened: vi.fn(async () => true), landed: vi.fn(async () => {}) };
+    const run = { opened: vi.fn(async () => false), landed: vi.fn(async () => {}) };
     return { c, learnLink, run, tj: createTabJobs({ ownMatch, learnLink, run, chrome: c, now }) };
   };
+  const tab = (id, url) => ({ id, url });
 
-  it("same tab: only after an Apply press does the company's page carry the job", async () => {
-    const { tj } = make();
-    await tj.loaded({ id: 7, url: BOARD });
-    await tj.loaded({ id: 7, url: DAYFORCE });
-    expect(await tj.carried({ id: 7, url: DAYFORCE })).toBeNull();
-    await tj.loaded({ id: 7, url: BOARD });
-    await tj.arm(7);
-    await tj.loaded({ id: 7, url: DAYFORCE });
-    expect(await tj.carried({ id: 7, url: DAYFORCE })).toBe("A");
-    await tj.closed(7);
-    expect(await tj.carried({ id: 7, url: DAYFORCE })).toBeNull();
-  });
-
-  it("Back to a page of another job never carries (no press)", async () => {
-    const { tj } = make();
-    await tj.loaded({ id: 3, url: "https://careers.globex.example/jobs/98765/data-engineer" });
-    await tj.loaded({ id: 3, url: BOARD });
-    await tj.loaded({ id: 3, url: "https://careers.globex.example/jobs/98765/data-engineer" });
-    expect(await tj.carried({ id: 3, url: "https://careers.globex.example/jobs/98765/data-engineer/apply" })).toBeNull();
-  });
-
-  it("a new tab after the Apply press: carries, learns the company link once, tells the run", async () => {
-    const { tj, learnLink, run } = make();
-    await tj.arm(7);
-    const tab = { id: 9, openerTabId: 7, url: "about:blank" };
-    // Its first page can load before the opening is noted: one at a time.
-    await Promise.all([tj.opened(tab), tj.loaded({ id: 9, url: "about:blank" }), tj.loaded({ id: 9, url: "https://www.linkedin.com/redir/redirect?url=x" }), tj.loaded({ id: 9, url: DAYFORCE })]);
-    expect(learnLink).toHaveBeenCalledTimes(1);
-    expect(learnLink).toHaveBeenCalledWith("A", DAYFORCE);
-    expect(run.landed).toHaveBeenCalledWith(expect.objectContaining({ id: 9, url: DAYFORCE }), 7);
-    expect(await tj.carried({ id: 9, url: DAYFORCE })).toBe("A");
-    await tj.loaded({ id: 9, url: `${DAYFORCE}/step2` });
-    expect(await tj.carried({ id: 9, url: `${DAYFORCE}/step2` })).toBe("A");
-    expect(learnLink).toHaveBeenCalledTimes(1);
-  });
-
-  it("a press heard a moment after the tab opened still counts", async () => {
+  it("good path: a press in A's listing, a new tab lands on Workday, Yes binds it and teaches the link", async () => {
     const { tj, learnLink } = make();
-    const opening = tj.opened({ id: 9, openerTabId: 7 });
-    setTimeout(() => tj.arm(7), 100);
-    await opening;
-    await tj.loaded({ id: 9, url: DAYFORCE });
-    expect(learnLink).toHaveBeenCalledWith("A", DAYFORCE);
+    await tj.pressed(tab(1, LI_A), 0);
+    await tj.opened({ id: 2, openerTabId: 1 });
+    await tj.loaded(tab(2, WD));
+    expect(await tj.carried(tab(2, WD))).toBeNull(); // nothing until Yes
+    expect(await tj.question(tab(2, WD))).toBe("A");
+    expect(await tj.answer(tab(2, WD), true)).toBe("A");
+    expect(learnLink).toHaveBeenCalledWith("A", WD);
+    expect(await tj.question(tab(2, WD))).toBeNull();
+    for (const step of [`${WD}/apply`, `${WD}/apply/applyManually`]) {
+      await tj.loaded(tab(2, step));
+      expect(await tj.carried(tab(2, step))).toBe("A");
+    }
   });
 
-  it("a middle-clicked link in the posting, an ad (no press): no carry, nothing learned", async () => {
+  it("No: no binding, nothing learned, and no question again without a new press", async () => {
     const { tj, learnLink } = make();
-    await tj.opened({ id: 9, openerTabId: 7 });
-    await tj.loaded({ id: 9, url: "https://www.linkedin.com/redir/redirect?url=x" });
-    await tj.loaded({ id: 9, url: "https://careers.acme.example/benefits-2024" });
+    await tj.pressed(tab(1, LI_A), 0);
+    await tj.loaded(tab(1, WD));
+    expect(await tj.answer(tab(1, WD), false)).toBeNull();
+    expect(await tj.carried(tab(1, WD))).toBeNull();
+    expect(await tj.question(tab(1, WD))).toBeNull();
     expect(learnLink).not.toHaveBeenCalled();
-    expect(await tj.carried({ id: 9, url: "https://careers.acme.example/benefits-2024" })).toBeNull();
   });
 
-  it("a similar job B, or a search, in between: nothing learned, nothing carried", async () => {
-    for (const between of ["https://www.linkedin.com/jobs/view/4000000002", "https://www.google.com/search?q=other+job"]) {
-      const { tj, learnLink, run } = make();
-      await tj.arm(7);
-      await tj.opened({ id: 9, openerTabId: 7 });
-      await tj.loaded({ id: 9, url: between });
-      await tj.loaded({ id: 9, url: "https://companyb.wd5.myworkdayjobs.com/en-US/ext/job/Remote/Dev_R-99/apply" });
-      expect(learnLink).not.toHaveBeenCalled();
-      expect(run.landed).not.toHaveBeenCalled();
-      expect(await tj.carried({ id: 9, url: "https://companyb.wd5.myworkdayjobs.com/x" })).toBeNull();
-    }
+  it("a press in a frame (an ad), or on a page that is no saved job, is no press", async () => {
+    const { tj } = make();
+    await tj.pressed(tab(1, LI_A), 3);
+    await tj.loaded(tab(1, WD));
+    expect(await tj.question(tab(1, WD))).toBeNull();
+    await tj.pressed(tab(5, "https://news.example/"), 0);
+    await tj.loaded(tab(5, WD));
+    expect(await tj.question(tab(5, WD))).toBeNull();
   });
 
-  it("a sign-in popup, or a careers home page with no posting, is never learned", async () => {
-    for (const url of ["https://accounts.google.com/o/oauth2/v2/auth?client=12345", "https://careers.northwind.example/jobs"]) {
-      const { tj, learnLink } = make();
-      await tj.arm(7);
-      await tj.opened({ id: 9, openerTabId: 7 });
-      await tj.loaded({ id: 9, url });
-      expect(learnLink).not.toHaveBeenCalled();
-    }
-  });
-
-  it("a press more than 20 s old, or a new tab after a minute, is no Apply", async () => {
+  it("one press, one new tab: the next tab opened from it gets nothing", async () => {
     let now = T0;
-    const { tj, learnLink } = make({ now: () => now });
-    await tj.arm(7);
-    now += ARM_MS + 1;
-    await tj.opened({ id: 9, openerTabId: 7 });
-    await tj.loaded({ id: 9, url: DAYFORCE });
+    const { tj } = make({ now: () => now });
+    await tj.pressed(tab(1, LI_A), 0);
+    await tj.opened({ id: 2, openerTabId: 1 });
+    now += 8_000;
+    await tj.opened({ id: 3, openerTabId: 1 }); // a link in A's description, ctrl-clicked
+    const other = "https://careers.acme.com/jobs/98765/senior-it-analyst";
+    expect(await tj.question(tab(3, other))).toBeNull();
+    expect(await tj.question(tab(2, WD))).toBe("A");
+  });
+
+  it("a new tab long after the press gets nothing", async () => {
+    let now = T0;
+    const { tj } = make({ now: () => now });
+    await tj.pressed(tab(1, LI_A), 0);
+    now += OPEN_MS + 1;
+    await tj.opened({ id: 2, openerTabId: 1 });
+    expect(await tj.question(tab(2, WD))).toBeNull();
+  });
+
+  it("leaving the application drops the binding, and the question stays away", async () => {
+    const { tj } = make();
+    await tj.pressed(tab(1, LI_A), 0);
+    await tj.loaded(tab(1, WD));
+    await tj.answer(tab(1, WD), true);
+    const other = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Austin/Sales_JR-9999/apply";
+    await tj.loaded(tab(1, other));
+    expect(await tj.carried(tab(1, other))).toBeNull();
+    expect(await tj.question(tab(1, other))).toBeNull();
+    await tj.loaded(tab(1, WD)); // even back on A's
+    expect(await tj.carried(tab(1, WD))).toBeNull();
+  });
+
+  it("Yes on a page that names no posting for sure binds, but teaches no link", async () => {
+    const { tj, learnLink } = make();
+    await tj.pressed(tab(1, LI_A), 0);
+    const df = "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345";
+    await tj.loaded(tab(1, df));
+    await tj.answer(tab(1, df), true);
+    expect(await tj.carried(tab(1, df))).toBe("A");
     expect(learnLink).not.toHaveBeenCalled();
-    await tj.arm(7);
-    await tj.opened({ id: 10, openerTabId: 7 });
-    now += 61_000;
-    await tj.loaded({ id: 10, url: DAYFORCE });
-    expect(learnLink).not.toHaveBeenCalled();
+  });
+
+  it("closing the tab forgets it", async () => {
+    const { tj } = make();
+    await tj.pressed(tab(1, LI_A), 0);
+    await tj.loaded(tab(1, WD));
+    await tj.answer(tab(1, WD), true);
+    await tj.closed(1);
+    expect(await tj.carried(tab(1, WD))).toBeNull();
+    expect(TAB_JOB).toBe("je_tab_job");
   });
 });
 
@@ -394,37 +382,33 @@ describe("Apply with Claude: a tab opened from the application's tab", () => {
     };
     const run = createApplyRun({ api, press: async () => ({ ok: true }), fillSession: async () => ({ frames: {} }), chrome: c });
     const event = () => JSON.parse(calls.find(([p]) => p === "/v1/apply/runs/r1/event")[1].body);
-    return { run, c, calls, session, event };
+    return { run, c, session, event };
   }
+  const DF = "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345";
 
   it("a tab of the run opens it: grouped and told once it lands; the run's tabs stay as they were", async () => {
-    const opener = { id: 7, url: BOARD, groupId: 3 };
+    const opener = { id: 7, url: LI_A, groupId: 3 };
     const { run, c, session, event } = await setup({ tabs: { 7: opener } });
     expect(await run.tabOpened({ id: 9, groupId: -1 }, opener)).toBe(true);
     expect(c.tabs.group).not.toHaveBeenCalled();
-    await run.tabLanded({ id: 9, groupId: -1, url: DAYFORCE }, 7);
+    await run.tabLanded({ id: 9, groupId: -1, url: DF }, 7);
     expect(c.tabs.group).toHaveBeenCalledWith({ groupId: 3, tabIds: 9 });
-    expect(event()).toEqual({ kind: "new_tab", url: DAYFORCE, grouped: true });
+    expect(event()).toEqual({ kind: "new_tab", url: DF, grouped: true });
     expect(session["je_apply_tabs:r1"]).toEqual([7]);
   });
 
-  it("says when it couldn't be grouped (11)", async () => {
-    const opener = { id: 7, url: BOARD, groupId: 3 };
+  it("says when it couldn't be grouped", async () => {
+    const opener = { id: 7, url: LI_A, groupId: 3 };
     const { run, event } = await setup({ tabs: { 7: opener }, group: async () => Promise.reject(new Error("no")) });
-    await run.tabLanded({ id: 9, groupId: -1, url: DAYFORCE }, 7);
+    await run.tabLanded({ id: 9, groupId: -1, url: DF }, 7);
     expect(event().grouped).toBe(false);
   });
 
-  it("a tab in the same group as a tab of the run counts", async () => {
-    const { run } = await setup({ tabs: { 7: { id: 7, url: DAYFORCE, groupId: 3 } } });
-    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: BOARD, groupId: 3 })).toBe(true);
-  });
-
   it("never the user's own LinkedIn group, an ungrouped tab or any page", async () => {
-    const { run } = await setup({ tabs: { 7: { id: 7, url: DAYFORCE, groupId: 3 } } });
-    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: BOARD, groupId: 5 })).toBe(false);
-    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: BOARD, groupId: -1 })).toBe(false);
-    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: "https://news.example/", groupId: -1 })).toBe(false);
+    const { run } = await setup({ tabs: { 7: { id: 7, url: DF, groupId: 3 } } });
+    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: LI_A, groupId: 5 })).toBe(false);
+    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: LI_A, groupId: -1 })).toBe(false);
+    expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: LI_A, groupId: 3 })).toBe(true);
   });
 });
 

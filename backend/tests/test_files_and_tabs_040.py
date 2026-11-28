@@ -31,7 +31,7 @@ from app.services.apply_playbook import playbook_text
 from tests.test_mcp_server import _connected_user
 
 BOARD = "https://www.linkedin.com/jobs/view/4100000001/"
-COMPANY = "https://jobs.northwind.example/en/jobs/7731/platform-engineer/apply"
+COMPANY = "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Remote/Platform-Engineer_R-7731/apply"
 
 
 @pytest.fixture(autouse=True)
@@ -84,7 +84,7 @@ async def test_the_company_link_is_learned_once_from_the_board(
     assert sj.apply_url_learned is True
 
     # A learned link: a later Apply may replace it.
-    other = "https://jobs.northwind.example/en/jobs/7732/platform-engineer/apply"
+    other = "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Remote/Platform-Engineer_R-7732/apply"
     r = await client.post(f"/v1/saved-jobs/{sj.id}/company-link", json={"url": other})
     assert r.json() == {"saved": True}
     await db_session.refresh(sj)
@@ -123,26 +123,108 @@ def test_country_boards_and_aggregators_are_job_boards(board):
 
 
 @pytest.mark.parametrize(
-    ("url", "ids"),
+    ("url", "strong", "weak"),
     [
         (
-            "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply",
+            "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR-97201/IT-Analyst_JR-1234/apply",
             {"jr1234"},
+            set(),
+        ),
+        (
+            "https://acme.wd1.myworkdayjobs.com/Retail/job/Store-0423-Austin-TX/Sales_R-111",
+            {"r111"},
+            {"423"},
         ),
         (
             "https://acme.taleo.net/careersection/2/jobapply.ftl?job=12345&lang=en",
-            {"12345"},
+            {"job=12345"},
+            set(),
         ),
-        ("https://www.indeed.com/viewjob?jk=a1b2c3d4", {"a1b2c3d4"}),
-        ("https://careers.acme.example/#/jobs/456", {"456"}),
+        ("https://www.indeed.com/viewjob?vjk=a1b2c3d4", {"jk=a1b2c3d4"}, set()),
+        (
+            "https://career4.successfactors.com/career?company=acmeP&career_job_req_id=12345",
+            {"career_job_req_id=12345"},
+            set(),
+        ),
+        ("https://careers.acme.example/job/12345/analyst-2026", set(), {"12345"}),
+        ("https://careers.acme.example/#/jobs/456", set(), {"456"}),
         (
             "https://acme.taleo.net/careersection/2/flow.jsf?lang=en&ts=1700000000",
+            set(),
             set(),
         ),
     ],
 )
-def test_posting_ids(url, ids):
-    assert sj_svc.posting_ids(url) == ids
+def test_posting_ids(url, strong, weak):
+    assert sj_svc.posting_ids(url) == (strong, weak)
+
+
+@pytest.mark.parametrize(
+    ("a", "b", "same"),
+    [
+        # The 2026 interns, the same zip, the same board id: other postings.
+        (
+            "https://acme.wd5.myworkdayjobs.com/x/job/Seattle-WA/Intern---Summer-2026_R-123",
+            "https://acme.wd5.myworkdayjobs.com/x/job/Seattle-WA/Data-Intern---Summer-2026_R-456/apply",
+            False,
+        ),
+        (
+            "https://recruiting.ultipro.com/ACM1/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666",
+            "https://recruiting.ultipro.com/ACM1/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/",
+            False,
+        ),
+        # Plain digits only: never surely the same.
+        (
+            "https://careers.acme.example/job/12345/a",
+            "https://careers.acme.example/job/12345/b",
+            False,
+        ),
+        # A step of the posting.
+        (
+            "https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234",
+            "https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234/apply/applyManually",
+            True,
+        ),
+        (
+            "https://acme.taleo.net/careersection/ex/jobdetail.ftl?job=2400123",
+            "https://acme.taleo.net/careersection/ex/jobapply.ftl?job=2400123&lang=en",
+            True,
+        ),
+    ],
+)
+def test_same_posting_uses_strong_ids(a, b, same):
+    assert sj_svc.same_posting(a, b) is same
+
+
+@pytest.mark.parametrize(
+    ("url", "key"),
+    [
+        (
+            "https://wd5.myworkdaysite.com/recruiting/acme/External/job/X_R-9",
+            "myworkdaysite.com/acme",
+        ),
+        (
+            "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/x",
+            "recruiting.ultipro.com/acm1000acme",
+        ),
+        (
+            "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/5",
+            "dayforcehcm.com/acme",
+        ),
+        (
+            "https://candidate.dayforcehcm.com/CandidatePortal/en-US/acme/Account/Login",
+            "dayforcehcm.com/acme",
+        ),
+        (
+            "https://career4.successfactors.com/career?company=acmeP",
+            "career4.successfactors.com/acmep",
+        ),
+        ("https://myjobs.adp.com/acme/cx/job-details", "myjobs.adp.com/acme"),
+        ("https://acme.wd5.myworkdayjobs.com/External", "acme.wd5.myworkdayjobs.com"),
+    ],
+)
+def test_shared_hosts_are_told_apart_by_company(url, key):
+    assert sj_svc.site_key(url) == key
 
 
 @pytest.mark.asyncio
@@ -150,7 +232,9 @@ def test_posting_ids(url, ids):
     ("listing", "url"),
     [
         # The listing is already the company's own: nothing to learn.
-        ("https://jobs.northwind.example/jobs/77", COMPANY),
+        ("https://northwind.wd5.myworkdayjobs.com/External/job/X_R-1", COMPANY),
+        # Plain digits name no posting for sure.
+        (BOARD, "https://jobs.northwind.example/en/jobs/7731/apply"),
         # Another job board, a LinkedIn page, or not a web page.
         (BOARD, "https://www.indeed.com/viewjob?jk=abc123"),
         (BOARD, "https://www.linkedin.com/company/northwind/"),
@@ -260,12 +344,12 @@ async def test_a_new_tab_is_a_hint_until_claude_reaches_it(engine, monkeypatch):
     # Not the run's site, and no link learned, until Claude is on that page.
     async with maker() as db:
         run = await svc.get_run(db, user.id, run_id)
-        assert "jobs.northwind.example" not in (run.apply_hosts or [])
+        assert "northwind.wd5.myworkdayjobs.com" not in (run.apply_hosts or [])
         assert (await db.get(SavedJob, job_id)).custom_apply_url is None
     await mcp_mod.fill_page(rid, COMPANY)
     async with maker() as db:
         run = await svc.get_run(db, user.id, run_id)
-        assert "jobs.northwind.example" in run.apply_hosts
+        assert "northwind.wd5.myworkdayjobs.com" in run.apply_hosts
         assert (await db.get(SavedJob, job_id)).custom_apply_url == COMPANY
 
 
@@ -298,11 +382,17 @@ async def test_claude_on_another_posting_of_that_site_teaches_nothing(
         await svc.extension_event(db, user.id, run_id, "new_tab", COMPANY)
         await db.commit()
     # Same host, another posting: not the page the tab opened.
-    await mcp_mod.fill_page(rid, "https://jobs.northwind.example/en/jobs/9999/other")
+    await mcp_mod.fill_page(
+        rid,
+        "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Remote/Other_R-9999",
+    )
     async with maker() as db:
         assert (await db.get(SavedJob, job_id)).custom_apply_url is None
     # A later step of that posting: it is.
-    await mcp_mod.fill_page(rid, "https://jobs.northwind.example/en/jobs/7731/step2")
+    await mcp_mod.fill_page(
+        rid,
+        "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Remote/Platform-Engineer_R-7731/apply/applyManually",
+    )
     async with maker() as db:
         assert (await db.get(SavedJob, job_id)).custom_apply_url == COMPANY
 

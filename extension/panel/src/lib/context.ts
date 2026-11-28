@@ -1,15 +1,7 @@
 // What the user is doing in the tab the panel is beside. Pure (URL + title in,
 // a context out) so it's unit-tested: test/panel-context.spec.js.
 import { applicantHost, postingKey } from "../../../src/autofill/hosts.js";
-import { postingIds, samePosting, siteOf } from "../../../src/tabJob.js";
-
-/** The company's own application (spec 040) and this page: one posting on one site, both naming it. */
-function sameApplication(companyUrl: string | null | undefined, pageUrl: string): boolean {
-  if (!companyUrl || siteOf(companyUrl) !== siteOf(pageUrl)) return false;
-  const theirs = postingIds(companyUrl);
-  const mine = postingIds(pageUrl);
-  return theirs.length > 0 && mine.length > 0 && samePosting(theirs, mine);
-}
+import { otherPosting, postingIds, sameApplication, siteOf } from "../../../src/tabJob.js";
 
 export type PageContext =
   | { kind: "none" }
@@ -197,7 +189,7 @@ export function bestJobMatch(
   const kept = carried ? allowed.find((j) => j.id === carried) : undefined;
   if (!kept) return null;
   const pageIds = postingIds(page.url);
-  const other = [kept.url, kept.company_url].some((u) => !!u && siteOf(u) === siteOf(page.url) && !samePosting(postingIds(u), pageIds));
+  const other = [kept.url, kept.company_url].some((u) => !!u && siteOf(u) === siteOf(page.url) && otherPosting(postingIds(u), pageIds));
   return other ? null : kept;
 }
 

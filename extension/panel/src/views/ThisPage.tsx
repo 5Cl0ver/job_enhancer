@@ -42,6 +42,7 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
   const workdayJob = !!workday?.posting;
   return (
     <div className="flex flex-col gap-3">
+      {!match && <ApplyingFor />}
       {fill.pick && <Point pick={fill.pick} />}
       {workdayJob && !workday?.apply && <WorkdayJob key={`workday:${tab.url}`} apply={false} onSaved={savedHere} />}
       {applying && apply}
@@ -61,6 +62,60 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
       {hidden.length > 0 && <Unlinked jobs={hidden} onLink={linkAgain} />}
       {!applying && (apply || <NoForm known={!!p} />)}
     </div>
+  );
+}
+
+/**
+ * "Applying for <job>?" (spec 040): right after an Apply on a saved job's
+ * own page, on the next page that names no job. Only Yes uses that job's
+ * résumé and cover letter here; No, or anything else, uses the usual ones.
+ */
+function ApplyingFor() {
+  const { tab, reloadSaved } = usePanel();
+  const [job, setJob] = React.useState<{ title: string; company: string } | null>(null);
+  const [busy, setBusy] = React.useState(false);
+  const tabId = tab.id;
+  const url = tab.url;
+  React.useEffect(() => {
+    let live = true;
+    const ask = () =>
+      tabId == null
+        ? setJob(null)
+        : send({ type: "getApplyQuestion", tabId }).then((r) => {
+            const asked = (r as { job?: { title: string; company: string } | null } | null)?.job;
+            if (live) setJob(asked || null);
+          });
+    ask();
+    const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
+      if (area === "session" && (changes.je_tab_press || changes.je_tab_job)) ask();
+    };
+    chrome.storage.onChanged.addListener(onChanged);
+    return () => {
+      live = false;
+      chrome.storage.onChanged.removeListener(onChanged);
+    };
+  }, [tabId, url]);
+  if (!job || tabId == null) return null;
+  const answer = async (yes: boolean) => {
+    setBusy(true);
+    await send({ type: "answerApplyQuestion", tabId, yes });
+    setBusy(false);
+    setJob(null);
+    if (yes) reloadSaved?.();
+  };
+  return (
+    <Card className="flex flex-wrap items-center gap-2" role="group" aria-label="Which job is this?">
+      <span className="min-w-0 flex-1 text-sm">
+        Applying for <strong>{job.title}</strong>
+        {job.company ? ` at ${job.company}` : ""}?
+      </span>
+      <Button size="sm" disabled={busy} onClick={() => answer(true)}>
+        Yes
+      </Button>
+      <Button size="sm" variant="outline" disabled={busy} onClick={() => answer(false)}>
+        No
+      </Button>
+    </Card>
   );
 }
 

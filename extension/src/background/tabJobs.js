@@ -1,23 +1,22 @@
 // Tabs and the jobs they apply for (spec 040), the background side of
 // src/tabJob.js: kept in the session, so a sleeping worker remembers them.
 //
-// - A page that is a saved job's own (its listing, its company application)
-//   marks its tab with that job; right after the user presses an Apply that
-//   leaves (`arm`), the next site in the tab, or a tab it opens, carries the
-//   job (src/tabJob.js says for how long and where it ends).
-// - A tab a job board's listing opens (LinkedIn's "Apply on company website"
-//   is a button with no address to read): after an Apply press there, its
-//   first page off the board, within a minute, with nothing else on a board
-//   in between, is the company's application. The job learns that link (the
-//   server checks again; a link the user set is never replaced). During Apply with Claude, a tab the application's own tab
-//   opens that looks like the application joins the run's tab group and
-//   Claude hears of it (a hint: Claude decides).
-import { ARM_MS, TAB_JOB, boardRedirect, carriedJobId, definitePosting, isWebPage, looksLikeApplication, nextEntry, onHub, onJobBoard, putEntry, siteOf, worthTelling } from "../tabJob.js";
+// - The user's own press on an Apply, in a saved job's own page (its main
+//   frame), is noted for that tab (`press`); a tab it opens within 20 s
+//   takes it over (once: the next tab opened gets nothing).
+// - On the next page that is no saved job by itself, the side panel asks
+//   "Applying for <job>?" (`question`). Yes binds the tab to the job and,
+//   when the page names its posting for sure, teaches the job its company
+//   link; No just ends it. Either way the press is used up.
+// - The binding holds while the tab stays on that application
+//   (`keepBinding`); anything else drops it.
+// - During Apply with Claude, a tab the application's own tab opens that
+//   looks like the application joins the run's tab group and Claude hears
+//   of it, as a hint (`run.opened` / `run.landed`).
+import { OPEN_MS, TAB_JOB, TAB_PRESS, askAbout, bindHere, boardOf, boardRedirect, boundJobId, isWebPage, keepBinding, onHub, postingIds, putEntry, worthTelling } from "../tabJob.js";
 
-const NEW_TABS = "je_new_tabs";
-const ARMED = "je_armed"; // tab → when the user last pressed an Apply that leaves
-const ARM_WAIT_MS = 1_000; // a new tab can open before its opener's press is heard
-const NEW_MS = 60_000; // a new tab's first real page must come within this
+const NEW_TABS = "je_new_tabs"; // run hints waiting for their tab's first page
+const NEW_MS = 60_000;
 
 /**
  * @param {{
@@ -43,53 +42,72 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     return got?.[key] || {};
   }
   const write = (key, value) => c.storage.session.set({ [key]: value }).catch(() => {});
-
-  /** The user pressed an Apply that leaves, in this tab. */
-  async function arm(tabId) {
-    if (tabId == null) return;
-    const held = await read(ARMED);
-    const fresh = Object.fromEntries(Object.entries(held).filter(([, at]) => now() - at < ARM_MS));
-    await write(ARMED, { ...fresh, [tabId]: now() });
+  async function set(key, tabId, value) {
+    await write(key, putEntry(await read(key), tabId, value));
   }
 
-  async function armed(tabId) {
-    const at = (await read(ARMED))[tabId];
-    return at != null && now() - at <= ARM_MS;
+  /** The user pressed an Apply in this tab's main frame. Only on a saved job's own page. */
+  function pressed(tab, frameId) {
+    return serial(async () => {
+      if (tab?.id == null || frameId !== 0 || !isWebPage(tab.url)) return;
+      const own = await ownMatch(tab).catch(() => null);
+      if (!own) return;
+      await set(TAB_PRESS, tab.id, { jobId: own.id, at: now() });
+    });
   }
 
-  /** The job carried to this tab's page, else null. */
+  /** The job bound to this tab's page (the user said Yes), else null. */
   async function carried(tab) {
     if (tab?.id == null) return null;
-    return carriedJobId((await read(TAB_JOB))[tab.id], tab.url || "", now());
+    return boundJobId((await read(TAB_JOB))[tab.id], tab.url || "", now());
+  }
+
+  /** The job the panel asks about on this tab's page, else null. */
+  async function question(tab) {
+    if (tab?.id == null) return null;
+    if ((await carried(tab)) != null) return null;
+    const press = (await read(TAB_PRESS))[tab.id];
+    if (!press) return null;
+    const own = await ownMatch(tab).catch(() => null);
+    return askAbout(press, tab.url || "", own?.id || null, now());
+  }
+
+  /** The user's answer. Yes binds the tab and (a strong id) teaches the link. */
+  function answer(tab, yes) {
+    return serial(async () => {
+      if (tab?.id == null) return null;
+      const press = (await read(TAB_PRESS))[tab.id];
+      const own = await ownMatch(tab).catch(() => null);
+      const jobId = askAbout(press, tab.url || "", own?.id || null, now());
+      await set(TAB_PRESS, tab.id, null); // used up
+      if (!jobId || !yes) return null;
+      await set(TAB_JOB, tab.id, bindHere(jobId, tab.url, now()));
+      if (postingIds(tab.url).strong.length) await learnLink(jobId, tab.url).catch(() => {});
+      return jobId;
+    });
   }
 
   /** A page finished loading in a tab. */
   function loaded(tab) {
     return serial(async () => {
-      // about:blank, chrome://: nothing changes.
-      if (tab?.id == null || !isWebPage(tab.url)) return;
-      const own = await ownMatch(tab).catch(() => null);
-      const map = await read(TAB_JOB);
-      const before = map[tab.id] || null;
-      const next = nextEntry(before, tab.url, own?.id || null, now(), { armed: await armed(tab.id) });
-      // (`next` also says whether the learn below is still this job's.)
-      if (JSON.stringify(next) !== JSON.stringify(before)) await write(TAB_JOB, putEntry(map, tab.id, next));
+      if (tab?.id == null || !isWebPage(tab.url)) return; // about:blank: nothing changes
+      const bound = (await read(TAB_JOB))[tab.id];
+      if (bound) {
+        const kept = keepBinding(bound, tab.url, now());
+        if (!kept) {
+          // Off the application: dropped, and no question until a new press.
+          await set(TAB_JOB, tab.id, null);
+          await set(TAB_PRESS, tab.id, null);
+        } else if (kept !== bound) await set(TAB_JOB, tab.id, kept);
+      }
       const waiting = await read(NEW_TABS);
       const opened = waiting[tab.id];
       if (!opened) return;
-      // The board's own redirect on the way out: still waiting.
-      if (onHub(tab.url) && boardRedirect(opened.from, tab.url)) return;
+      if (onHub(tab.url) && boardRedirect(opened.from, tab.url)) return; // on its way out
       const { [tab.id]: _gone, ...rest } = waiting;
       await write(NEW_TABS, rest);
-      // Anything else on a board (another posting), a search: not the Apply.
       if (onHub(tab.url) || now() - opened.at > NEW_MS) return;
-      // The job's own listing opened the company's application, and nothing
-      // else came between: the job learns that link (an address naming one
-      // posting only).
-      if (opened.boardJobId && next?.jobId === opened.boardJobId && definitePosting(tab.url) && looksLikeApplication(tab.url)) {
-        await learnLink(opened.boardJobId, tab.url).catch(() => {});
-      }
-      if (opened.run && worthTelling(opened.openerUrl, tab.url)) await run.landed(tab, opened.openerId).catch(() => {});
+      if (worthTelling(opened.openerUrl, tab.url)) await run.landed(tab, opened.openerId).catch(() => {});
     });
   }
 
@@ -99,43 +117,27 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
       if (tab?.id == null || tab.openerTabId == null) return;
       const opener = await c.tabs.get(tab.openerTabId).catch(() => null);
       if (!opener?.url) return;
-      const own = await ownMatch(opener).catch(() => null);
-      // Only right after an Apply press in the opener (heard a moment late,
-      // sometimes): a middle-clicked link, an ad, a tab of the user's own,
-      // never carry the job or teach it a link.
-      const map = await read(TAB_JOB);
-      const from = map[opener.id];
-      const site = siteOf(opener.url);
-      const job = own || carriedJobId(from, opener.url, now());
-      let pressed = await armed(opener.id);
-      for (let i = 0; job && !pressed && i < ARM_WAIT_MS / 200; i++) {
-        await new Promise((r) => setTimeout(r, 200));
-        pressed = await armed(opener.id);
+      // A press just made in the opener goes with the first tab it opens.
+      const presses = await read(TAB_PRESS);
+      const press = presses[opener.id];
+      if (press && !press.gave && now() - press.at <= OPEN_MS) {
+        await write(TAB_PRESS, putEntry(putEntry(presses, opener.id, { ...press, gave: true }), tab.id, { jobId: press.jobId, at: press.at }));
       }
-      const entry = !pressed ? null : own ? nextEntry(null, opener.url, own.id, now()) : carriedJobId(from, opener.url, now()) ? from : null;
-      if (entry) await write(TAB_JOB, putEntry(map, tab.id, { ...entry, opened: true, from: site }));
-      // Only the job's own listing on a board can teach the job its link.
-      const boardJobId = pressed && own && onJobBoard(opener.url) && definitePosting(opener.url) ? own.id : null;
-      const ran = await run.opened(tab, opener).catch(() => false);
-      if (!boardJobId && !ran) return;
+      if (!(await run.opened(tab, opener).catch(() => false))) return;
       const waiting = await read(NEW_TABS);
-      // Old ones go: a tab that never left about:blank.
       const fresh = Object.fromEntries(Object.entries(waiting).filter(([, v]) => now() - v.at < NEW_MS));
-      await write(NEW_TABS, { ...fresh, [tab.id]: { at: now(), from: site, openerUrl: opener.url, openerId: opener.id, boardJobId, run: !!ran } });
+      await write(NEW_TABS, { ...fresh, [tab.id]: { at: now(), from: boardOf(opener.url), openerUrl: opener.url, openerId: opener.id } });
     });
   }
 
   function closed(tabId) {
     return serial(async () => {
-      const map = await read(TAB_JOB);
-      if (map[tabId]) await write(TAB_JOB, putEntry(map, tabId, null));
-      const waiting = await read(NEW_TABS);
-      if (waiting[tabId]) {
-        const { [tabId]: _gone, ...rest } = waiting;
-        await write(NEW_TABS, rest);
+      for (const key of [TAB_JOB, TAB_PRESS, NEW_TABS]) {
+        const map = await read(key);
+        if (map[tabId]) await write(key, putEntry(map, tabId, null));
       }
     });
   }
 
-  return { arm, carried, loaded, opened, closed };
+  return { pressed, carried, question, answer, loaded, opened, closed };
 }

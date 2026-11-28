@@ -737,8 +737,8 @@ async function linkedJob(tab, carry = true) {
     await listSaved(cache?.version || null).catch(() => {});
     ({ [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE));
   }
-  // The job this tab came from, when the page doesn't say (spec 040): the
-  // company's application after the job board's Apply.
+  // The job the user said this tab applies for, when the page doesn't say
+  // (spec 040: "Applying for…? Yes" in the panel). Never a guess.
   return matchJob(tab, cache?.jobs || [], carry ? await tabJobs.carried(tab).catch(() => null) : null);
 }
 
@@ -1233,9 +1233,9 @@ async function markApplied(job, tab = null) {
     // page only reports its final Submit), the saved job this page is — the
     // same posting — no guessing by name. Anywhere else (a search box on a
     // saved job's page) never: the old exact title + company match only.
-    // The page's own job only (spec 040): never one carried from another
-    // page, which a Submit here could mark applied by mistake.
-    if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab, false).catch(() => null))?.id || null;
+    // The page's own job, or the one the user said this tab applies for
+    // (spec 040, "Applying for…? Yes"): never a guess.
+    if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab).catch(() => null))?.id || null;
   }
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
     method: "POST",
@@ -1511,9 +1511,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         await applyRun.event("blocked_submit", sender.tab, msg.url, undefined, msg.reason === "pending" ? "pending" : undefined);
         sendResponse({ ok: true });
       } else if (msg.type === "applyPressed") {
-        // The user pressed an Apply that leaves for the company's site (spec 040).
-        await tabJobs.arm(sender.tab?.id);
+        // The user's own press on an Apply, in the page itself (never a frame
+        // in it: an ad), on a saved job's page (spec 040): the panel may ask
+        // "Applying for…?" on the next page.
+        await tabJobs.pressed(sender.tab, sender.frameId);
         sendResponse({ ok: true });
+      } else if (msg.type === "getApplyQuestion") {
+        const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
+        const jobId = tab ? await tabJobs.question(tab).catch(() => null) : null;
+        const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+        const job = jobId ? (cache?.jobs || []).find((j) => j.id === jobId) : null;
+        sendResponse({ ok: true, job: job ? { id: job.id, title: job.title, company: job.company } : null });
+      } else if (msg.type === "answerApplyQuestion") {
+        const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
+        const jobId = tab ? await tabJobs.answer(tab, !!msg.yes).catch(() => null) : null;
+        if (tab?.id != null) changed(tab.id);
+        sendResponse({ ok: true, jobId });
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
