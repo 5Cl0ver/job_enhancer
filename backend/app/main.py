@@ -50,6 +50,16 @@ async def _scheduler_lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
         id="purge_deleted_users",
         replace_existing=True,
     )
+    from app.services import keep_warm
+
+    if keep_warm.public_url():
+        scheduler.add_job(
+            keep_warm.ping,
+            trigger="interval",
+            minutes=keep_warm.EVERY_MINUTES,
+            id="keep_warm",
+            replace_existing=True,
+        )
     from app.services.extension_connect import purge_connect_requests
 
     scheduler.add_job(

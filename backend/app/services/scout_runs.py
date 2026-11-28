@@ -61,6 +61,7 @@ from app.models.scout import (
     ScoutMission,
     ScoutPass,
     ScoutRun,
+    ScoutRunEvent,
 )
 from app.schemas.scout import (
     CaptureIn,
@@ -72,6 +73,7 @@ from app.schemas.scout import (
     RunCounts,
     RunFolder,
     RunHidden,
+    RunLastStep,
     RunLink,
     RunOut,
     RunTitle,
@@ -97,7 +99,7 @@ from app.services.scout_results import band, status_of
 from app.services.scout_review import SOURCE_LABEL
 from app.services.scout_tracks import BROAD, SCOPED, broad_track, get_track
 
-PLAYBOOK_VERSION = "2026.11.13"
+PLAYBOOK_VERSION = "2026.11.28"
 # What Claude is told lives in app/scout/*.md and scout_instructions (the user
 # can edit most of it; a run uses its own snapshot).
 SOURCE_STEP_KEYS = ("google_jobs", LOCAL)
@@ -957,6 +959,7 @@ async def runs_out(
             findings.setdefault(f.run_id, []).append(item)
         for r in runs:
             folders[r.id] = await review.peek_folder(db, r.user_id, r.criteria or {})
+    last = await _last_steps(db, [r.id for r in runs if r.status == RUN_RUNNING])
     out = []
     for r in runs:
         c = r.criteria or {}
@@ -1007,9 +1010,37 @@ async def runs_out(
                     and int(i) < len(names)
                 ],
                 looking_for=looking_for(c) if c else None,
+                last_step=last.get(r.id),
             )
         )
     return out
+
+
+async def _last_steps(
+    db: AsyncSession, run_ids: list[uuid.UUID]
+) -> dict[uuid.UUID, RunLastStep]:
+    """A running search's newest log line (spec 040): what Claude did last,
+    and when, so a slow start never looks stuck."""
+    if not run_ids:
+        return {}
+    newest = (
+        select(ScoutRunEvent.run_id, func.max(ScoutRunEvent.created_at).label("at"))
+        .where(ScoutRunEvent.run_id.in_(run_ids))
+        .group_by(ScoutRunEvent.run_id)
+        .subquery()
+    )
+    rows = (
+        await db.execute(
+            select(
+                ScoutRunEvent.run_id, ScoutRunEvent.summary, ScoutRunEvent.created_at
+            ).join(
+                newest,
+                (newest.c.run_id == ScoutRunEvent.run_id)
+                & (newest.c.at == ScoutRunEvent.created_at),
+            )
+        )
+    ).all()
+    return {r.run_id: RunLastStep(summary=r.summary, at=r.created_at) for r in rows}
 
 
 async def _fits_by_title(
@@ -2316,6 +2347,52 @@ async def finish_run(
             if waiting
             else ""
         ),
+    }
+
+
+# What stopped Claude on a job board, in the user's words (spec 040).
+WALL_WORDS = {
+    "sign_in": "wants you to sign in",
+    "captcha": "wants you to prove you're not a robot",
+    "blocked": "won't load",
+}
+
+
+async def needs_you(
+    db: AsyncSession,
+    user_id: uuid.UUID,
+    run_id: str | None,
+    kind: str,
+    page_url: str | None = None,
+) -> dict:
+    """The board showed a sign-in wall, a human check, or won't load (spec
+    040): the run waits for the user instead of ending with what it has.
+    Claude never signs in; the user does, in that tab, and Claude carries on
+    from the same page. The run log keeps it."""
+    run = await _run_for_agent(db, user_id, run_id)
+    kind = kind if kind in WALL_WORDS else "sign_in"
+    board = SOURCE_LABEL.get((run.criteria or {}).get("source", ""), "The job board")
+    ask = (
+        f"{board} {WALL_WORDS[kind]}. Please do it in that tab (I never sign "
+        "in for you), then tell me done here."
+        if kind != "blocked"
+        else f"{board} won't load. Please check it opens in that tab, then "
+        "tell me done here, or say skip."
+    )
+    return {
+        "run_id": str(run.id),
+        "status": run.status,
+        "tell_user": ask,
+        "next": (
+            f'Tell the user, in these words: "{ask}" Then stop and wait for '
+            "their reply in this chat. When they say done, reload "
+            "`page_url` and carry on exactly where you were (check_jobs for "
+            "that page, as usual). If they say skip, or can't, open the next "
+            "start_url from the brief if there is one; when none is left, call "
+            "finish_scout_run with a one-line note saying where it stopped "
+            "and why. Never end the run for this without asking first."
+        ),
+        **({"page_url": page_url} if page_url else {}),
     }
 
 

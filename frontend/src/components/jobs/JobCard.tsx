@@ -224,6 +224,7 @@ export function JobCard({
             variant="outline"
             className="h-7 text-xs"
             fromEmail={savedJob?.origin === "email"}
+            showApplied={false}
           />
         </div>
       </CardFooter>

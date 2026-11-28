@@ -48,6 +48,14 @@ def strip_html(raw_html: str) -> str:
     return _WS_RE.sub(" ", html_lib.unescape(text)).strip()
 
 
+def web_url(value: Any) -> str:
+    """A feed's link, only when it's a web address (http or https): a
+    ``javascript:`` or ``data:`` link from a feed is dropped, never shown as
+    Apply Now (spec 040)."""
+    url = str(value or "").strip()
+    return url if re.match(r"(?i)^https?://[^\s/]", url) else ""
+
+
 class JobSource(ABC):
     """Base class for a job-listing source."""
 

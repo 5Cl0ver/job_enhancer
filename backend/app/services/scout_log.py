@@ -134,6 +134,10 @@ def summarize(tool: str, sent: dict, out: dict | None, error: str | None) -> str
         counts = out.get("counts") or {}
         kept = counts.get("picked", 0) + counts.get("saved", 0)
         return f"Finished: {kept} good fit{'s' if kept != 1 else ''}"
+    if tool == "scout_needs_you":
+        where = _host(sent.get("page_url") or "") or "The job board"
+        words = runs.WALL_WORDS.get(sent.get("kind", ""), runs.WALL_WORDS["sign_in"])
+        return f"{where} {words}: Claude asked you to, and waits"[:300]
     if tool == "get_master_profile":
         return "Read your resume (not stored here)"
     return tool
@@ -197,6 +201,8 @@ async def _add(
         extra = int((more.response or {}).get("count", 0)) + 1
         more.response = {"count": extra}
         more.summary = f"{extra} more call{'s' if extra != 1 else ''} not logged"
+        # Its time moves on too: a running search's "Last step" reads it.
+        more.created_at = _now()
         return
     if n == MAX_EVENTS - 1:  # the last slot counts what comes after
         tool, summary, request, response, ok = (

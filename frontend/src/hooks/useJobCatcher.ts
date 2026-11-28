@@ -4,6 +4,7 @@
  */
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { api } from "@/lib/api";
+import { askHere, type HereJobCatcher } from "@/lib/jobCatcher";
 
 export interface JobCatcherRelease {
   version: string | null;
@@ -35,6 +36,17 @@ export function useJobCatcherInstalls(enabled = true) {
     queryKey: ["job-catcher", "installs"],
     queryFn: () => api.get<JobCatcherInstall[]>("/v1/extension/installs"),
     enabled,
+  });
+}
+
+/** The Job Catcher in this very browser, asked directly (spec 040); null
+ * when there's none here or it's too old to say. */
+export function useJobCatcherHere() {
+  return useQuery<HereJobCatcher | null>({
+    queryKey: ["job-catcher", "here"],
+    queryFn: () => askHere(),
+    staleTime: 5 * 60_000,
+    retry: false,
   });
 }
 

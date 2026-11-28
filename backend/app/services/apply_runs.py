@@ -121,6 +121,9 @@ REQUEUE_SHARE = 0.5
 # Job Catcher re-sends an unchanged page every minute: a step name older than
 # this is no longer the page on screen.
 LIVE_FRESH = timedelta(minutes=3)
+# A reading this long after Claude got a fix can show whether it was made
+# (Job Catcher reads every few seconds, then sends): spec 040.
+NOT_SEEN_AFTER = timedelta(seconds=10)
 # A fill Job Catcher is still doing is waited for again for this long.
 FILL_GOING = timedelta(minutes=3)
 ASK_IF_SENT_AFTER = timedelta(minutes=2)
@@ -1092,16 +1095,79 @@ async def mark_fixes(
     """Claude says which fixes it made, which boxes it couldn't find, and
     which it chose not to make, with why (spec 038)."""
     run = await for_agent(db, user.id, run_id)
+    done_ids = {str(x) for x in done or []}
     run.sheet, run.fixes, n = sheet_svc.mark(
         _ensure_sheet(run),
         run.fixes,
-        done={str(x) for x in done or []},
+        done=done_ids,
         gone={str(x) for x in gone or []},
         declined=_declined(declined),
         now=_iso(_now()),
     )
+    doubted = _not_seen(run, done_ids)
     await db.flush()
-    return {"run_id": str(run.id), "marked": n, "next": _after_fixes(run)}
+    out: dict[str, Any] = {"run_id": str(run.id), "marked": n}
+    if doubted:
+        out["not_on_page"] = [sheet_svc.for_claude(run.sheet, f) for f in doubted]
+        out["next"] = (
+            "Job Catcher's reading of the page still shows the old answer in "
+            "these boxes (`not_on_page`), and nothing on the page changed since "
+            "you got the fixes. Look at each box: if it already shows the new "
+            "answer, don't touch it (clicking a box again can undo it); just "
+            "call mark_fixes again. If it doesn't, make the change, then call "
+            "mark_fixes again with their ids (done, or declined with why). "
+            + _after_fixes(run)
+        )
+        were = "fixes were" if len(doubted) != 1 else "fix was"
+        _event(
+            run,
+            "fix_not_seen",
+            f"Claude said {len(doubted)} {were} done, but the page didn't "
+            "change: Claude was asked to look again.",
+        )
+        return out
+    return {**out, "next": _after_fixes(run)}
+
+
+def _not_seen(run: ApplyRun, ids: set[str]) -> list[dict[str, Any]]:
+    """Fixes Claude just called done that the page says it didn't make (spec
+    040): Job Catcher's latest reading is of the fix's step, taken at least
+    NOT_SEEN_AFTER after Claude got the fix (its readings lag a few seconds),
+    the box still holds what it held before (a box it reads as empty both
+    times may just be one it can't read), and nothing on the page changed
+    since. Each is doubted once: back to Claude, never "done". Said done
+    again, Claude's word stands ("Claude says done")."""
+    live = run.live or {}
+    at = live.get("at")
+    if not ids or not at or _now() - datetime.fromisoformat(at) > LIVE_FRESH:
+        return []
+    read_at = datetime.fromisoformat(at)
+    current = (run.sheet or {}).get("current")
+    changed = _aware(run.live_changed_at)
+    fixes = [dict(f) for f in run.fixes or []]
+    doubted = []
+    for f in fixes:
+        if (
+            f.get("id") not in ids
+            or f.get("status") != "sent"
+            or not f.get("claude_done")
+            or f.get("doubted")
+            or f.get("step") != current
+            or not f.get("sent_at")
+        ):
+            continue
+        sent = datetime.fromisoformat(f["sent_at"])
+        if changed is not None and changed > sent:
+            continue  # the page changed since: Job Catcher may not read this box
+        if read_at - sent < NOT_SEEN_AFTER:
+            continue  # read too soon after: the change may not show yet
+        if sheet_svc.still_old(live.get("boxes"), f):
+            f.pop("claude_done", None)
+            f["doubted"] = _iso(_now())
+            doubted.append(f)
+    if doubted:
+        run.fixes = fixes
+    return doubted
 
 
 async def did_it_myself(
@@ -1114,7 +1180,8 @@ async def did_it_myself(
     fix = next((f for f in fixes if f.get("id") == fix_id), None)
     if fix is None:
         raise LookupError("Fix not found")
-    if fix.get("status") not in ("gone", "declined"):
+    doubted = fix.get("status") == "sent" and fix.get("doubted")
+    if fix.get("status") not in ("gone", "declined") and not doubted:
         raise ValueError("Only for a fix Claude couldn't make.")
     fix.update(status="done", by_you=True, done_at=_iso(_now()))
     run.fixes = fixes
@@ -2436,9 +2503,11 @@ async def resume_decide(
     *,
     by: str,
     words: str | None = None,
+    letter: bool = False,
 ) -> ApplyRun:
     """The user's call on the résumé (spec 025): use it, or change it (with
-    what to change). From a chat, Claude passes the user's own words."""
+    what to change). From a chat, Claude passes the user's own words. With
+    Use it, `letter`: also write a cover letter for this job (spec 040)."""
     if decision not in RESUME_DECISIONS:
         raise ValueError("decision must be use or change")
     words = _text(words, 500) or None
@@ -2460,12 +2529,15 @@ async def resume_decide(
         "words": words,
         "at": _iso(_now()),
         "read": False,
+        **({"letter": True} if letter and decision == "use" else {}),
     }
     text = (
         "You said use the résumé."
         if decision == "use"
         else f"You asked for a résumé change: {note}"
     )
+    if letter and decision == "use":
+        text = "You said use the résumé, and asked for a cover letter too."
     if by == "chat":
         text = f"You told Claude in the chat: “{words}”. {text}"
     _event(run, "resume_decision", text)
@@ -3305,7 +3377,7 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
         run.resume_check = check
         if decision == "use":
             _set(run, APPLY_FILLING)
-            return {
+            out = {
                 **base,
                 "waiting_on": "resume",
                 "ready": True,
@@ -3315,6 +3387,17 @@ async def _what_now(db: AsyncSession, run: ApplyRun) -> dict[str, Any]:
                     "fill it (playbook step 4)."
                 ),
             }
+            if check.get("letter"):
+                out["cover_letter"] = True
+                out["next"] = (
+                    "The user is happy with the résumé and wants a cover letter "
+                    "for this job too: write a short one now from the master "
+                    "profile and this job (never invent anything) and call "
+                    "save_cover_letter. Then open the application and fill it "
+                    "(playbook step 4); they read the letter in the app next to "
+                    "the résumé."
+                )
+            return out
         _set(run, APPLY_WRITING)
         return {
             **base,

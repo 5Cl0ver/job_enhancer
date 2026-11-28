@@ -662,10 +662,25 @@ async def company_checked(
 
 
 @mcp.tool
+async def scout_needs_you(run_id: str, kind: str, page_url: str | None = None) -> dict:
+    """The job board stopped you: kind is sign_in (a sign-in or log-in wall),
+    captcha (any human check) or blocked (it won't load). Never sign in
+    yourself and never end the run for this: call this, tell the user what it
+    says, and wait for them in this chat. page_url: the page you were on.
+    Returns what to tell them and how to carry on."""
+    return await _scout(
+        "scout_needs_you",
+        run_id,
+        {"kind": kind, "page_url": page_url},
+        lambda db, user: scout_svc.needs_you(db, user.id, run_id, kind, page_url),
+    )
+
+
+@mcp.tool
 async def finish_scout_run(run_id: str, note: str = "") -> dict:
-    """End the run: when report_job says done, when results run out, or on a
-    CAPTCHA, login wall or error. ``note`` is one line for the user (e.g. "only
-    3 new jobs this week")."""
+    """End the run: when report_job says done, when results run out, or after
+    scout_needs_you when the user can't get past a wall and no search is left.
+    ``note`` is one line for the user (e.g. "only 3 new jobs this week")."""
     return await _scout(
         "finish_scout_run",
         run_id,

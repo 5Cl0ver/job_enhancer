@@ -188,7 +188,9 @@ async def resume_decision(
     """Use the résumé Claude wrote, or ask for a change (spec 025)."""
     run = await _run(db, user, run_id, lock=True)
     try:
-        await svc.resume_decide(db, run, data.decision, data.note, by="app")
+        await svc.resume_decide(
+            db, run, data.decision, data.note, by="app", letter=data.cover_letter
+        )
     except ValueError as exc:
         raise _bad(exc) from exc
     await db.commit()

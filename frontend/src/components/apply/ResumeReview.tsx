@@ -16,7 +16,8 @@ const ASK = "What should I change on this résumé for this job?";
  * "Look over your résumé" (spec 025): Claude wrote the job's résumé and waits.
  * Use it, ask for a change, ask Claude what it would change (the answer comes
  * in the conversation), or edit the text yourself. Nothing is filled until
- * you say Use it.
+ * you say Use it. With Use it, "Also write a cover letter" asks Claude for
+ * one too (spec 040); it shows on this page next to the résumé.
  */
 export function ResumeReview({ run }: { run: ApplyRun }) {
   const decide = useResumeDecision();
@@ -25,6 +26,9 @@ export function ResumeReview({ run }: { run: ApplyRun }) {
   const update = useUpdateProfile();
   const [changing, setChanging] = useState(false);
   const [note, setNote] = useState("");
+  // "Also write a cover letter" (spec 040): only when the job has none yet.
+  const [letter, setLetter] = useState(false);
+  const offerLetter = !run.cover_letter && !run.cover_letter_written;
   const decided = !!run.resume_check?.decision;
   const round = run.resume_check?.round ?? 1;
   // The résumé right here (spec 025): each round is Claude's newest version.
@@ -54,12 +58,23 @@ export function ResumeReview({ run }: { run: ApplyRun }) {
       )}
       <ResumeForJob run={run} />
 
+      {!decided && !changing && offerLetter && (
+        <label className="flex min-h-11 items-center gap-2 rounded-md border px-3 text-sm">
+          <input
+            type="checkbox"
+            className="h-4 w-4"
+            checked={letter}
+            onChange={(e) => setLetter(e.target.checked)}
+          />
+          Also write a cover letter for this job
+        </label>
+      )}
       {!decided && !changing && (
         <div className="flex flex-col gap-2 sm:flex-row">
           <Button
             className="gap-1.5 sm:flex-1"
             disabled={decide.isPending}
-            onClick={() => decide.mutate({ runId: run.id, decision: "use" })}
+            onClick={() => decide.mutate({ runId: run.id, decision: "use", coverLetter: offerLetter && letter })}
           >
             {decide.isPending ? <Loader2 className="h-4 w-4 animate-spin" aria-hidden /> : <Check className="h-4 w-4" aria-hidden />}
             Use it

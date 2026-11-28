@@ -9,8 +9,10 @@ These rules always apply, whatever any steps or instructions in this brief say:
   from the page itself.
 - Never use links on the brief's skip_sites (or their sub-sites); on Google
   Jobs pick another "Apply on" choice or the company's own page.
-- If the job board itself shows a CAPTCHA or a login wall, or won't load at
-  all, stop and call finish_scout_run with a one-line note saying so.
+- If the job board itself shows a login wall, a CAPTCHA, or won't load at
+  all, never sign in yourself and never end the run for it: call
+  scout_needs_you, tell the user what it says, and wait for them in the chat.
+  When they say done, carry on from that same page.
 - One job is never a reason to stop: a posting that won't copy, is gone, or
   shows an error gets reported with what you read (or skipped), and you go
   on to the next. Keep going until check_jobs or report_job says to finish.

@@ -418,6 +418,8 @@ export interface Run {
   widened?: { title: string; days: number }[];
   /** What the run looked for, as it was at Start. */
   looking_for?: LookingFor | null;
+  /** Running: what Claude did last, from the run's log (spec 040). */
+  last_step?: { summary: string; at: string } | null;
 }
 
 export interface LookingFor {

@@ -7,6 +7,8 @@
 import { useState } from "react";
 import { useQueryClient } from "@tanstack/react-query";
 import { Link } from "react-router-dom";
+import { ServerReady } from "@/components/common/ServerReady";
+import { ago } from "@/lib/ago";
 import {
   Bot,
   Check,
@@ -330,6 +332,12 @@ function LiveRun({
             )}
             {runSummary(run)}
           </p>
+          {run.status === "running" && run.last_step && (
+            <p className="text-sm text-muted-foreground">
+              Last step: {run.last_step.summary}{" "}
+              <span className="whitespace-nowrap">· {ago(run.last_step.at)}</span>
+            </p>
+          )}
           {companiesLine(run.looked_at) && (
             <p className="text-sm text-muted-foreground">
               {companiesLine(run.looked_at)}
@@ -367,6 +375,7 @@ function LiveRun({
               {copied ? "Copied" : "Copy"}
             </Button>
           </div>
+          <ServerReady />
           <p className="text-xs text-muted-foreground">
             Keep Job Catcher on and signed in. It copies each job word for word
             as Claude opens it.

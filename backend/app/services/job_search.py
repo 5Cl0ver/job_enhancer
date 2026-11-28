@@ -28,6 +28,7 @@ from app.schemas.job import JobListingSchema, JobSearchResponse, PaginatedMeta
 from app.services import allowance
 from app.services.dedup import is_duplicate, job_content_hash, normalize
 from app.services.sources import get_sources
+from app.services.sources.base import web_url
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +45,8 @@ async def _upsert_listing(db: AsyncSession, data: dict[str, Any]) -> uuid.UUID |
     A re-seen listing is refreshed with one ``UPDATE … RETURNING id`` — the row
     (and its description) is never read back.
     """
+    # Every feed's link goes through here: only web addresses (spec 040).
+    data = {**data, "apply_url": web_url(data.get("apply_url"))}
     title_norm = normalize(data["title"])
     company_norm = normalize(data["company"])
     location_norm = normalize(data["location"])

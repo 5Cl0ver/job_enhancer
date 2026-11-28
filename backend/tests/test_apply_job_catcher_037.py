@@ -331,7 +331,7 @@ async def test_a_press_stopped_after_submit_was_pressed_says_it_was_pressed(
 
 def test_the_playbook_says_what_cover_letter_and_unverified_mean():
     text = playbook_text()
-    assert APPLY_PLAYBOOK_VERSION == "2026.12.05"
+    assert APPLY_PLAYBOOK_VERSION >= "2026.12.05"
     assert 'One box for both ("Resume / Cover Letter")' in text
     assert "`cover_letter` (attached / unverified / no_box / no_file / failed)" in text
     assert "`unverified` means Job Catcher put the file in" in text

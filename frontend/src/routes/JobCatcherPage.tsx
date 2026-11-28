@@ -3,11 +3,12 @@ import { useIsPhone } from "@/hooks/useIsPhone";
 import {
   useDisconnectJobCatcher,
   useJobCatcherConnections,
+  useJobCatcherHere,
   useJobCatcherInstalls,
   useJobCatcherRelease,
   type JobCatcherConnection,
 } from "@/hooks/useJobCatcher";
-import { DOWNLOAD_URL, RECENT_MS, isOlder } from "@/lib/jobCatcher";
+import { DOWNLOAD_URL, RECENT_MS, isOlder, outdatedJobCatcher } from "@/lib/jobCatcher";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
@@ -41,15 +42,18 @@ export default function JobCatcherPage() {
   const release = useJobCatcherRelease();
   const connections = useJobCatcherConnections();
   const installs = useJobCatcherInstalls();
+  const here = useJobCatcherHere();
   const latest = release.data?.version ?? null;
   const live = connections.data ?? [];
   // Seen recently, by any sign-in (Connect or password), newest first.
   const seen = (installs.data ?? []).filter(
     (i) => Date.now() - new Date(i.last_seen_at).getTime() < RECENT_MS,
   );
-  const connected = seen.length > 0 || live.length > 0;
-  const newestVersion = seen[0]?.version ?? live.find((c) => c.version)?.version ?? null;
-  const behind = seen.find((i) => isOlder(i.version, latest))?.version ?? null;
+  const connected = seen.length > 0 || live.length > 0 || !!here.data;
+  // The one in this browser first, when it says (spec 040).
+  const newestVersion = here.data?.version ?? seen[0]?.version ?? live.find((c) => c.version)?.version ?? null;
+  // The same rule as the banner on every page: a reinstall replaces its old copy.
+  const behind = outdatedJobCatcher(installs.data, latest, Date.now(), here.data)?.version ?? null;
 
   return (
     <div className="container mx-auto flex max-w-2xl flex-col gap-3 md:gap-6 md:px-4 md:py-6">

@@ -12,6 +12,8 @@ import { JobCoverLetterPicker, letterFileName } from "@/components/jobs/JobCover
 import { documentFile, useFileViewer } from "@/components/common/FileViewer";
 import { ResumeReview } from "@/components/apply/ResumeReview";
 import { ModeSwitch } from "@/components/apply/ModeSwitch";
+import { NowLine } from "@/components/apply/NowLine";
+import { ServerReady } from "@/components/common/ServerReady";
 import { ReviewBoard } from "@/components/apply/Review";
 import { StepCheck } from "@/components/apply/StepCheck";
 import { YourApplication } from "@/components/apply/YourApplication";
@@ -77,6 +79,7 @@ function StartCard({ run }: { run: ApplyRun }) {
       </div>
       <p className="text-sm">Open the Claude side panel in Chrome and say:</p>
       <CopyLine line={applyLine(run)} />
+      <ServerReady />
       <ul className="list-disc space-y-1 pl-5 text-xs text-muted-foreground">
         <li>Keep Job Catcher on and signed in: it takes a photo of every page and fills what it knows.</li>
         <li>
@@ -216,6 +219,7 @@ export function ApplyRunPage() {
       )}
 
       <ApplySteps step={step} ended={!open} sent={run.status === "sent"} />
+      <NowLine run={run} />
       <Readiness run={run} open={open} />
 
       <Stopped run={run} />
