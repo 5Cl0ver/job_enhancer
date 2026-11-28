@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "key": "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAnJJaRYWwj0AQEzrHsqI3uZgxqu3tHGvGGF2VGPGllZsSVytw/LvS1pnOJHXdBYGWJ7N25wAnpz//r+7bO+6PGjKvnUrO79uGPnOhz4QDfaTjuyIWPoMVEMA2DNitqYIeWLKFrM1r1HIGo/H1aj7aSHWPDY7nhWJR/rE1kpcIZFe1eMX7QwkjbfLq9CvdMsE7VIgp9QtJg9KE3Tse+SrLA40fuHrqtDBxiuN8vFgUf/JbZWfvEfRFU5uwR8HFfC4TR0Ut8zyT+kJ/wWGPoDGUlt35+0ei0nD7auzBFO0txsBN0ek635JCNN8XpthXiklLn/KBTXkzDRrtjvkbOCZN8QIDAQAB",
   "name": "Job Enhancer — Job Catcher",
-  "version": "0.49.0",
+  "version": "0.50.0",
   "description": "Save jobs from any site to your Job Enhancer tracker — a side panel plus a one-click Save button on Indeed, LinkedIn & ZipRecruiter job pages.",
   "permissions": [
     "idle",
