@@ -115,6 +115,10 @@ async def test_the_company_link_is_learned_once_from_the_board(
         "https://wellfound.com/jobs/3344556-platform-engineer",
         "https://www.usajobs.gov/job/812345600",
         "https://www.careerbuilder.com/job/J3abc123456",
+        "https://jooble.org/desc/123",
+        "https://www.talent.com/view?id=abc",
+        "https://www.adzuna.com/details/123",
+        "https://click.appcast.io/track/abc",
     ],
 )
 def test_country_boards_and_aggregators_are_job_boards(board):
@@ -122,52 +126,31 @@ def test_country_boards_and_aggregators_are_job_boards(board):
     assert not sj_svc.on_job_board(COMPANY)
 
 
+def test_a_reposted_requisition_is_another_posting():
+    assert (
+        sj_svc.posting_level_id("https://x.wd5.myworkdayjobs.com/a/job/y_JR12345-1")
+        == "jr12345-1"
+    )
+    assert (
+        sj_svc.posting_level_id("https://x.wd5.myworkdayjobs.com/a/job/y_JR-12345")
+        == "jr12345"
+    )
+
+
 @pytest.mark.parametrize(
-    ("url", "strong", "weak"),
+    "url",
     [
-        (
-            "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR-97201/IT-Analyst_JR-1234/apply",
-            {"jr1234"},
-            set(),
-        ),
-        (
-            "https://acme.wd1.myworkdayjobs.com/Retail/job/Store-0423-Austin-TX/Sales_R-111",
-            {"r111"},
-            {"423"},
-        ),
-        (
-            "https://acme.taleo.net/careersection/2/jobapply.ftl?job=12345&lang=en",
-            {"job=12345"},
-            set(),
-        ),
-        ("https://www.indeed.com/viewjob?vjk=a1b2c3d4", {"jk=a1b2c3d4"}, set()),
-        (
-            "https://career4.successfactors.com/career?company=acmeP&career_job_req_id=12345",
-            {"career_job_req_id=12345"},
-            set(),
-        ),
-        ("https://careers.acme.example/job/12345/analyst-2026", set(), {"12345"}),
-        ("https://careers.acme.example/#/jobs/456", set(), {"456"}),
-        (
-            "https://acme.taleo.net/careersection/2/flow.jsf?lang=en&ts=1700000000",
-            set(),
-            set(),
-        ),
+        # A token is a posting only on a Greenhouse embed; elsewhere a session's.
+        "https://careers.acme.example/apply?token=abc123def",
+        # pid only on Eightfold, and never its search.
+        "https://careers.acme.example/jobs?pid=12345",
+        "https://acme.eightfold.ai/careers?query=analyst&pid=999",
+        # id only as digits or a UUID.
+        "https://careers.acme.example/apply?id=senior-analyst",
     ],
 )
-def test_posting_ids(url, strong, weak):
-    assert sj_svc.posting_ids(url) == (strong, weak)
-
-
-def test_a_reposted_requisition_is_another_posting():
-    assert sj_svc.posting_ids("https://x.wd5.myworkdayjobs.com/a/job/y_JR12345-1") == (
-        {"jr12345-1"},
-        set(),
-    )
-    assert sj_svc.posting_ids("https://x.wd5.myworkdayjobs.com/a/job/y_JR-12345") == (
-        {"jr12345"},
-        set(),
-    )
+def test_query_parts_that_are_no_posting(url):
+    assert sj_svc.posting_level_id(url) is None
 
 
 @pytest.mark.parametrize(
@@ -237,6 +220,23 @@ def test_only_a_posting_level_id_names_a_posting(url, posting):
         (
             "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25&siteid=5&jobid=777#jobDetails",
             "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25&siteid=5&jobid=777",
+        ),
+        (
+            "https://career5.successfactors.com/career?career_ns=job_listing&company=acme&career_job_req_id=9",
+            "https://career5.successfactors.com/career?career_ns=job_listing&company=acme&career_job_req_id=9",
+        ),
+        (
+            "https://acme.eightfold.ai/careers?pid=999&domain=acme.com&utm_source=li",
+            "https://acme.eightfold.ai/careers?pid=999&domain=acme.com",
+        ),
+        # A token kept only on a Greenhouse embed, never a session token elsewhere.
+        (
+            "https://boards.greenhouse.io/embed/job_app?for=acme&token=4012345",
+            "https://boards.greenhouse.io/embed/job_app?for=acme&token=4012345",
+        ),
+        (
+            "https://careers.acme.example/jobs/12345?token=SESSIONabc&jobId=12345",
+            "https://careers.acme.example/jobs/12345?jobId=12345",
         ),
     ],
 )
@@ -547,3 +547,28 @@ async def test_a_jobs_link_must_be_a_public_address(
     sj = await _job(db_session, test_user)
     r = await client.patch(f"/v1/saved-jobs/{sj.id}/listing", json={"apply_url": url})
     assert r.status_code == 422
+
+
+@pytest.mark.asyncio
+async def test_job_catcher_saves_the_link_with_its_pass(
+    anon_client: AsyncClient, db_session: AsyncSession, test_user: User
+):
+    import hashlib
+    import secrets
+
+    from app.models.extension import ExtensionToken
+
+    token = "jcx_" + secrets.token_urlsafe(32)
+    db_session.add(
+        ExtensionToken(
+            user_id=test_user.id, token_hash=hashlib.sha256(token.encode()).hexdigest()
+        )
+    )
+    await db_session.commit()
+    sj = await _job(db_session, test_user)
+    r = await anon_client.post(
+        f"/v1/saved-jobs/{sj.id}/company-link",
+        json={"url": COMPANY},
+        headers={"Authorization": f"Bearer {token}"},
+    )
+    assert r.status_code == 200 and r.json() == {"saved": True}

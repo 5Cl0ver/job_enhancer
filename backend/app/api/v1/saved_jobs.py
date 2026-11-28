@@ -280,7 +280,8 @@ async def choose_job_resume(
 async def learn_company_link(
     saved_job_id: uuid.UUID,
     data: CompanyLinkIn,
-    user: User = Depends(get_current_user),
+    # Job Catcher calls it, connected with its pass or a session (spec 040).
+    user: User = Depends(get_user_or_pass),
     db: AsyncSession = Depends(get_db),
 ) -> dict:
     """The user said this page is the job's application (spec 040, Job

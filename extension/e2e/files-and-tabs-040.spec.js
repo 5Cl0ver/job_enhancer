@@ -86,14 +86,14 @@ async function pressApply() {
   return { page, np };
 }
 
-const fillWith = (panel) => panel.getByRole("button", { name: "Fill with IT Analyst at Acme's résumé and cover letter" });
+const fillWith = (panel) => panel.getByRole("button", { name: "Use IT Analyst's résumé and letter" });
 const landing = (panel) => panel.getByRole("group", { name: /Is this the application for/ });
 const fileName = (np, id) => np.locator(`#${id}`).evaluate((el) => el.files?.[0]?.name || "");
 
 test("the board's Apply: the panel suggests the job; only its labelled Fill uses its résumé and letter, for that fill", async () => {
   const { page, np } = await pressApply();
   const { panel } = await panelBeside(WD_A);
-  await expect(panel.getByText("From your Apply on")).toContainText("IT Analyst at Acme");
+  await expect(panel.getByText("You pressed Apply on")).toContainText("IT Analyst at Acme");
   await expect(fillWith(panel)).toBeVisible();
   await expect(panel.getByRole("button", { name: "Use my usual résumé" })).toBeVisible();
   // Nothing of the job's is used until the user asks for it.
@@ -158,7 +158,7 @@ test("a press inside an ad's frame, or a page script's click, never suggests the
   const { panel } = await panelBeside(AD_LAND);
   await panel.waitForTimeout(800);
   await expect(fillWith(panel)).toHaveCount(0);
-  await expect(panel.getByText("From your Apply on")).toHaveCount(0);
+  await expect(panel.getByText("You pressed Apply on")).toHaveCount(0);
 
   await page.evaluate(() => {
     const a = document.getElementById("synth");

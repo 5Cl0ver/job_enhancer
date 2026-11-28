@@ -168,7 +168,8 @@ _JOB_BOARD = re.compile(
     rf"(^|\.)(linkedin\.(?:com|cn)|lnkd\.in|indeed\.{_TLD}|glassdoor\.{_TLD}"
     rf"|ziprecruiter\.{_TLD}|simplyhired\.{_TLD}|monster\.{_TLD}|careerbuilder\.{_TLD}"
     r"|builtin[a-z]*\.com|dice\.com|wellfound\.com|welcometothejungle\.com"
-    r"|jobright\.ai|joinhandshake\.com|handshake\.com|usajobs\.gov)$",
+    r"|jobright\.ai|joinhandshake\.com|handshake\.com|usajobs\.gov"
+    rf"|jooble\.org|talent\.com|adzuna\.{_TLD}|appcast\.io)$",
     re.IGNORECASE,
 )
 
@@ -190,83 +191,31 @@ _APPLICATION = re.compile(
 )
 
 
-# The ids that name a posting (spec 040, Job Catcher's postingIds). Strong:
-# UUIDs, requisition ids (R-1234, JR-1234, Workday's job ids) and the
-# posting's own query parts ("job=…", "career_job_req_id=…", Indeed's jk).
-# Weak: runs of 3+ digits in the path or #route, years and a zip next to its
-# state left out.
 _UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
 )
-# A repost keeps its suffix: JR12345-1 is not JR-12345.
+# A requisition id (R-1234, JR-1234); a repost keeps its suffix (JR12345-1).
 _REQ = re.compile(
     r"(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?:-\d{1,3})?(?![a-z0-9])", re.I
 )
-_STATES = (
-    "al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo"
-    "|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy"
-)
-_ZIP = re.compile(rf"(?<![a-z])(?:{_STATES})[-_ ,]+\d{{5}}(?:-\d{{4}})?(?!\d)", re.I)
-_YEAR = re.compile(r"(?<!\d)(19|20)\d{2}(?!\d)")
-_STRONG_PARAMS = {
-    "jk",
-    "vjk",
-    "gh_jid",
-    "ashby_jid",
-    "career_job_req_id",
-    "job",
-    "jobid",
-    "job_id",
-    "jid",
-    "req",
-    "reqid",
-    "requisitionid",
-    "postingid",
-    "jobreqid",
-    "opportunityid",
-    "jobpostingid",
-    "positionid",
-    "currentjobid",
-}
-
-
-def posting_ids(url: str | None) -> tuple[set[str], set[str]]:
-    """(strong, weak) ids naming a posting in an address."""
-    try:
-        parts = urlsplit(url or "")
-    except ValueError:
-        return set(), set()
-    strong: set[str] = set()
-    weak: set[str] = set()
-
-    def take(text: str) -> None:
-        rest = text.lower()
-        strong.update(m.group(0) for m in _UUID.finditer(rest))
-        rest = _UUID.sub(" ", rest)
-        strong.update(
-            re.sub(r"^([a-z]+)[-_]", r"\1", m.group(0)) for m in _REQ.finditer(rest)
-        )
-        rest = _REQ.sub(" ", rest)
-        rest = _YEAR.sub(" ", _ZIP.sub(" ", rest))
-        weak.update(m.lstrip("0") or "0" for m in re.findall(r"\d{3,}", rest))
-
-    take(unquote(parts.path))
-    take(parts.fragment)
-    for name, value in parse_qsl(parts.query):
-        key = name.lower()
-        if value and key in _STRONG_PARAMS:
-            strong.add(f"{'jk' if key == 'vjk' else key}={value.lower()}")
-    return strong, weak
 
 
 # The query parts that name the company on a host many share (Job Catcher's
-# siteOf / siteKey): kept in a learned link with the posting's own.
-_TENANT_PARAMS = {"company", "cid", "ccid", "clientkey", "partnerid", "siteid", "for"}
-# The query parts that name ONE posting (Job Catcher's postingLevelId).
+# siteOf / siteKey), or that the page needs to show the job (SuccessFactors'
+# career_ns, Eightfold's domain): kept in a learned link with the posting's.
+_KEEP_PARAMS = {
+    "company",
+    "cid",
+    "ccid",
+    "clientkey",
+    "partnerid",
+    "siteid",
+    "for",
+    "career_ns",
+    "domain",
+}
+# The query parts that name ONE posting anywhere (Job Catcher's postingParam).
 _POSTING_PARAMS = {
-    "pid",
-    "id",
-    "token",
     "jvi",
     "gh_jid",
     "ashby_jid",
@@ -287,6 +236,31 @@ _POSTING_PARAMS = {
     "positionid",
     "currentjobid",
 }
+_ONE_DIGITS_OR_UUID = re.compile(
+    r"\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
+
+
+def _posting_param(host: str, path: str, keys: set[str], name: str, value: str) -> bool:
+    """Does this query part name ONE posting here? The ones above anywhere; a
+    Greenhouse embed's token, an Eightfold job's pid (never a search with
+    query=), an id only as digits or a UUID. Never a session token."""
+    key = name.lower()
+    if not value:
+        return False
+    if key in _POSTING_PARAMS:
+        return True
+    if key == "token":
+        return bool(re.search(r"(^|\.)greenhouse\.io$", host)) and bool(
+            re.search(r"/embed/job_app\b", path, re.I)
+        )
+    if key == "pid":
+        return bool(re.search(r"(^|\.)eightfold\.ai$", host)) and "query" not in keys
+    if key == "id":
+        return bool(_ONE_DIGITS_OR_UUID.fullmatch(value))
+    return False
+
+
 # Hosts whose UUIDs name the company (its board), never a posting.
 _TENANT_UUIDS = re.compile(
     r"(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net|paylocity\.com|adp\.com)$", re.I
@@ -319,12 +293,14 @@ def posting_level_id(url: str | None) -> str | None:
         parts = urlsplit(url or "")
     except ValueError:
         return None
-    for name, value in parse_qsl(parts.query):
-        key = name.lower()
-        if value and key in _POSTING_PARAMS:
-            return f"{'jk' if key == 'vjk' else key}={value.lower()}"
     host = (parts.hostname or "").lower().removeprefix("www.")
     path = unquote(parts.path)
+    query = parse_qsl(parts.query)
+    keys = {k.lower() for k, _ in query}
+    for name, value in query:
+        if _posting_param(host, path, keys, name, value):
+            key = name.lower()
+            return f"{'jk' if key == 'vjk' else key}={value.lower()}"
     req = _REQ.search(path)
     if req:
         return re.sub(r"^([a-z]+)[-_]", r"\1", req.group(0).lower())
@@ -342,8 +318,15 @@ def clean_link(url: str) -> str:
     posting or the company on a shared host (a session token like _s.crb or
     a tracking id never stays in it)."""
     parts = urlsplit(url)
-    keep = _POSTING_PARAMS | _TENANT_PARAMS
-    query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() in keep]
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = unquote(parts.path)
+    pairs = parse_qsl(parts.query)
+    keys = {k.lower() for k, _ in pairs}
+    query = [
+        (k, v)
+        for k, v in pairs
+        if k.lower() in _KEEP_PARAMS or _posting_param(host, path, keys, k, v)
+    ]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))[
         :2000
     ]

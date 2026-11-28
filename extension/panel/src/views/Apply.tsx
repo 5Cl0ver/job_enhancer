@@ -20,8 +20,8 @@ import { Alert, Badge, Button, Card, InfoBubble, Input, Muted, SectionTitle, Sel
 import { HELP } from "@/lib/help";
 import { cn } from "@/lib/utils";
 import { appUrl, send } from "@/lib/chrome";
-import type { SavedJob } from "@/lib/context";
-import { jobName, useJobSuggestion } from "@/lib/suggestion";
+import { filesLabel, type SavedJob } from "@/lib/context";
+import { useJobSuggestion } from "@/lib/suggestion";
 import { Trouble } from "@/views/Trouble";
 import { startPointing } from "@/views/Point";
 import { usePanel, type FillAlready, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence, type SavedAnswer } from "@/lib/store";
@@ -47,6 +47,7 @@ const WHY: Record<string, string> = {
   other_person: "About someone else",
   too_long: "Too long for this box",
   not_added: "The site doesn't offer these",
+  choose_files: "Pick whose résumé to use, above, then fill again",
 };
 
 export function Apply({
@@ -82,13 +83,18 @@ export function Apply({
   // line up to date while it works; the result lands there too.
   // A job an Apply press suggests here (spec 040): its résumé and cover
   // letter only for a fill the user asks for by name, one at a time.
-  const { suggestion } = useJobSuggestion();
+  const { suggestion, refresh } = useJobSuggestion();
   const offered = !match ? suggestion : null;
+  const useJob = offered ? filesLabel(offered) : null;
+  const [moved, setMoved] = React.useState(false);
   async function autofill(withJob: string | null = null) {
     if (!tab.id) return;
     setBusy(true);
-    await send({ type: "pressAutofill", tabId: tab.id, ...(withJob ? { withJob } : {}) });
+    setMoved(false);
+    const r = (await send({ type: "pressAutofill", tabId: tab.id, ...(withJob ? { withJob } : {}) })) as { problem?: string } | null;
     setBusy(false);
+    if (r?.problem === "moved") setMoved(true); // the page changed under the panel: choose again
+    refresh();
   }
   // A status that went silent (STUCK_MS) no longer holds the button: press again.
   const st = fill.presence?.status;
@@ -126,15 +132,19 @@ export function Apply({
           {isApplication && <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>}
           {match && <JobLinks match={match} onNotThis={onNotThis} />}
         </div>
-        {offered ? (
-          <div className="flex flex-col gap-1">
-            <Button onClick={() => autofill(offered.jobId)} busy={filling} disabled={filling} className="h-auto w-full whitespace-normal py-2">
-              {!filling && <Zap />}
-              {filling ? "Filling…" : `Fill with ${jobName(offered)}'s résumé and cover letter`}
-            </Button>
-            <Button variant="link" size="sm" className="self-center text-muted-foreground" disabled={filling} onClick={() => autofill(null)}>
-              Use my usual résumé
-            </Button>
+        {offered && useJob ? (
+          // Two equal choices, for this press only (spec 040).
+          <div className="flex flex-col gap-1.5">
+            <div className="grid grid-cols-2 gap-2">
+              <Button variant="outline" onClick={() => autofill(offered.jobId)} busy={filling} disabled={filling} className="h-auto whitespace-normal py-2">
+                {filling ? "Filling…" : useJob}
+              </Button>
+              <Button variant="outline" onClick={() => autofill(null)} disabled={filling} className="h-auto whitespace-normal py-2">
+                Use my usual résumé
+              </Button>
+            </div>
+            {offered.problem && <span className="text-xs text-destructive">{offered.problem}</span>}
+            {moved && <span className="text-xs text-destructive">The page changed. Choose again for this page.</span>}
           </div>
         ) : (
           <Button onClick={() => autofill(null)} busy={filling} disabled={filling} className="w-full">
@@ -153,7 +163,8 @@ export function Apply({
         )}
         <StatusLine presence={fill.presence} busy={busy} filledNow={entries.length} needNow={needYou.length} alreadyNow={already.length} tabId={tab.id} />
         <ShortcutHint />
-        <ResumeChoice match={match} staged={staged} />
+        {/* The choice above says whose files: no second line about it. */}
+        {!(offered && useJob) && <ResumeChoice match={match} staged={staged} />}
         {!filling && entries.length + needYou.length + already.length > 0 && (
           <p className="text-xs" aria-live="polite">
             <b className="text-emerald-700 dark:text-emerald-300">{entries.length} filled</b>

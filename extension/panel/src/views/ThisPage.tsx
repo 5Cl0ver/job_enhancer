@@ -67,29 +67,33 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
 }
 
 /**
- * The job an Apply press suggests here (spec 040), on every page that names
- * no saved job: one plain line. The Fill button offers its résumé and cover
- * letter. Once, on the first application page: "Is this the application for
- * <job>?" — Yes only saves the job's link to this page.
+ * The job an Apply press suggests here (spec 040), on the pages after it
+ * that name no saved job: one plain line; Fill offers its files or the
+ * usual ones, for each press. Once, on the first page naming its posting:
+ * "Is this the application for <job>?" — Yes only saves the job's link.
  */
 function Suggested() {
-  const { tab } = usePanel();
+  const { tab, reloadSaved } = usePanel();
   const { suggestion, refresh } = useJobSuggestion();
   const [busy, setBusy] = React.useState(false);
-  const [failed, setFailed] = React.useState(false);
+  const [note, setNote] = React.useState("");
   if (!suggestion || tab.id == null) return null;
   const answer = async (yes: boolean) => {
     setBusy(true);
-    setFailed(false);
-    const r = (await send({ type: "answerLanding", tabId: tab.id, yes, page: suggestion.page })) as { ok?: boolean; refused?: boolean } | null;
+    setNote("");
+    const r = (await send({ type: "answerLanding", tabId: tab.id, yes, page: suggestion.page })) as { ok?: boolean; refused?: boolean; linkFailed?: boolean } | null;
     setBusy(false);
-    if (!r?.ok && !r?.refused) setFailed(true);
+    if (r?.ok) {
+      if (r.linkFailed) setNote("Couldn't save the job's link. Filling still works.");
+      else if (yes) reloadSaved?.();
+    } else if (r?.refused) setNote("The page changed. Asking about this page.");
+    else setNote("Couldn't save that. Try again.");
     refresh();
   };
   return (
     <Card className="flex flex-col gap-1.5" aria-live="polite">
       <Muted>
-        From your Apply on <strong className="text-foreground">{jobName(suggestion)}</strong>. Fill uses its résumé and cover letter only if you pick it.
+        You pressed Apply on <strong className="text-foreground">{jobName(suggestion)}</strong>.
       </Muted>
       {suggestion.ask && (
         <div className="flex flex-wrap items-center gap-2" role="group" aria-labelledby="landing-question">
@@ -104,7 +108,7 @@ function Suggested() {
           </Button>
         </div>
       )}
-      {failed && <span className="text-xs text-destructive">Couldn't save that. Try again.</span>}
+      {note && <span className="text-xs text-destructive">{note}</span>}
     </Card>
   );
 }

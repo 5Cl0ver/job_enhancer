@@ -3,9 +3,9 @@
 // test/files-and-tabs-040.spec.js.
 //
 // Only a hint: right after such a press on a saved job's own page, the side
-// panel asks "Applying for <job>?" on the next page; nothing is used until
-// the user says Yes. Only the user's own clicks count (`isTrusted`), in the
-// page itself (the background drops a frame's: an ad).
+// panel suggests that job on the next pages; its files are used only when
+// the user picks them for a fill. Only the user's own clicks count
+// (`isTrusted`), in the page itself (the background drops a frame's: an ad).
 
 // The whole label, so "Apply filters" never counts: "Apply", "Apply now",
 // "Apply on company website", "Apply on company site", "Apply for this job",

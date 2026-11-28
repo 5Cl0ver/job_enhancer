@@ -2,17 +2,21 @@
 // src/tabJob.js: kept in the session, so a sleeping worker remembers them.
 //
 // - The user's own press on an Apply, in a page's main frame, on a saved
-//   job's own page, is noted for that tab (`press`). An Apply on any other
-//   page, another board posting loaded in the tab, or a page that is
-//   another saved job's clears or replaces it. The first tab it opens
+//   job's own page, is noted for that tab (`press`). An Apply on another
+//   job's board posting, another board posting loaded in the tab, a page
+//   that is another saved job's, or the same company's site naming another
+//   posting clears or replaces it (the company site's own Apply keeps it). The first tab it opens
 //   within 20 s takes it over (the board tab keeps none).
-// - On the pages after it that are no saved job by themselves, the panel
-//   suggests the job (`suggestion`): its Fill button reads "Fill with
-//   <job>'s résumé and cover letter"; a press picks the job for THAT fill
-//   of THAT page only (`pick`, read by `fillJob`), never anything after.
-// - Once, on the first application page, the panel asks "Is this the
-//   application for <job>?": Yes teaches the job its company link when the
-//   page names its posting; nothing else (`answerLanding`).
+// - On the pages after it that are no saved job by themselves (once the
+//   application's first page is known, only on its company's site), the
+//   panel suggests the job (`suggestion`): two equal buttons, "Use <job>'s…"
+//   and "Use my usual résumé". A press picks for THAT press's fill only
+//   (`pick` → a nonce the fill carries, `fillJob`, `endPick`); without a
+//   choice (an automatic fill) the résumé and letter boxes are left
+//   (`holdsFiles`). A Submit there ends it (`submitted`).
+// - Once, on the first page naming its posting, the panel asks "Is this
+//   the application for <job>?": Yes teaches the job its company link;
+//   nothing else (`answerLanding`).
 // - During Apply with Claude, a tab the application's own tab opens that
 //   looks like the application joins the run's tab group and Claude hears
 //   of it, as a hint (`run.opened` / `run.landed`).
@@ -20,8 +24,8 @@
 // The panel's reads and answers never wait behind a tab opening (its run
 // check can take a while on a sleeping server): only the press bookkeeping
 // is one-at-a-time.
-import { OPEN_MS, TAB_PRESS, askAbout, boardOf, boardRedirect, fillJobFor, isWebPage, onHub, onJobBoard, pageOf, postingLevelId, putEntry, suggestFor, worthTelling } from "../tabJob.js";
-import { postingKey } from "../autofill/hosts.js";
+import { OPEN_MS, TAB_PRESS, askAbout, boardOf, boardRedirect, fillJobFor, holdFiles, isWebPage, looksLikeApplication, onHub, onJobBoard, pageOf, postingLevelId, putEntry, siteOf, suggestFor, worthTelling } from "../tabJob.js";
+import { applicantHost, isApplyUrl, postingKey } from "../autofill/hosts.js";
 
 const TAB_PICK = "je_tab_pick"; // tab → the job picked for one fill of one page
 const NEW_TABS = "je_new_tabs"; // run hints waiting for their tab's first page
@@ -63,15 +67,22 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     return serial(async () => {
       if (tab?.id == null || frameId !== 0 || !isWebPage(tab.url)) return;
       const own = await ownMatch(tab).catch(() => null);
-      // A saved job's own page: its press. Anything else: the earlier
-      // press is no longer the one (an Apply on another job).
-      await set(TAB_PRESS, tab.id, own ? { jobId: own.id, at: now(), page: boardPosting(tab.url) } : null);
+      if (own) {
+        // A saved job's own page: its press (another saved job's replaces it).
+        await set(TAB_PRESS, tab.id, { jobId: own.id, at: now(), page: boardPosting(tab.url) });
+      } else if (onJobBoard(tab.url)) {
+        // An Apply on another job's board posting: the earlier press is no longer the one.
+        await set(TAB_PRESS, tab.id, null);
+      }
+      // The company site's own Apply (Workday's, Greenhouse's…): the same
+      // application going on, the press stays.
     });
   }
 
   /**
    * What the panel shows on this tab's page, else null:
-   * {jobId, page, ask} — `ask`: "Is this the application for <job>?" (once).
+   * {jobId, page, ask, problem} — `ask`: "Is this the application for
+   * <job>?" (once); `problem`: the job's files didn't load for the last fill.
    */
   async function suggestion(tab) {
     if (tab?.id == null || !isWebPage(tab.url)) return null;
@@ -81,38 +92,80 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     const jobId = suggestFor(press, tab.url, own?.id || null, now());
     if (!jobId) return null;
     const page = pageOf(tab.url);
-    const ask = !press.answered && (press.landing ? press.landing === page : !!askAbout(press, tab.url, null, now()));
-    return { jobId, page, ask };
+    const ask = !press.answered && !!askAbout(press, tab.url, null, now()) && (!press.asking || press.asking === page);
+    return { jobId, page, ask, ...(press.problem ? { problem: press.problem } : {}) };
   }
 
-  /** "Is this the application for <job>?" Yes teaches the link (a page naming its posting); either way it's not asked again. */
+  /**
+   * "Is this the application for <job>?" Yes teaches the link (a page naming
+   * its posting); either way it's not asked again. `linkFailed`: the app
+   * couldn't save it (the panel says so).
+   */
   async function answerLanding(tab, yes, page) {
     if (tab?.id == null || !isWebPage(tab.url) || !page || pageOf(tab.url) !== page) return { refused: true };
     const offered = await suggestion(tab);
     if (!offered?.ask) return { refused: true };
     const press = (await read(TAB_PRESS))[tab.id];
     await set(TAB_PRESS, tab.id, { ...press, answered: true });
-    if (yes && postingLevelId(tab.url)) await learnLink(offered.jobId, tab.url).catch(() => {});
-    return { ok: true };
+    if (!yes || !postingLevelId(tab.url)) return { ok: true };
+    const saved = await learnLink(offered.jobId, tab.url).catch(() => false);
+    return saved === false ? { ok: true, linkFailed: true } : { ok: true };
   }
 
-  /** The user pressed "Fill with <job>'s…" (`jobId`), or the usual fill (null), for this page. */
+  /**
+   * The user's choice for ONE press of Fill on this page: the suggested
+   * job's files (`jobId`) or the usual ones (null). Returns the press's
+   * nonce (only the fill it starts honours it), or null when refused.
+   */
   async function pick(tab, jobId) {
-    if (tab?.id == null) return false;
-    if (!jobId) {
-      await set(TAB_PICK, tab.id, null);
-      return true;
-    }
+    if (tab?.id == null || !isWebPage(tab.url)) return null;
     const offered = await suggestion(tab);
-    if (offered?.jobId !== jobId) return false; // only the job suggested here
-    await set(TAB_PICK, tab.id, { jobId, page: offered.page, at: now() });
-    return true;
+    if (jobId && offered?.jobId !== jobId) return null; // only the job suggested here
+    const nonce = Math.random().toString(36).slice(2) + now().toString(36);
+    await set(TAB_PICK, tab.id, { jobId: jobId || null, page: pageOf(tab.url), nonce, at: now() });
+    if (offered?.problem) {
+      const press = (await read(TAB_PRESS))[tab.id];
+      if (press) await set(TAB_PRESS, tab.id, { ...press, problem: null });
+    }
+    return nonce;
   }
 
-  /** The saved job this fill of this tab's page uses: its own, else the one just picked for it, else none. */
-  async function fillJob(tab, ownJobId) {
+  /** That press's fill is over: its choice is used up. */
+  async function endPick(tabId, nonce) {
+    const held = (await read(TAB_PICK))[tabId];
+    if (held && held.nonce === nonce) await set(TAB_PICK, tabId, null);
+  }
+
+  /** The saved job this fill uses: the page's own, else the one picked for this press (`nonce`), else none. */
+  async function fillJob(tab, ownJobId, nonce) {
     if (tab?.id == null) return ownJobId || null;
-    return fillJobFor(ownJobId, (await read(TAB_PICK))[tab.id], tab.url || "", now());
+    return fillJobFor(ownJobId, (await read(TAB_PICK))[tab.id], tab.url || "", nonce, now());
+  }
+
+  /** Leave the résumé and cover-letter boxes alone on this fill? (A job is suggested and no choice was made for it.) */
+  async function holdsFiles(tab, nonce) {
+    if (tab?.id == null) return false;
+    const offered = await suggestion(tab).catch(() => null);
+    return holdFiles(!!offered, (await read(TAB_PICK))[tab.id], nonce);
+  }
+
+  /** The suggested job's files couldn't be used for that fill: the panel says so. */
+  async function noteProblem(tabId, problem) {
+    const press = (await read(TAB_PRESS))[tabId];
+    if (press) await set(TAB_PRESS, tabId, { ...press, problem });
+  }
+
+  /** The address changed (any part of it, #part too): a choice is for the page it was made on. */
+  async function moved(tabId) {
+    const held = (await read(TAB_PICK))[tabId];
+    if (held) await set(TAB_PICK, tabId, null);
+  }
+
+  /** The job was submitted (or its confirmation seen) in this tab: the suggestion ends. */
+  function submitted(tabId) {
+    return serial(async () => {
+      if ((await read(TAB_PRESS))[tabId]) await set(TAB_PRESS, tabId, null);
+    });
   }
 
   /** A page finished loading in a tab. */
@@ -120,18 +173,26 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     if (tab?.id == null || !isWebPage(tab.url)) return; // about:blank: nothing changes
     const opened = await serial(async () => {
       const page = pageOf(tab.url);
-      // A pick is for the page it was made on.
+      // A choice is for the page it was made on.
       const picked = (await read(TAB_PICK))[tab.id];
       if (picked && picked.page !== page) await set(TAB_PICK, tab.id, null);
       const press = (await read(TAB_PRESS))[tab.id];
       if (press) {
         const own = await ownMatch(tab).catch(() => null);
         const posting = boardPosting(tab.url);
+        const level = postingLevelId(tab.url);
         if ((posting && posting !== press.page) || (own && own.id !== press.jobId)) {
           // Another board posting, or another saved job's own page: that press was for another job.
           await set(TAB_PRESS, tab.id, null);
-        } else if (!press.landing && !press.answered && askAbout(press, tab.url, own?.id || null, now())) {
-          await set(TAB_PRESS, tab.id, { ...press, landing: page }); // the first application page: asked once
+        } else if (press.landingPosting && level && level !== press.landingPosting && siteOf(tab.url) === press.landingSite) {
+          // The same company's site naming another posting: another job.
+          await set(TAB_PRESS, tab.id, null);
+        } else if (!press.landingSite && suggestFor(press, tab.url, own?.id || null, now()) && (applicantHost(tab.url) || isApplyUrl(tab.url) || looksLikeApplication(tab.url))) {
+          // The application's first page: its company's site from now on,
+          // and (when it names its posting) the one the link question is about.
+          await set(TAB_PRESS, tab.id, { ...press, landingSite: siteOf(tab.url), ...(level ? { landingPosting: level, asking: page } : {}) });
+        } else if (press.landingSite && !press.landingPosting && level && siteOf(tab.url) === press.landingSite) {
+          await set(TAB_PRESS, tab.id, { ...press, landingPosting: level, asking: page });
         }
       }
       const waiting = await read(NEW_TABS);
@@ -203,5 +264,5 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     });
   }
 
-  return { pressed, suggestion, answerLanding, pick, fillJob, loaded, opened, closed };
+  return { pressed, suggestion, answerLanding, pick, endPick, fillJob, holdsFiles, noteProblem, moved, submitted, loaded, opened, closed };
 }

@@ -207,3 +207,14 @@ export function downloadFilename(resumeFilename: string, docType: "cover_letter"
   if (person) return `${person.replace(/\s+/g, "_")}_${label}.pdf`;
   return docType === "resume" ? "Resume.pdf" : "Cover_Letter.pdf";
 }
+
+/**
+ * What "Use <job>'s…" uses (spec 040): only what the job has of its own (a
+ * tailored résumé, a cover letter). Null: nothing of its own to offer.
+ */
+export function filesLabel(s: { title: string; hasResume: boolean; hasLetter: boolean }): string | null {
+  if (s.hasResume && s.hasLetter) return `Use ${s.title}'s résumé and letter`;
+  if (s.hasResume) return `Use ${s.title}'s résumé`;
+  if (s.hasLetter) return `Use ${s.title}'s cover letter`;
+  return null;
+}

@@ -14,6 +14,11 @@ export interface JobSuggestion {
   ask: boolean;
   /** The page it's about (an answer for another page is refused). */
   page: string;
+  /** What the job has of its own: a tailored résumé, a cover letter. */
+  hasResume: boolean;
+  hasLetter: boolean;
+  /** Its files didn't load for the last fill (said plainly). */
+  problem: string;
 }
 
 export function useJobSuggestion(): { suggestion: JobSuggestion | null; refresh: () => void } {
@@ -27,12 +32,17 @@ export function useJobSuggestion(): { suggestion: JobSuggestion | null; refresh:
     const load = async () => {
       if (tabId == null) return setSuggestion(null);
       const r = (await send({ type: "getJobSuggestion", tabId })) as {
-        job?: { id: string; title: string; company: string } | null;
+        job?: { id: string; title: string; company: string; hasResume?: boolean; hasLetter?: boolean } | null;
         ask?: boolean;
         page?: string;
+        problem?: string;
       } | null;
       if (!live) return;
-      setSuggestion(r?.job ? { jobId: r.job.id, title: r.job.title, company: r.job.company, ask: !!r.ask, page: r.page || "" } : null);
+      setSuggestion(
+        r?.job
+          ? { jobId: r.job.id, title: r.job.title, company: r.job.company, ask: !!r.ask, page: r.page || "", hasResume: !!r.job.hasResume, hasLetter: !!r.job.hasLetter, problem: r.problem || "" }
+          : null,
+      );
     };
     load();
     const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
@@ -49,3 +59,4 @@ export function useJobSuggestion(): { suggestion: JobSuggestion | null; refresh:
 
 /** "IT Analyst at Acme". */
 export const jobName = (s: { title: string; company: string }) => (s.company ? `${s.title} at ${s.company}` : s.title);
+

@@ -632,6 +632,8 @@ export function createSession(deps) {
     // A box holding a file (a plain one keeps it). One Job Catcher filled
     // whose list no longer shows it is tried again (attachFile, spec 037).
     if (boxes.some((f) => f.el.files?.length)) return state("attached");
+    // A job is suggested here and no files were chosen (spec 040): left for the user's pick.
+    if (copy.holdFiles) return false;
     if (!copy.resumeFile) return state("no_file");
     for (const field of boxes) {
       if (declined.has(field.id)) continue;

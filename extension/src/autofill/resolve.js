@@ -276,6 +276,13 @@ function yesNoBox(field, copy) {
  *          | {skip: "sensitive"|"consent"|"essay"|"noise"|"no_data"|"unknown"|"other_file"|"other_person"|"too_long", key?: string}}
  */
 export function resolve(field, copy) {
+  // A job is suggested here and no files were chosen for this fill (spec
+  // 040): the résumé and cover-letter boxes are the user's pick.
+  if (copy.holdFiles) {
+    if (field.kind === "file" && (isCoverLetterUpload(field) || isResumeUpload(field))) return { skip: "choose_files", key: isCoverLetterUpload(field) ? "cover_letter_file" : "resume_file" };
+    if (isCoverLetterText(field)) return { skip: "choose_files", key: "cover_letter" };
+    if (isResumeText(field)) return { skip: "choose_files", key: "resume_text" };
+  }
   const guard = fieldGuard(field);
   // "Paste your cover letter": the job's letter, when it has one (spec 031);
   // otherwise it stays an essay for the user (or Claude) to write.

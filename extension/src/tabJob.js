@@ -16,7 +16,7 @@ import { applicantHost, isApplyUrl, siteKey } from "./autofill/hosts.js";
 export const TAB_PRESS = "je_tab_press"; // tab → the press it holds
 export const SUGGEST_MS = 45 * 60_000; // a press suggests its job this long
 export const OPEN_MS = 20_000; // a tab opened this soon after a press inherits it
-export const PICK_MS = 2 * 60_000; // "Fill with <job>'s…" counts for that fill only
+export const PICK_MS = 5 * 60_000; // a long fill: "Use <job>'s…" still counts for the press that started it
 const KEEP = 50; // tabs remembered
 
 const TLD = "(?:com|net|org|ai|io|jobs|[a-z]{2}|co\\.[a-z]{2}|com\\.[a-z]{2})";
@@ -144,12 +144,7 @@ export function postingIds(url) {
     rest = rest.replace(ZIP, " ").replace(YEAR, " ");
     for (const m of rest.match(/\d{3,}/g) || []) weak.add(m.replace(/^0+(?=\d)/, ""));
   };
-  let path = u.pathname;
-  try {
-    path = decodeURIComponent(path);
-  } catch {
-    /* a bad %: as it is */
-  }
+  const path = decoded(u.pathname);
   take(path);
   take(u.hash);
   for (const [k, v] of u.searchParams) {
@@ -273,24 +268,48 @@ export function isSignIn(url) {
 export function suggestFor(press, url, ownJobId, now = Date.now()) {
   if (!press?.jobId || now - (press.at || 0) > SUGGEST_MS) return null;
   if (ownJobId || !isWebPage(url) || onHub(url) || isSignIn(url) || NOT_APPLICATION.test(hostOf(url))) return null;
+  // Once the application's first page is known, only on that company's site.
+  if (press.landingSite && siteOf(url) !== press.landingSite) return null;
   return press.jobId;
 }
 
 /**
- * Is this surely an application page (to ask "Is this the application for
- * <job>?" once, for the job's link)? An applicant system, an /apply page,
- * or a careers page naming a posting.
+ * Ask "Is this the application for <job>?" (once, for the job's link) only
+ * on a page that names its posting by a posting-level id.
  */
 export function askAbout(press, url, ownJobId, now = Date.now()) {
   if (!suggestFor(press, url, ownJobId, now)) return null;
-  const application = applicantHost(url) || isApplyUrl(url) || (looksLikeApplication(url) && postingLevelId(url));
-  return application ? press.jobId : null;
+  return postingLevelId(url) ? press.jobId : null;
 }
 
-// The query parts that name ONE posting (never the company: company=, cid…).
-const POSTING_PARAMS = new Set(["pid", "id", "token", "jvi", "gh_jid", "ashby_jid", "jk", "vjk", "opportunityid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "jobpostingid", "positionid", "currentjobid"]);
 // Hosts whose UUIDs name the company (its board), never a posting.
 const TENANT_UUIDS = /(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net|paylocity\.com|adp\.com)$/i;
+// The query parts that name ONE posting anywhere.
+const POSTING_PARAMS = new Set(["jvi", "gh_jid", "ashby_jid", "jk", "vjk", "opportunityid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "jobpostingid", "positionid", "currentjobid"]);
+const ONE_DIGITS_OR_UUID = /^(\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})$/i;
+
+/**
+ * Does this query part name ONE posting here? The ones above anywhere; a
+ * Greenhouse embed's `token`, an Eightfold job's `pid` (never a search with
+ * `query=`), an `id` only as digits or a UUID. Never a session token.
+ */
+export function postingParam(host, path, params, name, value) {
+  const k = name.toLowerCase();
+  if (!value) return false;
+  if (POSTING_PARAMS.has(k)) return true;
+  if (k === "token") return /(^|\.)greenhouse\.io$/i.test(host) && /\/embed\/job_app\b/i.test(path);
+  if (k === "pid") return /(^|\.)eightfold\.ai$/i.test(host) && !params.has("query");
+  if (k === "id") return ONE_DIGITS_OR_UUID.test(value);
+  return false;
+}
+
+function decoded(path) {
+  try {
+    return decodeURIComponent(path);
+  } catch {
+    return path;
+  }
+}
 
 /**
  * The id that names ONE posting in an address, else null: a posting query
@@ -298,14 +317,17 @@ const TENANT_UUIDS = /(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net|paylocity\.com
  * posting id in its path (Greenhouse, Lever, Ashby, Workable, Jobvite,
  * SmartRecruiters, iCIMS, Dayforce, Paylocity, Oracle, UKG's opportunity).
  * Never a lone UUID where UUIDs name the company. Learning a job's link
- * needs one.
+ * needs one (the server's posting_level_id).
  */
 export function postingLevelId(url) {
   const u = parse(url);
   if (!u) return null;
-  for (const [k, v] of u.searchParams) if (v && POSTING_PARAMS.has(k.toLowerCase())) return `${k.toLowerCase() === "vjk" ? "jk" : k.toLowerCase()}=${v.toLowerCase()}`;
   const host = hostOf(url);
-  const path = u.pathname;
+  const path = decoded(u.pathname);
+  const params = new Set([...u.searchParams.keys()].map((k) => k.toLowerCase()));
+  for (const [k, v] of u.searchParams) {
+    if (postingParam(host, path, params, k, v)) return `${k.toLowerCase() === "vjk" ? "jk" : k.toLowerCase()}=${v.toLowerCase()}`;
+  }
   const req = path.match(REQ);
   REQ.lastIndex = 0;
   if (req) return req[0].toLowerCase().replace(/^([a-z]+)[-_]/, "$1");
@@ -335,14 +357,25 @@ export function postingLevelId(url) {
 
 /**
  * The saved job one fill uses (spec 040): the page's own job; else the job
- * the user just picked in the panel for THIS page ("Fill with <job>'s…",
- * `pick`: {jobId, page, at}, good for 2 minutes); else none (the usual
- * résumé, no letter). Nothing is remembered past that one fill.
+ * the user picked in the panel for THIS press ("Use <job>'s…", `pick`:
+ * {jobId, page, nonce, at}) — only the fill that press started (`nonce`),
+ * on the page it was made on; else none (the usual résumé, no letter).
  */
-export function fillJobFor(ownJobId, pick, url, now = Date.now()) {
+export function fillJobFor(ownJobId, pick, url, nonce, now = Date.now()) {
   if (ownJobId) return ownJobId;
-  if (!pick?.jobId || !isWebPage(url) || now - (pick.at || 0) > PICK_MS) return null;
+  if (!pick?.jobId || !nonce || pick.nonce !== nonce || !isWebPage(url) || now - (pick.at || 0) > PICK_MS) return null;
   return pick.page === pageOf(url) ? pick.jobId : null;
+}
+
+/**
+ * Should this fill leave the résumé, cover-letter and résumé-text boxes
+ * alone? When a job is suggested here and the user hasn't chosen which
+ * files for THIS press (an automatic fill, the toolbar): they choose in the
+ * panel, never a guess either way.
+ */
+export function holdFiles(suggested, pick, nonce) {
+  if (!suggested) return false;
+  return !(nonce && pick?.nonce === nonce);
 }
 
 /**

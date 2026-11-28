@@ -233,15 +233,15 @@ export function createFillPresence({ notify, idleBadge = async () => ({ text: ""
    * reader everywhere) and filled once more before anything is reported.
    * @returns {Promise<{ok: boolean, filled: number, need: number, problem?: string}>}
    */
-  async function press(tabId) {
+  async function press(tabId, { nonce = null } = {}) {
     if (pressing.has(tabId)) return { ok: false, busy: true, filled: 0, need: 0 };
     pressing.add(tabId);
     try {
-      let out = await pressOnce(tabId, { note: "Starting…", retry: false });
+      let out = await pressOnce(tabId, { note: "Starting…", retry: false, nonce });
       if (out.blind) {
         await setStatus(tabId, { phase: "filling", done: 0, total: 0, note: "Looking deeper…" });
         await readAgain(tabId);
-        out = await pressOnce(tabId, { note: "Looking deeper…", retry: true });
+        out = await pressOnce(tabId, { note: "Looking deeper…", retry: true, nonce });
       }
       return out.result;
     } finally {
@@ -250,7 +250,7 @@ export function createFillPresence({ notify, idleBadge = async () => ({ text: ""
   }
 
   /** One press; `blind` when no frame saw a field (or none answered). */
-  async function pressOnce(tabId, { note, retry }) {
+  async function pressOnce(tabId, { note, retry, nonce = null }) {
     const frames = Object.entries(await readForms(tabId)).map(([id, p]) => ({ id: Number(id), p }));
     let targets = frames.filter((f) => f.p.form);
     if (targets.some((f) => f.p.inModal)) targets = targets.filter((f) => f.p.inModal);
@@ -260,7 +260,8 @@ export function createFillPresence({ notify, idleBadge = async () => ({ text: ""
       Promise.all(
         list.map((frameId) =>
           Promise.race([
-            chrome.tabs.sendMessage(tabId, { type: "runAutofill", force: true }, { frameId }).catch(() => null),
+            // `nonce`: the panel's choice of files for this press (spec 040).
+            chrome.tabs.sendMessage(tabId, { type: "runAutofill", force: true, ...(nonce ? { nonce } : {}) }, { frameId }).catch(() => null),
             new Promise((r) => setTimeout(() => r({ ok: false, slow: true }), FRAME_TIMEOUT_MS)),
           ]),
         ),

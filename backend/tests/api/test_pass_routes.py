@@ -35,6 +35,8 @@ PASS_ROUTES = {
     ("POST", "/v1/saved-jobs/backfill"),
     ("POST", "/v1/saved-jobs/mark-applied"),
     ("POST", "/v1/saved-jobs/sync-applications"),
+    # The job's company link, from the user's Yes in the panel (spec 040).
+    ("POST", "/v1/saved-jobs/{saved_job_id}/company-link"),
     ("GET", "/v1/autofill/bundle"),
     ("POST", "/v1/autofill/taught"),
     ("GET", "/v1/autofill/taught"),
