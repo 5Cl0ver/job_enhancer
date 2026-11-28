@@ -1516,17 +1516,24 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "Applying for…?" on the next page.
         await tabJobs.pressed(sender.tab, sender.frameId);
         sendResponse({ ok: true });
-      } else if (msg.type === "getApplyQuestion") {
+      } else if (msg.type === "getApplyQuestion" || msg.type === "answerApplyQuestion") {
+        // The side panel's question (spec 040): only the extension's own
+        // pages (the panel) ask or answer it, never a web page's script.
+        if (!String(sender.url || "").startsWith(chrome.runtime.getURL(""))) {
+          sendResponse({ ok: false });
+          return;
+        }
         const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
-        const jobId = tab ? await tabJobs.question(tab).catch(() => null) : null;
+        if (msg.type === "answerApplyQuestion") {
+          const out = tab ? await tabJobs.answer(tab, !!msg.yes, String(msg.page || "")).catch(() => ({ refused: true })) : { refused: true };
+          if (tab?.id != null) changed(tab.id);
+          sendResponse({ ok: !out.refused, ...out });
+          return;
+        }
+        const asked = tab ? await tabJobs.question(tab).catch(() => null) : null;
         const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
-        const job = jobId ? (cache?.jobs || []).find((j) => j.id === jobId) : null;
-        sendResponse({ ok: true, job: job ? { id: job.id, title: job.title, company: job.company } : null });
-      } else if (msg.type === "answerApplyQuestion") {
-        const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
-        const jobId = tab ? await tabJobs.answer(tab, !!msg.yes).catch(() => null) : null;
-        if (tab?.id != null) changed(tab.id);
-        sendResponse({ ok: true, jobId });
+        const job = asked ? (cache?.jobs || []).find((j) => j.id === asked.jobId) : null;
+        sendResponse({ ok: true, job: job ? { id: job.id, title: job.title, company: job.company } : null, again: !!asked?.again, page: asked?.page || "" });
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
@@ -1615,6 +1622,8 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: await autofill.refresh() });
       } else if (msg.type === "sessionUpdate") {
         if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
+        // Filling the bound application keeps "Applying for…" (spec 040).
+        if (sender.tab?.id != null) tabJobs.touch(sender.tab.id).catch(() => {});
         // A résumé that didn't go into its box: the owner hears (spec 032).
         if (msg.session?.resume === "failed") {
           caught.report("resume_failed", sender.url || sender.tab?.url, "The résumé didn't go into the upload box.");

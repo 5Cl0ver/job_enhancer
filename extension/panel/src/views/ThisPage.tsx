@@ -67,54 +67,67 @@ export function ThisPage({ onWrite }: { onWrite: (jobListingId: string) => void 
 
 /**
  * "Applying for <job>?" (spec 040): right after an Apply on a saved job's
- * own page, on the next page that names no job. Only Yes uses that job's
- * résumé and cover letter here; No, or anything else, uses the usual ones.
+ * own page, on the next page that names no job; "Still applying for…?" when
+ * the tab moved within the company's site and it isn't sure it's the same
+ * job. Only Yes uses that job's résumé and cover letter here; No, or
+ * anything else, uses the usual ones. The answer is about the page asked
+ * about: a tab that moved on is asked again.
  */
 function ApplyingFor() {
   const { tab, reloadSaved } = usePanel();
-  const [job, setJob] = React.useState<{ title: string; company: string } | null>(null);
+  type Asked = { title: string; company: string; again: boolean; page: string };
+  const [asked, setAsked] = React.useState<Asked | null>(null);
   const [busy, setBusy] = React.useState(false);
+  const [failed, setFailed] = React.useState(false);
   const tabId = tab.id;
   const url = tab.url;
+  const ask = React.useCallback(async () => {
+    if (tabId == null) return setAsked(null);
+    const r = (await send({ type: "getApplyQuestion", tabId })) as { job?: { title: string; company: string } | null; again?: boolean; page?: string } | null;
+    setAsked(r?.job ? { title: r.job.title, company: r.job.company, again: !!r.again, page: r.page || "" } : null);
+  }, [tabId]);
   React.useEffect(() => {
     let live = true;
-    const ask = () =>
-      tabId == null
-        ? setJob(null)
-        : send({ type: "getApplyQuestion", tabId }).then((r) => {
-            const asked = (r as { job?: { title: string; company: string } | null } | null)?.job;
-            if (live) setJob(asked || null);
-          });
-    ask();
+    const run = () => live && ask();
+    run();
     const onChanged = (changes: Record<string, chrome.storage.StorageChange>, area: string) => {
-      if (area === "session" && (changes.je_tab_press || changes.je_tab_job)) ask();
+      if (area === "session" && (changes.je_tab_press || changes.je_tab_job)) run();
     };
     chrome.storage.onChanged.addListener(onChanged);
     return () => {
       live = false;
       chrome.storage.onChanged.removeListener(onChanged);
     };
-  }, [tabId, url]);
-  if (!job || tabId == null) return null;
+  }, [ask, url]);
+  if (!asked || tabId == null) return null;
   const answer = async (yes: boolean) => {
     setBusy(true);
-    await send({ type: "answerApplyQuestion", tabId, yes });
+    setFailed(false);
+    const r = (await send({ type: "answerApplyQuestion", tabId, yes, page: asked.page })) as { ok?: boolean; refused?: boolean } | null;
     setBusy(false);
-    setJob(null);
+    if (r?.refused) return ask(); // the tab moved on: ask about the page it's on
+    if (!r?.ok) return setFailed(true); // keep the question
+    setAsked(null);
     if (yes) reloadSaved?.();
   };
+  const textId = "applying-for-question";
   return (
-    <Card className="flex flex-wrap items-center gap-2" role="group" aria-label="Which job is this?">
-      <span className="min-w-0 flex-1 text-sm">
-        Applying for <strong>{job.title}</strong>
-        {job.company ? ` at ${job.company}` : ""}?
-      </span>
-      <Button size="sm" disabled={busy} onClick={() => answer(true)}>
-        Yes
-      </Button>
-      <Button size="sm" variant="outline" disabled={busy} onClick={() => answer(false)}>
-        No
-      </Button>
+    <Card className="flex flex-col gap-1.5" role="group" aria-labelledby={textId} aria-live="polite">
+      <div className="flex flex-wrap items-center gap-2">
+        <span id={textId} className="min-w-0 flex-1 text-sm">
+          {asked.again ? "Still applying for " : "Applying for "}
+          <strong>{asked.title}</strong>
+          {asked.company ? ` at ${asked.company}` : ""}?
+        </span>
+        <Button size="sm" disabled={busy} onClick={() => answer(true)}>
+          Yes
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy} onClick={() => answer(false)}>
+          No
+        </Button>
+      </div>
+      <Muted>Uses this job's résumé and cover letter.</Muted>
+      {failed && <span className="text-xs text-destructive">Couldn't save that. Try again.</span>}
     </Card>
   );
 }

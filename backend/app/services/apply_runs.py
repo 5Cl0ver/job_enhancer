@@ -1290,35 +1290,6 @@ async def with_inbox(
     return out
 
 
-async def _reached(db: AsyncSession, run: ApplyRun, page_url: str) -> None:
-    """Claude is on the page a new tab opened (spec 040): the same company's
-    site and surely the same posting (strong ids). That was the company's
-    application, so the job keeps its link (the saved-jobs service checks it
-    again)."""
-    site = sj_svc.site_key(page_url)
-
-    def same(url: str | None) -> bool:
-        return (
-            bool(site)
-            and sj_svc.site_key(url) == site
-            and sj_svc.same_posting(url, page_url)
-        )
-
-    tabs = [
-        e
-        for e in run.events or []
-        if e.get("kind") == "new_tab" and not e.get("reached") and same(e.get("url"))
-    ]
-    if not tabs:
-        return
-    url = tabs[-1]["url"]
-    run.events = [
-        {**e, "reached": True} if e.get("kind") == "new_tab" and e in tabs else e
-        for e in run.events or []
-    ]
-    await sj_svc.learn_company_link(db, run.user_id, run.saved_job_id, url)
-
-
 NEW_TABS_TOLD = 3
 
 
@@ -2913,7 +2884,6 @@ async def page_done(
     waiting = sheet_svc.waiting(run.fixes)
     hold = last and bool(waiting)  # the owner's fixes first, then the review
     page = _new_page(run, page_url, page_title, rows, last=last and not hold, step=key)
-    await _reached(db, run, page_url)
     await _with_fill(db, run, page)
     req = await _request(db, run, REQUEST_PHOTO, page_url, page["n"])
     title = _step_title(run, key)
@@ -3028,7 +2998,6 @@ async def fill_request(
     if run.status in (APPLY_READING, APPLY_QUESTIONS, APPLY_WRITING):
         _set(run, APPLY_FILLING)
     _add_host(run, page_url)
-    await _reached(db, run, page_url)
     # Filling after a go-on is going on (spec 038).
     _moved_on(run)
     # A long fill of this very page still going, or finished after the last
@@ -4130,8 +4099,9 @@ async def extension_event(
     elif kind == "new_tab":
         # A tab the run's tab opened that looks like the application (spec
         # 040: LinkedIn's "Apply on company website"). Only a hint for
-        # Claude: its site isn't the run's, and the job learns no link, until
-        # Claude reaches that page (`_reached`).
+        # Claude: its site isn't the run's until Claude reaches that page, and
+        # the job never learns a link from it (only the user's Yes in Job
+        # Catcher teaches one).
         if not host or not public_web_url(url):
             return run
         _event(run, "new_tab", f"A new tab opened on {host}.")

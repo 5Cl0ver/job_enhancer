@@ -13,7 +13,7 @@
 // idle. Anything else drops it; the question comes back only after a new
 // press. When in doubt: the usual résumé and no letter.
 
-import { applicantHost, siteKey } from "./autofill/hosts.js";
+import { applicantHost, isApplyUrl, siteKey } from "./autofill/hosts.js";
 
 export const TAB_PRESS = "je_tab_press"; // tab → the press it holds
 export const TAB_JOB = "je_tab_job"; // tab → the job the user said Yes to
@@ -24,7 +24,7 @@ const KEEP = 50; // tabs remembered
 const TLD = "(?:com|net|org|ai|io|jobs|[a-z]{2}|co\\.[a-z]{2}|com\\.[a-z]{2})";
 // Job boards and aggregators: where the user picks the NEXT job.
 const BOARD = new RegExp(
-  `(^|\\.)(linkedin\\.(?:com|cn)|lnkd\\.in|indeed\\.${TLD}|glassdoor\\.${TLD}|ziprecruiter\\.${TLD}|simplyhired\\.${TLD}|monster\\.${TLD}|careerbuilder\\.${TLD}|builtin[a-z]*\\.com|dice\\.com|wellfound\\.com|welcometothejungle\\.com|jobright\\.ai|joinhandshake\\.com|handshake\\.com|usajobs\\.gov)$`,
+  `(^|\\.)(linkedin\\.(?:com|cn)|lnkd\\.in|indeed\\.${TLD}|glassdoor\\.${TLD}|ziprecruiter\\.${TLD}|simplyhired\\.${TLD}|monster\\.${TLD}|careerbuilder\\.${TLD}|builtin[a-z]*\\.com|dice\\.com|wellfound\\.com|welcometothejungle\\.com|jobright\\.ai|joinhandshake\\.com|handshake\\.com|usajobs\\.gov|jooble\\.org|talent\\.com|adzuna\\.${TLD}|appcast\\.io)$`,
   "i",
 );
 const HUB = /(^|\.)(bing\.com|duckduckgo\.com|claude\.ai)$/i;
@@ -32,7 +32,7 @@ const APP = /(^|\.)job-enhancer[\w-]*\.vercel\.app$/i;
 // A board's own way out to the company's site.
 const BOARD_REDIRECT = /^\/(redir\b|safety\/go\b|applystart\b|rc\/clk\b|pagead\/clk\b|jobs\/view\/externalApply\b|partner\/jobListing\b|clk\b)/i;
 // Sign-ins on the way: passed through, never "another site".
-const SIGN_IN = /(^|\.)(okta\.com|oktapreview\.com|auth0\.com|microsoftonline\.com|login\.microsoft\.com|login\.live\.com|onelogin\.com|pingone\.com|b2clogin\.com|accounts\.google\.com)$/i;
+const SIGN_IN = /(^|\.)(okta\.com|oktapreview\.com|auth0\.com|microsoftonline\.com|login\.microsoft\.com|login\.live\.com|onelogin\.com|pingone\.com|b2clogin\.com|accounts\.google\.com|appleid\.apple\.com|accounts\.sap\.com|login\.icims\.com)$/i;
 // Never the application in a tab of its own: sign-ins, file pickers.
 const NOT_APPLICATION = /(^|\.)(accounts\.google\.com|drive\.google\.com|docs\.google\.com|dropbox\.com|onedrive\.live\.com|box\.com|login\.live\.com|microsoftonline\.com|okta\.com|auth0\.com)$/i;
 // An application or careers page (the server's looks_like_application).
@@ -43,7 +43,8 @@ const STRONG_PARAMS = new Set(["jk", "vjk", "gh_jid", "ashby_jid", "career_job_r
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ONE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Requisition ids: R-1234, JR-1234, REQ-1234, R1234 (Workday's job ids).
-const REQ = /(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])/gi;
+// A repost keeps its suffix: JR12345-1 is not JR-12345.
+const REQ = /(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?:-\d{1,3})?(?![a-z0-9])/gi;
 const STATES = "al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy";
 // A zip next to its state ("Portland-OR-97201") and a year are no posting.
 const ZIP = new RegExp(`(?<![a-z])(?:${STATES})[-_ ,]+\\d{5}(?:-\\d{4})?(?!\\d)`, "gi");
@@ -101,6 +102,10 @@ export function siteOf(url) {
   if (/successfactors\.(com|eu)$|(^|\.)sapsf\.(com|eu)$/.test(host)) return tenant(host, u.searchParams.get("company"));
   if (/^(myjobs|recruiting|tcs)\.adp\.com$/.test(host)) return tenant(host, parts[0]);
   if (/(^|\.)paylocity\.com$/.test(host)) return tenant(host, parts.find((p) => ONE_UUID.test(p)));
+  if (/^ats\.rippling\.com$/.test(host)) return tenant(host, parts[0]);
+  if (/^workforcenow\.adp\.com$/.test(host)) return tenant(host, u.searchParams.get("cid"));
+  // Jobvite: /<company>/job/… or /careers/<company>/job/….
+  if (/(^|\.)jobvite\.com$/.test(host)) return tenant(host, low[0] === "careers" ? parts[1] : parts[0]);
   return applicantHost(url) ? siteKey(url) : domainOf(url);
 }
 
@@ -130,12 +135,14 @@ export function postingIds(url) {
   if (!u) return { strong: [], weak: [] };
   const take = (text) => {
     let rest = text.toLowerCase();
-    for (const re of [UUID, REQ]) {
-      rest = rest.replace(re, (m) => {
-        strong.add(m.replace(/[-_]/g, ""));
-        return " ";
-      });
-    }
+    rest = rest.replace(UUID, (m) => {
+      strong.add(m);
+      return " ";
+    });
+    rest = rest.replace(REQ, (m) => {
+      strong.add(m.replace(/^([a-z]+)[-_]/, "$1"));
+      return " ";
+    });
     rest = rest.replace(ZIP, " ").replace(YEAR, " ");
     for (const m of rest.match(/\d{3,}/g) || []) weak.add(m.replace(/^0+(?=\d)/, ""));
   };
@@ -212,9 +219,10 @@ export function looksLikeApplication(url) {
  * site — never a sign-in, a file picker, a privacy page or an ad.
  */
 export function worthTelling(openerUrl, url) {
-  if (!parse(url) || onHub(url) || NOT_APPLICATION.test(hostOf(url))) return false;
-  if (onJobBoard(openerUrl)) return true;
-  return looksLikeApplication(url) && siteOf(url) !== siteOf(openerUrl);
+  if (!parse(url) || onHub(url) || isSignIn(url) || NOT_APPLICATION.test(hostOf(url))) return false;
+  const application = looksLikeApplication(url) || !!applicantHost(url);
+  if (onJobBoard(openerUrl)) return application;
+  return application && siteOf(url) !== siteOf(openerUrl);
 }
 
 /** The board's own redirect out of `fromSite` (its query ids don't count). */
@@ -226,45 +234,127 @@ export function boardRedirect(fromSite, url) {
 /** The board a page is on, for `boardRedirect`. */
 export const boardOf = (url) => domainOf(url);
 
+/** A sign-in on the way: a sign-in host, or a board's own sign-in pages. */
+export function isSignIn(url) {
+  const u = parse(url);
+  if (!u) return false;
+  const host = hostOf(url);
+  if (SIGN_IN.test(host)) return true;
+  if (/(^|\.)linkedin\.com$/.test(host)) return /^\/(oauth|uas|checkpoint)\b/i.test(u.pathname);
+  if (/^secure\.indeed\.com$/.test(host)) return /^\/(oauth|account|auth)\b/i.test(u.pathname);
+  if (/^online\.adp\.com$/.test(host)) return /^\/signin\b/i.test(u.pathname);
+  return false;
+}
+
 /**
  * The job to ask about on this page, else null: a press on that job's own
  * page in this tab (or the one that opened it) within 45 minutes, and this
- * page is no saved job by itself, no board, search or app page.
+ * page is no saved job by itself and surely an application (an applicant
+ * system, an /apply page, or a careers page naming a posting) — never a
+ * board, a search, a sign-in, a shop or a news page.
  */
 export function askAbout(press, url, ownJobId, now = Date.now()) {
   if (!press?.jobId || now - (press.at || 0) > BIND_MS) return null;
-  if (ownJobId || !isWebPage(url) || onHub(url) || NOT_APPLICATION.test(hostOf(url))) return null;
-  // Only on what looks like an application, never a news site or a shop.
-  return applicantHost(url) || looksLikeApplication(url) ? press.jobId : null;
+  if (ownJobId || !isWebPage(url) || onHub(url) || isSignIn(url) || NOT_APPLICATION.test(hostOf(url))) return null;
+  const ids = postingIds(url);
+  const application = applicantHost(url) || isApplyUrl(url) || (looksLikeApplication(url) && (ids.strong.length || ids.weak.length));
+  return application ? press.jobId : null;
+}
+
+/** A page's place: its path (no trailing /) and its #route. */
+function placeOf(url) {
+  const u = parse(url);
+  if (!u) return { path: "", hash: "" };
+  return { path: u.pathname.replace(/\/+$/, "").toLowerCase(), hash: u.hash.replace(/^#/, "").replace(/[?].*$/, "").toLowerCase() };
+}
+
+/** The plain numbers that name a posting: weak ids and digit-only posting query values. */
+function numbersOf(ids) {
+  const out = new Set(ids?.weak || []);
+  for (const id of ids?.strong || []) {
+    const v = id.includes("=") ? id.split(/=(.*)/s)[1] : "";
+    if (/^\d{3,}$/.test(v)) out.add(v.replace(/^0+(?=\d)/, ""));
+  }
+  return [...out];
 }
 
 /** The binding the user's Yes makes on this page. */
 export function bindHere(jobId, url, now = Date.now()) {
-  return { jobId, site: siteOf(url), ids: postingIds(url), at: now };
+  const ids = postingIds(url);
+  return { jobId, site: siteOf(url), places: [placeOf(url)], strong: ids.strong, nums: numbersOf(ids), at: now };
 }
 
 /**
- * The binding after a page loads in the tab: kept (its time restarted)
- * while the tab stays on that site and posting, else null. A sign-in on the
- * way keeps it as it is; about:blank changes nothing.
+ * What a page loaded in the bound tab does to the binding:
+ * - "keep": surely the same posting (a strong id shared, or the Yes page
+ *   itself or a step below it with no other posting's id); its 45 minutes
+ *   restart;
+ * - "same": a sign-in on the way, about:blank: nothing changes;
+ * - "ask": the same company's site but not surely the same posting: the
+ *   panel asks "Still applying for…?" (`asking`), the job unused till Yes;
+ * - "drop": another site, another posting, or too long idle.
  */
-export function keepBinding(bound, url, now = Date.now()) {
-  if (!bound?.jobId || now - (bound.at || 0) > BIND_MS) return null;
-  if (!isWebPage(url)) return bound;
-  if (SIGN_IN.test(hostOf(url))) return bound;
-  if (!bound.site || siteOf(url) !== bound.site) return null;
+export function judgeBinding(bound, url, now = Date.now()) {
+  if (!bound?.jobId || now - (bound.at || 0) > BIND_MS) return { verdict: "drop", bound: null };
+  if (!isWebPage(url) || isSignIn(url)) return { verdict: "same", bound };
+  if (!bound.site || siteOf(url) !== bound.site) return { verdict: "drop", bound: null };
   const ids = postingIds(url);
-  // Said Yes on a page naming no posting: a page that names one may be
-  // another job's, so it never takes it on.
-  const none = !bound.ids?.strong?.length && !bound.ids?.weak?.length;
-  if (none ? ids.strong.length || ids.weak.length : otherPosting(bound.ids, ids)) return null;
-  return { ...bound, at: now };
+  const nums = numbersOf(ids);
+  const held = bound.nums || [];
+  // Plain numbers: each side has one the other lacks.
+  if (nums.length && held.length && nums.some((n) => !held.includes(n)) && held.some((n) => !nums.includes(n))) return { verdict: "drop", bound: null };
+  const strong = bound.strong || [];
+  const keep = () => {
+    const merged = [...new Set([...strong, ...ids.strong])];
+    const { asking: _a, ...rest } = bound;
+    return { verdict: "keep", bound: { ...rest, strong: merged, nums: held.length ? held : nums, at: now } };
+  };
+  const here = placeOf(url);
+  const ask = { verdict: "ask", bound: { ...bound, asking: here } };
+  if (strong.length && ids.strong.length) {
+    if (!overlap(strong, ids.strong)) return { verdict: "drop", bound: null };
+    const before = named(strong);
+    let fresh = false;
+    for (const [k, v] of named(ids.strong)) {
+      if (before.has(k) && before.get(k) !== v) return { verdict: "drop", bound: null };
+      if (!before.has(k)) fresh = true;
+    }
+    // A posting part the Yes page didn't name (a board id shared, then an
+    // opportunityId): not surely the same posting.
+    return fresh ? ask : keep();
+  }
+  // A strong id where the Yes page had none: never taken on silently.
+  if (ids.strong.length) return ask;
+  const under = (bound.places || []).some((p) => p.hash === here.hash && (here.path === p.path || here.path.startsWith(`${p.path}/`)));
+  return under ? keep() : ask;
 }
 
-/** The job bound to this page, else null (read-only). */
+/** Kept, or null (`judgeBinding` without asking: an unsure page is no binding). */
+export function keepBinding(bound, url, now = Date.now()) {
+  const { verdict, bound: next } = judgeBinding(bound, url, now);
+  return verdict === "keep" || verdict === "same" ? next : null;
+}
+
+/** "Still applying for…? Yes" on this page: it becomes a place of the binding. */
+export function confirmBinding(bound, url, now = Date.now()) {
+  if (!bound?.jobId) return null;
+  const ids = postingIds(url);
+  const { asking: _a, ...rest } = bound;
+  return { ...rest, places: [...(bound.places || []), placeOf(url)].slice(-20), strong: [...new Set([...(bound.strong || []), ...ids.strong])], nums: bound.nums?.length ? bound.nums : numbersOf(ids), at: now };
+}
+
+/** Is the binding asking about this page? */
+export function askingHere(bound, url) {
+  if (!bound?.asking) return false;
+  const here = placeOf(url);
+  return bound.asking.path === here.path && bound.asking.hash === here.hash;
+}
+
+/** The job bound to this page, else null (read-only; never while asking). */
 export function boundJobId(bound, url, now = Date.now()) {
-  if (!isWebPage(url) || SIGN_IN.test(hostOf(url))) return null;
-  return keepBinding(bound, url, now)?.jobId || null;
+  if (!isWebPage(url) || isSignIn(url) || askingHere(bound, url)) return null;
+  const { verdict, bound: next } = judgeBinding(bound, url, now);
+  return verdict === "keep" || verdict === "same" ? next?.jobId || null : null;
 }
 
 /** The tabs map with one tab's entry set (or removed), newest last, capped. */

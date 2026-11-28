@@ -159,72 +159,31 @@ def test_posting_ids(url, strong, weak):
     assert sj_svc.posting_ids(url) == (strong, weak)
 
 
-@pytest.mark.parametrize(
-    ("a", "b", "same"),
-    [
-        # The 2026 interns, the same zip, the same board id: other postings.
-        (
-            "https://acme.wd5.myworkdayjobs.com/x/job/Seattle-WA/Intern---Summer-2026_R-123",
-            "https://acme.wd5.myworkdayjobs.com/x/job/Seattle-WA/Data-Intern---Summer-2026_R-456/apply",
-            False,
-        ),
-        (
-            "https://recruiting.ultipro.com/ACM1/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666",
-            "https://recruiting.ultipro.com/ACM1/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/",
-            False,
-        ),
-        # Plain digits only: never surely the same.
-        (
-            "https://careers.acme.example/job/12345/a",
-            "https://careers.acme.example/job/12345/b",
-            False,
-        ),
-        # A step of the posting.
-        (
-            "https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234",
-            "https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234/apply/applyManually",
-            True,
-        ),
-        (
-            "https://acme.taleo.net/careersection/ex/jobdetail.ftl?job=2400123",
-            "https://acme.taleo.net/careersection/ex/jobapply.ftl?job=2400123&lang=en",
-            True,
-        ),
-    ],
-)
-def test_same_posting_uses_strong_ids(a, b, same):
-    assert sj_svc.same_posting(a, b) is same
+def test_a_reposted_requisition_is_another_posting():
+    assert sj_svc.posting_ids("https://x.wd5.myworkdayjobs.com/a/job/y_JR12345-1") == (
+        {"jr12345-1"},
+        set(),
+    )
+    assert sj_svc.posting_ids("https://x.wd5.myworkdayjobs.com/a/job/y_JR-12345") == (
+        {"jr12345"},
+        set(),
+    )
 
 
-@pytest.mark.parametrize(
-    ("url", "key"),
-    [
-        (
-            "https://wd5.myworkdaysite.com/recruiting/acme/External/job/X_R-9",
-            "myworkdaysite.com/acme",
-        ),
-        (
-            "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/x",
-            "recruiting.ultipro.com/acm1000acme",
-        ),
-        (
-            "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/5",
-            "dayforcehcm.com/acme",
-        ),
-        (
-            "https://candidate.dayforcehcm.com/CandidatePortal/en-US/acme/Account/Login",
-            "dayforcehcm.com/acme",
-        ),
-        (
-            "https://career4.successfactors.com/career?company=acmeP",
-            "career4.successfactors.com/acmep",
-        ),
-        ("https://myjobs.adp.com/acme/cx/job-details", "myjobs.adp.com/acme"),
-        ("https://acme.wd5.myworkdayjobs.com/External", "acme.wd5.myworkdayjobs.com"),
-    ],
-)
-def test_shared_hosts_are_told_apart_by_company(url, key):
-    assert sj_svc.site_key(url) == key
+def test_the_link_kept_has_no_session_or_tracking_parts():
+    assert (
+        sj_svc.clean_link(
+            "https://acme.wd5.myworkdayjobs.com/en-US/External/job/X_R1234/apply"
+            "?source=LinkedIn&_s.crb=abc123#step"
+        )
+        == "https://acme.wd5.myworkdayjobs.com/en-US/External/job/X_R1234/apply"
+    )
+    assert (
+        sj_svc.clean_link(
+            "https://acme.taleo.net/careersection/2/jobdetail.ftl?job=2400123&lang=en"
+        )
+        == "https://acme.taleo.net/careersection/2/jobdetail.ftl?job=2400123"
+    )
 
 
 @pytest.mark.asyncio
@@ -325,7 +284,7 @@ def test_job_catcher_may_report_a_new_tab():
 
 
 @pytest.mark.asyncio
-async def test_a_new_tab_is_a_hint_until_claude_reaches_it(engine, monkeypatch):
+async def test_a_new_tab_is_only_a_hint(engine, monkeypatch):
     maker, user, run_id, job_id = await _board_run(engine, monkeypatch)
     rid = str(run_id)
     await mcp_mod.get_apply_brief(rid)
@@ -341,60 +300,16 @@ async def test_a_new_tab_is_a_hint_until_claude_reaches_it(engine, monkeypatch):
     # Told once.
     again = await mcp_mod.message_user(rid, "Filling it in.")
     assert "new_tab_url" not in again
-    # Not the run's site, and no link learned, until Claude is on that page.
     async with maker() as db:
         run = await svc.get_run(db, user.id, run_id)
         assert "northwind.wd5.myworkdayjobs.com" not in (run.apply_hosts or [])
-        assert (await db.get(SavedJob, job_id)).custom_apply_url is None
+    # Claude on that very page: the run's site now, but the job learns no
+    # link (only the user's Yes in Job Catcher teaches one).
     await mcp_mod.fill_page(rid, COMPANY)
     async with maker() as db:
         run = await svc.get_run(db, user.id, run_id)
         assert "northwind.wd5.myworkdayjobs.com" in run.apply_hosts
-        assert (await db.get(SavedJob, job_id)).custom_apply_url == COMPANY
-
-
-@pytest.mark.asyncio
-async def test_a_new_tab_claude_never_goes_to_teaches_nothing(engine, monkeypatch):
-    maker, user, run_id, job_id = await _board_run(engine, monkeypatch)
-    rid = str(run_id)
-    await mcp_mod.get_apply_brief(rid)
-    async with maker() as db:
-        # A privacy page opened from the application; Claude stays on the board.
-        await svc.extension_event(
-            db, user.id, run_id, "new_tab", "https://jobs.contoso.example/jobs/999"
-        )
-        await db.commit()
-    await mcp_mod.fill_page(rid, BOARD)
-    async with maker() as db:
-        run = await svc.get_run(db, user.id, run_id)
-        assert "jobs.contoso.example" not in (run.apply_hosts or [])
         assert (await db.get(SavedJob, job_id)).custom_apply_url is None
-
-
-@pytest.mark.asyncio
-async def test_claude_on_another_posting_of_that_site_teaches_nothing(
-    engine, monkeypatch
-):
-    maker, user, run_id, job_id = await _board_run(engine, monkeypatch)
-    rid = str(run_id)
-    await mcp_mod.get_apply_brief(rid)
-    async with maker() as db:
-        await svc.extension_event(db, user.id, run_id, "new_tab", COMPANY)
-        await db.commit()
-    # Same host, another posting: not the page the tab opened.
-    await mcp_mod.fill_page(
-        rid,
-        "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Remote/Other_R-9999",
-    )
-    async with maker() as db:
-        assert (await db.get(SavedJob, job_id)).custom_apply_url is None
-    # A later step of that posting: it is.
-    await mcp_mod.fill_page(
-        rid,
-        "https://northwind.wd5.myworkdayjobs.com/en-US/External/job/Remote/Platform-Engineer_R-7731/apply/applyManually",
-    )
-    async with maker() as db:
-        assert (await db.get(SavedJob, job_id)).custom_apply_url == COMPANY
 
 
 @pytest.mark.asyncio

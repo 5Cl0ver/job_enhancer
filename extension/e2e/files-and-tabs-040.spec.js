@@ -67,7 +67,7 @@ async function panelBeside(url) {
   return { panel, tabId };
 }
 
-const question = (panel) => panel.getByRole("group", { name: "Which job is this?" });
+const question = (panel) => panel.getByRole("group", { name: /applying for/i });
 
 test("the board's Apply, then Yes: the tab is bound to the job, its link is learned, every step keeps it", async () => {
   const page = await ext.context.newPage();
@@ -77,6 +77,8 @@ test("the board's Apply, then Yes: the tab is bound to the job, its link is lear
   await np.waitForURL(WD_A);
   const { panel, tabId } = await panelBeside(WD_A);
   await expect(question(panel)).toContainText("Applying for IT Analyst at Acme?");
+  await expect(question(panel)).toContainText("Uses this job's résumé and cover letter.");
+  await expect(question(panel)).toHaveAttribute("aria-live", "polite");
   await question(panel).getByRole("button", { name: "Yes" }).click();
   await expect(question(panel)).toHaveCount(0);
   const bound = () => ext.worker.evaluate(async (id) => (await chrome.storage.session.get("je_tab_job")).je_tab_job?.[id]?.jobId || null, tabId);
@@ -103,6 +105,29 @@ test("No: nothing is bound or learned, and the panel doesn't ask again", async (
   expect(await ext.worker.evaluate(async (id) => (await chrome.storage.session.get("je_tab_job")).je_tab_job?.[id] || null, tabId)).toBeNull();
   expect(api.calls("/v1/saved-jobs/A/company-link")).toEqual([]);
   await Promise.all([page.close(), np.close(), panel.close()]);
+});
+
+test("a web page can't ask or answer the question", async () => {
+  const page = await ext.context.newPage();
+  await page.goto(LI_A);
+  await page.waitForTimeout(800);
+  const [np] = await Promise.all([ext.context.waitForEvent("page"), page.click("#apply")]);
+  await np.waitForURL(WD_A);
+  const tabId = await tabIdOf(WD_A);
+  // A content script's message (the page's own script can't reach the
+  // extension at all; a frame of ours on a page is still a page).
+  const fromPage = await ext.worker.evaluate(async (id) => {
+    const [t] = await chrome.tabs.query({ url: "https://acme.wd5.myworkdayjobs.com/*" });
+    const [{ result }] = await chrome.scripting.executeScript({
+      target: { tabId: t.id },
+      func: (tab) => chrome.runtime.sendMessage({ type: "answerApplyQuestion", tabId: tab, yes: true, page: "x" }),
+      args: [id],
+    });
+    return result;
+  }, tabId);
+  expect(fromPage).toEqual({ ok: false });
+  expect(await ext.worker.evaluate(async (id) => (await chrome.storage.session.get("je_tab_job")).je_tab_job?.[id] || null, tabId)).toBeNull();
+  await Promise.all([page.close(), np.close()]);
 });
 
 test("a press inside an ad's frame, or a page script's click, never makes the panel ask", async () => {

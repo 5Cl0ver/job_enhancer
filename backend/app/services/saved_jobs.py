@@ -5,7 +5,15 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from urllib.parse import parse_qsl, quote_plus, unquote, urlparse, urlsplit
+from urllib.parse import (
+    parse_qsl,
+    quote_plus,
+    unquote,
+    urlencode,
+    urlparse,
+    urlsplit,
+    urlunsplit,
+)
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
@@ -190,7 +198,10 @@ _APPLICATION = re.compile(
 _UUID = re.compile(
     r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
 )
-_REQ = re.compile(r"(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])", re.I)
+# A repost keeps its suffix: JR12345-1 is not JR-12345.
+_REQ = re.compile(
+    r"(?<![a-z0-9])(?:jr|req|r)[-_]?\d{2,}(?:-\d{1,3})?(?![a-z0-9])", re.I
+)
 _STATES = (
     "al|ak|az|ar|ca|co|ct|de|dc|fl|ga|hi|id|il|in|ia|ks|ky|la|me|md|ma|mi|mn|ms|mo"
     "|mt|ne|nv|nh|nj|nm|ny|nc|nd|oh|ok|or|pa|ri|sc|sd|tn|tx|ut|vt|va|wa|wv|wi|wy"
@@ -230,11 +241,12 @@ def posting_ids(url: str | None) -> tuple[set[str], set[str]]:
 
     def take(text: str) -> None:
         rest = text.lower()
-        for pattern in (_UUID, _REQ):
-            strong.update(
-                re.sub(r"[-_]", "", m.group(0)) for m in pattern.finditer(rest)
-            )
-            rest = pattern.sub(" ", rest)
+        strong.update(m.group(0) for m in _UUID.finditer(rest))
+        rest = _UUID.sub(" ", rest)
+        strong.update(
+            re.sub(r"^([a-z]+)[-_]", r"\1", m.group(0)) for m in _REQ.finditer(rest)
+        )
+        rest = _REQ.sub(" ", rest)
         rest = _YEAR.sub(" ", _ZIP.sub(" ", rest))
         weak.update(m.lstrip("0") or "0" for m in re.findall(r"\d{3,}", rest))
 
@@ -247,64 +259,19 @@ def posting_ids(url: str | None) -> tuple[set[str], set[str]]:
     return strong, weak
 
 
-def _named(ids: set[str]) -> dict[str, str]:
-    return dict(i.split("=", 1) for i in ids if "=" in i)
-
-
-def same_posting(a: str | None, b: str | None) -> bool:
-    """Surely one posting: strong ids on both, shared, and every posting query
-    part on either side the same on the other (a step of it, never another
-    posting with a shared year, zip or board id)."""
-    sa, _ = posting_ids(a)
-    sb, _ = posting_ids(b)
-    if not sa or not sb or not sa & sb:
-        return False
-    na, nb = _named(sa), _named(sb)
-    return all(na.get(k) == nb.get(k) for k in set(na) | set(nb))
+def clean_link(url: str) -> str:
+    """The link to keep: no #part and only the posting's own query parts (a
+    session token like _s.crb or a tracking id never stays in it)."""
+    parts = urlsplit(url)
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() in _STRONG_PARAMS]
+    return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))[
+        :2000
+    ]
 
 
 def names_one_posting(url: str | None) -> bool:
     """A strong id names one posting (plain digits never do)."""
     return bool(posting_ids(url)[0])
-
-
-_SHARED_PATH_TENANT = re.compile(
-    r"(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net)$|^(myjobs|recruiting|tcs)\.adp\.com$"
-)
-
-
-def site_key(url: str | None) -> str:
-    """The company's part of a shared applicant host (Job Catcher's siteOf):
-    Workday's /recruiting/<tenant>, UKG's and ADP's /<tenant>, Dayforce's
-    /<locale>/<tenant>, SuccessFactors' ?company=; else the host."""
-    try:
-        parts = urlsplit(url or "")
-    except ValueError:
-        return ""
-    host = (parts.hostname or "").lower().removeprefix("www.")
-    path = [p for p in parts.path.split("/") if p]
-    low = [p.lower() for p in path]
-
-    def tenant(base: str, key: str | None) -> str:
-        return f"{base}/{(key or '?').lower()}"
-
-    if host.endswith("myworkdaysite.com"):
-        at = low.index("recruiting") if "recruiting" in low else -1
-        return tenant(
-            "myworkdaysite.com", path[at + 1] if 0 <= at < len(path) - 1 else None
-        )
-    if _SHARED_PATH_TENANT.search(host):
-        return tenant(host, path[0] if path else None)
-    if host.endswith("dayforcehcm.com"):
-        at = next(
-            (i for i, p in enumerate(low) if re.fullmatch(r"[a-z]{2}-[a-z]{2}", p)), -1
-        )
-        return tenant(
-            "dayforcehcm.com", path[at + 1] if 0 <= at < len(path) - 1 else None
-        )
-    if re.search(r"successfactors\.(com|eu)$|(^|\.)sapsf\.(com|eu)$", host):
-        return tenant(host, dict(parse_qsl(parts.query)).get("company"))
-    return host
 
 
 # Never the application: sign-ins and file pickers (a résumé from Drive).
@@ -360,9 +327,10 @@ async def learn_company_link(
         or not looks_like_application(url)
     ):
         return False
-    if sj.custom_apply_url == url[:2000]:
+    link = clean_link(url)
+    if sj.custom_apply_url == link:
         return False
-    sj.custom_apply_url = url[:2000]
+    sj.custom_apply_url = link
     sj.apply_url_learned = True
     sj.updated_at = datetime.now(UTC)
     await db.flush()
