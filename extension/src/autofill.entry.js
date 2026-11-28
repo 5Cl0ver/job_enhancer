@@ -25,6 +25,7 @@ import { learnKeyFor, resolve } from "./autofill/resolve.js";
 import { createSession, pointRefusal } from "./autofill/session.js";
 import { AI_IN_AUTOFILL } from "./autofill/flags.js";
 import { watchForSubmit } from "./autofill/track.js";
+import { watchApplyPresses } from "./autofill/applyClick.js";
 import { extractFromJsonLd } from "./extract/jsonld.js";
 
 /** The hiring company in the page's own job data (JSON-LD), or "". */
@@ -57,6 +58,12 @@ function send(msg) {
     return Promise.resolve(null);
   }
 }
+
+// The user's own press on an Apply that leaves for the company's site (spec
+// 040): the background carries the saved job along only right after one.
+watchApplyPresses(document, () => {
+  if (isCurrent()) send({ type: "applyPressed" });
+});
 
 // ---- Pop-ups ------------------------------------------------------------------
 // While a pop-up holding a form is open, only its fields are filled: what's

@@ -1272,10 +1272,11 @@ async def with_inbox(
         }
     tab = _new_tab_line(run)
     if tab:
-        line, url = tab
+        line, urls = tab
         out = {
             **out,
-            "new_tab_url": url,
+            "new_tab_urls": urls,
+            "new_tab_url": urls[-1],  # the latest
             "next": f"{line} {out['next']}" if out.get("next") else line,
         }
     blocked = _blocked_line(run)
@@ -1290,17 +1291,26 @@ async def with_inbox(
 
 
 async def _reached(db: AsyncSession, run: ApplyRun, page_url: str) -> None:
-    """Claude is on the page a new tab opened (spec 040): that was the
-    company's application, so the job keeps its link (once; the saved-jobs
-    service checks it names one posting on a job board's job)."""
+    """Claude is on the page a new tab opened (spec 040): the same page, or
+    the same posting (its ids) on the same host. That was the company's
+    application, so the job keeps its link (the saved-jobs service checks it
+    again)."""
     host = _host(page_url)
+    key = url_key(page_url)
+    ids = sj_svc.posting_ids(page_url)
+
+    def same(url: str | None) -> bool:
+        if not host or _host(url) != host:
+            return False
+        if key and url_key(url or "") == key:
+            return True
+        theirs = sj_svc.posting_ids(url)
+        return bool(ids and theirs and ids & theirs)
+
     tabs = [
         e
         for e in run.events or []
-        if e.get("kind") == "new_tab"
-        and not e.get("reached")
-        and host
-        and _host(e.get("url")) == host
+        if e.get("kind") == "new_tab" and not e.get("reached") and same(e.get("url"))
     ]
     if not tabs:
         return
@@ -1312,9 +1322,13 @@ async def _reached(db: AsyncSession, run: ApplyRun, page_url: str) -> None:
     await sj_svc.learn_company_link(db, run.user_id, run.saved_job_id, url)
 
 
-def _new_tab_line(run: ApplyRun) -> tuple[str, str] | None:
-    """The application opened in a new tab since Claude's last call (spec
-    040), told once: where it is. The address is data (``new_tab_url``)."""
+NEW_TABS_TOLD = 3
+
+
+def _new_tab_line(run: ApplyRun) -> tuple[str, list[str]] | None:
+    """New tabs the application's tab opened since Claude's last call (spec
+    040), told once, a few at most: a hint, Claude decides. The addresses
+    are data (``new_tab_urls``)."""
     new = [
         e for e in run.events or [] if e.get("kind") == "new_tab" and not e.get("told")
     ]
@@ -1324,12 +1338,19 @@ def _new_tab_line(run: ApplyRun) -> tuple[str, str] | None:
         {**e, "told": True} if e.get("kind") == "new_tab" else e
         for e in run.events or []
     ]
+    new = new[-NEW_TABS_TOLD:]
+    grouped = all(e.get("grouped") for e in new)
+    where = (
+        "Job Catcher put it in your tab group"
+        if grouped
+        else "it may not be in your tab group: look for it among the tabs"
+    )
     return (
-        "A new tab opened from the application's tab (new_tab_url; Job "
-        "Catcher put it in your tab group). If it is the application, switch "
-        "to it and carry on there; if it isn't (a privacy page, a sign-in, an "
-        "ad), ignore it. Never ask the user for the address.",
-        new[-1].get("url") or "",
+        f"A new tab opened from the application's tab (new_tab_urls; {where}). "
+        "If it is the application, switch to it and carry on there; if it "
+        "isn't (a privacy page, a sign-in, an ad), ignore it. Never ask the "
+        "user for the address.",
+        [e.get("url") or "" for e in new],
     )
 
 
@@ -4007,6 +4028,7 @@ async def extension_event(
     url: str | None,
     words: str | None = None,
     reason: str | None = None,
+    grouped: bool | None = None,
 ) -> ApplyRun:
     run = await _locked(db, user_id, run_id)
     if run.status not in APPLY_OPEN:
@@ -4116,7 +4138,10 @@ async def extension_event(
         if not host or not public_web_url(url):
             return run
         _event(run, "new_tab", f"A new tab opened on {host}.")
-        run.events = [*run.events[:-1], {**run.events[-1], "url": url[:2000]}]
+        run.events = [
+            *run.events[:-1],
+            {**run.events[-1], "url": url[:2000], "grouped": bool(grouped)},
+        ]
     else:
         raise ValueError("Unknown event")
     await db.flush()

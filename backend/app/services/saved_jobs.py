@@ -5,7 +5,7 @@ import re
 import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
-from urllib.parse import quote_plus, urlparse, urlsplit
+from urllib.parse import parse_qsl, quote_plus, unquote, urlparse, urlsplit
 
 from fastapi import HTTPException
 from rapidfuzz import fuzz
@@ -153,14 +153,15 @@ def effective_resume_id(row) -> uuid.UUID | None:
     return None if row.resume_usual else row.track_resume_id
 
 
-# Job boards whose "Apply on company website" leads elsewhere (spec 040).
-JOB_BOARDS = (
-    "linkedin.com",
-    "indeed.com",
-    "ziprecruiter.com",
-    "glassdoor.com",
-    "simplyhired.com",
-    "monster.com",
+# Job boards and aggregators whose Apply leads elsewhere (spec 040), with
+# their country sites (indeed.co.uk, uk.indeed.com, glassdoor.ca…).
+_TLD = r"(?:com|net|org|ai|io|jobs|[a-z]{2}|co\.[a-z]{2}|com\.[a-z]{2})"
+_JOB_BOARD = re.compile(
+    rf"(^|\.)(linkedin\.(?:com|cn)|lnkd\.in|indeed\.{_TLD}|glassdoor\.{_TLD}"
+    rf"|ziprecruiter\.{_TLD}|simplyhired\.{_TLD}|monster\.{_TLD}|careerbuilder\.{_TLD}"
+    r"|builtin[a-z]*\.com|dice\.com|wellfound\.com|welcometothejungle\.com"
+    r"|jobright\.ai|joinhandshake\.com|handshake\.com|usajobs\.gov)$",
+    re.IGNORECASE,
 )
 
 
@@ -181,17 +182,63 @@ _APPLICATION = re.compile(
 )
 
 
-# One posting for sure: an id in the address (digits, a UUID, a Workday
-# requisition like _R-1234), never a careers home page or a sign-in.
-_POSTING_ID = re.compile(r"\d{3,}|[0-9a-f]{8}-[0-9a-f]{4}-", re.IGNORECASE)
+# The ids that name a posting (spec 040, Job Catcher's postingIds): UUIDs,
+# requisition ids (R-1234, JR-1234), runs of 3+ digits in the path or the
+# #route, and the posting's own query parts — never a timestamp or a
+# tracking id.
+_UUID = re.compile(
+    r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}", re.I
+)
+_REQ = re.compile(r"(?<![a-z])(?:jr|req|r)[-_]?\d{2,}(?![a-z0-9])", re.I)
+_POSTING_PARAMS = {
+    "jk",
+    "vjk",
+    "gh_jid",
+    "ashby_jid",
+    "job",
+    "jobid",
+    "job_id",
+    "jid",
+    "id",
+    "req",
+    "reqid",
+    "requisitionid",
+    "postingid",
+    "jobreqid",
+    "opportunityid",
+    "jobpostingid",
+    "positionid",
+    "currentjobid",
+}
 
 
-def names_one_posting(url: str | None) -> bool:
+def posting_ids(url: str | None) -> set[str]:
     try:
         parts = urlsplit(url or "")
     except ValueError:
-        return False
-    return bool(_POSTING_ID.search(f"{parts.path}?{parts.query}"))
+        return set()
+    ids: set[str] = set()
+
+    def take(text: str) -> None:
+        rest = text.lower()
+        for pattern in (_UUID, _REQ):
+            for m in pattern.findall(rest):
+                ids.add(re.sub(r"[-_]", "", m))
+            rest = pattern.sub(" ", rest)
+        ids.update(re.findall(r"\d{3,}", rest))
+
+    take(unquote(parts.path))
+    take(parts.fragment)
+    for name, value in parse_qsl(parts.query):
+        if value and name.lower() in _POSTING_PARAMS:
+            if name.lower() in ("jk", "vjk"):
+                ids.add(value.lower())
+            take(value)
+    return ids
+
+
+def names_one_posting(url: str | None) -> bool:
+    return bool(posting_ids(url))
 
 
 # Never the application: sign-ins and file pickers (a résumé from Drive).
@@ -214,26 +261,28 @@ def looks_like_application(url: str | None) -> bool:
 
 
 def on_job_board(url: str | None) -> bool:
-    host = _site(url)
-    return any(host == b or host.endswith(f".{b}") for b in JOB_BOARDS)
+    return bool(_JOB_BOARD.search(_site(url)))
 
 
 async def learn_company_link(
     db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, url: str
 ) -> bool:
     """The company's own application, reached from the job board's listing
-    (spec 040: LinkedIn's "Apply on company website" has no address to read,
-    so Job Catcher sees the tab it opens). It becomes the job's apply link,
-    the board's listing staying the listing's own link as the backup. Only
-    once: a link the user (or an earlier visit) set is never changed, and only
-    a board listing's job learns one. True when it was saved."""
+    right after the user pressed its Apply (spec 040: LinkedIn's "Apply on
+    company website" has no address to read, so Job Catcher sees the tab it
+    opens). It becomes the job's apply link, the board's listing staying the
+    listing's own link as the backup, marked as learned: a later Apply may
+    replace it, while a link the user set is never changed. Only a board
+    listing's job learns one. True when it was saved."""
     sj = await db.scalar(
         select(SavedJob)
         .options(selectinload(SavedJob.job_listing))
         .where(SavedJob.id == saved_job_id, SavedJob.user_id == user_id)
     )
-    if sj is None or sj.custom_apply_url or sj.job_listing is None:
+    if sj is None or sj.job_listing is None:
         return False
+    if sj.custom_apply_url and not sj.apply_url_learned:
+        return False  # the user's own link
     listing_url = sj.job_listing.apply_url
     host = _site(url)
     if (
@@ -245,7 +294,10 @@ async def learn_company_link(
         or not looks_like_application(url)
     ):
         return False
+    if sj.custom_apply_url == url[:2000]:
+        return False
     sj.custom_apply_url = url[:2000]
+    sj.apply_url_learned = True
     sj.updated_at = datetime.now(UTC)
     await db.flush()
     return True
@@ -753,6 +805,7 @@ async def rename_listing(
         sj.custom_location = data.location or None
     if data.apply_url is not None:
         sj.custom_apply_url = data.apply_url
+        sj.apply_url_learned = False  # the user's own: never replaced
     await db.flush()
     return sj
 

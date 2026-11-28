@@ -1510,6 +1510,10 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "pending": Job Catcher's own hold while a press goes through (spec 037).
         await applyRun.event("blocked_submit", sender.tab, msg.url, undefined, msg.reason === "pending" ? "pending" : undefined);
         sendResponse({ ok: true });
+      } else if (msg.type === "applyPressed") {
+        // The user pressed an Apply that leaves for the company's site (spec 040).
+        await tabJobs.arm(sender.tab?.id);
+        sendResponse({ ok: true });
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });

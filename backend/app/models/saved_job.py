@@ -90,6 +90,12 @@ class SavedJob(Base):
     custom_company: Mapped[str | None] = mapped_column(String(255))
     custom_location: Mapped[str | None] = mapped_column(String(255))
     custom_apply_url: Mapped[str | None] = mapped_column(Text)
+    # custom_apply_url was learned by Job Catcher (the company's application
+    # after an Apply on the board, spec 040), not set by the user: a later
+    # Apply may replace it; the user's own link never is.
+    apply_url_learned: Mapped[bool] = mapped_column(
+        Boolean, nullable=False, default=False, server_default="false"
+    )
     notes: Mapped[str | None] = mapped_column(Text)
     applied_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     last_stage_change: Mapped[datetime] = mapped_column(

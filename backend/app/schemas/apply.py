@@ -114,6 +114,8 @@ class ExtensionEvent(BaseModel):
     # through, never the user's lock (spec 037).
     words: str | None = Field(default=None, max_length=300)
     reason: Literal["pending"] | None = None
+    # new_tab: Job Catcher put the tab in the run's tab group (spec 040).
+    grouped: bool | None = None
 
 
 class HelpDoneIn(BaseModel):

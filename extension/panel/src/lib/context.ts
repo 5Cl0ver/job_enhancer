@@ -1,7 +1,15 @@
 // What the user is doing in the tab the panel is beside. Pure (URL + title in,
 // a context out) so it's unit-tested: test/panel-context.spec.js.
 import { applicantHost, postingKey } from "../../../src/autofill/hosts.js";
-import { definitePosting } from "../../../src/tabJob.js";
+import { postingIds, samePosting, siteOf } from "../../../src/tabJob.js";
+
+/** The company's own application (spec 040) and this page: one posting on one site, both naming it. */
+function sameApplication(companyUrl: string | null | undefined, pageUrl: string): boolean {
+  if (!companyUrl || siteOf(companyUrl) !== siteOf(pageUrl)) return false;
+  const theirs = postingIds(companyUrl);
+  const mine = postingIds(pageUrl);
+  return theirs.length > 0 && mine.length > 0 && samePosting(theirs, mine);
+}
 
 export type PageContext =
   | { kind: "none" }
@@ -167,9 +175,7 @@ export function bestJobMatch(
   if (here) {
     // Its listing, or the company's own application (spec 040) when that
     // names one posting (never a careers home page or a sign-in).
-    const same = pool.filter(
-      (j) => postingKey(j.url)?.key === here.key || (!!j.company_url && definitePosting(j.company_url) === here.key),
-    );
+    const same = pool.filter((j) => postingKey(j.url)?.key === here.key || sameApplication(j.company_url, page.url));
     if (same.length === 1) return same[0];
     if (here.sure) sameSure = same;
     // Several saved from one address (a careers page listing many jobs): the
@@ -190,11 +196,8 @@ export function bestJobMatch(
   // system than the job's own (when in doubt, no job: the usual résumé).
   const kept = carried ? allowed.find((j) => j.id === carried) : undefined;
   if (!kept) return null;
-  const mineHere = definitePosting(page.url);
-  const other = [kept.url, kept.company_url].some((u) => {
-    const theirs = u ? postingKey(u) : null;
-    return !!mineHere && !!theirs && theirs.scope === here?.scope && theirs.key !== mineHere;
-  });
+  const pageIds = postingIds(page.url);
+  const other = [kept.url, kept.company_url].some((u) => !!u && siteOf(u) === siteOf(page.url) && !samePosting(postingIds(u), pageIds));
   return other ? null : kept;
 }
 

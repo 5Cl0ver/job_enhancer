@@ -80,12 +80,69 @@ async def test_the_company_link_is_learned_once_from_the_board(
     jobs = (await client.get("/v1/saved-jobs/")).json()
     assert jobs[0]["job_listing"]["apply_url"] == COMPANY
 
-    # Once: a later tab never changes it.
-    other = "https://careers.contoso.example/job/1"
+    await db_session.refresh(sj)
+    assert sj.apply_url_learned is True
+
+    # A learned link: a later Apply may replace it.
+    other = "https://jobs.northwind.example/en/jobs/7732/platform-engineer/apply"
     r = await client.post(f"/v1/saved-jobs/{sj.id}/company-link", json={"url": other})
+    assert r.json() == {"saved": True}
+    await db_session.refresh(sj)
+    assert sj.custom_apply_url == other and sj.apply_url_learned is True
+
+    # The user sets the link: it's theirs, never replaced.
+    mine = "https://jobs.northwind.example/en/jobs/7731/apply"
+    r = await client.patch(f"/v1/saved-jobs/{sj.id}/listing", json={"apply_url": mine})
+    assert r.status_code == 200
+    await db_session.refresh(sj)
+    assert sj.custom_apply_url == mine and sj.apply_url_learned is False
+    r = await client.post(f"/v1/saved-jobs/{sj.id}/company-link", json={"url": COMPANY})
     assert r.json() == {"saved": False}
     await db_session.refresh(sj)
-    assert sj.custom_apply_url == COMPANY
+    assert sj.custom_apply_url == mine
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "board",
+    [
+        "https://uk.indeed.com/viewjob?jk=a1b2c3d4",
+        "https://www.indeed.co.uk/viewjob?jk=a1b2c3d4",
+        "https://www.glassdoor.co.uk/job-listing/x.htm?jl=1009001",
+        "https://www.linkedin.cn/jobs/view/4100000001/",
+        "https://builtin.com/job/platform-engineer/4455667",
+        "https://www.dice.com/job-detail/abc-123456",
+        "https://wellfound.com/jobs/3344556-platform-engineer",
+        "https://www.usajobs.gov/job/812345600",
+        "https://www.careerbuilder.com/job/J3abc123456",
+    ],
+)
+def test_country_boards_and_aggregators_are_job_boards(board):
+    assert sj_svc.on_job_board(board)
+    assert not sj_svc.on_job_board(COMPANY)
+
+
+@pytest.mark.parametrize(
+    ("url", "ids"),
+    [
+        (
+            "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply",
+            {"jr1234"},
+        ),
+        (
+            "https://acme.taleo.net/careersection/2/jobapply.ftl?job=12345&lang=en",
+            {"12345"},
+        ),
+        ("https://www.indeed.com/viewjob?jk=a1b2c3d4", {"a1b2c3d4"}),
+        ("https://careers.acme.example/#/jobs/456", {"456"}),
+        (
+            "https://acme.taleo.net/careersection/2/flow.jsf?lang=en&ts=1700000000",
+            set(),
+        ),
+    ],
+)
+def test_posting_ids(url, ids):
+    assert sj_svc.posting_ids(url) == ids
 
 
 @pytest.mark.asyncio
@@ -231,10 +288,61 @@ async def test_a_new_tab_claude_never_goes_to_teaches_nothing(engine, monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_claude_on_another_posting_of_that_site_teaches_nothing(
+    engine, monkeypatch
+):
+    maker, user, run_id, job_id = await _board_run(engine, monkeypatch)
+    rid = str(run_id)
+    await mcp_mod.get_apply_brief(rid)
+    async with maker() as db:
+        await svc.extension_event(db, user.id, run_id, "new_tab", COMPANY)
+        await db.commit()
+    # Same host, another posting: not the page the tab opened.
+    await mcp_mod.fill_page(rid, "https://jobs.northwind.example/en/jobs/9999/other")
+    async with maker() as db:
+        assert (await db.get(SavedJob, job_id)).custom_apply_url is None
+    # A later step of that posting: it is.
+    await mcp_mod.fill_page(rid, "https://jobs.northwind.example/en/jobs/7731/step2")
+    async with maker() as db:
+        assert (await db.get(SavedJob, job_id)).custom_apply_url == COMPANY
+
+
+@pytest.mark.asyncio
+async def test_every_new_tab_is_told_and_the_group_only_when_it_is(engine, monkeypatch):
+    maker, user, run_id, _ = await _board_run(engine, monkeypatch)
+    rid = str(run_id)
+    await mcp_mod.get_apply_brief(rid)
+    urls = [f"https://jobs{n}.northwind.example/jobs/{n}000/apply" for n in range(5)]
+    async with maker() as db:
+        for n, url in enumerate(urls):
+            await svc.extension_event(
+                db, user.id, run_id, "new_tab", url, grouped=n != 4
+            )
+        await db.commit()
+    out = await mcp_mod.message_user(rid, "Looking at the new tabs.")
+    assert out["new_tab_urls"] == urls[-3:]  # a few at most, the latest
+    assert out["new_tab_url"] == urls[-1]
+    assert "may not be in your tab group" in out["next"]
+    assert "put it in your tab group" not in out["next"]
+    async with maker() as db:
+        await svc.extension_event(db, user.id, run_id, "new_tab", COMPANY, grouped=True)
+        await db.commit()
+    out = await mcp_mod.message_user(rid, "One more.")
+    assert out["new_tab_urls"] == [COMPANY]
+    assert "Job Catcher put it in your tab group" in out["next"]
+
+
+@pytest.mark.asyncio
 async def test_a_new_tab_that_isnt_a_web_page_is_ignored(engine, monkeypatch):
     maker, user, run_id, _ = await _board_run(engine, monkeypatch)
     async with maker() as db:
-        for url in ("about:blank", "http://192.168.1.5/apply", "http://localhost/x"):
+        for url in (
+            "about:blank",
+            "http://192.168.1.5/apply",
+            "http://localhost/x",
+            "http://127.1/jobs/123",
+            "http://0x7f.0.0.1/jobs/123",
+        ):
             await svc.extension_event(db, user.id, run_id, "new_tab", url)
         await db.commit()
         run = await svc.get_run(db, user.id, run_id)
@@ -331,6 +439,11 @@ async def test_resume_details_carry_its_text(
         "http://localhost:3000/apply",
         "http://intranet/apply",
         "http://[::1]/apply",
+        "http://127.1/apply",
+        "http://0177.0.0.1/apply",
+        "http://0x7f.0.0.1/apply",
+        "http://10.1/apply",
+        "http://2130706433/apply",
     ],
 )
 async def test_a_jobs_link_must_be_a_public_address(

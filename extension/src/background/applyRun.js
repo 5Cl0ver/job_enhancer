@@ -271,8 +271,10 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     if (!data.run_id || tab?.id == null) return;
     const opener = openerId == null ? null : await c.tabs.get(openerId).catch(() => null);
     const group = opener?.groupId ?? -1;
-    if (group !== -1 && tab.groupId !== group) await c.tabs.group({ groupId: group, tabIds: tab.id }).catch(() => {});
-    await api(`/v1/apply/runs/${data.run_id}/event`, { method: "POST", body: JSON.stringify({ kind: "new_tab", url: tab.url }) }).catch(() => null);
+    let grouped = group !== -1 && tab.groupId === group;
+    if (group !== -1 && !grouped) grouped = (await c.tabs.group({ groupId: group, tabIds: tab.id }).catch(() => null)) === group;
+    // Claude is only told it's in its tab group when it is.
+    await api(`/v1/apply/runs/${data.run_id}/event`, { method: "POST", body: JSON.stringify({ kind: "new_tab", url: tab.url, grouped }) }).catch(() => null);
   }
 
   async function loop() {
