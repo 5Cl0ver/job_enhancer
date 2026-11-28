@@ -147,6 +147,9 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
   async function wake() {
     const data = await active(true);
     if (data.run_id && !looping) loop();
+    // Nothing open: not kept, so a run started just after is seen at the
+    // next page tick (never 60 s later).
+    if (!data.run_id) state.at = 0;
     return !!data.run_id;
   }
 

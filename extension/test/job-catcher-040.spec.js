@@ -283,6 +283,16 @@ describe("a fill never waits for a page to tick (bed62c61)", () => {
     expect(c.alarms.create).not.toHaveBeenCalled();
     expect(api).toHaveBeenCalledTimes(1);
   });
+
+  it("a run started just after the worker woke is seen at the next page tick, not 60 s later", async () => {
+    const c = fakeChrome();
+    let open = false;
+    const api = vi.fn(async () => ({ ok: true, json: async () => (open ? { run_id: "r1", hosts: ["acme.example"], requests: [] } : { run_id: null }) }));
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    expect(await run.wake()).toBe(false);
+    open = true;
+    expect((await run.active()).run_id).toBe("r1");
+  });
 });
 
 describe("review of spec 040", () => {
