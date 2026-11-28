@@ -235,8 +235,13 @@ export function isPhoneExtension(field) {
   return EXT_WORD.test(asks) && !EXT_INCLUDED.test(asks);
 }
 
+// "Preferred contact method" is one choice; a list of ticks ("Contact
+// preferences": marketing opt-ins) is never it (spec 040 review).
+const CONTACT_KINDS = new Set(["radio", "select", "buttons", "combobox", "text"]);
+
 export function profileKeyFor(field) {
   const key = profileKeyOf(field);
+  if (key === "contact_method" && field.kind && !CONTACT_KINDS.has(field.kind)) return null;
   return key === "phone" && isPhoneExtension(field) ? null : key;
 }
 
@@ -297,29 +302,42 @@ function stateForms(v) {
   return code && US_STATES[code] ? [US_STATES[code], code] : [s];
 }
 
-/** Is this a US state ("OR", "Oregon")? */
+// US state codes that are also countries' codes (CA Canada, IN India, DE
+// Germany…), and a state name that is also a country's (Georgia): they never
+// say a place is in the United States (spec 040 review).
+const SHARED_CODES = new Set(["AL", "AR", "AZ", "CA", "CO", "DE", "GA", "ID", "IL", "IN", "KY", "LA", "MA", "MD", "ME", "MN", "MO", "MS", "MT", "NC", "NE", "PA", "SC", "SD", "TN", "VA"]);
+const SHARED_NAMES = new Set(["georgia"]);
+
+/** Is this surely a US state ("OR", "Oregon")? Never one that could be a country ("CA", "Georgia"). */
 export function isUsState(v) {
   const s = String(v ?? "").trim();
   if (!s) return false;
-  return s.length === 2 ? !!US_STATES[s.toUpperCase()] : Object.values(US_STATES).some((n) => n.toLowerCase() === s.toLowerCase());
+  if (s.length === 2) return !!US_STATES[s.toUpperCase()] && !SHARED_CODES.has(s.toUpperCase());
+  return !SHARED_NAMES.has(s.toLowerCase()) && Object.values(US_STATES).some((n) => n.toLowerCase() === s.toLowerCase());
+}
+
+/** Does this say the United States ("USA", "U.S.", "United States of America")? */
+export function isUsCountry(v) {
+  return /^(us|usa|u\.s\.a?\.?|united states( of america)?|america)$/i.test(String(v ?? "").trim());
 }
 
 // The ways a country-code list words the United States (spec 040): Workday's
 // "United States of America (+1)", "United States (+1)", "USA +1", "+1 United
 // States", a bare "+1". Searched in this order (Workday's prompt tries the
 // first few); a list is checked for an exact one before a close one, so
-// Canada's "+1" is never taken.
+// Canada's "+1" is never taken. The bare "+1" comes last, and counts only
+// where one option alone has it (matchOption).
 const US_DIAL = [
   "United States of America (+1)",
   "United States of America",
   "United States",
-  "+1",
   "United States (+1)",
   "United States +1",
   "USA (+1)",
   "US (+1)",
   "USA +1",
   "+1 United States",
+  "+1",
 ];
 
 // A link box takes only a link, and LinkedIn's only a LinkedIn one (spec 040:
@@ -377,6 +395,15 @@ export function valueForms(key, value) {
   return [v, ...forms.filter((f) => f !== v)];
 }
 
+/** A US phone: the profile's country is the United States, or none is set
+ * and the number doesn't start with another country's code ("+44 …"). */
+function usPhone(p) {
+  const phone = String(p.phone || "").trim();
+  if (!phone) return false;
+  if (p.country) return /^(us|usa|u\.s\.|united states)/i.test(p.country);
+  return !phone.startsWith("+") || phone.startsWith("+1");
+}
+
 export function profileValues(profile, email, today = new Date(), history = null) {
   const p = profile || {};
   const edu = history?.education?.[0] || {};
@@ -394,7 +421,7 @@ export function profileValues(profile, email, today = new Date(), history = null
     email_confirm: list(email),
     phone: list(p.phone),
     phone_type: list(p.phone ? "Mobile" : null, p.phone ? "Cell" : null),
-    phone_country: list(...(/^(us|usa|u\.s\.|united states)/i.test(p.country || "United States") && p.phone ? US_DIAL : [])),
+    phone_country: list(...(usPhone(p) ? US_DIAL : [])),
     contact_method: list(email ? "Email" : null, email ? "E-mail" : null),
     address_line1: list(p.address_line1),
     address_line2: list(p.address_line2),

@@ -227,6 +227,11 @@ export function nationalNumber(phone) {
   return s;
 }
 
+/** A box you type in (a typeahead too): where a link box takes only a link. */
+function typedBox(field) {
+  return ["text", "textarea", "editable"].includes(field.kind) || (field.kind === "combobox" && field.el?.tagName === "INPUT");
+}
+
 // Boxes a former-employer question is answered in (never a text box).
 const CHOICE_KINDS = new Set(["radio", "select", "combobox", "buttons"]);
 
@@ -288,8 +293,9 @@ export function resolve(field, copy) {
   // every site asking it gets the correction.
   // A remembered answer that isn't this kind of box's ("LinkedIn" for the
   // LinkedIn link, spec 040) is never used.
+  // Only in a box you type in: "Do you have a LinkedIn profile?" keeps its Yes.
   const recalled = COMPUTED_KEYS.has(key) ? null : learnedFor(field, copy, key);
-  const learned = recalled && key && !fitsKey(key, recalled.answer) ? null : recalled;
+  const learned = recalled && key && typedBox(field) && !fitsKey(key, recalled.answer) ? null : recalled;
   // The phone number remembered for an extension box (a Workday revisit
   // taken for the user's answer): never put back (spec 036).
   if (learned && phoneInExtension(field, learned.answer, copy)) return { skip: "no_data" };

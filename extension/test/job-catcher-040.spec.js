@@ -11,7 +11,7 @@ import { jobPart, jobValues } from "../src/autofill/classify/jobHistory.js";
 import { resolve } from "../src/autofill/resolve.js";
 import { collectFields } from "../src/autofill/scan.js";
 import { createSession } from "../src/autofill/session.js";
-import { CHIP_WAITS, chipsOf, skillWordings, writeField } from "../src/autofill/widgets.js";
+import { CHIP_WAITS, chipsOf, homeOf, liveBox, skillWordings, writeField } from "../src/autofill/widgets.js";
 import { APPLY_ALARM, createApplyRun } from "../src/background/applyRun.js";
 
 const parse = (html) => new DOMParser().parseFromString(html, "text/html");
@@ -282,5 +282,124 @@ describe("a fill never waits for a page to tick (bed62c61)", () => {
     expect(await run.wake()).toBe(false);
     expect(c.alarms.create).not.toHaveBeenCalled();
     expect(api).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("review of spec 040", () => {
+  const values = profileValues(PROFILE, EMAIL);
+  const pick = (labels) => {
+    const options = labels.map((o) => (typeof o === "string" ? { label: o } : o));
+    for (const strict of [true, false]) for (const c of values.phone_country) {
+      const i = matchOption(c, options, { strict });
+      if (i >= 0) return i;
+    }
+    return -1;
+  };
+
+  it("a '+1' two options share never picks one: the United States by its name, else nothing", () => {
+    expect(values.phone_country.at(-1)).toBe("+1");
+    expect(pick([{ label: "Canada (+1)", value: "+1" }, { label: "United States (+1)", value: "+1" }])).toBe(1);
+    expect(pick([{ label: "+1 (CA)", value: "+1" }, { label: "+1 (US)", value: "+1" }])).not.toBe(0); // never Canada
+    expect(matchOption("+1", [{ label: "+1" }, { label: "+44" }])).toBe(0);
+  });
+
+  it("a non-US number with no country: no country code", () => {
+    expect(profileValues({ phone: "+44 20 7946 0000" }, EMAIL).phone_country).toEqual([]);
+    expect(profileValues({ phone: "+1 555 010 2345" }, EMAIL).phone_country[0]).toBe("United States of America (+1)");
+    expect(profileValues({ phone: "555-010-2345" }, EMAIL).phone_country[0]).toBe("United States of America (+1)");
+    expect(profileValues({ phone: "555-010-2345", country: "Canada" }, EMAIL).phone_country).toEqual([]);
+  });
+
+  it("a job's country is the United States only when it surely is", () => {
+    const c = (location) => jobValues("country", { location }, { question: "Country" });
+    for (const loc of ["Tbilisi, Georgia", "Toronto, CA", "Chennai, IN", "Berlin, Germany", "Remote"]) expect(c(loc)).toEqual([]);
+    expect(c("Harborview, OR")[0]).toBe("United States");
+    expect(c("Suite 4, Portland, OR")[0]).toBe("United States");
+    expect(c("Atlanta, GA, USA")[0]).toBe("United States");
+    expect(c("Toronto, ON, Canada")).toEqual(["Canada"]);
+  });
+
+  it("'Do you have a LinkedIn profile?' keeps its saved Yes; only a box you type in takes a link only", () => {
+    const radio = { question: "Do you have a LinkedIn profile?", key: "do you have a linkedin profile", hints: {}, kind: "radio", options: [{ label: "Yes" }, { label: "No" }] };
+    const copy = { values: {}, answers: [{ question_key: "do you have a linkedin profile", answer: "Yes" }] };
+    expect(resolve(radio, copy)).toMatchObject({ values: ["Yes"] });
+    expect(resolve({ ...radio, kind: "text", options: undefined }, copy)).toMatchObject({ skip: "no_data" });
+  });
+
+  it("a list of contact ticks (marketing) is never the preferred contact method", () => {
+    expect(profileKeyFor({ question: "Contact preferences", kind: "checkbox_list", hints: {} })).toBeNull();
+    expect(profileKeyFor({ question: "Contact preferences", kind: "checkbox", hints: {} })).toBeNull();
+    expect(profileKeyFor({ question: "Preferred Contact Method", kind: "radio", hints: {} })).toBe("contact_method");
+    expect(profileKeyFor({ question: "Preferred Contact Method", kind: "select", hints: {} })).toBe("contact_method");
+  });
+
+  it("the redrawn Skills box is found only in its own field, never a box elsewhere with its id", async () => {
+    const w = new Window();
+    const doc = w.document;
+    doc.body.innerHTML = `<div data-automation-id="formField-skills"><div data-automation-id="multiselectInputContainer"><input id="sk"></div></div>
+      <div data-automation-id="formField-jobTitle"><div class="spot"></div></div>`;
+    const input = doc.querySelector("#sk");
+    homeOf(input);
+    // Redrawn: the old box gone, and only a box in ANOTHER field has its id.
+    input.closest("[data-automation-id=formField-skills]").innerHTML = "";
+    doc.querySelector(".spot").innerHTML = `<input id="sk">`;
+    expect(liveBox(input)).toBe(input); // not the Job Title's box
+    // Drawn again in its own field: found.
+    doc.querySelector(".spot").innerHTML = "";
+    doc.querySelector("[data-automation-id=formField-skills]").innerHTML = `<input id="sk-2">`;
+    expect(liveBox(input).id).toBe("sk-2");
+  });
+});
+
+describe("the wake alarm stops when there's no good answer (review)", () => {
+  function chromeWith(token) {
+    const alarms = new Map();
+    return {
+      storage: { session: { get: vi.fn(async () => ({})), set: vi.fn(async () => {}) }, local: { get: vi.fn(async () => token) } },
+      tabs: { query: vi.fn(async () => []) },
+      windows: { getAll: vi.fn(async () => []) },
+      alarms: { create: vi.fn(async (n, i) => alarms.set(n, i)), clear: vi.fn(async (n) => alarms.delete(n)) },
+      _alarms: alarms,
+    };
+  }
+
+  it("signed out: cleared", async () => {
+    const c = chromeWith({ je_token: "t" });
+    let signedIn = true;
+    const api = vi.fn(async () => (signedIn ? { ok: true, json: async () => ({ run_id: "r1", hosts: [], requests: [] }) } : null));
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    await run.active(true);
+    expect(c._alarms.has(APPLY_ALARM)).toBe(true);
+    signedIn = false;
+    c.storage.local.get = vi.fn(async () => ({}));
+    await run.active(true);
+    expect(c._alarms.has(APPLY_ALARM)).toBe(false);
+  });
+
+  it("errors for more than 90 s (401, 5xx, offline): cleared; a good answer sets it again", async () => {
+    const c = chromeWith({ je_token: "t" });
+    let mode = "ok";
+    const api = vi.fn(async () => (mode === "ok" ? { ok: true, json: async () => ({ run_id: "r1", hosts: [], requests: [] }) } : mode === "401" ? { ok: false, status: 401 } : Promise.reject(new Error("offline"))));
+    const run = createApplyRun({ api, press: vi.fn(), fillSession: vi.fn(), chrome: c });
+    const now = vi.spyOn(Date, "now");
+    try {
+      now.mockReturnValue(1_000_000);
+      await run.active(true);
+      expect(c._alarms.has(APPLY_ALARM)).toBe(true);
+      mode = "401";
+      now.mockReturnValue(1_030_000);
+      await run.active(true);
+      expect(c._alarms.has(APPLY_ALARM)).toBe(true); // a short blip keeps it
+      mode = "offline";
+      now.mockReturnValue(1_095_000);
+      await run.active(true);
+      expect(c._alarms.has(APPLY_ALARM)).toBe(false);
+      mode = "ok";
+      now.mockReturnValue(1_100_000);
+      await run.active(true);
+      expect(c._alarms.has(APPLY_ALARM)).toBe(true);
+    } finally {
+      now.mockRestore();
+    }
   });
 });

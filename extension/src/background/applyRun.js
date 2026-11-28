@@ -108,6 +108,7 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
           // Signed out: no application here. (No token for a moment, a
           // refresh that failed, is just a failed ask, below.)
           state = { at: Date.now(), ttl: IDLE_TTL, data: { run_id: null }, okAt: Date.now() };
+          wakeAlarm(false);
         } else {
           if (!res || !res.ok) throw new Error("no answer");
           const data = (await res.json()) || { run_id: null };
@@ -119,6 +120,9 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
         // ask again soon; after 90 s without an answer, stop trusting it.
         const stale = Date.now() - state.okAt > TRUST_MS;
         state = { ...state, at: Date.now(), ttl: RETRY_MS, data: stale ? { run_id: null } : state.data };
+        // No good answer for 90 s (signed out on the server, offline, down):
+        // the alarm stops; a page or a good answer starts it again.
+        if (stale) wakeAlarm(false);
       } finally {
         asking = null;
       }

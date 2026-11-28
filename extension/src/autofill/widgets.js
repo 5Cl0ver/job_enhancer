@@ -755,11 +755,13 @@ export function liveBox(input) {
   if (!input || input.isConnected) return input;
   const home = homes.get(input);
   if (!home) return input;
+  // In the same field it was in: never a box elsewhere that took its id.
+  const inField = (el) => !home.field || el.closest?.('[data-automation-id^="formField-"]')?.getAttribute("data-automation-id") === home.field;
   let found = home.id ? home.doc.getElementById(home.id) : null;
-  if (found && !found.matches?.(SEARCH_INPUT)) found = null;
+  if (found && (!found.matches?.(SEARCH_INPUT) || !inField(found))) found = null;
   if (!found && home.field) {
-    const fields = [...home.doc.querySelectorAll("[data-automation-id]")].filter((b) => b.getAttribute("data-automation-id") === home.field);
-    const inputs = fields.length === 1 ? [...fields[0].querySelectorAll(SEARCH_INPUT)] : [];
+    const fields = home.doc.querySelectorAll(`[data-automation-id="${home.field.replace(/["\\]/g, "\\$&")}"]`);
+    const inputs = fields.length === 1 ? [...fields[0].querySelectorAll(SEARCH_INPUT)].filter(inField) : [];
     found = inputs.length === 1 ? inputs[0] : null;
   }
   if (!found) return input;
