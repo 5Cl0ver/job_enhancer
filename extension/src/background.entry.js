@@ -730,23 +730,32 @@ const choiceKeyFor = (job, url) => (job ? `je_resume_choice:job:${job.id}` : `je
 const SAVED_CACHE = "je_saved_cache";
 const SAVED_CACHE_MS = 2 * 60_000;
 
-async function linkedJob(tab, carry = true) {
+async function linkedJob(tab) {
   if (!tab?.url) return null;
   let { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
   if (!cache || Date.now() - (cache.at || 0) > SAVED_CACHE_MS) {
     await listSaved(cache?.version || null).catch(() => {});
     ({ [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE));
   }
-  // The job the user said this tab applies for, when the page doesn't say
-  // (spec 040: "Applying for…? Yes" in the panel). Never a guess.
-  return matchJob(tab, cache?.jobs || [], carry ? await tabJobs.carried(tab).catch(() => null) : null);
+  return matchJob(tab, cache?.jobs || []);
 }
 
-async function matchJob(tab, jobs, carried = null) {
+async function matchJob(tab, jobs) {
   if (!jobs.length) return null;
   const { je_not_this: notThis = {}, je_page_job: pinned = {} } = await chrome.storage.local.get(["je_not_this", "je_page_job"]);
   const pid = pageId(tab.url);
-  return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid], carried) || null;
+  return bestJobMatch({ url: tab.url, title: tab.title || "" }, jobs, notThis[pid] || [], pinned[pid]) || null;
+}
+
+/** A message from the extension's own pages (the panel), never a web page. */
+function fromExtension(sender) {
+  return String(sender?.url || "").startsWith(chrome.runtime.getURL(""));
+}
+
+/** A saved job from the list held here, by id. */
+async function savedJobById(id) {
+  const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
+  return (cache?.jobs || []).find((j) => j.id === id) || null;
 }
 
 /** The saved job a page is by itself (no carrying, never a fetch). */
@@ -1233,8 +1242,6 @@ async function markApplied(job, tab = null) {
     // page only reports its final Submit), the saved job this page is — the
     // same posting — no guessing by name. Anywhere else (a search box on a
     // saved job's page) never: the old exact title + company match only.
-    // The page's own job, or the one the user said this tab applies for
-    // (spec 040, "Applying for…? Yes"): never a guess.
     if (!id && detectAts(tab.url || "")) id = (await linkedJob(tab).catch(() => null))?.id || null;
   }
   const res = await fetch(`${cfg.API_BASE}/v1/saved-jobs/mark-applied`, {
@@ -1516,24 +1523,23 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // "Applying for…?" on the next page.
         await tabJobs.pressed(sender.tab, sender.frameId);
         sendResponse({ ok: true });
-      } else if (msg.type === "getApplyQuestion" || msg.type === "answerApplyQuestion") {
-        // The side panel's question (spec 040): only the extension's own
-        // pages (the panel) ask or answer it, never a web page's script.
-        if (!String(sender.url || "").startsWith(chrome.runtime.getURL(""))) {
+      } else if (msg.type === "getJobSuggestion" || msg.type === "answerLanding") {
+        // The side panel's suggestion (spec 040): only the extension's own
+        // pages ask or answer, never a web page's script.
+        if (!fromExtension(sender)) {
           sendResponse({ ok: false });
           return;
         }
         const tab = await chrome.tabs.get(msg.tabId).catch(() => null);
-        if (msg.type === "answerApplyQuestion") {
-          const out = tab ? await tabJobs.answer(tab, !!msg.yes, String(msg.page || "")).catch(() => ({ refused: true })) : { refused: true };
+        if (msg.type === "answerLanding") {
+          const out = tab ? await tabJobs.answerLanding(tab, !!msg.yes, String(msg.page || "")).catch(() => ({ refused: true })) : { refused: true };
           if (tab?.id != null) changed(tab.id);
           sendResponse({ ok: !out.refused, ...out });
           return;
         }
-        const asked = tab ? await tabJobs.question(tab).catch(() => null) : null;
-        const { [SAVED_CACHE]: cache } = await chrome.storage.local.get(SAVED_CACHE);
-        const job = asked ? (cache?.jobs || []).find((j) => j.id === asked.jobId) : null;
-        sendResponse({ ok: true, job: job ? { id: job.id, title: job.title, company: job.company } : null, again: !!asked?.again, page: asked?.page || "" });
+        const offered = tab ? await tabJobs.suggestion(tab).catch(() => null) : null;
+        const job = offered ? await savedJobById(offered.jobId) : null;
+        sendResponse({ ok: true, job: job ? { id: job.id, title: job.title, company: job.company } : null, ask: !!offered?.ask, page: offered?.page || "" });
       } else if (msg.type === "applySubmitPressed") {
         await applyRun.event("submit_pressed", sender.tab, msg.url);
         sendResponse({ ok: true });
@@ -1565,7 +1571,13 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         // The cover letter (spec 031): the job's pick, from the run on its
         // tab (undefined = not the run's tab), else the linked saved job.
         const runLetter = await applyRun.coverLetterFor(tab).catch(() => undefined);
-        const linked = await linkedJob(tab).catch(() => null);
+        const own = await linkedJob(tab).catch(() => null);
+        // The page's own saved job; else the job the user picked in the
+        // panel for this one fill of this page (spec 040: "Fill with <job>'s
+        // résumé and cover letter"); else none.
+        const pickedId = own ? null : await tabJobs.fillJob(tab, null).catch(() => null);
+        const picked = pickedId ? await savedJobById(pickedId) : null;
+        const linked = own || picked;
         const coverLetterId = runLetter !== undefined ? runLetter : linked?.cover_letter_id || null;
         // The company this application is for (spec 034, "have you worked
         // here before?"): the saved job linked to the page; else the page
@@ -1580,10 +1592,12 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
           const failed = got.chosenFailed ? { resume: null, copy: got.copy && { ...got.copy, history: null } } : {};
           sendResponse({ ok: true, ...got, ...failed, resumeId: runResume, company });
         } else {
-          const { key, choice, resumeId } = await resumeFor(tab);
+          const { key, choice, resumeId: chosen } = await resumeFor(tab);
+          // A picked job's own résumé (its tailored one), else the usual.
+          const resumeId = picked ? picked.resume_id || null : chosen;
           const got = await autofill.get({ resumeId, coverLetterId });
           // Never a silent switch: the panel says the chosen résumé failed.
-          if (resumeId && !!got.chosenFailed !== !!choice?.failed) {
+          if (!picked && resumeId && !!got.chosenFailed !== !!choice?.failed) {
             const { job } = await resumeFor(tab);
             const note = job ? { failedFor: got.chosenFailed ? resumeId : null, filename: choice?.filename || "" } : { ...(choice || { resumeId, filename: "" }), failed: !!got.chosenFailed };
             await chrome.storage.session.set({ [key]: note });
@@ -1622,8 +1636,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: await autofill.refresh() });
       } else if (msg.type === "sessionUpdate") {
         if (sender.tab?.id != null) await storeFillSession(sender.tab.id, sender.frameId ?? 0, msg.session || {});
-        // Filling the bound application keeps "Applying for…" (spec 040).
-        if (sender.tab?.id != null) tabJobs.touch(sender.tab.id).catch(() => {});
+
         // A résumé that didn't go into its box: the owner hears (spec 032).
         if (msg.session?.resume === "failed") {
           caught.report("resume_failed", sender.url || sender.tab?.url, "The résumé didn't go into the upload box.");
@@ -1825,6 +1838,16 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       } else if (msg.type === "pressAutofill") {
         // The panel's Autofill button (or the page, for a tab id it knows).
         const tabId = msg.tabId ?? sender.tab?.id;
+        // The panel's "Fill with <job>'s résumé and cover letter" (`withJob`,
+        // spec 040) picks the suggested job for this one fill; its plain
+        // Autofill, the usual résumé.
+        if (tabId != null && fromExtension(sender)) {
+          const tab = await chrome.tabs.get(tabId).catch(() => null);
+          if (tab && !(await tabJobs.pick(tab, msg.withJob || null).catch(() => false))) {
+            sendResponse({ ok: false, problem: "refresh" });
+            return;
+          }
+        }
         sendResponse(tabId != null ? await pressTab(tabId) : { ok: false, problem: "refresh" });
       } else if (msg.type === "startPick") {
         await startPick(msg.tabId);

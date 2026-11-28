@@ -1,18 +1,17 @@
 // Job Catcher's files and tabs (spec 040). Invented data.
-// Never a guess: right after the user's own press on an Apply on a saved
-// job's own page, the side panel asks "Applying for <job>?" on the next
-// page that names no job; only Yes, on that page, binds the tab to it (its
-// résumé, cover letter, Submit and company link). The binding is kept only
-// on pages surely of that posting; elsewhere on the company's site the
-// panel asks "Still applying for…?"; anything else drops it. Every other
-// path ends with no binding.
+// Never a guess: after the user's own press on an Apply on saved job J's
+// own page, the panel only SUGGESTS J on the pages that follow ("Fill with
+// J's résumé and cover letter", one fill of one page at a time); nothing is
+// remembered as "this page is J". Once, on the first application page, it
+// asks "Is this the application for J?": Yes only teaches J its company
+// link, and only from a page naming its posting.
 import { Window } from "happy-dom";
 import { describe, expect, it, vi } from "vitest";
-import { BIND_MS, OPEN_MS, TAB_JOB, askAbout, bindHere, boundJobId, confirmBinding, isSignIn, isWebPage, judgeBinding, keepBinding, onHub, onJobBoard, otherPosting, postingIds, putEntry, sameApplication, siteOf, worthTelling } from "../src/tabJob.js";
-import { pageId } from "../src/autofill/hosts.js";
+import { OPEN_MS, PICK_MS, SUGGEST_MS, askAbout, fillJobFor, pageOf, isSignIn, isWebPage, onHub, onJobBoard, postingIds, postingLevelId, putEntry, sameApplication, siteOf, suggestFor, worthTelling } from "../src/tabJob.js";
 import { createTabJobs } from "../src/background/tabJobs.js";
 import { applyLabel, isApplyPress, watchApplyPresses } from "../src/autofill/applyClick.js";
 import { bestJobMatch } from "../panel/src/lib/context.ts";
+
 import { isResumeText, resolve } from "../src/autofill/resolve.js";
 
 const LI_A = "https://www.linkedin.com/jobs/view/4100000001/";
@@ -55,210 +54,138 @@ describe("the Apply press: a hint only", () => {
   });
 });
 
-describe("when the panel asks", () => {
+
+describe("the suggestion: on pages naming no saved job, for 45 minutes", () => {
   const WD = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234";
-  it("on the next application page within 45 minutes, never on a saved job's own page, a board, a sign-in or a news site", () => {
-    expect(askAbout(PRESS, WD, null, T0 + 1_000)).toBe("A");
-    expect(askAbout(PRESS, WD, null, T0 + BIND_MS + 1)).toBeNull();
-    expect(askAbout(PRESS, WD, "B", T0)).toBeNull();
-    expect(askAbout(PRESS, LI_A, null, T0)).toBeNull();
-    expect(askAbout(PRESS, "https://accounts.google.com/o/oauth2", null, T0)).toBeNull();
-    expect(askAbout(PRESS, "https://news.example/story", null, T0)).toBeNull();
-    expect(askAbout(null, WD, null, T0)).toBeNull();
+  it("suggests the pressed job; never on its own page, a board, a sign-in, or after 45 minutes", () => {
+    expect(suggestFor(PRESS, WD, null, T0 + 1_000)).toBe("A");
+    expect(suggestFor(PRESS, WD, "B", T0)).toBeNull(); // the page is another saved job's
+    expect(suggestFor(PRESS, LI_A, null, T0)).toBeNull();
+    expect(suggestFor(PRESS, "https://accounts.google.com/o/oauth2", null, T0)).toBeNull();
+    expect(suggestFor(PRESS, WD, null, T0 + SUGGEST_MS + 1)).toBeNull();
+    expect(suggestFor(null, WD, null, T0)).toBeNull();
     expect(OPEN_MS).toBe(20_000);
   });
-});
 
-/**
- * Say Yes on the first page, then load each next one 30 s apart: the verdict
- * on each ("keep", "same", "ask", "drop"). On "ask" the user says Yes again
- * (`stillYes`) or goes on without answering.
- */
-function walk(urls, { stillYes = true } = {}) {
-  let b = bindHere("A", urls[0], T0);
-  const out = [];
-  for (const [i, u] of urls.slice(1).entries()) {
-    const at = T0 + (i + 1) * 30_000;
-    const { verdict, bound } = judgeBinding(b, u, at);
-    out.push(verdict);
-    if (verdict === "drop") break;
-    b = bound;
-    if (verdict === "ask") {
-      expect(boundJobId(b, u, at)).toBeNull(); // never used while asking
-      if (stillYes) b = confirmBinding(b, u, at); // else the user goes on without answering
-    }
-    if (verdict === "keep" || (verdict === "ask" && stillYes)) expect(boundJobId(b, u, at)).toBe("A");
-  }
-  return out;
-}
-
-describe("good path: Yes, then every step keeps the job (a few asked once)", () => {
-  const paths = {
-    Workday: [
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply",
-      "https://accounts.google.com/o/oauth2/v2/auth?client_id=1",
-      "https://www.linkedin.com/oauth/v2/authorization?client_id=x",
-      "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply/applyManually",
-    ],
-    iCIMS: ["https://careers-acme.icims.com/jobs/12345/it-analyst/job?mode=job&iis=LinkedIn", "https://careers-acme.icims.com/jobs/12345/it-analyst/job/candidate?mode=apply"],
-    Taleo: ["https://acme.taleo.net/careersection/ex/jobdetail.ftl?job=2400123&lang=en", "https://acme.taleo.net/careersection/ex/jobdetail.ftl?job=2400123&tz=GMT"],
-    Paylocity: ["https://recruiting.paylocity.com/Recruiting/Jobs/Apply/2345678", "https://recruiting.paylocity.com/Recruiting/Jobs/Apply/2345678/step2"],
-    UKG: [
-      "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666",
-      "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/Apply/OpportunityApply?opportunityId=aaaabbbb-1111-2222-3333-444455556666",
-    ],
-    Dayforce: ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345", "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345/apply"],
-    Greenhouse: ["https://boards.greenhouse.io/acme/jobs/4455667?gh_src=li", "https://boards.greenhouse.io/acme/jobs/4455667/confirmation"],
-    Lever: ["https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666", "https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666/apply", "https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666/thanks"],
-  };
-  for (const [name, urls] of Object.entries(paths)) {
-    it(`${name}: every step is kept without asking`, () => {
-      expect(askAbout(PRESS, urls[0], null, T0)).toBe("A");
-      expect(walk(urls).every((v) => v === "keep" || v === "same")).toBe(true);
-    });
-  }
-
-  it("a step that isn't surely the posting asks once; after Yes it keeps", () => {
-    // Workday's sign-in page, Taleo's flow, iCIMS's login: no posting id.
-    expect(walk(["https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply", "https://acme.wd5.myworkdayjobs.com/en-US/External/login", "https://acme.wd5.myworkdayjobs.com/en-US/External/login", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply/applyManually"])).toEqual(["ask", "keep", "keep"]);
-    expect(walk(["https://acme.taleo.net/careersection/2/jobdetail.ftl?job=12345", "https://acme.taleo.net/careersection/2/jobapply.ftl?lang=en"])).toEqual(["ask"]);
-    expect(walk(["https://careers-acme.icims.com/jobs/12345/engineer/job", "https://careers-acme.icims.com/jobs/12345/engineer/login"])).toEqual(["ask"]);
-    // SuccessFactors keeps its one address.
-    expect(walk(["https://career5.successfactors.com/career?company=acme&career_job_req_id=123", "https://career5.successfactors.com/career?company=acme&navBarLevel=MY_PROFILE"])).toEqual(["keep"]);
-  });
-
-  it("the 45 minutes restart only on a kept page (or the user's own work: touch)", () => {
-    const url = paths.Workday[0];
-    let b = bindHere("A", url, T0);
-    b = keepBinding(b, `${url}/apply`, T0 + BIND_MS - 1_000);
-    expect(b?.at).toBe(T0 + BIND_MS - 1_000);
-    expect(judgeBinding(b, `${url}/apply`, T0 + 2 * BIND_MS).verdict).toBe("drop");
-    // An asked page never restarts it.
-    const asked = judgeBinding(bindHere("A", url, T0), "https://acme.wd5.myworkdayjobs.com/en-US/External/userHome", T0 + 40 * 60_000);
-    expect(asked.verdict).toBe("ask");
-    expect(asked.bound.at).toBe(T0);
-    expect(judgeBinding(b, "about:blank", T0 + BIND_MS).verdict).toBe("same");
-    expect(isWebPage("chrome://newtab/")).toBe(false);
-  });
-});
-
-describe("the reviewer's cases: a Yes never spreads", () => {
-  const board = "11111111-2222-3333-4444-555555555555";
-  const cases = [
-    // [Yes page, next pages…, the verdicts]
-    ["Workable, then another job's slug", ["https://apply.workable.com/acme/j/A1B2C3D4E5/apply/", "https://apply.workable.com/acme/j/F6G7H8J9K0/apply/"], ["ask"]],
-    ["a careers slug, then another", ["https://acme.com/careers/senior-designer/apply", "https://acme.com/careers/staff-engineer/apply"], ["ask"]],
-    ["Breezy slugs", ["https://acme.breezy.hr/p/a1b2c3d4e5f6-senior-designer/apply", "https://acme.breezy.hr/p/f6e5d4c3b2a1-staff-engineer/apply"], ["ask"]],
-    ["Jobvite slugs", ["https://jobs.jobvite.com/acme/job/oAbCdEfG", "https://jobs.jobvite.com/acme/job/oHiJkLmN"], ["ask"]],
-    ["JazzHR slugs", ["https://acme.applytojob.com/apply/AbCdEfGh/Engineer", "https://acme.applytojob.com/apply/IjKlMnOp/Designer"], ["ask"]],
-    ["a #route slug", ["https://acme.com/careers#/job/senior", "https://acme.com/careers#/job/junior"], ["ask"]],
-    ["UKG: Register, then an opportunity, then another", [`https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/Account/Register`, `https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/OpportunityDetail?opportunityId=aaaaaaaa-2222-3333-4444-555555555555`, `https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/OpportunityDetail?opportunityId=bbbbbbbb-2222-3333-4444-555555555555`], ["ask", "ask"]],
-    ["UKG: another opportunity", [`https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/OpportunityDetail?opportunityId=aaaaaaaa-2222-3333-4444-555555555555`, `https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/OpportunityApply?opportunityId=bbbbbbbb-2222-3333-4444-555555555555`], ["drop"]],
-    ["UKG: Yes on the board home, then an opportunity", [`https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/`, `https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/OpportunityDetail?opportunityId=bbbbbbbb-2222-3333-4444-555555555555`], ["ask"]],
-    ["Workday: another requisition", ["https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/Engineer_R12345/apply", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/Designer_R67890/apply"], ["drop"]],
-    ["Workday: a reposted requisition", ["https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/Engineer_JR-12345", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/Designer_JR12345-1"], ["drop"]],
-    ["Greenhouse: another job", ["https://job-boards.greenhouse.io/acme/jobs/4012345", "https://job-boards.greenhouse.io/acme/jobs/4067890"], ["drop"]],
-    ["gh_jid: another job", ["https://acme.com/careers?gh_jid=4012345", "https://acme.com/careers/job?gh_jid=4067890"], ["drop"]],
-    ["Greenhouse: another company", ["https://boards.greenhouse.io/acme/jobs/4012345", "https://boards.greenhouse.io/beta/jobs/4012345"], ["drop"]],
-    ["Lever: another company", ["https://jobs.lever.co/acme/aaaaaaaa-2222-3333-4444-555555555555/apply", "https://jobs.lever.co/beta/aaaaaaaa-2222-3333-4444-555555555555/apply"], ["drop"]],
-    ["Lever: its list, then another job", ["https://jobs.lever.co/acme/aaaaaaaa-2222-3333-4444-555555555555/apply", "https://jobs.lever.co/acme", "https://jobs.lever.co/acme/bbbbbbbb-2222-3333-4444-555555555555"], ["ask", "drop"]],
-    ["iCIMS: search, then another job", ["https://careers-acme.icims.com/jobs/12345/engineer/job", "https://careers-acme.icims.com/jobs/search?ss=1", "https://careers-acme.icims.com/jobs/67890/designer/job"], ["ask", "drop"]],
-    ["iCIMS: another job, the portal part the same", ["https://careers-acme.icims.com/jobs/12345/engineer/job?in_iframe=1&hub=7", "https://careers-acme.icims.com/jobs/67890/designer/job?in_iframe=1&hub=7"], ["drop"]],
-    ["Taleo: another job", ["https://acme.taleo.net/careersection/2/jobdetail.ftl?job=12345", "https://acme.taleo.net/careersection/2/jobapply.ftl?lang=en", "https://acme.taleo.net/careersection/2/jobdetail.ftl?job=67890"], ["ask", "drop"]],
-    ["Taleo: Yes on a step, then a job", ["https://acme.taleo.net/careersection/2/jobapply.ftl?lang=en", "https://acme.taleo.net/careersection/2/jobdetail.ftl?job=67890"], ["ask"]],
-    ["Taleo: the section's number kept, a job appears", ["https://acme.taleo.net/careersection/10000/jobapply.ftl?lang=en", "https://acme.taleo.net/careersection/10000/jobdetail.ftl?job=67890"], ["ask"]],
-    ["Dayforce: another company", ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345", "https://jobs.dayforcehcm.com/en-US/beta/CANDIDATEPORTAL/jobs/12345"], ["drop"]],
-    ["Dayforce: another job", ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345", "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/67890"], ["drop"]],
-    ["Paylocity: another job", ["https://recruiting.paylocity.com/Recruiting/Jobs/Apply/1234567", "https://recruiting.paylocity.com/Recruiting/Jobs/Apply/7654321"], ["drop"]],
-    ["SuccessFactors: another company", ["https://career5.successfactors.com/career?company=acme&career_job_req_id=123", "https://career5.successfactors.com/career?company=beta&career_job_req_id=123"], ["drop"]],
-    ["SuccessFactors: another requisition", ["https://career5.successfactors.com/career?company=acme&career_job_req_id=123", "https://career5.successfactors.com/career?company=acme&career_job_req_id=456"], ["drop"]],
-    ["ADP: another company", ["https://myjobs.adp.com/acme/cx/job-details?reqId=5001234", "https://myjobs.adp.com/beta/cx/job-details?reqId=5001234"], ["drop"]],
-    ["ADP WFN: another company", ["https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=aaaaaaaa-2222-3333-4444-555555555555&jobId=123", "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=bbbbbbbb-2222-3333-4444-555555555555&jobId=123"], ["drop"]],
-    ["ADP WFN: another job", ["https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=aaaaaaaa-2222-3333-4444-555555555555&jobId=123", "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=aaaaaaaa-2222-3333-4444-555555555555&jobId=456"], ["drop"]],
-    ["ADP WFN: Yes on its list, then a job", ["https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=aaaaaaaa-2222-3333-4444-555555555555&ccId=19000101_000001&lang=en_US", "https://workforcenow.adp.com/mascsr/default/mdf/recruitment/recruitment.html?cid=aaaaaaaa-2222-3333-4444-555555555555&ccId=19000101_000001&jobId=999&lang=en_US"], ["ask"]],
-    ["a zip and a year in two slugs", ["https://acme.com/jobs/portland-or-97201-engineer-2026", "https://acme.com/jobs/portland-or-97201-designer-2026"], ["ask"]],
-    ["a step, then another slug", ["https://acme.com/jobs/12345-engineer", "https://acme.com/jobs/12345-engineer/apply/step2", "https://acme.com/jobs/engineer-portland"], ["keep", "ask"]],
-    ["a #route number", ["https://acme.com/careers#/job/123", "https://acme.com/careers#/job/124"], ["drop"]],
-    ["Workday: a sign-in, then another tenant", ["https://acme.wd5.myworkdayjobs.com/en-US/External/job/x_R12345/apply", "https://login.microsoftonline.com/abc", "https://beta.wd1.myworkdayjobs.com/en-US/External/job/x_R12345/apply"], ["same", "drop"]],
-    ["myworkdaysite: another tenant", ["https://wd5.myworkdaysite.com/recruiting/acme/External/job/x_R12345", "https://wd5.myworkdaysite.com/recruiting/beta/External/job/x_R12345"], ["drop"]],
-    ["SmartRecruiters: another job", ["https://jobs.smartrecruiters.com/Acme/743999123456789-engineer", "https://jobs.smartrecruiters.com/Acme/743999987654321-designer"], ["drop"]],
-    ["Paycom: another company", ["https://www.paycomonline.net/v4/ats/web.php/jobs/ViewJobDetails?job=12345&clientkey=ABC", "https://www.paycomonline.net/v4/ats/web.php/jobs/ViewJobDetails?job=12345&clientkey=DEF"], ["drop"]],
-    ["Oracle: another job, the site number shared", ["https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210512345/apply/section/1", "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210598765"], ["drop"]],
-    ["a store number shared", ["https://careers.acme.com/store-0456/jobs/12345", "https://careers.acme.com/store-0456/jobs/67890"], ["drop"]],
-    ["Avature: another job", ["https://acme.avature.net/careers/ApplicationMethods?jobId=12345", "https://acme.avature.net/careers/JobDetail/Designer/67890"], ["drop"]],
-    ["a step, then another job referring back", ["https://acme.com/careers/job/12345?src=linkedin", "https://acme.com/careers/job/12345/apply", "https://acme.com/careers/job/67890/apply?ref=12345"], ["keep", "drop"]],
-    ["Jobvite: another company", ["https://jobs.jobvite.com/careers/acme/job/oAbCdEfG/apply", "https://jobs.jobvite.com/careers/globex/job/oZzYyXxW/apply"], ["drop"]],
-    ["Jobvite: another company, the other address", ["https://jobs.jobvite.com/careers/acme/job/oAbCdEfG/apply", "https://jobs.jobvite.com/globex/job/oZzYyXxW/apply"], ["drop"]],
-  ];
-  for (const [name, urls, verdicts] of cases) {
-    it(name, () => {
-      expect(walk(urls, { stillYes: false })).toEqual(verdicts);
-    });
-  }
-
-  it("UKG: Yes to the first opportunity, then another one drops it", () => {
-    const opp = (id) => `https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/OpportunityDetail?opportunityId=${id}-2222-3333-4444-555555555555`;
-    expect(walk([`https://recruiting.ultipro.com/ACME1000/JobBoard/${board}/Account/Register`, opp("aaaaaaaa"), opp("bbbbbbbb")])).toEqual(["ask", "drop"]);
-  });
-
-  it("sign-ins on the way change nothing: LinkedIn's, Indeed's, Apple, SAP, ADP, iCIMS", () => {
-    const b = bindHere("A", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/x_R111/apply", T0);
-    for (const u of ["https://www.linkedin.com/oauth/v2/authorization?client_id=x", "https://secure.indeed.com/oauth/v2/authorize?x", "https://secure.indeed.com/account/login", "https://appleid.apple.com/auth/authorize", "https://accounts.sap.com/saml2/idp/sso", "https://online.adp.com/signin/v1/", "https://login.icims.com/"]) {
-      expect([u, judgeBinding(b, u, T0 + 1).verdict]).toEqual([u, "same"]);
-      expect(isSignIn(u)).toBe(true);
-    }
-    expect(isSignIn(LI_A)).toBe(false);
-  });
-
-  it("the panel never asks on a sign-in, a shop, a news page or an aggregator", () => {
-    for (const u of ["https://shop.example.com/dp/B0", "https://news.example.com/careers-advice", "https://jooble.org/desc/123", "https://www.talent.com/view?id=abc", "https://www.adzuna.com/details/123", "https://click.appcast.io/track/abc", "https://www.glassdoor.com/job-listing/x", "https://acme.com/", "https://accounts.sap.com/saml2/idp/sso", "https://online.adp.com/signin/v1/", "https://login.icims.com/", "https://www.linkedin.com/oauth/v2/authorization"]) {
+  it("asks about the link only on a page that is surely an application", () => {
+    expect(askAbout(PRESS, WD, null, T0)).toBe("A");
+    expect(askAbout(PRESS, "https://acme.com/careers/apply", null, T0)).toBe("A");
+    for (const u of ["https://shop.example.com/dp/B0", "https://news.example.com/careers-advice", "https://jooble.org/desc/123", "https://www.talent.com/view?id=abc", "https://click.appcast.io/track/abc", "https://acme.com/", "https://accounts.sap.com/saml2/idp/sso", "https://online.adp.com/signin/v1/", "https://login.icims.com/", "https://www.linkedin.com/oauth/v2/authorization"]) {
       expect([u, askAbout(PRESS, u, null, T0 + 1)]).toEqual([u, null]);
     }
-    expect(askAbout(PRESS, "https://acme.com/careers/apply", null, T0 + 1)).toBe("A");
   });
 
-  it("shared hosts are told apart by company (Jobvite, Rippling, ADP included)", () => {
+  it("one fill, one page: a pick counts only on the page it was made on, for 2 minutes", () => {
+    const pick = { jobId: "A", page: pageOf(WD), at: T0 };
+    expect(fillJobFor(null, pick, WD, T0 + 1_000)).toBe("A");
+    expect(fillJobFor(null, pick, `${WD}/apply`, T0 + 1_000)).toBeNull(); // the next step: pick again
+    expect(fillJobFor(null, pick, WD, T0 + PICK_MS + 1)).toBeNull();
+    expect(fillJobFor(null, null, WD, T0)).toBeNull(); // no pick: the usual résumé
+    expect(fillJobFor("B", pick, WD, T0)).toBe("B"); // the page's own job always
+  });
+});
+
+describe("a posting-level id, the only page a link is learned from", () => {
+  it("posting query parts, requisitions and the systems' own posting ids", () => {
+    for (const [u, id] of [
+      ["https://acme.eightfold.ai/careers?pid=999&domain=acme.com", "pid=999"],
+      ["https://careers.acme.com/apply?id=456", "id=456"],
+      ["https://boards.greenhouse.io/embed/job_app?for=acme&token=4012345", "token=4012345"],
+      ["https://jobs.jobvite.com/acme/job/oAbCdEfG?jvi=oAbCdEfG", "jvi=oabcdefg"],
+      ["https://www.indeed.com/viewjob?vjk=a1b2c3", "jk=a1b2c3"],
+      ["https://boards.greenhouse.io/acme/jobs/4012345", "4012345"],
+      ["https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234/apply", "jr1234"],
+      ["https://jobs.lever.co/acme/aaaaaaaa-2222-3333-4444-555555555555/apply", "aaaaaaaa-2222-3333-4444-555555555555"],
+      ["https://apply.workable.com/acme/j/A1B2C3D4E5/apply/", "a1b2c3d4e5"],
+      ["https://jobs.smartrecruiters.com/Acme/743999123456789-engineer", "743999123456789"],
+      ["https://careers-acme.icims.com/jobs/12345/it-analyst/job", "12345"],
+      ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345", "12345"],
+      ["https://recruiting.paylocity.com/Recruiting/Jobs/Details/2345678", "2345678"],
+      ["https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/210512345", "210512345"],
+      ["https://recruiting.ultipro.com/ACM1/JobBoard/aaaaaaaa-1111-2222-3333-444444444444/OpportunityDetail?opportunityId=bbbbbbbb-1111-2222-3333-444444444444", "opportunityid=bbbbbbbb-1111-2222-3333-444444444444"],
+    ]) {
+      expect([u, postingLevelId(u)]).toEqual([u, id]);
+    }
+  });
+
+  it("never a board home, a list, a portal, or a UUID that names the company", () => {
+    for (const u of ["https://boards.greenhouse.io/acme", "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL", "https://acme.breezy.hr/", "https://apply.workable.com/acme/", "https://jobs.jobvite.com/acme/jobs", "https://acme.applytojob.com/apply", "https://jobs.smartrecruiters.com/Acme", "https://careers-acme.icims.com/jobs/search?ss=1", "https://acme.com/careers", "https://recruiting.ultipro.com/ACM1/JobBoard/aaaaaaaa-1111-2222-3333-444444444444/", "https://recruiting.paylocity.com/Recruiting/Jobs/All/aaaaaaaa-1111-2222-3333-444444444444"]) {
+      expect([u, postingLevelId(u)]).toEqual([u, null]);
+    }
+  });
+});
+
+describe("the company's application in the matcher", () => {
+  const J = { id: "J", job_listing_id: "1", title: "Software Engineer", company: "Acme", location: "", url: "https://www.linkedin.com/jobs/view/4011111111/", applied: false, company_url: null };
+  const K = { id: "K", job_listing_id: "2", title: "Data Analyst", company: "Acme", location: "", url: "https://www.linkedin.com/jobs/view/4022222222/", applied: false, company_url: null };
+
+  it("K's pages are never J (no job is carried onto a page)", () => {
+    for (const [url, title] of [
+      ["https://acme.eightfold.ai/careers?pid=999&domain=acme.com", "Careers at Acme"],
+      ["https://apply.workable.com/acme/j/FGHJKL/apply/", "Product Designer - Acme"],
+      ["https://boards.greenhouse.io/acme/jobs/2222222", "Job Application for Product Designer at Acme"],
+      ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/54321", "Acme Careers"],
+      ["https://careers.acme.com/apply?id=456", "Apply"],
+    ]) {
+      expect(bestJobMatch({ url, title }, [J])).toBeNull();
+      expect(bestJobMatch({ url, title }, [J, K])).toBeNull();
+    }
+  });
+
+  it("a learned link sharing only the company's UUID, or a number, with K's page is never it", () => {
+    const J2 = { ...J, company_url: "https://x.example-ats.com/aaaaaaaa-1111-2222-3333-444444444444/jobs/111" };
+    expect(bestJobMatch({ url: "https://x.example-ats.com/aaaaaaaa-1111-2222-3333-444444444444/jobs/222", title: "x" }, [J2])).toBeNull();
+    expect(sameApplication("https://acme.wd5.myworkdayjobs.com/x/job/a_R123", "https://acme.wd5.myworkdayjobs.com/x/job/b_R123-1")).toBe(false);
+    const board = "aaaaaaaa-1111-2222-3333-444444444444";
+    expect(sameApplication(`https://recruiting.ultipro.com/A/JobBoard/${board}/`, `https://recruiting.ultipro.com/A/JobBoard/${board}/OpportunityDetail?opportunityId=bbbbbbbb-2222-3333-4444-555555555555`)).toBe(false);
+    // The same posting, a later step: it is.
+    const wd = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Software-Engineer_R-123";
+    expect(sameApplication(wd, `${wd}/apply/applyManually`)).toBe(true);
+    expect(bestJobMatch({ url: `${wd}/apply/applyManually`, title: "Workday" }, [{ ...J, company_url: wd }])?.id).toBe("J");
+  });
+});
+
+describe("sites, boards and sign-ins", () => {
+  it("job boards, aggregators, search engines and the app", () => {
+    for (const url of [LI_A, "https://uk.indeed.com/", "https://www.indeed.co.uk/", "https://www.glassdoor.co.uk/Job/index.htm", "https://www.linkedin.cn/", "https://builtin.com/jobs", "https://www.dice.com/jobs", "https://wellfound.com/jobs", "https://www.usajobs.gov/job/1", "https://jooble.org/x", "https://www.google.com/search?q=jobs", "https://job-enhancer-xxj1.vercel.app/jobs"]) {
+      expect(onHub(url)).toBe(true);
+    }
+    expect(onJobBoard("https://www.glassdoor.co.uk/x")).toBe(true);
+    expect(onHub("https://careers.google.com/jobs/results/1")).toBe(false);
+  });
+
+  it("shared hosts are told apart by company", () => {
     for (const [a, b] of [
+      ["https://wd5.myworkdaysite.com/recruiting/acme/External", "https://wd5.myworkdaysite.com/recruiting/globex/External/job/X_R-9"],
+      ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL", "https://jobs.dayforcehcm.com/en-US/globex/CANDIDATEPORTAL/jobs/555"],
+      ["https://recruiting.ultipro.com/ACM1000ACME/JobBoard/x/", "https://recruiting.ultipro.com/GLX2000GLOBX/JobBoard/y/"],
+      ["https://career4.successfactors.com/career?company=acmeP", "https://career4.successfactors.com/career?company=globexP"],
+      ["https://myjobs.adp.com/acme/cx", "https://myjobs.adp.com/globex/cx"],
       ["https://jobs.jobvite.com/careers/acme/job/x", "https://jobs.jobvite.com/careers/globex/job/x"],
-      ["https://jobs.jobvite.com/acme/job/x", "https://jobs.jobvite.com/globex/job/x"],
       ["https://ats.rippling.com/acme/jobs/x", "https://ats.rippling.com/beta/jobs/x"],
       ["https://workforcenow.adp.com/x?cid=1", "https://workforcenow.adp.com/x?cid=2"],
     ]) {
       expect(siteOf(a)).not.toBe(siteOf(b));
     }
-    expect(siteOf("https://jobs.jobvite.com/careers/acme/job/x")).toBe(siteOf("https://jobs.jobvite.com/acme/job/x"));
   });
 
-  it("the company's application is never another posting that shares a number", () => {
-    expect(sameApplication("https://acme.wd5.myworkdayjobs.com/en-US/External/job/x_R123", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/y_R123-1")).toBe(false);
-    expect(sameApplication(`https://recruiting.ultipro.com/A/JobBoard/${board}/`, `https://recruiting.ultipro.com/A/JobBoard/${board}/OpportunityDetail?opportunityId=bbbbbbbb-2222-3333-4444-555555555555`)).toBe(false);
-  });
-});
-
-describe("the company's application in the matcher: strong ids only", () => {
-  const wdA = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Software-Engineer-Intern---Summer-2026_R-123";
-  const A = { id: "A", job_listing_id: "1", title: "Software Engineer Intern", company: "Acme", location: "", url: LI_A, applied: false, company_url: wdA };
-  const B = { id: "B", job_listing_id: "2", title: "Data Science Intern", company: "Globex", location: "", url: "https://www.linkedin.com/jobs/view/4100000002/", applied: false };
-
-  it("another 2026 intern posting, another careers job, another UKG opportunity or its board home: not A", () => {
-    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Data-Science-Intern---Summer-2026_R-456/apply", title: "Workday" }, [A, B])).toBeNull();
-    const A3 = { ...A, company_url: "https://careers.acme.com/job/12345/analyst-2026" };
-    expect(bestJobMatch({ url: "https://careers.acme.com/job/67890/engineer-2026", title: "x" }, [A3])).toBeNull();
-    // Plain digits never name a company application for sure, even the same.
-    expect(sameApplication(A3.company_url, "https://careers.acme.com/job/12345/analyst-2026/apply")).toBe(false);
-    const A4 = { ...A, company_url: "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/OpportunityDetail?opportunityId=aaaabbbb-1111-2222-3333-444455556666" };
-    expect(bestJobMatch({ url: A4.company_url.replace("aaaabbbb", "cccccccc"), title: "x" }, [A4])).toBeNull();
-    expect(bestJobMatch({ url: "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/0f1e2d3c-1111-2222-3333-444455556666/", title: "x" }, [A4])).toBeNull();
+  it("sign-ins: LinkedIn's and Indeed's own, Apple, SAP, ADP, iCIMS", () => {
+    for (const u of ["https://www.linkedin.com/oauth/v2/authorization?client_id=x", "https://secure.indeed.com/oauth/v2/authorize?x", "https://secure.indeed.com/account/login", "https://appleid.apple.com/auth/authorize", "https://accounts.sap.com/saml2/idp/sso", "https://online.adp.com/signin/v1/", "https://login.icims.com/"]) {
+      expect(isSignIn(u)).toBe(true);
+    }
+    expect(isSignIn(LI_A)).toBe(false);
   });
 
-  it("the same posting's later step is A", () => {
-    expect(bestJobMatch({ url: `${wdA}/apply/applyManually`, title: "Workday" }, [A, B])?.id).toBe("A");
+  it("ids: years, zips and store numbers never name a posting; reposted requisitions differ", () => {
+    expect(postingIds("https://acme.wd5.myworkdayjobs.com/External/job/Portland-OR-97201/IT-Analyst_R-1234")).toEqual({ strong: ["r1234"], weak: [] });
+    expect(postingIds("https://x.wd5.myworkdayjobs.com/a/job/y_JR12345-1").strong).toEqual(["jr12345-1"]);
+    expect(isWebPage("chrome://newtab/")).toBe(false);
   });
 
-  it("the bound job, never onto another posting of its own system", () => {
-    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Other_R-999/apply", title: "Workday" }, [A, B], [], undefined, "A")).toBeNull();
-    expect(bestJobMatch({ url: "https://acme.wd5.myworkdayjobs.com/en-US/External/userHome", title: "Workday" }, [A, B], [], undefined, "A")?.id).toBe("A");
+  it("keeps a few tabs, newest last", () => {
+    let map = {};
+    for (let i = 0; i < 60; i++) map = putEntry(map, i, { jobId: `j${i}`, at: T0 });
+    expect(Object.keys(map)).toHaveLength(50);
   });
 });
 
@@ -271,6 +198,7 @@ describe("what Claude hears of a new tab", () => {
     }
   });
 });
+
 
 /** A fake chrome with session storage and tabs. */
 function fakeChrome(tabs = {}) {
@@ -287,197 +215,230 @@ function fakeChrome(tabs = {}) {
   };
 }
 
-describe("the background: press, question, Yes", () => {
-  const WD = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234";
-  const LI_K = "https://www.linkedin.com/jobs/view/4100000333/";
-  const jobOf = { [LI_A]: { id: "A" } };
-  const ownMatch = async (tab) => jobOf[tab.url] || null;
-  const make = ({ now = () => T0 } = {}) => {
-    const c = fakeChrome({ 1: { id: 1, url: LI_A, groupId: -1 }, 2: { id: 2, url: WD, groupId: -1 } });
-    const learnLink = vi.fn(async () => {});
-    const run = { opened: vi.fn(async () => false), landed: vi.fn(async () => {}) };
-    return { c, learnLink, run, tj: createTabJobs({ ownMatch, learnLink, run, chrome: c, now }) };
+const LI_J = "https://www.linkedin.com/jobs/view/4100000111/";
+function make({ now = () => T0, saved = { [LI_J]: "J" }, run } = {}) {
+  const c = fakeChrome({ 1: { id: 1, url: LI_J, groupId: -1 }, 2: { id: 2, url: "about:blank", groupId: -1 } });
+  const learnLink = vi.fn(async () => {});
+  const tj = createTabJobs({ ownMatch: async (t) => (saved[t.url] ? { id: saved[t.url] } : null), learnLink, run: run || { opened: async () => false, landed: async () => {} }, chrome: c, now });
+  return { c, learnLink, tj };
+}
+const tab = (id, url) => ({ id, url });
+
+describe("every reviewer scenario: K's page offers at most 'Fill with J's…', never uses J, learns nothing without Yes", () => {
+  const flows = {
+    "Greenhouse board home, then another posting": ["https://boards.greenhouse.io/acme", "https://boards.greenhouse.io/acme/jobs/2222222"],
+    "Dayforce portal, then a posting": ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL", "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/54321"],
+    "Breezy root, then a posting": ["https://acme.breezy.hr/", "https://acme.breezy.hr/p/abcdef-data-analyst/apply"],
+    "Workable list, then a posting": ["https://apply.workable.com/acme/", "https://apply.workable.com/acme/j/FGHJKL/apply/"],
+    "Jobvite list, then a posting": ["https://jobs.jobvite.com/acme/jobs", "https://jobs.jobvite.com/acme/jobs/job/oQxyzAB/apply"],
+    "JazzHR /apply, then a posting": ["https://acme.applytojob.com/apply", "https://acme.applytojob.com/apply/XyZabC/Data-Analyst"],
+    "SmartRecruiters company, then a posting": ["https://jobs.smartrecruiters.com/Acme", "https://jobs.smartrecruiters.com/Acme/743999888777666-data-analyst"],
+    "iCIMS search, then a posting": ["https://careers-acme.icims.com/jobs/search?ss=1", "https://careers-acme.icims.com/jobs/5555/data-analyst/job"],
+    "custom careers slugs": ["https://acme.com/careers/software-engineer/apply", "https://acme.com/careers", "https://acme.com/careers/data-analyst/apply"],
+    "UKG: another opportunity in the path": ["https://recruiting.ultipro.com/ACM1000ACME/JobBoard/aaaaaaaa-1111-2222-3333-444444444444/OpportunityDetail/bbbbbbbb-1111-2222-3333-444444444444", "https://recruiting.ultipro.com/ACM1000ACME/JobBoard/aaaaaaaa-1111-2222-3333-444444444444/OpportunityDetail/cccccccc-1111-2222-3333-444444444444"],
+    "Paylocity: another company's job": ["https://recruiting.paylocity.com/Recruiting/Jobs/Details/1234567", "https://recruiting.paylocity.com/Recruiting/Jobs/Apply/7654321"],
+    "a #route SPA, another job": ["https://acme.com/careers/#/jobs/12345", "https://acme.com/careers/#/jobs/12345/apply", "https://acme.com/careers/#/jobs/67890/apply"],
+    "Eightfold pid": ["https://acme.eightfold.ai/careers?pid=111", "https://acme.eightfold.ai/careers?pid=999&domain=acme.com"],
+    "Workday: another requisition, the 2026 interns": ["https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Intern---Summer-2026_R-123", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Seattle-WA/Data-Intern---Summer-2026_R-456"],
+    "Oracle: another job, a site number shared": ["https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210512345", "https://jpmc.fa.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1001/job/210598765"],
+    "another company's tenant": ["https://wd5.myworkdaysite.com/recruiting/acme/External", "https://wd5.myworkdaysite.com/recruiting/globex/External/job/Remote/Dev_R-9/apply"],
+    "SuccessFactors: another company": ["https://career4.successfactors.com/career?company=acmeP&career_job_req_id=12345", "https://career4.successfactors.com/career?company=globexP&career_job_req_id=67890"],
   };
-  const tab = (id, url) => ({ id, url });
-  const ask = async (tj, t) => (await tj.question(t))?.jobId ?? null;
+  for (const [name, urls] of Object.entries(flows)) {
+    it(name, async () => {
+      let now = T0;
+      const { tj, learnLink } = make({ now: () => now });
+      await tj.loaded(tab(1, LI_J));
+      await tj.pressed(tab(1, LI_J), 0);
+      let picked = false;
+      for (const u of urls) {
+        now += 30_000;
+        await tj.loaded(tab(1, u));
+        const s = await tj.suggestion(tab(1, u));
+        // At most the labelled choice, and only for J.
+        expect(s === null || s.jobId === "J").toBe(true);
+        // Never used on its own.
+        expect(await tj.fillJob(tab(1, u), null)).toBeNull();
+        // The user picks it on the first page only.
+        if (!picked && s) {
+          expect(await tj.pick(tab(1, u), "J")).toBe(true);
+          expect(await tj.fillJob(tab(1, u), null)).toBe("J");
+          picked = true;
+        }
+      }
+      // K's page: no job unless picked there; no link without a Yes.
+      expect(await tj.fillJob(tab(1, urls.at(-1)), null)).toBeNull();
+      expect(learnLink).not.toHaveBeenCalled();
+    });
+  }
 
-  it("good path: a press in A's listing, a new tab lands on Workday, Yes on that page binds it and teaches the link", async () => {
-    const { tj, learnLink } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.opened({ id: 2, openerTabId: 1 });
-    await tj.loaded(tab(2, WD));
-    expect(await tj.carried(tab(2, WD))).toBeNull(); // nothing until Yes
-    const q = await tj.question(tab(2, WD));
-    expect(q).toEqual({ jobId: "A", again: false, page: pageId(WD) });
-    expect(await tj.answer(tab(2, WD), true, q.page)).toEqual({ jobId: "A" });
-    expect(learnLink).toHaveBeenCalledWith("A", WD);
-    expect(await tj.question(tab(2, WD))).toBeNull();
-    for (const step of [`${WD}/apply`, `${WD}/apply/applyManually`]) {
-      await tj.loaded(tab(2, step));
-      expect(await tj.carried(tab(2, step))).toBe("A");
-    }
-  });
-
-  it("Yes binds only the page asked about: a tab that moved on is refused and asked again", async () => {
-    const { tj, learnLink } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, WD));
-    const q = await tj.question(tab(1, WD));
-    const elsewhere = "https://beta.wd1.myworkdayjobs.com/en-US/Careers/job/y_R222/apply";
-    expect(await tj.answer(tab(1, elsewhere), true, q.page)).toEqual({ refused: true });
-    expect(await tj.carried(tab(1, elsewhere))).toBeNull();
-    expect(learnLink).not.toHaveBeenCalled();
-    expect(await ask(tj, tab(1, elsewhere))).toBe("A"); // still asking, about this page
-  });
-
-  it("No: no binding, nothing learned, and no question again without a new press", async () => {
-    const { tj, learnLink } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, WD));
-    expect(await tj.answer(tab(1, WD), false, pageId(WD))).toEqual({ jobId: null });
-    expect(await tj.carried(tab(1, WD))).toBeNull();
-    expect(await ask(tj, tab(1, WD))).toBeNull();
-    expect(learnLink).not.toHaveBeenCalled();
+  it("a pick for another job than the one suggested is refused", async () => {
+    const { tj } = make();
+    await tj.pressed(tab(1, LI_J), 0);
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await tj.loaded(tab(1, wd));
+    expect(await tj.pick(tab(1, wd), "K")).toBe(false);
+    expect(await tj.fillJob(tab(1, wd), null)).toBeNull();
   });
 
   it("a press in a frame (an ad), with no frame id, or on a page that is no saved job, is no press", async () => {
     const { tj, c } = make();
-    await tj.pressed(tab(1, LI_A), 3);
-    await tj.pressed(tab(1, LI_A), undefined);
-    await tj.loaded(tab(1, WD));
-    expect(await ask(tj, tab(1, WD))).toBeNull();
+    await tj.pressed(tab(1, LI_J), 3);
+    await tj.pressed(tab(1, LI_J), undefined);
+    await tj.pressed(tab(5, "https://news.example/"), 0);
     expect(c.store.je_tab_press || {}).toEqual({});
   });
 
-  it("an Apply on another, unsaved job clears the press", async () => {
-    let now = T0;
-    const { tj } = make({ now: () => now });
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, LI_K));
-    await tj.pressed(tab(1, LI_K), 0); // K's Apply: not saved
-    now += 60_000;
-    const other = "https://beta.wd1.myworkdayjobs.com/en-US/Careers/job/Remote/Designer_R999";
-    await tj.loaded(tab(1, other));
-    expect(await ask(tj, tab(1, other))).toBeNull();
+  it("an Apply on another job, another board posting, or another saved job's page replaces or clears it", async () => {
+    const saved = { [LI_J]: "J", "https://www.linkedin.com/jobs/view/4100000222/": "L" };
+    const wd = "https://beta.wd1.myworkdayjobs.com/en-US/Careers/job/Remote/Designer_R999";
+    for (const steps of [
+      async (tj) => {
+        await tj.loaded(tab(1, "https://www.linkedin.com/jobs/view/4100000333/"));
+        await tj.pressed(tab(1, "https://www.linkedin.com/jobs/view/4100000333/"), 0); // K, unsaved
+      },
+      async (tj) => tj.loaded(tab(1, "https://www.linkedin.com/jobs/view/4100000333/")),
+    ]) {
+      const { tj } = make({ saved });
+      await tj.pressed(tab(1, LI_J), 0);
+      await steps(tj);
+      await tj.loaded(tab(1, wd));
+      expect(await tj.suggestion(tab(1, wd))).toBeNull();
+    }
+    // Another saved job's Apply: that job is suggested instead.
+    const { tj } = make({ saved });
+    await tj.pressed(tab(1, LI_J), 0);
+    await tj.loaded(tab(1, "https://www.linkedin.com/jobs/view/4100000222/"));
+    await tj.pressed(tab(1, "https://www.linkedin.com/jobs/view/4100000222/"), 0);
+    await tj.loaded(tab(1, wd));
+    expect((await tj.suggestion(tab(1, wd)))?.jobId).toBe("L");
   });
 
-  it("another board posting loaded in the pressed tab clears the press", async () => {
-    const { tj } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, LI_K));
-    const other = "https://beta.wd1.myworkdayjobs.com/en-US/Careers/job/Remote/Designer_R999";
-    await tj.loaded(tab(1, other));
-    expect(await ask(tj, tab(1, other))).toBeNull();
-  });
-
-  it("one press, one new tab; the board tab keeps none once it handed it over", async () => {
+  it("one press, one new tab; the board tab keeps none; a handed press goes no further", async () => {
     let now = T0;
     const { tj } = make({ now: () => now });
-    await tj.pressed(tab(1, LI_A), 0);
+    await tj.pressed(tab(1, LI_J), 0);
     await tj.opened({ id: 2, openerTabId: 1 });
     now += 8_000;
-    await tj.opened({ id: 3, openerTabId: 1 }); // a link in A's description
-    expect(await ask(tj, tab(3, "https://careers.acme.com/jobs/98765/senior-it-analyst/apply"))).toBeNull();
-    expect(await ask(tj, tab(2, WD))).toBe("A");
-    // A tab the new tab opens (a link on Workday) never takes the press on.
+    await tj.opened({ id: 3, openerTabId: 1 });
     await tj.opened({ id: 4, openerTabId: 2 });
-    expect(await ask(tj, tab(2, WD))).toBe("A");
-    expect(await ask(tj, tab(4, "https://careers.acme.com/jobs/98765/senior-it-analyst/apply"))).toBeNull();
-    await tj.answer(tab(2, WD), false, pageId(WD));
-    // Later in the board tab: no question from the press it gave away.
-    const later = "https://careers.other.example/jobs/apply/5555";
-    await tj.loaded(tab(1, later));
-    expect(await ask(tj, tab(1, later))).toBeNull();
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    expect((await tj.suggestion(tab(2, wd)))?.jobId).toBe("J");
+    expect(await tj.suggestion(tab(3, wd))).toBeNull();
+    expect(await tj.suggestion(tab(4, wd))).toBeNull();
+    expect(await tj.suggestion(tab(1, wd))).toBeNull();
   });
+});
 
-  it("a new tab long after the press gets nothing", async () => {
-    let now = T0;
-    const { tj } = make({ now: () => now });
-    await tj.pressed(tab(1, LI_A), 0);
-    now += OPEN_MS + 1;
-    await tj.opened({ id: 2, openerTabId: 1 });
-    expect(await ask(tj, tab(2, WD))).toBeNull();
-  });
+describe("good path: LinkedIn → the application, every step offers 'Fill with J's…'; a press uses J's résumé and letter", () => {
+  const paths = {
+    Workday: ["https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234", "https://acme.wd5.myworkdayjobs.com/en-US/External/login", "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Portland-OR/IT-Analyst_JR-1234/apply/applyManually"],
+    iCIMS: ["https://careers-acme.icims.com/jobs/12345/it-analyst/job?mode=job", "https://careers-acme.icims.com/jobs/12345/it-analyst/candidate?mode=apply"],
+    Taleo: ["https://acme.taleo.net/careersection/ex/jobdetail.ftl?job=2400123", "https://acme.taleo.net/careersection/ex/flow.jsf?lang=en"],
+    Greenhouse: ["https://boards.greenhouse.io/acme/jobs/4455667?gh_src=li", "https://boards.greenhouse.io/acme/jobs/4455667/confirmation"],
+    Lever: ["https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666", "https://jobs.lever.co/acme/aaaabbbb-1111-2222-3333-444455556666/apply"],
+    Dayforce: ["https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345", "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345/apply"],
+    Paylocity: ["https://recruiting.paylocity.com/Recruiting/Jobs/Details/2345678", "https://recruiting.paylocity.com/Recruiting/Jobs/Apply/2345678"],
+    Oracle: ["https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/210512345", "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/210512345/apply/section/1"],
+  };
+  for (const [name, urls] of Object.entries(paths)) {
+    it(name, async () => {
+      let now = T0;
+      const { tj, learnLink } = make({ now: () => now });
+      await tj.pressed(tab(1, LI_J), 0);
+      await tj.opened({ id: 2, openerTabId: 1 });
+      for (const [i, u] of urls.entries()) {
+        now += 30_000;
+        await tj.loaded(tab(2, u));
+        const s = await tj.suggestion(tab(2, u));
+        expect(s?.jobId).toBe("J");
+        // The question for the link: only on the first application page.
+        expect(s.ask).toBe(i === 0);
+        if (i === 0) expect(await tj.answerLanding(tab(2, u), true, s.page)).toEqual({ ok: true });
+        expect(await tj.fillJob(tab(2, u), null)).toBeNull();
+        expect(await tj.pick(tab(2, u), "J")).toBe(true);
+        expect(await tj.fillJob(tab(2, u), null)).toBe("J");
+      }
+      expect(learnLink).toHaveBeenCalledTimes(1);
+      expect(learnLink).toHaveBeenCalledWith("J", urls[0]);
+    });
+  }
 
-  it("not surely the posting: 'Still applying for…?', the job unused till Yes; No drops it", async () => {
-    const { tj } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, WD));
-    await tj.answer(tab(1, WD), true, pageId(WD));
-    const home = "https://acme.wd5.myworkdayjobs.com/en-US/External/userHome";
-    await tj.loaded(tab(1, home));
-    expect(await tj.carried(tab(1, home))).toBeNull();
-    expect(await tj.question(tab(1, home))).toEqual({ jobId: "A", again: true, page: pageId(home) });
-    expect(await tj.answer(tab(1, home), true, pageId(home))).toEqual({ jobId: "A" });
-    expect(await tj.carried(tab(1, home))).toBe("A");
-    const list = "https://acme.wd5.myworkdayjobs.com/en-US/External?q=sales";
-    await tj.loaded(tab(1, list));
-    await tj.answer(tab(1, list), false, pageId(list));
-    expect(await tj.carried(tab(1, list))).toBeNull();
-    expect(await tj.question(tab(1, list))).toBeNull();
-  });
-
-  it("another posting or site drops the binding, and the question stays away", async () => {
-    const { tj } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, WD));
-    await tj.answer(tab(1, WD), true, pageId(WD));
-    const other = "https://acme.wd5.myworkdayjobs.com/en-US/External/job/Austin/Sales_JR-9999/apply";
-    await tj.loaded(tab(1, other));
-    expect(await tj.carried(tab(1, other))).toBeNull();
-    expect(await tj.question(tab(1, other))).toBeNull();
-    await tj.loaded(tab(1, WD)); // even back on A's
-    expect(await tj.carried(tab(1, WD))).toBeNull();
-  });
-
-  it("idle: an asked page never restarts the 45 minutes; a fill does (touch)", async () => {
-    let now = T0;
-    const { tj } = make({ now: () => now });
-    await tj.pressed(tab(1, LI_A), 0);
-    const yes = "https://apply.workable.com/acme/j/A1B2C3D4E5/apply/";
-    await tj.loaded(tab(1, yes));
-    await tj.answer(tab(1, yes), true, pageId(yes));
-    now += 40 * 60_000;
-    await tj.touch(1); // the user filled the page
-    now += 40 * 60_000;
-    expect(await tj.carried(tab(1, yes))).toBe("A");
-    for (const u of ["https://apply.workable.com/acme/", "https://apply.workable.com/acme/j/F6G7H8J9K0/apply/"]) {
-      now += 40 * 60_000;
-      await tj.loaded(tab(1, u));
-    }
-    expect(await tj.carried(tab(1, "https://apply.workable.com/acme/j/F6G7H8J9K0/apply/"))).toBeNull();
-  });
-
-  it("two hops: Yes on the careers page, then its Apply to Workday asks again", async () => {
-    const { tj } = make();
-    const careers = "https://careers.acme.com/job/12345/it-analyst";
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, careers));
-    await tj.answer(tab(1, careers), true, pageId(careers));
-    await tj.pressed(tab(1, careers), 0); // the careers page's own Apply
-    await tj.loaded(tab(1, WD));
-    expect(await tj.carried(tab(1, WD))).toBeNull();
-    expect(await tj.question(tab(1, WD))).toEqual({ jobId: "A", again: true, page: pageId(WD) });
-  });
-
-  it("Yes on a page with no strong posting id binds, but teaches no link", async () => {
+  it("the link question: No, a page without a posting id, or another page than asked learns nothing", async () => {
     const { tj, learnLink } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    const df = "https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345";
-    await tj.loaded(tab(1, df));
-    await tj.answer(tab(1, df), true, pageId(df));
-    expect(await tj.carried(tab(1, df))).toBe("A");
+    await tj.pressed(tab(1, LI_J), 0);
+    const home = "https://acme.com/careers/apply";
+    await tj.loaded(tab(1, home));
+    const s = await tj.suggestion(tab(1, home));
+    expect(s.ask).toBe(true);
+    expect(await tj.answerLanding(tab(1, "https://acme.com/other"), true, s.page)).toEqual({ refused: true });
+    expect(await tj.answerLanding(tab(1, home), true, s.page)).toEqual({ ok: true }); // no posting id: nothing learned
     expect(learnLink).not.toHaveBeenCalled();
+    expect((await tj.suggestion(tab(1, home))).ask).toBe(false); // asked once
+    const other = make();
+    await other.tj.pressed(tab(1, LI_J), 0);
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await other.tj.loaded(tab(1, wd));
+    await other.tj.answerLanding(tab(1, wd), false, pageOf(wd));
+    expect(other.learnLink).not.toHaveBeenCalled();
   });
 
-  it("closing the tab forgets it", async () => {
+  it("a press's suggestion ends after 45 minutes, and on closing the tab", async () => {
+    let now = T0;
+    const { tj } = make({ now: () => now });
+    await tj.pressed(tab(1, LI_J), 0);
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    now += SUGGEST_MS + 1;
+    await tj.loaded(tab(1, wd));
+    expect(await tj.suggestion(tab(1, wd))).toBeNull();
+    const again = make();
+    await again.tj.pressed(tab(1, LI_J), 0);
+    await again.tj.closed(1);
+    expect(await again.tj.suggestion(tab(1, wd))).toBeNull();
+  });
+
+  it("a pick ends when the page changes", async () => {
     const { tj } = make();
-    await tj.pressed(tab(1, LI_A), 0);
-    await tj.loaded(tab(1, WD));
-    await tj.answer(tab(1, WD), true, pageId(WD));
-    await tj.closed(1);
-    expect(await tj.carried(tab(1, WD))).toBeNull();
-    expect(TAB_JOB).toBe("je_tab_job");
+    await tj.pressed(tab(1, LI_J), 0);
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await tj.loaded(tab(1, wd));
+    await tj.pick(tab(1, wd), "J");
+    await tj.loaded(tab(1, `${wd}/apply`));
+    await tj.loaded(tab(1, wd)); // even back
+    expect(await tj.fillJob(tab(1, wd), null)).toBeNull();
+  });
+});
+
+describe("the panel never waits behind a tab opening", () => {
+  it("a slow run check doesn't hold the suggestion, the pick or the answer", async () => {
+    let release;
+    const slow = new Promise((r) => (release = r));
+    const { tj } = make({ run: { opened: () => slow.then(() => false), landed: async () => {} } });
+    await tj.pressed(tab(1, LI_J), 0);
+    const opening = tj.opened({ id: 2, openerTabId: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await tj.loaded(tab(2, wd)); // not stuck behind the run check
+    expect((await tj.suggestion(tab(2, wd)))?.jobId).toBe("J");
+    expect(await tj.pick(tab(2, wd), "J")).toBe(true);
+    release();
+    await opening;
+  });
+
+  it("a run's new tab that lands before the run check returns is still told", async () => {
+    let release;
+    const slow = new Promise((r) => (release = r));
+    const landed = vi.fn(async () => {});
+    const { tj } = make({ run: { opened: () => slow.then(() => true), landed } });
+    const opening = tj.opened({ id: 2, openerTabId: 1 });
+    await new Promise((r) => setTimeout(r, 10));
+    const wd = "https://acme.wd5.myworkdayjobs.com/x/job/y_R111";
+    await tj.loaded(tab(2, wd));
+    expect(landed).not.toHaveBeenCalled();
+    release();
+    await opening;
+    expect(landed).toHaveBeenCalledTimes(1);
+    expect(landed).toHaveBeenCalledWith(expect.objectContaining({ id: 2, url: wd }), 1);
   });
 });
 
@@ -532,6 +493,7 @@ describe("Apply with Claude: a tab opened from the application's tab", () => {
     expect(await run.tabOpened({ id: 9, groupId: -1 }, { id: 8, url: LI_A, groupId: 3 })).toBe(true);
   });
 });
+
 
 describe('"Paste your résumé"', () => {
   const box = (question, extra = {}) => ({ kind: "textarea", question, hints: {}, ...extra });

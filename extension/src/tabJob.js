@@ -1,24 +1,22 @@
-// Which saved job a tab is applying for when its page doesn't say (spec 040).
-// PURE: unit-tested in test/files-and-tabs-040.spec.js.
+// Which saved job a page of an application is for (spec 040), when the
+// page doesn't say. PURE: unit-tested in test/files-and-tabs-040.spec.js.
 //
-// An application often leaves the job's own page: the job board's Apply
-// opens the company's site (Dayforce, iCIMS…), and those pages rarely name
-// the job. Job Catcher never guesses which job that is. Right after the user
-// pressed an Apply on a saved job's own page (`press`, src/autofill/
-// applyClick.js), the side panel asks "Applying for <job>?" on the next
-// page that is no saved job by itself; only a Yes binds the tab to that job
-// (its résumé, its cover letter, its Submit, its company link). The binding
-// lasts while the tab stays on that application: its site (`siteOf`, tenant
-// and all) and its posting (`postingIds`, strong ids first), 45 minutes
-// idle. Anything else drops it; the question comes back only after a new
-// press. When in doubt: the usual résumé and no letter.
+// Job Catcher never decides that by itself. Right after the user's own
+// press on an Apply on a saved job's own page (`press`, src/autofill/
+// applyClick.js), the side panel SUGGESTS that job on the pages that follow
+// (`suggestFor`): its Fill button reads "Fill with <job>'s résumé and
+// cover letter", and each press uses the job for that one fill of that one
+// page only (`fillJobFor`). Nothing is remembered as "this page is that
+// job". Once, on the first application page, the panel asks "Is this the
+// application for <job>?": Yes only teaches the job its company link, and
+// only when the page names its posting (`postingLevelId`).
 
 import { applicantHost, isApplyUrl, siteKey } from "./autofill/hosts.js";
 
 export const TAB_PRESS = "je_tab_press"; // tab → the press it holds
-export const TAB_JOB = "je_tab_job"; // tab → the job the user said Yes to
-export const BIND_MS = 45 * 60_000; // a press, and a binding, last this long idle
+export const SUGGEST_MS = 45 * 60_000; // a press suggests its job this long
 export const OPEN_MS = 20_000; // a tab opened this soon after a press inherits it
+export const PICK_MS = 2 * 60_000; // "Fill with <job>'s…" counts for that fill only
 const KEEP = 50; // tabs remembered
 
 const TLD = "(?:com|net|org|ai|io|jobs|[a-z]{2}|co\\.[a-z]{2}|com\\.[a-z]{2})";
@@ -39,7 +37,7 @@ const NOT_APPLICATION = /(^|\.)(accounts\.google\.com|drive\.google\.com|docs\.g
 const APPLICATION = /job|career|apply|applicat|recruit|talent|hiring|position|opening|requisition|candidate|workday|greenhouse|lever\.co|icims|taleo|dayforce|smartrecruiters|ashbyhq|jobvite|workable|successfactors|paylocity|paycom|ultipro|adp\.com/i;
 
 // Ids that surely name ONE posting (the server's STRONG_PARAMS).
-const STRONG_PARAMS = new Set(["jk", "vjk", "gh_jid", "ashby_jid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "opportunityid", "jobpostingid", "positionid", "currentjobid"]);
+const STRONG_PARAMS = new Set(["pid", "id", "token", "jvi", "jk", "vjk", "gh_jid", "ashby_jid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "opportunityid", "jobpostingid", "positionid", "currentjobid"]);
 const UUID = /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
 const ONE_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 // Requisition ids: R-1234, JR-1234, REQ-1234, R1234 (Workday's job ids).
@@ -203,7 +201,26 @@ export function sameApplication(companyUrl, pageUrl) {
   const na = named(a.strong);
   const nb = named(b.strong);
   for (const k of new Set([...na.keys(), ...nb.keys()])) if (na.get(k) !== nb.get(k)) return false;
+  // Unnamed strong ids (a requisition, a UUID): each side with one the other
+  // lacks is another posting (a shared tenant UUID never makes them one).
+  const ua = a.strong.filter((x) => !x.includes("="));
+  const ub = b.strong.filter((x) => !x.includes("="));
+  if (ua.some((x) => !ub.includes(x)) && ub.some((x) => !ua.includes(x))) return false;
+  // Plain numbers: each side with one the other lacks.
+  const ma = numbersOf(a);
+  const mb = numbersOf(b);
+  if (ma.some((x) => !mb.includes(x)) && mb.some((x) => !ma.includes(x))) return false;
   return true;
+}
+
+/** The plain numbers that name a posting: weak ids and digit-only posting query values. */
+function numbersOf(ids) {
+  const out = new Set(ids?.weak || []);
+  for (const id of ids?.strong || []) {
+    const v = id.includes("=") ? id.split(/=(.*)/s)[1] : "";
+    if (/^\d{3,}$/.test(v)) out.add(v.replace(/^0+(?=\d)/, ""));
+  }
+  return [...out];
 }
 
 /** An application or careers page, never a sign-in or a file picker. */
@@ -247,114 +264,96 @@ export function isSignIn(url) {
 }
 
 /**
- * The job to ask about on this page, else null: a press on that job's own
- * page in this tab (or the one that opened it) within 45 minutes, and this
- * page is no saved job by itself and surely an application (an applicant
- * system, an /apply page, or a careers page naming a posting) — never a
- * board, a search, a sign-in, a shop or a news page.
+ * Is there a job to suggest on this page? A press on that job's own page in
+ * this tab (or the one that opened it) within 45 minutes, and this page is
+ * no saved job by itself, no board, search, app or sign-in page. Only a
+ * suggestion: the panel offers "Fill with <job>'s résumé and cover letter",
+ * one fill at a time.
  */
-export function askAbout(press, url, ownJobId, now = Date.now()) {
-  if (!press?.jobId || now - (press.at || 0) > BIND_MS) return null;
+export function suggestFor(press, url, ownJobId, now = Date.now()) {
+  if (!press?.jobId || now - (press.at || 0) > SUGGEST_MS) return null;
   if (ownJobId || !isWebPage(url) || onHub(url) || isSignIn(url) || NOT_APPLICATION.test(hostOf(url))) return null;
-  const ids = postingIds(url);
-  const application = applicantHost(url) || isApplyUrl(url) || (looksLikeApplication(url) && (ids.strong.length || ids.weak.length));
-  return application ? press.jobId : null;
-}
-
-/** A page's place: its path (no trailing /) and its #route. */
-function placeOf(url) {
-  const u = parse(url);
-  if (!u) return { path: "", hash: "" };
-  return { path: u.pathname.replace(/\/+$/, "").toLowerCase(), hash: u.hash.replace(/^#/, "").replace(/[?].*$/, "").toLowerCase() };
-}
-
-/** The plain numbers that name a posting: weak ids and digit-only posting query values. */
-function numbersOf(ids) {
-  const out = new Set(ids?.weak || []);
-  for (const id of ids?.strong || []) {
-    const v = id.includes("=") ? id.split(/=(.*)/s)[1] : "";
-    if (/^\d{3,}$/.test(v)) out.add(v.replace(/^0+(?=\d)/, ""));
-  }
-  return [...out];
-}
-
-/** The binding the user's Yes makes on this page. */
-export function bindHere(jobId, url, now = Date.now()) {
-  const ids = postingIds(url);
-  return { jobId, site: siteOf(url), places: [placeOf(url)], strong: ids.strong, nums: numbersOf(ids), at: now };
+  return press.jobId;
 }
 
 /**
- * What a page loaded in the bound tab does to the binding:
- * - "keep": surely the same posting (a strong id shared, or the Yes page
- *   itself or a step below it with no other posting's id); its 45 minutes
- *   restart;
- * - "same": a sign-in on the way, about:blank: nothing changes;
- * - "ask": the same company's site but not surely the same posting: the
- *   panel asks "Still applying for…?" (`asking`), the job unused till Yes;
- * - "drop": another site, another posting, or too long idle.
+ * Is this surely an application page (to ask "Is this the application for
+ * <job>?" once, for the job's link)? An applicant system, an /apply page,
+ * or a careers page naming a posting.
  */
-export function judgeBinding(bound, url, now = Date.now()) {
-  if (!bound?.jobId || now - (bound.at || 0) > BIND_MS) return { verdict: "drop", bound: null };
-  if (!isWebPage(url) || isSignIn(url)) return { verdict: "same", bound };
-  if (!bound.site || siteOf(url) !== bound.site) return { verdict: "drop", bound: null };
-  const ids = postingIds(url);
-  const nums = numbersOf(ids);
-  const held = bound.nums || [];
-  // Plain numbers: each side has one the other lacks.
-  if (nums.length && held.length && nums.some((n) => !held.includes(n)) && held.some((n) => !nums.includes(n))) return { verdict: "drop", bound: null };
-  const strong = bound.strong || [];
-  const keep = () => {
-    const merged = [...new Set([...strong, ...ids.strong])];
-    const { asking: _a, ...rest } = bound;
-    return { verdict: "keep", bound: { ...rest, strong: merged, nums: held.length ? held : nums, at: now } };
-  };
-  const here = placeOf(url);
-  const ask = { verdict: "ask", bound: { ...bound, asking: here } };
-  if (strong.length && ids.strong.length) {
-    if (!overlap(strong, ids.strong)) return { verdict: "drop", bound: null };
-    const before = named(strong);
-    let fresh = false;
-    for (const [k, v] of named(ids.strong)) {
-      if (before.has(k) && before.get(k) !== v) return { verdict: "drop", bound: null };
-      if (!before.has(k)) fresh = true;
-    }
-    // A posting part the Yes page didn't name (a board id shared, then an
-    // opportunityId): not surely the same posting.
-    return fresh ? ask : keep();
+export function askAbout(press, url, ownJobId, now = Date.now()) {
+  if (!suggestFor(press, url, ownJobId, now)) return null;
+  const application = applicantHost(url) || isApplyUrl(url) || (looksLikeApplication(url) && postingLevelId(url));
+  return application ? press.jobId : null;
+}
+
+// The query parts that name ONE posting (never the company: company=, cid…).
+const POSTING_PARAMS = new Set(["pid", "id", "token", "jvi", "gh_jid", "ashby_jid", "jk", "vjk", "opportunityid", "career_job_req_id", "job", "jobid", "job_id", "jid", "req", "reqid", "requisitionid", "postingid", "jobreqid", "jobpostingid", "positionid", "currentjobid"]);
+// Hosts whose UUIDs name the company (its board), never a posting.
+const TENANT_UUIDS = /(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net|paylocity\.com|adp\.com)$/i;
+
+/**
+ * The id that names ONE posting in an address, else null: a posting query
+ * part, a requisition id (R-1234, JR-1234), or the applicant system's own
+ * posting id in its path (Greenhouse, Lever, Ashby, Workable, Jobvite,
+ * SmartRecruiters, iCIMS, Dayforce, Paylocity, Oracle, UKG's opportunity).
+ * Never a lone UUID where UUIDs name the company. Learning a job's link
+ * needs one.
+ */
+export function postingLevelId(url) {
+  const u = parse(url);
+  if (!u) return null;
+  for (const [k, v] of u.searchParams) if (v && POSTING_PARAMS.has(k.toLowerCase())) return `${k.toLowerCase() === "vjk" ? "jk" : k.toLowerCase()}=${v.toLowerCase()}`;
+  const host = hostOf(url);
+  const path = u.pathname;
+  const req = path.match(REQ);
+  REQ.lastIndex = 0;
+  if (req) return req[0].toLowerCase().replace(/^([a-z]+)[-_]/, "$1");
+  const own = [
+    [/(^|\.)greenhouse\.io$/, /\/jobs\/(\d{4,})/],
+    [/(^|\.)lever\.co$/, /^\/[^/]+\/([0-9a-f-]{36})/i],
+    [/(^|\.)ashbyhq\.com$/, /^\/[^/]+\/([0-9a-f-]{36})/i],
+    [/(^|\.)workable\.com$/, /\/j\/([0-9a-z]{6,})/i],
+    [/(^|\.)jobvite\.com$/, /\/job\/([0-9a-z]{6,})/i],
+    [/(^|\.)smartrecruiters\.com$/, /^\/[^/]+\/(\d{6,})/],
+    [/(^|\.)icims\.com$/, /\/jobs\/(\d{3,})\//],
+    [/(^|\.)dayforcehcm\.com$/, /\/jobs\/(\d{3,})/i],
+    [/(^|\.)paylocity\.com$/, /\/jobs\/(?:details|apply)\/(\d{3,})/i],
+    [/\.oraclecloud\.com$/, /\/job\/(\d{3,})/i],
+    [/(^|\.)ultipro\.(com|ca)$|\.rec\.pro\.ukg\.net$/, /\/opportunity(?:detail|apply)\/([0-9a-f-]{36})/i],
+  ];
+  for (const [h, p] of own) {
+    if (!h.test(host)) continue;
+    const m = p.exec(path);
+    if (m) return m[1].toLowerCase();
   }
-  // A strong id where the Yes page had none: never taken on silently.
-  if (ids.strong.length) return ask;
-  const under = (bound.places || []).some((p) => p.hash === here.hash && (here.path === p.path || here.path.startsWith(`${p.path}/`)));
-  return under ? keep() : ask;
+  // Elsewhere, a UUID in the path names the posting, unless the host uses them for the company.
+  const uuid = !TENANT_UUIDS.test(host) && path.match(UUID);
+  UUID.lastIndex = 0;
+  return uuid ? uuid[0].toLowerCase() : null;
 }
 
-/** Kept, or null (`judgeBinding` without asking: an unsure page is no binding). */
-export function keepBinding(bound, url, now = Date.now()) {
-  const { verdict, bound: next } = judgeBinding(bound, url, now);
-  return verdict === "keep" || verdict === "same" ? next : null;
+/**
+ * The saved job one fill uses (spec 040): the page's own job; else the job
+ * the user just picked in the panel for THIS page ("Fill with <job>'s…",
+ * `pick`: {jobId, page, at}, good for 2 minutes); else none (the usual
+ * résumé, no letter). Nothing is remembered past that one fill.
+ */
+export function fillJobFor(ownJobId, pick, url, now = Date.now()) {
+  if (ownJobId) return ownJobId;
+  if (!pick?.jobId || !isWebPage(url) || now - (pick.at || 0) > PICK_MS) return null;
+  return pick.page === pageOf(url) ? pick.jobId : null;
 }
 
-/** "Still applying for…? Yes" on this page: it becomes a place of the binding. */
-export function confirmBinding(bound, url, now = Date.now()) {
-  if (!bound?.jobId) return null;
-  const ids = postingIds(url);
-  const { asking: _a, ...rest } = bound;
-  return { ...rest, places: [...(bound.places || []), placeOf(url)].slice(-20), strong: [...new Set([...(bound.strong || []), ...ids.strong])], nums: bound.nums?.length ? bound.nums : numbersOf(ids), at: now };
-}
-
-/** Is the binding asking about this page? */
-export function askingHere(bound, url) {
-  if (!bound?.asking) return false;
-  const here = placeOf(url);
-  return bound.asking.path === here.path && bound.asking.hash === here.hash;
-}
-
-/** The job bound to this page, else null (read-only; never while asking). */
-export function boundJobId(bound, url, now = Date.now()) {
-  if (!isWebPage(url) || isSignIn(url) || askingHere(bound, url)) return null;
-  const { verdict, bound: next } = judgeBinding(bound, url, now);
-  return verdict === "keep" || verdict === "same" ? next?.jobId || null : null;
+/**
+ * One page: its address without the #part, unless the #part is the page
+ * (a "#/jobs/12345" route). Every step of an application is its own page.
+ */
+export function pageOf(url) {
+  const u = parse(url);
+  if (!u) return "";
+  const route = u.hash.startsWith("#/") ? u.hash : "";
+  return `${u.origin}${u.pathname.replace(/\/+$/, "")}${u.search}${route}`.toLowerCase();
 }
 
 /** The tabs map with one tab's entry set (or removed), newest last, capped. */

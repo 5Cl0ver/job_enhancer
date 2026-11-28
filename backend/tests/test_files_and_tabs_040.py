@@ -170,6 +170,93 @@ def test_a_reposted_requisition_is_another_posting():
     )
 
 
+@pytest.mark.parametrize(
+    ("url", "posting"),
+    [
+        ("https://acme.eightfold.ai/careers?pid=999&domain=acme.com", "pid=999"),
+        ("https://careers.acme.example/apply?id=456", "id=456"),
+        (
+            "https://boards.greenhouse.io/embed/job_app?for=acme&token=4012345",
+            "token=4012345",
+        ),
+        ("https://jobs.jobvite.com/acme/job/oAbCdEfG?jvi=oAbCdEfG", "jvi=oabcdefg"),
+        ("https://boards.greenhouse.io/acme/jobs/4012345", "4012345"),
+        (
+            "https://acme.wd5.myworkdayjobs.com/x/job/Portland/IT-Analyst_JR-1234/apply",
+            "jr1234",
+        ),
+        (
+            "https://jobs.lever.co/acme/aaaaaaaa-2222-3333-4444-555555555555/apply",
+            "aaaaaaaa-2222-3333-4444-555555555555",
+        ),
+        ("https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL/jobs/12345", "12345"),
+        ("https://recruiting.paylocity.com/Recruiting/Jobs/Details/2345678", "2345678"),
+        (
+            "https://acme.fa.us2.oraclecloud.com/hcmUI/CandidateExperience/en/sites/CX_1/job/210512345",
+            "210512345",
+        ),
+        # A company's board, a home page, a list: no posting.
+        ("https://boards.greenhouse.io/acme", None),
+        ("https://jobs.dayforcehcm.com/en-US/acme/CANDIDATEPORTAL", None),
+        ("https://apply.workable.com/acme/", None),
+        ("https://jobs.jobvite.com/acme/jobs", None),
+        ("https://acme.applytojob.com/apply", None),
+        ("https://jobs.smartrecruiters.com/Acme", None),
+        ("https://acme.example/careers", None),
+        # A UUID that names the company's board, never a posting.
+        (
+            "https://recruiting.ultipro.com/ACM1/JobBoard/aaaaaaaa-1111-2222-3333-444444444444/",
+            None,
+        ),
+        (
+            "https://recruiting.paylocity.com/Recruiting/Jobs/All/aaaaaaaa-1111-2222-3333-444444444444",
+            None,
+        ),
+    ],
+)
+def test_only_a_posting_level_id_names_a_posting(url, posting):
+    assert sj_svc.posting_level_id(url) == posting
+    assert sj_svc.names_one_posting(url) is (posting is not None)
+
+
+@pytest.mark.parametrize(
+    ("url", "kept"),
+    [
+        (
+            "https://career5.successfactors.com/career?company=acme&career_job_req_id=123&_s.crb=zz",
+            "https://career5.successfactors.com/career?company=acme&career_job_req_id=123",
+        ),
+        (
+            "https://workforcenow.adp.com/mascsr/recruitment.html?cid=abc&ccId=1900_1&jobId=5&lang=en",
+            "https://workforcenow.adp.com/mascsr/recruitment.html?cid=abc&ccId=1900_1&jobId=5",
+        ),
+        (
+            "https://www.paycomonline.net/v4/ats/web.php/jobs/ViewJobDetails?job=12345&clientkey=ABC&utm_source=li",
+            "https://www.paycomonline.net/v4/ats/web.php/jobs/ViewJobDetails?job=12345&clientkey=ABC",
+        ),
+        (
+            "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25&siteid=5&jobid=777#jobDetails",
+            "https://sjobs.brassring.com/TGnewUI/Search/Home/Home?partnerid=25&siteid=5&jobid=777",
+        ),
+    ],
+)
+def test_the_link_keeps_the_company_on_a_shared_host(url, kept):
+    assert sj_svc.clean_link(url) == kept
+
+
+@pytest.mark.asyncio
+async def test_a_board_home_is_never_learned_as_the_link(
+    db_session: AsyncSession, test_user: User
+):
+    sj = await _job(db_session, test_user)
+    for url in (
+        "https://recruiting.ultipro.com/ACM1/JobBoard/aaaaaaaa-1111-2222-3333-444444444444/",
+        "https://recruiting.paylocity.com/Recruiting/Jobs/All/aaaaaaaa-1111-2222-3333-444444444444",
+        "https://boards.greenhouse.io/acme",
+    ):
+        assert not await sj_svc.learn_company_link(db_session, test_user.id, sj.id, url)
+
+
 def test_the_link_kept_has_no_session_or_tracking_parts():
     assert (
         sj_svc.clean_link(

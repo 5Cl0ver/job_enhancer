@@ -259,19 +259,99 @@ def posting_ids(url: str | None) -> tuple[set[str], set[str]]:
     return strong, weak
 
 
+# The query parts that name the company on a host many share (Job Catcher's
+# siteOf / siteKey): kept in a learned link with the posting's own.
+_TENANT_PARAMS = {"company", "cid", "ccid", "clientkey", "partnerid", "siteid", "for"}
+# The query parts that name ONE posting (Job Catcher's postingLevelId).
+_POSTING_PARAMS = {
+    "pid",
+    "id",
+    "token",
+    "jvi",
+    "gh_jid",
+    "ashby_jid",
+    "jk",
+    "vjk",
+    "opportunityid",
+    "career_job_req_id",
+    "job",
+    "jobid",
+    "job_id",
+    "jid",
+    "req",
+    "reqid",
+    "requisitionid",
+    "postingid",
+    "jobreqid",
+    "jobpostingid",
+    "positionid",
+    "currentjobid",
+}
+# Hosts whose UUIDs name the company (its board), never a posting.
+_TENANT_UUIDS = re.compile(
+    r"(^|\.)(ultipro\.(com|ca)|rec\.pro\.ukg\.net|paylocity\.com|adp\.com)$", re.I
+)
+# An applicant system's own posting id in its path.
+_OWN_POSTING = (
+    (r"(^|\.)greenhouse\.io$", r"/jobs/(\d{4,})"),
+    (r"(^|\.)lever\.co$", r"^/[^/]+/([0-9a-f-]{36})"),
+    (r"(^|\.)ashbyhq\.com$", r"^/[^/]+/([0-9a-f-]{36})"),
+    (r"(^|\.)workable\.com$", r"/j/([0-9a-z]{6,})"),
+    (r"(^|\.)jobvite\.com$", r"/job/([0-9a-z]{6,})"),
+    (r"(^|\.)smartrecruiters\.com$", r"^/[^/]+/(\d{6,})"),
+    (r"(^|\.)icims\.com$", r"/jobs/(\d{3,})/"),
+    (r"(^|\.)dayforcehcm\.com$", r"/jobs/(\d{3,})"),
+    (r"(^|\.)paylocity\.com$", r"/jobs/(?:details|apply)/(\d{3,})"),
+    (r"\.oraclecloud\.com$", r"/job/(\d{3,})"),
+    (
+        r"(^|\.)ultipro\.(com|ca)$|\.rec\.pro\.ukg\.net$",
+        r"/opportunity(?:detail|apply)/([0-9a-f-]{36})",
+    ),
+)
+
+
+def posting_level_id(url: str | None) -> str | None:
+    """The id that names ONE posting in an address (spec 040), else None: a
+    posting query part, a requisition id (R-1234, JR-1234), or the applicant
+    system's own posting id in its path. Never a lone UUID where UUIDs name
+    the company (UKG, Paylocity, ADP). Learning a job's link needs one."""
+    try:
+        parts = urlsplit(url or "")
+    except ValueError:
+        return None
+    for name, value in parse_qsl(parts.query):
+        key = name.lower()
+        if value and key in _POSTING_PARAMS:
+            return f"{'jk' if key == 'vjk' else key}={value.lower()}"
+    host = (parts.hostname or "").lower().removeprefix("www.")
+    path = unquote(parts.path)
+    req = _REQ.search(path)
+    if req:
+        return re.sub(r"^([a-z]+)[-_]", r"\1", req.group(0).lower())
+    for host_re, path_re in _OWN_POSTING:
+        if re.search(host_re, host):
+            m = re.search(path_re, path, re.I)
+            if m:
+                return m.group(1).lower()
+    uuid_ = None if _TENANT_UUIDS.search(host) else _UUID.search(path)
+    return uuid_.group(0).lower() if uuid_ else None
+
+
 def clean_link(url: str) -> str:
-    """The link to keep: no #part and only the posting's own query parts (a
-    session token like _s.crb or a tracking id never stays in it)."""
+    """The link to keep: no #part, and only the query parts that name the
+    posting or the company on a shared host (a session token like _s.crb or
+    a tracking id never stays in it)."""
     parts = urlsplit(url)
-    query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() in _STRONG_PARAMS]
+    keep = _POSTING_PARAMS | _TENANT_PARAMS
+    query = [(k, v) for k, v in parse_qsl(parts.query) if k.lower() in keep]
     return urlunsplit((parts.scheme, parts.netloc, parts.path, urlencode(query), ""))[
         :2000
     ]
 
 
 def names_one_posting(url: str | None) -> bool:
-    """A strong id names one posting (plain digits never do)."""
-    return bool(posting_ids(url)[0])
+    """A posting-level id names one posting (a board or company id never does)."""
+    return posting_level_id(url) is not None
 
 
 # Never the application: sign-ins and file pickers (a résumé from Drive).
@@ -300,13 +380,13 @@ def on_job_board(url: str | None) -> bool:
 async def learn_company_link(
     db: AsyncSession, user_id: uuid.UUID, saved_job_id: uuid.UUID, url: str
 ) -> bool:
-    """The company's own application for a job on a board (spec 040): a page
-    the user said Yes to in Job Catcher ("Applying for <job>?") after the
-    board's Apply, or one Claude reached from the run's new tab. It must name
-    its posting by a strong id. It becomes the job's apply link, the board's
-    listing staying the listing's own link as the backup, marked as learned:
-    a later one may replace it, while a link the user set is never changed.
-    True when it was saved."""
+    """The company's own application for a job on a board (spec 040): the
+    page the user said Yes to in Job Catcher ("Is this the application for
+    <job>?") after pressing Apply on the job's listing. It must name its
+    posting by a posting-level id. It becomes the job's apply link (the
+    board's listing stays the listing's own link, as the backup), marked as
+    learned: a later Yes may replace it, while a link the user set is never
+    changed. True when it was saved."""
     sj = await db.scalar(
         select(SavedJob)
         .options(selectinload(SavedJob.job_listing))

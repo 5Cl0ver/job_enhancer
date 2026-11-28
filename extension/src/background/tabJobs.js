@@ -1,26 +1,29 @@
-// Tabs and the jobs they apply for (spec 040), the background side of
+// Tabs and the job a press suggests (spec 040), the background side of
 // src/tabJob.js: kept in the session, so a sleeping worker remembers them.
 //
-// - The user's own press on an Apply, in a page's main frame, is noted for
-//   that tab (`press`) when the page is a saved job's own, or a page the
-//   user already said is that job's (two hops: the company's careers page,
-//   then its applicant system). Any other press, or another board posting
-//   loaded in the tab, clears it. The first tab it opens within 20 s takes
-//   it over (the board tab keeps none).
-// - On the next application page that is no saved job by itself, the side
-//   panel asks "Applying for <job>?" (`question`). Yes, on the page asked
-//   about, binds the tab to the job and, when the page names its posting by
-//   a strong id, teaches the job its company link; No just ends it. Either
-//   way the press is used up.
-// - The binding holds on pages surely of that posting; on the same
-//   company's site but not surely the same posting the panel asks "Still
-//   applying for…?" (the job unused till Yes); anything else drops it.
+// - The user's own press on an Apply, in a page's main frame, on a saved
+//   job's own page, is noted for that tab (`press`). An Apply on any other
+//   page, another board posting loaded in the tab, or a page that is
+//   another saved job's clears or replaces it. The first tab it opens
+//   within 20 s takes it over (the board tab keeps none).
+// - On the pages after it that are no saved job by themselves, the panel
+//   suggests the job (`suggestion`): its Fill button reads "Fill with
+//   <job>'s résumé and cover letter"; a press picks the job for THAT fill
+//   of THAT page only (`pick`, read by `fillJob`), never anything after.
+// - Once, on the first application page, the panel asks "Is this the
+//   application for <job>?": Yes teaches the job its company link when the
+//   page names its posting; nothing else (`answerLanding`).
 // - During Apply with Claude, a tab the application's own tab opens that
 //   looks like the application joins the run's tab group and Claude hears
 //   of it, as a hint (`run.opened` / `run.landed`).
-import { OPEN_MS, TAB_JOB, TAB_PRESS, askAbout, askingHere, bindHere, boardOf, boardRedirect, boundJobId, confirmBinding, isWebPage, judgeBinding, onHub, onJobBoard, postingIds, putEntry, worthTelling } from "../tabJob.js";
-import { pageId, postingKey } from "../autofill/hosts.js";
+//
+// The panel's reads and answers never wait behind a tab opening (its run
+// check can take a while on a sleeping server): only the press bookkeeping
+// is one-at-a-time.
+import { OPEN_MS, TAB_PRESS, askAbout, boardOf, boardRedirect, fillJobFor, isWebPage, onHub, onJobBoard, pageOf, postingLevelId, putEntry, suggestFor, worthTelling } from "../tabJob.js";
+import { postingKey } from "../autofill/hosts.js";
 
+const TAB_PICK = "je_tab_pick"; // tab → the job picked for one fill of one page
 const NEW_TABS = "je_new_tabs"; // run hints waiting for their tab's first page
 const NEW_MS = 60_000;
 
@@ -37,8 +40,8 @@ const boardPosting = (url) => (onJobBoard(url) && postingKey(url)?.sure ? postin
  * }} deps
  */
 export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { opened: async () => false, landed: async () => {} }, chrome: c = globalThis.chrome, now = () => Date.now() }) {
-  // One change at a time: a new tab's first page can load before its
-  // opening has been noted.
+  // The press bookkeeping, one change at a time (a new tab's first page can
+  // load before its opening has been noted). Never network inside.
   let chain = Promise.resolve();
   const serial = (fn) => {
     const next = chain.then(fn, fn);
@@ -60,131 +63,145 @@ export function createTabJobs({ ownMatch, learnLink = async () => {}, run = { op
     return serial(async () => {
       if (tab?.id == null || frameId !== 0 || !isWebPage(tab.url)) return;
       const own = await ownMatch(tab).catch(() => null);
-      // A page the user already said is a job's: the next hop asks again.
-      const bound = own ? null : boundJobId((await read(TAB_JOB))[tab.id], tab.url, now());
-      const jobId = own?.id || bound;
-      // An Apply for anything else: the earlier press is no longer the one.
-      await set(TAB_PRESS, tab.id, jobId ? { jobId, at: now(), page: boardPosting(tab.url), again: !own } : null);
+      // A saved job's own page: its press. Anything else: the earlier
+      // press is no longer the one (an Apply on another job).
+      await set(TAB_PRESS, tab.id, own ? { jobId: own.id, at: now(), page: boardPosting(tab.url) } : null);
     });
   }
 
-  /** The job bound to this tab's page (the user said Yes), else null. */
-  async function carried(tab) {
-    if (tab?.id == null) return null;
-    return boundJobId((await read(TAB_JOB))[tab.id], tab.url || "", now());
-  }
-
   /**
-   * What the panel asks on this tab's page, else null: {jobId, again, page}.
-   * `again`: "Still applying for…?" (the binding is unsure, or a second hop).
+   * What the panel shows on this tab's page, else null:
+   * {jobId, page, ask} — `ask`: "Is this the application for <job>?" (once).
    */
-  async function question(tab) {
+  async function suggestion(tab) {
     if (tab?.id == null || !isWebPage(tab.url)) return null;
-    const bound = (await read(TAB_JOB))[tab.id];
-    if (bound && askingHere(bound, tab.url)) return { jobId: bound.jobId, again: true, page: pageId(tab.url) };
-    if ((await carried(tab)) != null) return null;
     const press = (await read(TAB_PRESS))[tab.id];
     if (!press) return null;
     const own = await ownMatch(tab).catch(() => null);
-    const jobId = askAbout(press, tab.url, own?.id || null, now());
-    return jobId ? { jobId, again: !!press.again, page: pageId(tab.url) } : null;
+    const jobId = suggestFor(press, tab.url, own?.id || null, now());
+    if (!jobId) return null;
+    const page = pageOf(tab.url);
+    const ask = !press.answered && (press.landing ? press.landing === page : !!askAbout(press, tab.url, null, now()));
+    return { jobId, page, ask };
   }
 
-  /**
-   * The user's answer about `page` (the page the panel asked about). Only on
-   * that page: the tab moved on and nothing is bound (the panel asks again).
-   */
-  function answer(tab, yes, page) {
-    return serial(async () => {
-      if (tab?.id == null || !isWebPage(tab.url)) return { refused: true };
-      if (!page || pageId(tab.url) !== page) return { refused: true };
-      const bound = (await read(TAB_JOB))[tab.id];
-      if (bound && askingHere(bound, tab.url)) {
-        // "Still applying for…?"
-        await set(TAB_JOB, tab.id, yes ? confirmBinding(bound, tab.url, now()) : null);
-        if (!yes) await set(TAB_PRESS, tab.id, null);
-        return { jobId: yes ? bound.jobId : null };
-      }
-      const press = (await read(TAB_PRESS))[tab.id];
-      const own = await ownMatch(tab).catch(() => null);
-      const jobId = askAbout(press, tab.url, own?.id || null, now());
-      await set(TAB_PRESS, tab.id, null); // used up
-      if (!jobId || !yes) return { jobId: null };
-      await set(TAB_JOB, tab.id, bindHere(jobId, tab.url, now()));
-      if (postingIds(tab.url).strong.length) await learnLink(jobId, tab.url).catch(() => {});
-      return { jobId };
-    });
+  /** "Is this the application for <job>?" Yes teaches the link (a page naming its posting); either way it's not asked again. */
+  async function answerLanding(tab, yes, page) {
+    if (tab?.id == null || !isWebPage(tab.url) || !page || pageOf(tab.url) !== page) return { refused: true };
+    const offered = await suggestion(tab);
+    if (!offered?.ask) return { refused: true };
+    const press = (await read(TAB_PRESS))[tab.id];
+    await set(TAB_PRESS, tab.id, { ...press, answered: true });
+    if (yes && postingLevelId(tab.url)) await learnLink(offered.jobId, tab.url).catch(() => {});
+    return { ok: true };
   }
 
-  /** The user is working on the bound application (a fill, the panel): its 45 minutes restart. */
-  function touch(tabId) {
-    return serial(async () => {
-      const bound = (await read(TAB_JOB))[tabId];
-      if (bound && !bound.asking) await set(TAB_JOB, tabId, { ...bound, at: now() });
-    });
+  /** The user pressed "Fill with <job>'s…" (`jobId`), or the usual fill (null), for this page. */
+  async function pick(tab, jobId) {
+    if (tab?.id == null) return false;
+    if (!jobId) {
+      await set(TAB_PICK, tab.id, null);
+      return true;
+    }
+    const offered = await suggestion(tab);
+    if (offered?.jobId !== jobId) return false; // only the job suggested here
+    await set(TAB_PICK, tab.id, { jobId, page: offered.page, at: now() });
+    return true;
+  }
+
+  /** The saved job this fill of this tab's page uses: its own, else the one just picked for it, else none. */
+  async function fillJob(tab, ownJobId) {
+    if (tab?.id == null) return ownJobId || null;
+    return fillJobFor(ownJobId, (await read(TAB_PICK))[tab.id], tab.url || "", now());
   }
 
   /** A page finished loading in a tab. */
-  function loaded(tab) {
-    return serial(async () => {
-      if (tab?.id == null || !isWebPage(tab.url)) return; // about:blank: nothing changes
-      const bound = (await read(TAB_JOB))[tab.id];
-      if (bound) {
-        const { verdict, bound: next } = judgeBinding(bound, tab.url, now());
-        if (verdict === "drop") {
-          await set(TAB_JOB, tab.id, null);
-          // Off the application: no question until a new press (an Apply
-          // pressed on the bound page is one: the next hop asks again).
-          const press = (await read(TAB_PRESS))[tab.id];
-          if (press && !press.again) await set(TAB_PRESS, tab.id, null);
-        } else if (verdict !== "same") await set(TAB_JOB, tab.id, next);
-      }
-      // Another board posting in the pressed tab: that press was for another job.
+  async function loaded(tab) {
+    if (tab?.id == null || !isWebPage(tab.url)) return; // about:blank: nothing changes
+    const opened = await serial(async () => {
+      const page = pageOf(tab.url);
+      // A pick is for the page it was made on.
+      const picked = (await read(TAB_PICK))[tab.id];
+      if (picked && picked.page !== page) await set(TAB_PICK, tab.id, null);
       const press = (await read(TAB_PRESS))[tab.id];
-      const posting = boardPosting(tab.url);
-      if (press && posting && posting !== press.page) await set(TAB_PRESS, tab.id, null);
-
+      if (press) {
+        const own = await ownMatch(tab).catch(() => null);
+        const posting = boardPosting(tab.url);
+        if ((posting && posting !== press.page) || (own && own.id !== press.jobId)) {
+          // Another board posting, or another saved job's own page: that press was for another job.
+          await set(TAB_PRESS, tab.id, null);
+        } else if (!press.landing && !press.answered && askAbout(press, tab.url, own?.id || null, now())) {
+          await set(TAB_PRESS, tab.id, { ...press, landing: page }); // the first application page: asked once
+        }
+      }
       const waiting = await read(NEW_TABS);
-      const opened = waiting[tab.id];
-      if (!opened) return;
-      if (onHub(tab.url) && boardRedirect(opened.from, tab.url)) return; // on its way out
+      const hint = waiting[tab.id];
+      if (!hint) return null;
+      if (onHub(tab.url) && boardRedirect(hint.from, tab.url)) return null; // on its way out
+      if (hint.pending) {
+        // The run's check is still out: it tells Claude when it's back.
+        if (!hint.landed) await write(NEW_TABS, { ...waiting, [tab.id]: { ...hint, landed: { id: tab.id, url: tab.url } } });
+        return null;
+      }
       const { [tab.id]: _gone, ...rest } = waiting;
       await write(NEW_TABS, rest);
-      if (onHub(tab.url) || now() - opened.at > NEW_MS) return;
-      if (worthTelling(opened.openerUrl, tab.url)) await run.landed(tab, opened.openerId).catch(() => {});
+      return hint;
     });
+    // The run's hint goes out of the queue (it calls the server).
+    if (opened && !onHub(tab.url) && now() - opened.at <= NEW_MS && worthTelling(opened.openerUrl, tab.url)) {
+      await run.landed(tab, opened.openerId).catch(() => {});
+    }
   }
 
   /** A tab opened from another one. */
-  function opened(tab) {
-    return serial(async () => {
-      if (tab?.id == null || tab.openerTabId == null) return;
-      const opener = await c.tabs.get(tab.openerTabId).catch(() => null);
-      if (!opener?.url) return;
-      // A press just made in the opener goes with the first tab it opens,
-      // and only there.
-      // A press made in this very tab, never one it was handed.
+  async function opened(tab) {
+    if (tab?.id == null || tab.openerTabId == null) return;
+    const opener = await c.tabs.get(tab.openerTabId).catch(() => null);
+    if (!opener?.url) return;
+    // A press made in this very tab, never one it was handed, goes with
+    // the first tab it opens, and only there.
+    await serial(async () => {
       const presses = await read(TAB_PRESS);
       const press = presses[opener.id];
       if (press && !press.handed && now() - press.at <= OPEN_MS) {
         const { page: _page, ...carry } = press;
         await write(TAB_PRESS, putEntry(putEntry(presses, opener.id, null), tab.id, { ...carry, handed: true }));
       }
-      if (!(await run.opened(tab, opener).catch(() => false))) return;
+    });
+    // The run's check calls the server: out of the queue. Its hint waits
+    // meanwhile, so a first page that loads first isn't missed.
+    await serial(async () => {
       const waiting = await read(NEW_TABS);
       const fresh = Object.fromEntries(Object.entries(waiting).filter(([, v]) => now() - v.at < NEW_MS));
-      await write(NEW_TABS, { ...fresh, [tab.id]: { at: now(), from: boardOf(opener.url), openerUrl: opener.url, openerId: opener.id } });
+      await write(NEW_TABS, { ...fresh, [tab.id]: { at: now(), from: boardOf(opener.url), openerUrl: opener.url, openerId: opener.id, pending: true } });
     });
+    const ours = await run.opened(tab, opener).catch(() => false);
+    const landed = await serial(async () => {
+      const waiting = await read(NEW_TABS);
+      const hint = waiting[tab.id];
+      if (!hint) return null;
+      if (!ours || hint.landed) {
+        const { [tab.id]: _gone, ...rest } = waiting;
+        await write(NEW_TABS, rest);
+        return ours ? hint : null;
+      }
+      await write(NEW_TABS, { ...waiting, [tab.id]: { ...hint, pending: false } });
+      return null;
+    });
+    const at = landed?.landed;
+    if (at && !onHub(at.url) && now() - landed.at <= NEW_MS && worthTelling(landed.openerUrl, at.url)) {
+      await run.landed({ ...tab, id: at.id, url: at.url }, landed.openerId).catch(() => {});
+    }
   }
 
   function closed(tabId) {
     return serial(async () => {
-      for (const key of [TAB_JOB, TAB_PRESS, NEW_TABS]) {
+      for (const key of [TAB_PRESS, TAB_PICK, NEW_TABS]) {
         const map = await read(key);
         if (map[tabId]) await write(key, putEntry(map, tabId, null));
       }
     });
   }
 
-  return { pressed, carried, question, answer, touch, loaded, opened, closed };
+  return { pressed, suggestion, answerLanding, pick, fillJob, loaded, opened, closed };
 }

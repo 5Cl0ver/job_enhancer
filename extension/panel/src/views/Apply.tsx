@@ -21,6 +21,7 @@ import { HELP } from "@/lib/help";
 import { cn } from "@/lib/utils";
 import { appUrl, send } from "@/lib/chrome";
 import type { SavedJob } from "@/lib/context";
+import { jobName, useJobSuggestion } from "@/lib/suggestion";
 import { Trouble } from "@/views/Trouble";
 import { startPointing } from "@/views/Point";
 import { usePanel, type FillAlready, type FillEntry, type FillNeed, type FillStatus, type FillSuggestion, type Presence, type SavedAnswer } from "@/lib/store";
@@ -79,10 +80,14 @@ export function Apply({
 
   // The background fills every frame that holds a form and keeps the status
   // line up to date while it works; the result lands there too.
-  async function autofill() {
+  // A job an Apply press suggests here (spec 040): its résumé and cover
+  // letter only for a fill the user asks for by name, one at a time.
+  const { suggestion } = useJobSuggestion();
+  const offered = !match ? suggestion : null;
+  async function autofill(withJob: string | null = null) {
     if (!tab.id) return;
     setBusy(true);
-    await send({ type: "pressAutofill", tabId: tab.id });
+    await send({ type: "pressAutofill", tabId: tab.id, ...(withJob ? { withJob } : {}) });
     setBusy(false);
   }
   // A status that went silent (STUCK_MS) no longer holds the button: press again.
@@ -121,10 +126,22 @@ export function Apply({
           {isApplication && <Muted>{match ? match.company : "Save the job below so it's tracked."}</Muted>}
           {match && <JobLinks match={match} onNotThis={onNotThis} />}
         </div>
-        <Button onClick={autofill} busy={filling} disabled={filling} className="w-full">
-          {!filling && <Zap />}
-          {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
-        </Button>
+        {offered ? (
+          <div className="flex flex-col gap-1">
+            <Button onClick={() => autofill(offered.jobId)} busy={filling} disabled={filling} className="h-auto w-full whitespace-normal py-2">
+              {!filling && <Zap />}
+              {filling ? "Filling…" : `Fill with ${jobName(offered)}'s résumé and cover letter`}
+            </Button>
+            <Button variant="link" size="sm" className="self-center text-muted-foreground" disabled={filling} onClick={() => autofill(null)}>
+              Use my usual résumé
+            </Button>
+          </div>
+        ) : (
+          <Button onClick={() => autofill(null)} busy={filling} disabled={filling} className="w-full">
+            {!filling && <Zap />}
+            {filling ? "Filling…" : entries.length ? "Fill again" : "Autofill this page"}
+          </Button>
+        )}
         {signup && (
           <div data-testid="signup-note">
             <Alert tone="info">

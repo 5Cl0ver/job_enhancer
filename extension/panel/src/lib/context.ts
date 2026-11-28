@@ -1,7 +1,7 @@
 // What the user is doing in the tab the panel is beside. Pure (URL + title in,
 // a context out) so it's unit-tested: test/panel-context.spec.js.
 import { applicantHost, postingKey } from "../../../src/autofill/hosts.js";
-import { otherPosting, postingIds, sameApplication, siteOf } from "../../../src/tabJob.js";
+import { sameApplication } from "../../../src/tabJob.js";
 
 export type PageContext =
   | { kind: "none" }
@@ -153,11 +153,8 @@ export function bestJobMatch(
   jobs: SavedJob[],
   notThis: string[] = [],
   pinned?: string,
-  /** The job this tab was applying for when the page doesn't say (spec 040). */
-  carried?: string | null,
 ): SavedJob | null {
   let pool = jobs.filter((j) => !notThis.includes(j.id));
-  const allowed = pool;
   const here = postingKey(page.url);
   // Only an address that is surely one posting can hold a pin: a careers page
   // listing many jobs, or #/job/42 vs #/job/43, can't.
@@ -182,15 +179,7 @@ export function bestJobMatch(
   });
   // The most specific title wins ("Software Engineer II" over "Software Engineer").
   // One posting saved more than once: any of them is this page.
-  const best = fits.sort((a, b) => norm(b.title).length - norm(a.title).length)[0] || sameSure[0];
-  if (best) return best;
-  // The carried job, never over this page being another posting of the same
-  // system than the job's own (when in doubt, no job: the usual résumé).
-  const kept = carried ? allowed.find((j) => j.id === carried) : undefined;
-  if (!kept) return null;
-  const pageIds = postingIds(page.url);
-  const other = [kept.url, kept.company_url].some((u) => !!u && siteOf(u) === siteOf(page.url) && otherPosting(postingIds(u), pageIds));
-  return other ? null : kept;
+  return fits.sort((a, b) => norm(b.title).length - norm(a.title).length)[0] || sameSure[0] || null;
 }
 
 /** A saved job that looks like this one: same company, same or contained title (whole words). */
