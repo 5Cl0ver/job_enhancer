@@ -11,6 +11,9 @@ import { type ApplyMode, type ApplyRun, type ApplyRunShort, type Fix, isOpenAppl
 const LIVE_MS = 3000;
 const BANNER_MS = 15_000;
 
+/** Every Continue shares one key: one pending holds the run's polls. */
+const CONTINUE_KEY = ["apply-continue"];
+
 /** One run; re-read every 3 s while it's open. */
 export function useApplyRun(id: string | undefined) {
   const qc = useQueryClient();
@@ -19,6 +22,9 @@ export function useApplyRun(id: string | undefined) {
     queryFn: async () => {
       const run = await api.get<ApplyRun>(`/v1/apply/runs/${id}`);
       const was = qc.getQueryData<ApplyRun>(["apply-run", id]);
+      // A Continue on its way (spec 040): a poll read before it landed would
+      // bring the step's look back. Keep what's on screen; its answer wins.
+      if (was && qc.isMutating({ mutationKey: CONTINUE_KEY })) return was;
       // A résumé was saved, or the job moved to Applied: those pages are stale.
       if (was && (was.resume_id !== run.resume_id || was.status !== run.status)) {
         qc.invalidateQueries({ queryKey: ["saved-jobs"] });
@@ -176,6 +182,7 @@ export const useSendFixes = () => useRunAction<string>((id) => `/v1/apply/runs/$
 export function useContinue() {
   const qc = useQueryClient();
   return useMutation({
+    mutationKey: CONTINUE_KEY,
     mutationFn: (id: string) => api.post<ApplyRun>(`/v1/apply/runs/${id}/continue`, {}),
     onMutate: async (id: string) => {
       await qc.cancelQueries({ queryKey: ["apply-run"] });

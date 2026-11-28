@@ -201,6 +201,8 @@ async def _add(
         extra = int((more.response or {}).get("count", 0)) + 1
         more.response = {"count": extra}
         more.summary = f"{extra} more call{'s' if extra != 1 else ''} not logged"
+        # Its time moves on too: a running search's "Last step" reads it.
+        more.created_at = _now()
         return
     if n == MAX_EVENTS - 1:  # the last slot counts what comes after
         tool, summary, request, response, ok = (

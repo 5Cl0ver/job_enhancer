@@ -21,10 +21,10 @@ vi.mock("@/lib/api", () => ({
   API_BASE: "http://localhost:8000",
 }));
 
-import { ApplyButton } from "@/components/jobs/ApplyButton";
+import { ApplyButton, openWatched, webUrl } from "@/components/jobs/ApplyButton";
 import { NowLine, stuckOn } from "@/components/apply/NowLine";
 import { ResumeReview } from "@/components/apply/ResumeReview";
-import { useContinue } from "@/hooks/useApply";
+import { useApplyRun, useContinue } from "@/hooks/useApply";
 import { ago } from "@/lib/ago";
 import { fixLine, fixNotMade, type ApplyRun, type RunFix } from "@/lib/apply";
 import { outdatedJobCatcher } from "@/lib/jobCatcher";
@@ -80,6 +80,18 @@ describe("what Claude is doing now (spec 040)", () => {
     expect(screen.getByRole("status")).toHaveTextContent("Claude ran into a problem: The phone number won't take.");
   });
 
+  it("takes the newest problem by its time, not its place in the list", () => {
+    const t = (s: number) => new Date(Date.now() + s * 1000).toISOString();
+    const run = {
+      ...RUN,
+      problems: [
+        { id: "p2", at: t(9), kind: "site" as const, what: "Newest.", page: null, count: 1 },
+        { id: "p1", at: t(3), kind: "site" as const, what: "Older.", page: null, count: 1 },
+      ],
+    };
+    expect(stuckOn(run)).toBe("Newest.");
+  });
+
   it("is quiet while the run waits for you", () => {
     const { container } = wrap(<NowLine run={{ ...RUN, paused_step: "my information" }} />);
     expect(container).toBeEmptyDOMElement();
@@ -114,6 +126,36 @@ describe("Continue shows Sent to Claude at once (spec 040)", () => {
     expect(check).toMatchObject({ step: "my information", title: "My Information", read: false });
     await act(async () => fail(new Error("offline")));
     await waitFor(() => expect(qc.getQueryData<ApplyRun>(["apply-run", "r1"])?.paused_step).toBe("my information"));
+  });
+});
+
+describe("a poll during Continue never brings the step back (spec 040)", () => {
+  function Both() {
+    const { data } = useApplyRun("r1");
+    const go = useContinue();
+    return (
+      <>
+        <p>{data?.paused_step ?? "going on"}</p>
+        <button type="button" onClick={() => go.mutate("r1")}>
+          go
+        </button>
+      </>
+    );
+  }
+
+  it("keeps Sent to Claude while the Continue is on its way", async () => {
+    const paused = { ...RUN, paused_step: "my information", paused_title: "My Information" };
+    get.mockResolvedValue(paused); // every poll still says paused
+    post.mockReturnValue(new Promise(() => {})); // the Continue never lands
+    const qc = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    wrap(<Both />, qc);
+    expect(await screen.findByText("my information")).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "go" }));
+    expect(await screen.findByText("going on")).toBeInTheDocument();
+    await act(async () => {
+      await qc.refetchQueries({ queryKey: ["apply-run", "r1"] });
+    });
+    expect(screen.getByText("going on")).toBeInTheDocument();
   });
 });
 
@@ -184,13 +226,73 @@ describe("Did you apply? only once you're done (spec 040)", () => {
     window.dispatchEvent(new Event("focus"));
     await act(async () => vi.advanceTimersByTime(5000));
     expect(screen.queryByText("Did you apply?")).not.toBeInTheDocument();
+    await act(async () => vi.advanceTimersByTime(6000));
     tab.closed = true;
     await act(async () => vi.advanceTimersByTime(2000));
     expect(await screen.findByText("Did you apply?")).toBeInTheDocument();
   });
+
+  it("a site that cuts the tab off at once (COOP) is never asked about", async () => {
+    wrap(<ApplyButton job={JOB} />);
+    await userEvent.click(screen.getByRole("link", { name: /Apply Now/ }));
+    tab.closed = true; // reads closed right away while it's really open
+    await act(async () => vi.advanceTimersByTime(3000));
+    expect(screen.queryByText("Did you apply?")).not.toBeInTheDocument();
+    expect(await screen.findByRole("button", { name: "I applied" })).toBeInTheDocument();
+  });
+
+  it("no quiet I applied where Applied is one tap away", async () => {
+    wrap(<ApplyButton job={JOB} showApplied={false} />);
+    await userEvent.click(screen.getByRole("link", { name: /Apply Now/ }));
+    await act(async () => vi.advanceTimersByTime(3000));
+    expect(screen.queryByRole("button", { name: "I applied" })).not.toBeInTheDocument();
+  });
+});
+
+describe("Apply Now opens only web addresses (spec 040)", () => {
+  it("never a javascript: or data: link", () => {
+    const open = vi.spyOn(window, "open");
+    expect(webUrl("javascript:alert(1)")).toBeNull();
+    expect(webUrl("data:text/html,x")).toBeNull();
+    expect(webUrl("https://jobs.example/1")).toBe("https://jobs.example/1");
+    expect(openWatched("javascript:alert(1)")).toBeNull();
+    expect(open).not.toHaveBeenCalled();
+    open.mockRestore();
+  });
+
+  it("follows the link from the new tab with no referrer", () => {
+    const doc = document.implementation.createHTMLDocument("");
+    const clicked: { href: string; rel: string }[] = [];
+    const tab = { opener: "app", document: doc, location: { href: "" }, close: vi.fn() };
+    vi.spyOn(window, "open").mockReturnValue(tab as unknown as Window);
+    const realCreate = doc.createElement.bind(doc);
+    vi.spyOn(doc, "createElement").mockImplementation((tag: string) => {
+      const el = realCreate(tag) as HTMLAnchorElement;
+      el.click = () => clicked.push({ href: el.href, rel: el.rel });
+      return el;
+    });
+    expect(openWatched("https://jobs.example/1")).toBe(tab);
+    expect(tab.opener).toBeNull();
+    expect(clicked).toEqual([{ href: "https://jobs.example/1", rel: "noreferrer" }]);
+    vi.restoreAllMocks();
+  });
 });
 
 describe("which Job Catcher is behind (spec 040)", () => {
+  it("doesn't name the browser when there's only one computer", () => {
+    const now = Date.parse("2026-11-28T12:00:00Z");
+    expect(
+      outdatedJobCatcher(
+        [
+          { install_id: "a", version: "0.48.0", browser: "Chrome 157 (Windows)", last_seen_at: new Date(now - 3600_000).toISOString() },
+          { install_id: "b", version: "0.44.0", browser: "Chrome 157 (Windows)", last_seen_at: new Date(now - 7200_000).toISOString() },
+        ],
+        "0.49.0",
+        now,
+      ),
+    ).toEqual({ version: "0.48.0", latest: "0.49.0", where: "" });
+  });
+
   const now = Date.parse("2026-11-28T12:00:00Z");
   const at = (h: number) => new Date(now - h * 3600_000).toISOString();
 

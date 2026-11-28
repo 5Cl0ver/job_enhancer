@@ -8,9 +8,12 @@
 - The server keeps itself awake on Render only.
 """
 
+from datetime import UTC, datetime, timedelta
+
 import pytest
 
 import app.mcp_server as mcp_mod
+from app.models.apply import ApplyRun
 from app.models.scout import ScoutRun
 from app.services import apply_runs as svc
 from app.services import apply_sheet as sheet_svc
@@ -52,10 +55,22 @@ def test_still_old_reads_the_kth_box():
     assert sheet_svc.still_old(boxes, {**fix, "to": None, "ask": "why?"}) is False
 
 
-async def _sent_fix(engine, monkeypatch):
+async def _sent_fix(engine, monkeypatch, *, read_after: int = 15):
+    """A fix Claude got; Job Catcher's latest reading came `read_after`
+    seconds after (the page unchanged since before the fix)."""
     maker, user, run_id, rid = await _paused(engine, monkeypatch)
     fix_id = await _fix(maker, user, run_id)
     await _continue(maker, user, run_id)
+    async with maker() as db:
+        run = await db.get(ApplyRun, run_id)
+        now = datetime.now(UTC)
+        run.fixes = [
+            {**f, "sent_at": (now - timedelta(seconds=read_after)).isoformat()}
+            for f in run.fixes
+        ]
+        run.live = {**run.live, "at": now.isoformat()}
+        run.live_changed_at = now - timedelta(seconds=read_after + 30)
+        await db.commit()
     return maker, user, run_id, rid, fix_id
 
 
@@ -68,7 +83,7 @@ async def test_a_fix_the_page_never_showed_goes_back_to_claude_once(
     out = await mcp_mod.mark_fixes(rid, done=[fix_id])
     assert [f["id"] for f in out["not_on_page"]] == [fix_id]
     assert out["not_on_page"][0]["now_on_page"] == "Mr."
-    assert "make the change now" in out["next"]
+    assert "already shows the new answer, don't touch it" in out["next"]
     run = await _run(maker, run_id)
     (fix,) = run.fixes
     assert fix["status"] == "sent" and fix["doubted"] and "claude_done" not in fix
@@ -78,6 +93,24 @@ async def test_a_fix_the_page_never_showed_goes_back_to_claude_once(
     assert "not_on_page" not in again
     (fix,) = (await _run(maker, run_id)).fixes
     assert fix["status"] == "sent" and fix["claude_done"]
+
+
+@pytest.mark.asyncio
+async def test_a_reading_too_soon_after_the_fix_is_never_proof(engine, monkeypatch):
+    maker, user, run_id, rid, fix_id = await _sent_fix(
+        engine, monkeypatch, read_after=4
+    )
+    out = await mcp_mod.mark_fixes(rid, done=[fix_id])
+    assert "not_on_page" not in out
+    (fix,) = (await _run(maker, run_id)).fixes
+    assert fix["claude_done"] and not fix.get("doubted")
+
+
+def test_an_empty_box_read_as_empty_is_never_proof():
+    fix = {"q": "I have a preferred name", "k": 1, "now": "", "to": "Yes"}
+    assert (
+        sheet_svc.still_old([{"q": "I have a preferred name", "a": ""}], fix) is False
+    )
 
 
 @pytest.mark.asyncio
@@ -214,6 +247,24 @@ async def test_a_running_search_says_what_claude_did_last(engine, monkeypatch):
     assert out.last_step is None  # only while it runs
 
 
+@pytest.mark.asyncio
+async def test_last_step_moves_on_past_the_log_cap(engine, monkeypatch):
+    from app.services import scout_log
+
+    maker = await _connected_user(engine, monkeypatch, email="w3@test.dev")
+    _user_id, _, run_id = await _setup(maker, "w3@test.dev", job_count=3)
+    await mcp_mod.get_scout_brief()
+    monkeypatch.setattr(scout_log, "MAX_EVENTS", 2)
+    await mcp_mod.check_jobs(str(run_id), [])  # the last slot: "1 more call"
+    async with maker() as db:
+        (first,) = await scout_svc.runs_out(db, [await db.get(ScoutRun, run_id)])
+    await mcp_mod.check_jobs(str(run_id), [])
+    async with maker() as db:
+        (later,) = await scout_svc.runs_out(db, [await db.get(ScoutRun, run_id)])
+    assert later.last_step.summary == "2 more calls not logged"
+    assert later.last_step.at > first.last_step.at
+
+
 def test_the_scout_rules_never_end_a_run_at_a_wall():
     from pathlib import Path
 
@@ -261,3 +312,44 @@ async def test_keep_warm_only_on_render(monkeypatch):
     assert await keep_warm.ping() is True
     assert seen == ["https://api.example.com/health"]
     assert PAGE  # the same invented Workday page as spec 038
+
+
+def test_feeds_never_store_a_link_that_isnt_a_web_address():
+    from app.services.sources.base import web_url
+
+    assert web_url(" https://jobs.example/1 ") == "https://jobs.example/1"
+    assert web_url("http://jobs.example/1") == "http://jobs.example/1"
+    for bad in (
+        "javascript:alert(1)",
+        "JavaScript:alert(1)",
+        "data:text/html,x",
+        "",
+        None,
+        "jobs.example/1",
+        "https://",
+    ):
+        assert web_url(bad) == ""
+
+
+@pytest.mark.asyncio
+async def test_ingest_blanks_a_javascript_apply_link(db_session):
+    from sqlalchemy import select
+
+    from app.models.job_listing import JobListing
+    from app.services.job_search import _upsert_listing
+
+    await _upsert_listing(
+        db_session,
+        {
+            "title": "Help Desk Analyst",
+            "company": "Northwind Labs",
+            "location": "Portland, OR",
+            "description": "Help people.",
+            "apply_url": "javascript:alert(document.cookie)",
+            "source": "remotive",
+            "external_id": "x1",
+        },
+    )
+    await db_session.commit()
+    listing = await db_session.scalar(select(JobListing))
+    assert listing.apply_url == ""

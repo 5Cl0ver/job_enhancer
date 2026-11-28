@@ -5,9 +5,12 @@ import { type ApplyRun, isOpenApply, needsYou } from "@/lib/apply";
 
 /** The newest problem Claude noted since its last step: what it's stuck on. */
 export function stuckOn(run: Pick<ApplyRun, "events" | "problems">): string | null {
-  const last = run.events[run.events.length - 1]?.at ?? "";
-  const open = (run.problems ?? []).filter((p) => (p.status ?? "open") === "open" && p.at > last);
-  return open.length ? open[open.length - 1].what : null;
+  const lastAt = run.events[run.events.length - 1]?.at;
+  const last = lastAt ? Date.parse(lastAt) : 0;
+  const open = (run.problems ?? [])
+    .filter((p) => (p.status ?? "open") === "open" && Date.parse(p.at) > last)
+    .sort((a, b) => Date.parse(b.at) - Date.parse(a.at));
+  return open[0]?.what ?? null;
 }
 
 /**

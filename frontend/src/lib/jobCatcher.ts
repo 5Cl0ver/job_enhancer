@@ -148,7 +148,10 @@ export function outdatedJobCatcher(
     .filter((i) => isOlder(i.version, latest) && !replaced(i))
     .sort((a, b) => seen(b) - seen(a))[0];
   if (!one) return null;
-  return { version: one.version, latest, where: recent.length > 1 ? browserLabel(one.browser) : "" };
+  // Named only when the user has more than one computer or browser: each
+  // computer counted once, by its newest copy.
+  const computers = recent.filter((i) => !recent.some((o) => o !== i && sameComputer(o, i) && seen(o) > seen(i)));
+  return { version: one.version, latest, where: computers.length > 1 ? browserLabel(one.browser) : "" };
 }
 
 /** "0.34.1" is older than "0.35.0". */

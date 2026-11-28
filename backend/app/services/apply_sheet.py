@@ -872,7 +872,9 @@ def still_old(boxes: Any, fix: dict) -> bool:
     if not 0 < k <= len(same):
         return False
     a = _fold(same[k - 1].get("a"))
-    return a == _fold(fix.get("now")) and a != _fold(fix["to"])
+    # Empty when the fix was made and empty now: maybe a box Job Catcher
+    # can't read (a custom widget), never proof.
+    return bool(a) and a == _fold(fix.get("now")) and a != _fold(fix["to"])
 
 
 def check_step(sheet: dict | None, key: str, *, now: str, keep: bool = False) -> dict:
