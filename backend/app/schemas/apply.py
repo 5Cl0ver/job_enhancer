@@ -32,6 +32,8 @@ class AnswersIn(BaseModel):
 class ResumeDecisionIn(BaseModel):
     decision: Literal["use", "change"]
     note: str | None = Field(default=None, max_length=2000)
+    # "Also write a cover letter for this job" (spec 040), with Use it.
+    cover_letter: bool = False
 
 
 class FixIn(BaseModel):

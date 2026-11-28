@@ -1,7 +1,7 @@
 import { useState } from "react";
 import { Link, useLocation } from "react-router-dom";
 import { Download, X } from "lucide-react";
-import { useJobCatcherInstalls, useJobCatcherRelease } from "@/hooks/useJobCatcher";
+import { useJobCatcherHere, useJobCatcherInstalls, useJobCatcherRelease } from "@/hooks/useJobCatcher";
 import { outdatedJobCatcher } from "@/lib/jobCatcher";
 
 const HIDE_KEY = "je_jc_update_hidden";
@@ -27,17 +27,18 @@ function hideForADay(latest: string) {
 
 /**
  * Never out of date (spec 034): on every app page, when the user's Job
- * Catcher (any computer seen in the last 30 days) is older than the newest
- * release. Job Catcher is a zip install, so Chrome can't update it by itself.
+ * Catcher (any computer seen in the last 30 days, and the one in this very
+ * browser, asked directly: spec 040) is older than the newest release. Job Catcher is a zip install, so Chrome can't update it by itself.
  * "How to update" goes to the Job Catcher page; "Hide for a day" hides it for
  * this release.
  */
 export function UpdateBanner() {
   const { data: installs } = useJobCatcherInstalls();
   const { data: release } = useJobCatcherRelease();
+  const { data: here } = useJobCatcherHere();
   const { pathname } = useLocation();
   const [hidden, setHidden] = useState(false);
-  const behind = outdatedJobCatcher(installs, release?.version);
+  const behind = outdatedJobCatcher(installs, release?.version, Date.now(), here);
   if (!behind || hidden || hiddenFor(behind.latest) || pathname.startsWith("/job-catcher")) return null;
   const where = behind.where ? `on ${behind.where}` : "on your computer";
   return (

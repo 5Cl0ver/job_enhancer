@@ -83,7 +83,7 @@ centred box from 768px and a bottom sheet below it (scrolls inside, footer pinne
 | `SaveSearchButton.tsx` | Save current search criteria (FR-024) |
 | `CollectionSidebar.tsx` | Collection list + create/delete + filter |
 | `AddJobDialog.tsx` | Manually add a job by URL (`source=manual`) |
-| `ApplyButton.tsx` | Opens external apply link + "Mark as Applied" confirm |
+| `ApplyButton.tsx` | Opens external apply link; asks "Did you apply?" once its tab is closed (never mid-application), with a quiet "I applied" meanwhile |
 
 ## `tracker/`
 | File | Purpose |

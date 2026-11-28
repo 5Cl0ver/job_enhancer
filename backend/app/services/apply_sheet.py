@@ -857,6 +857,24 @@ def mark(
     return sheet, out, n
 
 
+def still_old(boxes: Any, fix: dict) -> bool:
+    """Job Catcher's reading of the page shows the fix's box still holding
+    what it held when the owner made the fix, not what they asked for
+    (spec 040): Claude said done, but the page says otherwise."""
+    if not fix.get("to"):
+        return False
+    same = [
+        b
+        for b in boxes or []
+        if isinstance(b, dict) and norm(b.get("q")) == norm(fix.get("q"))
+    ]
+    k = fix.get("k", 1)
+    if not 0 < k <= len(same):
+        return False
+    a = _fold(same[k - 1].get("a"))
+    return a == _fold(fix.get("now")) and a != _fold(fix["to"])
+
+
 def check_step(sheet: dict | None, key: str, *, now: str, keep: bool = False) -> dict:
     """The owner looked a step over (Continue), or switched to Keep going:
     the step never pauses again, and Claude is told once."""

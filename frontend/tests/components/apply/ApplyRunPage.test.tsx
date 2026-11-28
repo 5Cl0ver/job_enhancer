@@ -423,7 +423,7 @@ describe("look over the résumé (spec 025)", () => {
     await userEvent.type(screen.getByRole("textbox", { name: "What should Claude change?" }), "Lead with Intune");
     await userEvent.click(send);
     await waitFor(() =>
-      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/resume-decision", { decision: "change", note: "Lead with Intune" }),
+      expect(post).toHaveBeenCalledWith("/v1/apply/runs/r1/resume-decision", { decision: "change", note: "Lead with Intune", cover_letter: false }),
     );
   });
 });

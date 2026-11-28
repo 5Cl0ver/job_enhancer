@@ -332,6 +332,8 @@ export interface RunFix {
   why?: string | null;
   /** The owner made it themselves ("I did it myself"). */
   by_you?: boolean;
+  /** Claude said done, but the page still showed the old answer (spec 040). */
+  doubted?: string | null;
 }
 
 export const TAG_LABEL: Record<RowTag, string> = {
@@ -389,13 +391,16 @@ export function fixLine(fix: RunFix): string {
   if (fix.status === "declined") return fix.why ? `Claude didn't do this: ${fix.why}` : "Claude didn't do this";
   const what = fix.to ? `→ ${fix.to}` : "Asked Claude";
   if (fix.status === "done" && fix.by_you) return `${what} (you did it)`;
+  if (fix.status === "sent" && fix.doubted && fix.claude_done) return `${what} (Claude says done; the page didn't show it)`;
+  if (fix.status === "sent" && fix.doubted) return `${what} (not on the page yet: Claude is looking again)`;
   if (fix.status === "sent" && fix.claude_done) return `${what} (Claude says done)`;
   if (fix.status === "done" && fix.already) return `${what} (already that)`;
   return `${what} (${fix.status})`;
 }
 
 /** A fix Claude couldn't or wouldn't make: the owner can do it themselves. */
-export const fixNotMade = (fix?: RunFix) => fix?.status === "gone" || fix?.status === "declined";
+export const fixNotMade = (fix?: RunFix) =>
+  fix?.status === "gone" || fix?.status === "declined" || (fix?.status === "sent" && !!fix.doubted);
 
 // Optional consent boxes (texts, marketing): Claude never ticks one by itself
 // (spec 038), but a fix the owner asks for is their own decision.

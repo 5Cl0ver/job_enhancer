@@ -533,6 +533,13 @@ class TitleTried(BaseModel):
     never: bool
 
 
+class RunLastStep(BaseModel):
+    """What Claude did last on a running search, from its log (spec 040)."""
+
+    summary: str
+    at: datetime
+
+
 class RunOut(BaseModel):
     id: uuid.UUID
     mission_id: uuid.UUID | None
@@ -573,6 +580,8 @@ class RunOut(BaseModel):
     widened: list[RunWidened] = Field(default_factory=list)
     # What the run looked for, as it was at Start: place, radius, window, bar.
     looking_for: dict | None = None
+    # Running: Claude's newest step and when (spec 040).
+    last_step: RunLastStep | None = None
 
 
 class ActiveRunOut(BaseModel):

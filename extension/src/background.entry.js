@@ -152,6 +152,13 @@ const connect = createConnect({ cfg, onConnected: storePass, fetchFn: (url, opts
 // Only the app's /connect page may ask (externally_connectable lists only the
 // app's address), and only gets the proof for the code we're waiting on.
 chrome.runtime.onMessageExternal.addListener((msg, sender, sendResponse) => {
+  // The app asks which Job Catcher is in this browser (spec 040): only the
+  // app's own address can ask (externally_connectable), and it's told only
+  // the version and the browser's name.
+  if (msg?.type === "version") {
+    sendResponse({ version: chrome.runtime.getManifest().version, browser: browserName() });
+    return false;
+  }
   connect.proofFor(msg, sender).then(sendResponse, () => sendResponse({}));
   return true;
 });

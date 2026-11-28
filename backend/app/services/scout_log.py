@@ -134,6 +134,10 @@ def summarize(tool: str, sent: dict, out: dict | None, error: str | None) -> str
         counts = out.get("counts") or {}
         kept = counts.get("picked", 0) + counts.get("saved", 0)
         return f"Finished: {kept} good fit{'s' if kept != 1 else ''}"
+    if tool == "scout_needs_you":
+        where = _host(sent.get("page_url") or "") or "The job board"
+        words = runs.WALL_WORDS.get(sent.get("kind", ""), runs.WALL_WORDS["sign_in"])
+        return f"{where} {words}: Claude asked you to, and waits"[:300]
     if tool == "get_master_profile":
         return "Read your resume (not stored here)"
     return tool

@@ -171,7 +171,38 @@ export const useDidItMyself = () =>
 export const useSendFixes = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/fixes/send`);
 
 /** Page by page: the owner looked the step over; its fixes go with it. */
-export const useContinue = () => useRunAction<string>((id) => `/v1/apply/runs/${id}/continue`);
+/** Continue (Page by page): "Sent to Claude…" shows at once (spec 040), never
+ * a spinning button; the server's answer replaces it, an error puts it back. */
+export function useContinue() {
+  const qc = useQueryClient();
+  return useMutation({
+    mutationFn: (id: string) => api.post<ApplyRun>(`/v1/apply/runs/${id}/continue`, {}),
+    onMutate: async (id: string) => {
+      await qc.cancelQueries({ queryKey: ["apply-run"] });
+      const before = qc.getQueryData<ApplyRun>(["apply-run", id]);
+      if (before?.paused_step) {
+        const step = before.paused_step;
+        qc.setQueryData<ApplyRun>(["apply-run", id], {
+          ...before,
+          paused_step: null,
+          sheet: {
+            ...(before.sheet ?? { steps: [] }),
+            check: { step, title: before.paused_title ?? step, at: new Date().toISOString(), read: false, moved_on: false },
+          },
+        });
+      }
+      return { before };
+    },
+    onError: (_e, id, ctx) => {
+      if (ctx?.before) qc.setQueryData(["apply-run", id], ctx.before);
+    },
+    onSuccess: (run) => {
+      qc.setQueryData(["apply-run", run.id], run);
+      qc.invalidateQueries({ queryKey: ["apply-open"] });
+      qc.invalidateQueries({ queryKey: ["apply-runs"] });
+    },
+  });
+}
 
 /** Page by page or Keep going, any time. */
 export const useSetMode = () =>
@@ -188,9 +219,9 @@ export const usePostMessage = () =>
 
 /** The user's look at Claude's résumé: use it, or change it (spec 025). */
 export const useResumeDecision = () =>
-  useRunAction<{ runId: string; decision: "use" | "change"; note?: string }>(
+  useRunAction<{ runId: string; decision: "use" | "change"; note?: string; coverLetter?: boolean }>(
     (v) => `/v1/apply/runs/${v.runId}/resume-decision`,
-    (v) => ({ decision: v.decision, note: v.note ?? null }),
+    (v) => ({ decision: v.decision, note: v.note ?? null, cover_letter: !!v.coverLetter }),
   );
 
 /** "It wasn't sent": back to the review. */
