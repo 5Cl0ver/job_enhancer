@@ -212,7 +212,7 @@ describe("the reviewer's cases: a Yes never spreads", () => {
   });
 
   it("the panel never asks on a sign-in, a shop, a news page or an aggregator", () => {
-    for (const u of ["https://www.amazon.com/dp/B0", "https://news.example.com/careers-advice", "https://jooble.org/desc/123", "https://www.talent.com/view?id=abc", "https://www.adzuna.com/details/123", "https://click.appcast.io/track/abc", "https://www.glassdoor.com/job-listing/x", "https://acme.com/", "https://accounts.sap.com/saml2/idp/sso", "https://online.adp.com/signin/v1/", "https://login.icims.com/", "https://www.linkedin.com/oauth/v2/authorization"]) {
+    for (const u of ["https://shop.example.com/dp/B0", "https://news.example.com/careers-advice", "https://jooble.org/desc/123", "https://www.talent.com/view?id=abc", "https://www.adzuna.com/details/123", "https://click.appcast.io/track/abc", "https://www.glassdoor.com/job-listing/x", "https://acme.com/", "https://accounts.sap.com/saml2/idp/sso", "https://online.adp.com/signin/v1/", "https://login.icims.com/", "https://www.linkedin.com/oauth/v2/authorization"]) {
       expect([u, askAbout(PRESS, u, null, T0 + 1)]).toEqual([u, null]);
     }
     expect(askAbout(PRESS, "https://acme.com/careers/apply", null, T0 + 1)).toBe("A");
