@@ -18,7 +18,9 @@
      ticked "I currently work here" on row 1, which hides its To date.
      Skills (spec 037): ?slowSkills=<ms> the results come that much later (a
      server-side search); ?autopick Workday picks a lone result by itself,
-     whatever it is; no result shows "No Items". -->
+     whatever it is; no result shows "No Items". ?redraw (spec 040): like real
+     Workday, the Skills box is drawn again at once after each chip (a new input, the
+     old one gone from the page). -->
 <html lang="en">
   <head>
     <meta charset="utf-8" />
@@ -75,6 +77,7 @@
       const params = new URLSearchParams(location.search);
       const slowSkills = Number(params.get("slowSkills") || 0);
       const autopick = params.has("autopick");
+      const redraw = params.has("redraw");
       const SCHOOLS = ["Harborview Community College","Harborview State University","Salem Technical Institute"];
       const DEGREES = ["High School Diploma","Associate's Degree","Bachelor's Degree","Master's Degree"];
 
@@ -191,10 +194,12 @@
           chips.appendChild(li);
           (data[input.id] ||= []).push(label);
           input.value = "";
+          if (redraw && input.id === "skills") queueMicrotask(() => redrawPrompt(input, catalog));
         };
         let popped = null;
         let asked = 0; // only the latest search's results ever show
         input.addEventListener("keydown", (e) => {
+          if (!input.isConnected) return; // a box drawn over is dead
           if (e.key === "Escape") return popped?.close();
           if (e.key !== "Enter") return;
           e.preventDefault();
@@ -216,6 +221,16 @@
           if (slow) setTimeout(results, slow);
           else results();
         });
+      }
+
+      // Workday draws the prompt again: the same id, a new box, the chips above it.
+      function redrawPrompt(input, catalog) {
+        const box = input.closest('[data-automation-id="multiSelectContainer"]');
+        const fresh = document.createElement("div");
+        fresh.setAttribute("data-automation-id", "multiSelectContainer");
+        fresh.innerHTML = `<ul class="chips" data-automation-id="selectedItemList">${(data[input.id] || []).map((l) => `<li data-automation-id="selectedItem">${l}</li>`).join("")}</ul><input id="${input.id}" placeholder="Search">`;
+        box.replaceWith(fresh);
+        wirePrompt(fresh.querySelector("input"), catalog);
       }
 
       // Month/year boxes take a value Workday's way only: ArrowUp/ArrowDown or

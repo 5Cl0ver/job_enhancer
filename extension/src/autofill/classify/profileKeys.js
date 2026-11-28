@@ -153,6 +153,8 @@ const RULES = [
   { key: "last_name", re: /last[\s_-]*name|surname|family[\s_-]*name/i },
   { key: "full_name", re: /full[\s_-]*(legal[\s_-]*)?name|legal[\s_-]*name|your[\s_-]*name|^\W*name\W*$/i },
   { key: "email", re: /e-?mail/i },
+  // "Preferred Contact Method" (Dayforce, spec 040): Email.
+  { key: "contact_method", re: /(preferred|best)[\s_-]*(method|way|mode|means)[\s_-]*(of[\s_-]*)?contact|contact[\s_-]*(method|preference)|how (should|would you like|do you prefer) (we|us|to be) (to )?contact/i },
   { key: "phone_type", re: /(phone|device)[\s_-]*(device[\s_-]*)?type|type of phone/i },
   { key: "phone_country", re: /country[\s_-]*(phone[\s_-]*)?code|phone.*country|dialing code/i },
   { key: "phone", re: /phone|mobile|telephone|\bcell\b/i },
@@ -233,8 +235,13 @@ export function isPhoneExtension(field) {
   return EXT_WORD.test(asks) && !EXT_INCLUDED.test(asks);
 }
 
+// "Preferred contact method" is one choice; a list of ticks ("Contact
+// preferences": marketing opt-ins) is never it (spec 040 review).
+const CONTACT_KINDS = new Set(["radio", "select", "buttons", "combobox", "text"]);
+
 export function profileKeyFor(field) {
   const key = profileKeyOf(field);
+  if (key === "contact_method" && field.kind && !CONTACT_KINDS.has(field.kind)) return null;
   return key === "phone" && isPhoneExtension(field) ? null : key;
 }
 
@@ -295,7 +302,58 @@ function stateForms(v) {
   return code && US_STATES[code] ? [US_STATES[code], code] : [s];
 }
 
-function countryForms(v) {
+// US state codes that are also countries' codes (CA Canada, IN India, DE
+// Germany…), and a state name that is also a country's (Georgia): they never
+// say a place is in the United States (spec 040 review).
+const SHARED_CODES = new Set(["AL", "AR", "AZ", "CA", "CO", "DE", "GA", "ID", "IL", "IN", "KY", "LA", "MA", "MD", "ME", "MN", "MO", "MS", "MT", "NC", "NE", "PA", "SC", "SD", "TN", "VA"]);
+const SHARED_NAMES = new Set(["georgia"]);
+
+/** Is this surely a US state ("OR", "Oregon")? Never one that could be a country ("CA", "Georgia"). */
+export function isUsState(v) {
+  const s = String(v ?? "").trim();
+  if (!s) return false;
+  if (s.length === 2) return !!US_STATES[s.toUpperCase()] && !SHARED_CODES.has(s.toUpperCase());
+  return !SHARED_NAMES.has(s.toLowerCase()) && Object.values(US_STATES).some((n) => n.toLowerCase() === s.toLowerCase());
+}
+
+/** Does this say the United States ("USA", "U.S.", "United States of America")? */
+export function isUsCountry(v) {
+  return /^(us|usa|u\.s\.a?\.?|united states( of america)?|america)$/i.test(String(v ?? "").trim());
+}
+
+// The ways a country-code list words the United States (spec 040): Workday's
+// "United States of America (+1)", "United States (+1)", "USA +1", "+1 United
+// States", a bare "+1". Searched in this order (Workday's prompt tries the
+// first few); a list is checked for an exact one before a close one, so
+// Canada's "+1" is never taken. The bare "+1" comes last, and counts only
+// where one option alone has it (matchOption).
+const US_DIAL = [
+  "United States of America (+1)",
+  "United States of America",
+  "United States",
+  "United States (+1)",
+  "United States +1",
+  "USA (+1)",
+  "US (+1)",
+  "USA +1",
+  "+1 United States",
+  "+1",
+];
+
+// A link box takes only a link, and LinkedIn's only a LinkedIn one (spec 040:
+// Dayforce's "LinkedIn Profile" got a saved "LinkedIn").
+const LINK = /^(https?:\/\/)?([\w-]+\.)+[a-z]{2,}(:\d+)?(\/\S*)?$/i;
+const LINK_KEYS = { linkedin_url: /linkedin\./i, github_url: /github\./i, portfolio_url: /./ };
+
+/** Does this answer fit the box's kind (a link box, a link)? */
+export function fitsKey(key, value) {
+  const want = LINK_KEYS[key];
+  if (!want) return true;
+  const v = String(value ?? "").trim();
+  return LINK.test(v) && want.test(v);
+}
+
+export function countryForms(v) {
   if (!v) return [];
   const s = String(v).trim();
   if (/^(us|usa|u\.s\.a?\.?|united states( of america)?|america)$/i.test(s)) {
@@ -337,6 +395,15 @@ export function valueForms(key, value) {
   return [v, ...forms.filter((f) => f !== v)];
 }
 
+/** A US phone: the profile's country is the United States, or none is set
+ * and the number doesn't start with another country's code ("+44 …"). */
+function usPhone(p) {
+  const phone = String(p.phone || "").trim();
+  if (!phone) return false;
+  if (p.country) return /^(us|usa|u\.s\.|united states)/i.test(p.country);
+  return !phone.startsWith("+") || phone.startsWith("+1");
+}
+
 export function profileValues(profile, email, today = new Date(), history = null) {
   const p = profile || {};
   const edu = history?.education?.[0] || {};
@@ -354,7 +421,8 @@ export function profileValues(profile, email, today = new Date(), history = null
     email_confirm: list(email),
     phone: list(p.phone),
     phone_type: list(p.phone ? "Mobile" : null, p.phone ? "Cell" : null),
-    phone_country: list(...(/^(us|usa|united states)/i.test(p.country || "United States") && p.phone ? ["United States (+1)", "+1", "United States"] : [])),
+    phone_country: list(...(usPhone(p) ? US_DIAL : [])),
+    contact_method: list(email ? "Email" : null, email ? "E-mail" : null),
     address_line1: list(p.address_line1),
     address_line2: list(p.address_line2),
     city: list(city),
@@ -366,9 +434,9 @@ export function profileValues(profile, email, today = new Date(), history = null
       [city, stateFull].filter(Boolean).join(", "),
       city,
     ),
-    linkedin_url: list(p.linkedin_url),
-    github_url: list(p.github_url),
-    portfolio_url: list(p.portfolio_url),
+    linkedin_url: list(p.linkedin_url).filter((v) => fitsKey("linkedin_url", v)),
+    github_url: list(p.github_url).filter((v) => fitsKey("github_url", v)),
+    portfolio_url: list(p.portfolio_url).filter((v) => fitsKey("portfolio_url", v)),
     authorized_to_work: list(yn(p.authorized_to_work)),
     requires_sponsorship: list(yn(p.requires_sponsorship)),
     // "Able to work without sponsorship?": the other way round (spec 036).

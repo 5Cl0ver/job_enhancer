@@ -14,7 +14,7 @@ import { reinjectOpenTabs } from "./background/reinject.js";
 import { createAutofillCopy } from "./background/autofillCopy.js";
 import { createFillPresence } from "./background/fillPresence.js";
 import { createConnect } from "./background/connect.js";
-import { createApplyRun } from "./background/applyRun.js";
+import { APPLY_ALARM, createApplyRun } from "./background/applyRun.js";
 import { createCaughtReporter, fillFailure, isSaveFailure, ownerReport, placeOf } from "./background/bugReports.js";
 import { capture } from "./background/pagePhoto.js";
 import { sameBox } from "./autofill/fingerprint.js";
@@ -168,6 +168,8 @@ chrome.alarms?.onAlarm.addListener((alarm) => {
   if (alarm.name === connect.alarm) connect.status().catch(() => {});
   if (alarm.name === REVOKE_ALARM) retryRevoke().catch(() => {});
   if (alarm.name === VERSION_ALARM) checkVersion().catch(() => {});
+  // A run is open: carry on its requests even with no page ticking (spec 040).
+  if (alarm.name === APPLY_ALARM) applyRun.wake().catch(() => {});
 });
 
 function browserName() {
@@ -601,6 +603,9 @@ const applyRun = createApplyRun({
     if (held && (held.run || "") !== runId) await chrome.storage.session.remove(k);
   },
 });
+// The worker just started (a reload, an update, Chrome stopped it): an open
+// run's requests are carried on at once, not at the next page tick (spec 040).
+applyRun.wake().catch(() => {});
 
 async function getFillSession(tabId) {
   const key = fillKey(tabId);

@@ -27,10 +27,15 @@
 //   one attached on the run's pages: never a guess from the page's address.
 //   Its cover letter likewise (spec 031): the run's, else the job's.
 // Extension API calls on each turn keep the service worker awake while a run
-// is open (Chrome resets its idle timer on every extension call).
+// is open (Chrome resets its idle timer on every extension call). A worker
+// Chrome stopped anyway, or one that started again (an update, a reload), is
+// woken by an alarm every 30 s while a run is open, and looks at once when it
+// starts (spec 040): a fill never waits for a page to tick (Chrome slows a
+// hidden tab's timers to once a minute), so Claude never hears "no answer".
 import { CHOICE_CHARS, MAX_CHOICES, onRunHost, shotPlan } from "../autofill/applyPage.js";
 import { CAPTURE_GAP_MS, capture as captureTab } from "./pagePhoto.js";
 
+export const APPLY_ALARM = "je-apply-wake";
 const OPEN_TTL = 2_000;
 const IDLE_TTL = 60_000;
 const RETRY_MS = 3_000;
@@ -87,6 +92,7 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
   let state = { at: 0, ttl: IDLE_TTL, data: { run_id: null }, okAt: 0 };
   let asking = null;
   let looping = false;
+  let alarmOn = null; // whether the wake alarm is set (null: not known yet)
   const done = new Set(); // request ids answered here (claimed, or taken elsewhere)
   const handling = new Set(); // request ids being handled right now
   const fillingTabs = new Set(); // tabs a fill request is filling now
@@ -102,22 +108,49 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
           // Signed out: no application here. (No token for a moment, a
           // refresh that failed, is just a failed ask, below.)
           state = { at: Date.now(), ttl: IDLE_TTL, data: { run_id: null }, okAt: Date.now() };
+          wakeAlarm(false);
         } else {
           if (!res || !res.ok) throw new Error("no answer");
           const data = (await res.json()) || { run_id: null };
           state = { at: Date.now(), ttl: data.run_id ? OPEN_TTL : IDLE_TTL, data, okAt: Date.now() };
+          wakeAlarm(!!data.run_id);
         }
       } catch {
         // Keep what we knew for a while (a restart never lifts the lock), and
         // ask again soon; after 90 s without an answer, stop trusting it.
         const stale = Date.now() - state.okAt > TRUST_MS;
         state = { ...state, at: Date.now(), ttl: RETRY_MS, data: stale ? { run_id: null } : state.data };
+        // No good answer for 90 s (signed out on the server, offline, down):
+        // the alarm stops; a page or a good answer starts it again.
+        if (stale) wakeAlarm(false);
       } finally {
         asking = null;
       }
       return state.data;
     })();
     return asking;
+  }
+
+  /** The 30 s wake alarm: on while a run is open, off otherwise. */
+  function wakeAlarm(on) {
+    if (alarmOn === on || !c.alarms) return;
+    alarmOn = on;
+    try {
+      const done = on ? c.alarms.create(APPLY_ALARM, { periodInMinutes: 0.5 }) : c.alarms.clear(APPLY_ALARM);
+      Promise.resolve(done).catch(() => {});
+    } catch {
+      /* no alarms here */
+    }
+  }
+
+  /** The worker woke (the alarm, a start): look now, and carry on any open run. */
+  async function wake() {
+    const data = await active(true);
+    if (data.run_id && !looping) loop();
+    // Nothing open: not kept, so a run started just after is seen at the
+    // next page tick (never 60 s later).
+    if (!data.run_id) state.at = 0;
+    return !!data.run_id;
   }
 
   async function signedOut() {
@@ -577,5 +610,5 @@ export function createApplyRun({ api, press, fillSession, onRunFill = async () =
     }
   }
 
-  return { tick, event, active, loop, resumeFor, inRun, coverLetterFor, runFor };
+  return { tick, event, active, loop, wake, resumeFor, inRun, coverLetterFor, runFor };
 }

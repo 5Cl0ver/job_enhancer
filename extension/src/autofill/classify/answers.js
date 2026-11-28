@@ -139,6 +139,13 @@ export function matchOption(answer, options, { strict = false } = {}) {
   if (!want || !options?.length) return -1;
   const labels = options.map((o) => clean(o.label));
   const usable = (i) => !PLACEHOLDER.test(labels[i]);
+  // A bare dial code ("+1") names a country only where ONE option has it:
+  // Canada and the United States share "+1" (spec 040 review).
+  if (/^\+\d{1,4}$/.test(want)) {
+    const has = (s) => clean(s).split(" ").includes(want);
+    const hits = options.map((o, k) => (usable(k) && (has(o.label) || has(o.value)) ? k : -1)).filter((k) => k >= 0);
+    return hits.length === 1 ? hits[0] : -1;
+  }
 
   let i = labels.findIndex((l, k) => usable(k) && l === want);
   if (i >= 0) return i;

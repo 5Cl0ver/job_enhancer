@@ -12,7 +12,7 @@
 // with a name box plus a phone or email box. PURE: unit-tested in
 // test/autofill-memory.spec.js.
 
-import { degreeForms } from "./profileKeys.js";
+import { countryForms, degreeForms, isUsCountry, isUsState } from "./profileKeys.js";
 
 const JOB = /\b(employment|employer|work (history|experience)|experience|previous (jobs?|positions?|employers?)|job history|positions? held|prior employment)\b/i;
 const EDUCATION = /\b(education|schools?|universit(y|ies)|colleges?|academic)\b/i;
@@ -25,7 +25,7 @@ const NAME_HINT = /employer|\bjob_?\d|work_?hist|prev(ious)?_?(job|employer)|wor
 /** The user's own details: never written into a past job's, a school's or a reference's box. */
 export const PERSONAL = new Set([
   "first_name", "last_name", "full_name", "preferred_name", "middle_name", "email", "email_confirm",
-  "phone", "phone_type", "phone_country", "address_line1", "address_line2", "city", "state", "postal_code",
+  "phone", "phone_type", "phone_country", "contact_method", "address_line1", "address_line2", "city", "state", "postal_code",
   "country", "location", "linkedin_url", "github_url", "portfolio_url",
 ]);
 
@@ -59,6 +59,7 @@ export function jobPart(field) {
   // "Employer City" is the job's city, not the employer's name.
   if (/\bcity\b/i.test(q)) return "city";
   if (/\b(state|province)\b/i.test(q)) return "state";
+  if (/\bcountry\b/i.test(q)) return "country";
   if (/\b(company|employer|organi[sz]ation|business)( name)?\b/i.test(q)) return "company";
   if (/\b(job title|title|position( title| held)?|role)\b/i.test(q)) return "title";
   return "";
@@ -101,6 +102,20 @@ export function classifySections(fields) {
   return out;
 }
 
+/**
+ * A past job's country from its location (spec 040): "…, USA" or a surely-US
+ * state last ("Harborview, OR") is the United States; three parts or more
+ * end in the country ("Toronto, ON, Canada"). Nothing when it doesn't say
+ * ("Toronto, CA", "Tbilisi, Georgia", "Remote").
+ */
+function jobCountry(location) {
+  const parts = String(location || "").split(",").map((s) => s.trim()).filter(Boolean);
+  const last = parts[parts.length - 1] || "";
+  if (isUsCountry(last) || (parts.length >= 2 && isUsState(last))) return countryForms("United States");
+  if (parts.length >= 3 && !isUsState(last)) return countryForms(last);
+  return [];
+}
+
 const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
 const pad = (n) => String(n).padStart(2, "0");
 
@@ -115,6 +130,7 @@ export function jobValues(part, job, field) {
   if (part === "current") return job.current ? ["Yes"] : [];
   if (part === "city") return city ? [city] : [];
   if (part === "state") return state ? [state] : [];
+  if (part === "country") return jobCountry(job.location);
   const m = part === "start" ? job.start_month : job.end_month;
   const y = part === "start" ? job.start_year : job.end_year;
   if (part === "end" && job.current) return /\b(present|current)\b/i.test(field.options?.map((o) => o.label).join(" ") || "") ? ["Present", "Current"] : [];
